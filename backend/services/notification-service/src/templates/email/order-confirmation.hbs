@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Order Confirmation - TicketToken</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .content { background: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-top: none; }
+    .ticket-info { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+    .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+    .qr-code { text-align: center; margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🎉 Order Confirmed!</h1>
+      <p>Your tickets are ready</p>
+    </div>
+    
+    <div class="content">
+      <p>Hi {{customerName}},</p>
+      
+      <p>Great news! Your order <strong>#{{orderId}}</strong> has been confirmed and your tickets have been secured on the blockchain.</p>
+      
+      <div class="ticket-info">
+        <h3>📍 Event Details</h3>
+        <p><strong>{{eventName}}</strong></p>
+        <p>📅 {{eventDate}}</p>
+        <p>📍 {{venueName}}</p>
+        <p>🎫 {{ticketCount}} ticket(s)</p>
+        <p>💰 Total: ${{totalAmount}}</p>
+      </div>
+      
+      {{#if qrCode}}
+      <div class="qr-code">
+        <img src="{{qrCode}}" alt="Ticket QR Code" width="200" height="200">
+        <p><small>Show this QR code at the venue</small></p>
+      </div>
+      {{/if}}
+      
+      <center>
+        <a href="{{ticketUrl}}" class="button">View Your Tickets</a>
+      </center>
+      
+      <h3>What's Next?</h3>
+      <ul>
+        <li>Your tickets are stored securely in your account</li>
+        <li>You can transfer or resell them on our marketplace</li>
+        <li>Show the QR code at the venue for entry</li>
+      </ul>
+      
+      <p>If you have any questions, feel free to reply to this email.</p>
+      
+      <p>See you at the event!<br>
+      The TicketToken Team</p>
+    </div>
+    
+    <div class="footer">
+      <p>© 2025 TicketToken. All rights reserved.</p>
+      <p>This is an automated message, please do not reply directly.</p>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,26 @@
+-- Insert test tenant
+INSERT INTO tenants (id, name) VALUES 
+('00000000-0000-0000-0000-000000000001', 'Test Tenant')
+ON CONFLICT DO NOTHING;
+
+-- Insert test venue
+INSERT INTO venues (id, tenant_id, name) VALUES 
+('11111111-1111-1111-1111-111111111111', '00000000-0000-0000-0000-000000000001', 'Test Venue')
+ON CONFLICT DO NOTHING;
+
+-- Insert test event
+INSERT INTO events (id, tenant_id, venue_id, name, status, starts_at, ends_at) VALUES 
+('22222222-2222-2222-2222-222222222222', 
+ '00000000-0000-0000-0000-000000000001',
+ '11111111-1111-1111-1111-111111111111',
+ 'Test Concert',
+ 'DRAFT',
+ NOW() + INTERVAL '7 days',
+ NOW() + INTERVAL '7 days 3 hours')
+ON CONFLICT DO NOTHING;
+
+-- Insert event tiers
+INSERT INTO event_tiers (id, event_id, name, price_cents, total_qty) VALUES 
+('33333333-3333-3333-3333-333333333333', '22222222-2222-2222-2222-222222222222', 'General Admission', 5000, 100),
+('44444444-4444-4444-4444-444444444444', '22222222-2222-2222-2222-222222222222', 'VIP', 15000, 20)
+ON CONFLICT DO NOTHING;

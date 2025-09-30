@@ -1,0 +1,119 @@
+#!/bin/bash
+# rate_limiting.redis
+# Purpose: Implement comprehensive rate limiting for API protection and abuse prevention
+# 
+# Key Components:
+# - Sliding Window Rate Limiting: Track requests in time windows
+# - Multiple Limit Tiers: Different limits for different endpoints
+# - User-Based Limiting: Track by user_id from core.sessions
+# - IP-Based Limiting: Track by ip_address from core.sessions
+# - Device Fingerprint Limiting: Prevent abuse across multiple accounts
+#
+# Integration Points:
+# - Links to core.sessions.risk_level for dynamic limits
+# - Updates core.suspicious_sessions when limits exceeded
+# - Uses core.sessions.device_fingerprint for device tracking
+
+echo "=== Setting up TicketToken Rate Limiting ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to display progress
+show_progress() {
+    echo "[$(date +%H:%M:%S)] $1"
+}
+
+show_progress "Setting up endpoint rate limits..."
+
+# Comprehensive endpoint configuration
+redis-cli HSET rate_limits:endpoints "/api/auth/login" "5:900"
+redis-cli HSET rate_limits:endpoints "/api/auth/register" "3:3600"
+redis-cli HSET rate_limits:endpoints "/api/auth/logout" "10:60"
+redis-cli HSET rate_limits:endpoints "/api/auth/refresh" "10:300"
+redis-cli HSET rate_limits:endpoints "/api/tickets/purchase" "10:60"
+redis-cli HSET rate_limits:endpoints "/api/tickets/list" "100:60"
+redis-cli HSET rate_limits:endpoints "/api/tickets/cancel" "5:300"
+redis-cli HSET rate_limits:endpoints "/api/events/list" "100:60"
+redis-cli HSET rate_limits:endpoints "/api/events/search" "50:60"
+redis-cli HSET rate_limits:endpoints "/api/events/details" "200:60"
+redis-cli HSET rate_limits:endpoints "/api/nft/mint" "5:300"
+redis-cli HSET rate_limits:endpoints "/api/nft/transfer" "10:300"
+redis-cli HSET rate_limits:endpoints "/api/wallet/balance" "60:60"
+redis-cli HSET rate_limits:endpoints "/api/wallet/transfer" "5:300"
+redis-cli HSET rate_limits:endpoints "/api/venue/list" "50:60"
+redis-cli HSET rate_limits:endpoints "/api/user/profile" "30:60"
+redis-cli HSET rate_limits:endpoints "/api/user/update" "10:300"
+
+show_progress "Configuring IP-specific limits..."
+
+# IP-specific limits (stricter than user limits)
+redis-cli HSET rate_limits:ip "/api/auth/login" "3:900"
+redis-cli HSET rate_limits:ip "/api/auth/register" "1:3600"
+redis-cli HSET rate_limits:ip "/api/tickets/purchase" "5:60"
+redis-cli HSET rate_limits:ip "/api/wallet/transfer" "3:300"
+
+show_progress "Setting up device limits..."
+
+# Device-specific limits (across all users)
+redis-cli HSET rate_limits:device "/api/auth/login" "10:3600"
+redis-cli HSET rate_limits:device "/api/auth/register" "3:86400"
+redis-cli HSET rate_limits:device "/api/tickets/purchase" "20:3600"
+redis-cli HSET rate_limits:device "/api/nft/mint" "10:3600"
+
+show_progress "Configuring user tiers and risk levels..."
+
+# User tier multipliers
+redis-cli HSET rate_limits:tiers "anonymous" "0.5"
+redis-cli HSET rate_limits:tiers "free" "1.0"
+redis-cli HSET rate_limits:tiers "premium" "2.0"
+redis-cli HSET rate_limits:tiers "vip" "5.0"
+redis-cli HSET rate_limits:tiers "partner" "10.0"
+
+# Risk level multipliers
+redis-cli HSET rate_limits:risk_multipliers "low" "1.0"
+redis-cli HSET rate_limits:risk_multipliers "medium" "0.7"
+redis-cli HSET rate_limits:risk_multipliers "high" "0.3"
+redis-cli HSET rate_limits:risk_multipliers "critical" "0.1"
+redis-cli HSET rate_limits:risk_multipliers "blocked" "0.0"
+
+show_progress "Setting up blocking thresholds..."
+
+# Auto-blocking thresholds
+redis-cli HSET rate_limits:auto_block "failed_login_attempts" "10:3600"
+redis-cli HSET rate_limits:auto_block "total_violations" "20:86400"
+redis-cli HSET rate_limits:auto_block "rapid_requests" "100:60"
+redis-cli HSET rate_limits:auto_block "multiple_users_per_device" "5:3600"
+
+show_progress "Initializing monitoring keys..."
+
+# Initialize daily stats
+redis-cli HSET rate_limit:stats:$(date +%Y%m%d) total_requests 0
+redis-cli HSET rate_limit:stats:$(date +%Y%m%d) blocked_requests 0
+redis-cli HSET rate_limit:stats:$(date +%Y%m%d) suspicious_ips 0
+redis-cli HSET rate_limit:stats:$(date +%Y%m%d) blocked_devices 0
+redis-cli EXPIRE rate_limit:stats:$(date +%Y%m%d) 604800  # Keep for 7 days
+
+echo ""
+echo "=== Rate Limiting Setup Summary ==="
+echo "Endpoints configured: $(redis-cli HLEN rate_limits:endpoints)"
+echo "IP limits configured: $(redis-cli HLEN rate_limits:ip)"
+echo "Device limits configured: $(redis-cli HLEN rate_limits:device)"
+echo "User tiers configured: $(redis-cli HLEN rate_limits:tiers)"
+echo "Risk levels configured: $(redis-cli HLEN rate_limits:risk_multipliers)"
+echo ""
+echo "✓ Complete rate limiting system created successfully!"
+
+# Example usage commands:
+echo ""
+echo "=== Example Usage ==="
+echo "# Track user request:"
+echo "redis-cli ZADD api_requests:user123:login \$(date +%s) \"request_\$(date +%s)\""
+echo ""
+echo "# Clean old requests (sliding window):"
+echo "redis-cli ZREMRANGEBYSCORE api_requests:user123:login -inf \$(($(date +%s) - 900))"
+echo ""
+echo "# Block suspicious IP:"
+echo "redis-cli SETEX blocked_ip:192.168.1.100 3600 \"reason:too_many_requests\""
+echo ""
+echo "# Track device fingerprint:"
+echo "redis-cli HINCRBY device_requests:fp_abc123 /api/login 1"

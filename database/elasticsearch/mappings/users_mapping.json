@@ -1,0 +1,293 @@
+{
+  "settings": {
+    "number_of_shards": 2,
+    "number_of_replicas": 1,
+    "analysis": {
+      "analyzer": {
+        "email_analyzer": {
+          "type": "custom",
+          "tokenizer": "uax_url_email",
+          "filter": ["lowercase"]
+        }
+      },
+      "normalizer": {
+        "lowercase_normalizer": {
+          "type": "custom",
+          "filter": ["lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "userId": {
+        "type": "keyword"
+      },
+      "email": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer",
+        "fields": {
+          "search": {
+            "type": "text",
+            "analyzer": "email_analyzer"
+          }
+        }
+      },
+      "username": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer",
+        "fields": {
+          "search": {
+            "type": "text",
+            "analyzer": "simple"
+          },
+          "suggest": {
+            "type": "completion",
+            "analyzer": "simple",
+            "preserve_separators": false,
+            "preserve_position_increments": true,
+            "max_input_length": 50
+          }
+        }
+      },
+      "firstName": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "lastName": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          }
+        }
+      },
+      "fullName": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "keyword": {
+            "type": "keyword"
+          },
+          "suggest": {
+            "type": "completion",
+            "analyzer": "standard"
+          }
+        }
+      },
+      "profile": {
+        "properties": {
+          "bio": {
+            "type": "text",
+            "analyzer": "english"
+          },
+          "avatar": {
+            "type": "keyword",
+            "index": false
+          },
+          "location": {
+            "properties": {
+              "city": {
+                "type": "keyword"
+              },
+              "state": {
+                "type": "keyword"
+              },
+              "country": {
+                "type": "keyword"
+              },
+              "coordinates": {
+                "type": "geo_point"
+              }
+            }
+          },
+          "phone": {
+            "type": "keyword"
+          },
+          "phoneVerified": {
+            "type": "boolean"
+          },
+          "dateOfBirth": {
+            "type": "date"
+          },
+          "socialLinks": {
+            "type": "object",
+            "enabled": false
+          }
+        }
+      },
+      "preferences": {
+        "properties": {
+          "favoriteGenres": {
+            "type": "keyword"
+          },
+          "favoriteVenues": {
+            "type": "keyword"
+          },
+          "favoriteArtists": {
+            "type": "keyword"
+          },
+          "language": {
+            "type": "keyword"
+          },
+          "currency": {
+            "type": "keyword"
+          },
+          "notificationSettings": {
+            "type": "object",
+            "enabled": false
+          },
+          "privacy": {
+            "properties": {
+              "profileVisibility": {
+                "type": "keyword"
+              },
+              "showActivity": {
+                "type": "boolean"
+              },
+              "allowMessages": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      },
+      "activity": {
+        "properties": {
+          "totalEvents": {
+            "type": "integer"
+          },
+          "totalSpent": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "lastPurchase": {
+            "type": "date"
+          },
+          "loyaltyPoints": {
+            "type": "integer"
+          },
+          "membershipTier": {
+            "type": "keyword"
+          },
+          "lifetimeValue": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          }
+        }
+      },
+      "security": {
+        "properties": {
+          "twoFactorEnabled": {
+            "type": "boolean"
+          },
+          "twoFactorMethod": {
+            "type": "keyword"
+          },
+          "lastPasswordChange": {
+            "type": "date"
+          },
+          "loginAttempts": {
+            "type": "integer"
+          },
+          "lockedUntil": {
+            "type": "date"
+          },
+          "suspiciousActivity": {
+            "type": "boolean"
+          }
+        }
+      },
+      "devices": {
+        "type": "nested",
+        "properties": {
+          "deviceId": {
+            "type": "keyword"
+          },
+          "deviceType": {
+            "type": "keyword"
+          },
+          "deviceName": {
+            "type": "text"
+          },
+          "lastUsed": {
+            "type": "date"
+          },
+          "trusted": {
+            "type": "boolean"
+          }
+        }
+      },
+      "compliance": {
+        "properties": {
+          "gdprConsent": {
+            "type": "boolean"
+          },
+          "marketingConsent": {
+            "type": "boolean"
+          },
+          "dataRetentionDate": {
+            "type": "date"
+          },
+          "kycStatus": {
+            "type": "keyword"
+          }
+        }
+      },
+      "metadata": {
+        "properties": {
+          "source": {
+            "type": "keyword"
+          },
+          "referrer": {
+            "type": "keyword"
+          },
+          "ipAddress": {
+            "type": "ip"
+          },
+          "userAgent": {
+            "type": "text",
+            "index": false
+          }
+        }
+      },
+      "roles": {
+        "type": "keyword"
+      },
+      "permissions": {
+        "type": "keyword"
+      },
+      "tags": {
+        "type": "keyword"
+      },
+      "flags": {
+        "type": "keyword"
+      },
+      "lastLoginAt": {
+        "type": "date"
+      },
+      "lastActivityAt": {
+        "type": "date"
+      },
+      "createdAt": {
+        "type": "date"
+      },
+      "updatedAt": {
+        "type": "date"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "verified": {
+        "type": "boolean"
+      },
+      "searchScore": {
+        "type": "float"
+      }
+    }
+  }
+}

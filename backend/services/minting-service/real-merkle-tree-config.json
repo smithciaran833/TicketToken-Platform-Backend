@@ -1,0 +1,8 @@
+{
+  "merkleTree": "4Zp86Wv5ds72L6Hx5rexMBTxRWuavncZSjJM2jKcbpXV",
+  "treeAuthority": "4eidE2LamvDGKFbJMNQ1H7uNGyg59Qc8vfM5mUJdDdp8",
+  "maxDepth": 14,
+  "maxBufferSize": 64,
+  "compressionProgram": "cmtDvXumGCrqC1Age74AVPhSRVXJMd8PJS91L8KbNCK",
+  "noopProgram": "noopb9bkMVfRPU8AsbpTUg8AQkHtKwMYZiFUjNRtMmV"
+}

@@ -1,0 +1,1 @@
+TicketToken: Payment confirmed! ${{amount}} for {{eventName}}. Order #{{orderIdShort}}. View tickets: {{shortUrl}}

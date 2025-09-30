@@ -1,0 +1,354 @@
+{
+  "settings": {
+    "number_of_shards": 5,
+    "number_of_replicas": 1,
+    "index.refresh_interval": "5s",
+    "analysis": {
+      "analyzer": {
+        "log_analyzer": {
+          "type": "pattern",
+          "pattern": "\\W+",
+          "lowercase": true
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "logId": {
+        "type": "keyword"
+      },
+      "@timestamp": {
+        "type": "date",
+        "format": "date_optional_time||epoch_millis"
+      },
+      "timestamp": {
+        "type": "date",
+        "format": "date_optional_time||epoch_millis"
+      },
+      "level": {
+        "type": "keyword"
+      },
+      "severity": {
+        "type": "integer"
+      },
+      "priority": {
+        "type": "integer"
+      },
+      "service": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "module": {
+        "type": "keyword"
+      },
+      "function": {
+        "type": "keyword"
+      },
+      "line": {
+        "type": "integer"
+      },
+      "message": {
+        "type": "text",
+        "analyzer": "log_analyzer",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 1024
+          },
+          "standard": {
+            "type": "text",
+            "analyzer": "standard"
+          }
+        }
+      },
+      "error": {
+        "properties": {
+          "type": {
+            "type": "keyword"
+          },
+          "message": {
+            "type": "text"
+          },
+          "stackTrace": {
+            "type": "text",
+            "index": false
+          },
+          "code": {
+            "type": "keyword"
+          },
+          "details": {
+            "type": "object",
+            "enabled": false
+          },
+          "fingerprint": {
+            "type": "keyword"
+          }
+        }
+      },
+      "request": {
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "method": {
+            "type": "keyword"
+          },
+          "path": {
+            "type": "keyword"
+          },
+          "query": {
+            "type": "text"
+          },
+          "headers": {
+            "type": "object",
+            "enabled": false
+          },
+          "body": {
+            "type": "text",
+            "index": false
+          },
+          "ip": {
+            "type": "ip"
+          },
+          "geo": {
+            "properties": {
+              "country": {
+                "type": "keyword"
+              },
+              "city": {
+                "type": "keyword"
+              },
+              "location": {
+                "type": "geo_point"
+              }
+            }
+          },
+          "userAgent": {
+            "type": "text"
+          },
+          "referer": {
+            "type": "keyword"
+          }
+        }
+      },
+      "response": {
+        "properties": {
+          "statusCode": {
+            "type": "integer"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "headers": {
+            "type": "object",
+            "enabled": false
+          },
+          "cached": {
+            "type": "boolean"
+          }
+        }
+      },
+      "performance": {
+        "properties": {
+          "cpu": {
+            "type": "float"
+          },
+          "memory": {
+            "type": "float"
+          },
+          "disk": {
+            "type": "float"
+          },
+          "duration": {
+            "type": "integer"
+          },
+          "dbQueries": {
+            "type": "integer"
+          },
+          "dbDuration": {
+            "type": "integer"
+          },
+          "cacheHits": {
+            "type": "integer"
+          },
+          "cacheMisses": {
+            "type": "integer"
+          }
+        }
+      },
+      "security": {
+        "properties": {
+          "threat": {
+            "type": "keyword"
+          },
+          "action": {
+            "type": "keyword"
+          },
+          "blocked": {
+            "type": "boolean"
+          },
+          "ruleId": {
+            "type": "keyword"
+          },
+          "attackType": {
+            "type": "keyword"
+          },
+          "severity": {
+            "type": "keyword"
+          },
+          "confidence": {
+            "type": "float"
+          }
+        }
+      },
+      "blockchain": {
+        "properties": {
+          "network": {
+            "type": "keyword"
+          },
+          "transactionHash": {
+            "type": "keyword"
+          },
+          "blockNumber": {
+            "type": "long"
+          },
+          "gasUsed": {
+            "type": "long"
+          },
+          "gasPrice": {
+            "type": "long"
+          },
+          "contractAddress": {
+            "type": "keyword"
+          },
+          "method": {
+            "type": "keyword"
+          }
+        }
+      },
+      "analytics": {
+        "properties": {
+          "eventType": {
+            "type": "keyword"
+          },
+          "eventCategory": {
+            "type": "keyword"
+          },
+          "eventAction": {
+            "type": "keyword"
+          },
+          "eventLabel": {
+            "type": "keyword"
+          },
+          "eventValue": {
+            "type": "float"
+          }
+        }
+      },
+      "context": {
+        "properties": {
+          "deployment": {
+            "type": "keyword"
+          },
+          "region": {
+            "type": "keyword"
+          },
+          "availability_zone": {
+            "type": "keyword"
+          },
+          "datacenter": {
+            "type": "keyword"
+          },
+          "hostname": {
+            "type": "keyword"
+          },
+          "containerId": {
+            "type": "keyword"
+          },
+          "podName": {
+            "type": "keyword"
+          },
+          "namespace": {
+            "type": "keyword"
+          }
+        }
+      },
+      "user": {
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "username": {
+            "type": "keyword"
+          },
+          "email": {
+            "type": "keyword"
+          },
+          "role": {
+            "type": "keyword"
+          }
+        }
+      },
+      "session": {
+        "properties": {
+          "id": {
+            "type": "keyword"
+          },
+          "startTime": {
+            "type": "date"
+          }
+        }
+      },
+      "correlation": {
+        "properties": {
+          "requestId": {
+            "type": "keyword"
+          },
+          "correlationId": {
+            "type": "keyword"
+          },
+          "traceId": {
+            "type": "keyword"
+          },
+          "spanId": {
+            "type": "keyword"
+          },
+          "parentSpanId": {
+            "type": "keyword"
+          }
+        }
+      },
+      "environment": {
+        "type": "keyword"
+      },
+      "application": {
+        "type": "keyword"
+      },
+      "version": {
+        "type": "keyword"
+      },
+      "tags": {
+        "type": "keyword"
+      },
+      "labels": {
+        "type": "object",
+        "enabled": false
+      },
+      "metadata": {
+        "type": "object",
+        "enabled": false
+      },
+      "retention": {
+        "type": "keyword"
+      }
+    }
+  }
+}

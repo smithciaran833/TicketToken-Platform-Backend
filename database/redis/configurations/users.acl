@@ -1,0 +1,5 @@
+user default on +@all ~* &* >TicketToken2025SecurePass!
+user monitoring on +ping +info +client +config|get ~* &* >MonitoringPass2025!
+user app_user on +@read +@write +@list +@set +@string +@stream -flushdb -flushall ~app:* ~session:* ~cache:* &* >AppUserPass2025!
+user session_service on +@read +@write +@list +@string +del +expire +ttl ~session:* &* >SessionServicePass2025!
+user cache_service on +@read +@write +@string +del +expire +ttl ~cache:* &* >CacheServicePass2025!

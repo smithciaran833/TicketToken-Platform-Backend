@@ -1,0 +1,98 @@
+#!/bin/bash
+# geospatial_data.redis
+# Purpose: Enable location-based features using Redis GEO commands
+#
+# Features:
+# - Venue Discovery: Find venues near user location
+# - Event Search: Events within radius
+# - Geographic Analytics: Popular areas, venue clusters
+
+echo "=== Setting up TicketToken Geospatial Data ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to display progress
+show_progress() {
+    echo "[$(date +%H:%M:%S)] $1"
+}
+
+show_progress "Setting up venue locations..."
+
+# Add venue locations (Nashville area)
+redis-cli GEOADD venues:locations -86.7816 36.1627 "venue:1:ryman"
+redis-cli GEOADD venues:locations -86.7744 36.1599 "venue:2:bridgestone"
+redis-cli GEOADD venues:locations -86.7675 36.1747 "venue:3:ascend"
+redis-cli GEOADD venues:locations -86.8785 36.2468 "venue:4:opry"
+redis-cli GEOADD venues:locations -86.7850 36.1580 "venue:5:marathon"
+redis-cli GEOADD venues:locations -86.7620 36.1744 "venue:6:exit_in"
+redis-cli GEOADD venues:locations -86.8054 36.1466 "venue:7:cannery"
+
+show_progress "Setting up event locations..."
+
+# Active event locations (with TTL)
+redis-cli GEOADD events:active:locations -86.7816 36.1627 "event:123:blues_fest"
+redis-cli GEOADD events:active:locations -86.7744 36.1599 "event:456:hockey_game"
+redis-cli GEOADD events:active:locations -86.7675 36.1747 "event:789:rock_concert"
+redis-cli EXPIRE events:active:locations 86400  # 24 hours
+
+# Event metadata
+redis-cli HSET event:123:geo city "Nashville" state "TN" venue_name "Ryman Auditorium" zip "37219"
+redis-cli HSET event:456:geo city "Nashville" state "TN" venue_name "Bridgestone Arena" zip "37203"
+redis-cli HSET event:789:geo city "Nashville" state "TN" venue_name "Ascend Amphitheater" zip "37201"
+
+show_progress "Configuring geographic zones..."
+
+# Delivery/service zones
+redis-cli GEOADD zones:service:nashville -86.7833 36.1659 "zone:downtown:premium"
+redis-cli GEOADD zones:service:nashville -86.8250 36.1400 "zone:west_end:standard"
+redis-cli GEOADD zones:service:nashville -86.7000 36.1900 "zone:east_nashville:standard"
+redis-cli GEOADD zones:service:nashville -86.9000 36.0500 "zone:franklin:extended"
+redis-cli GEOADD zones:service:nashville -86.6500 36.2000 "zone:madison:extended"
+
+# Zone configurations
+redis-cli HSET zone:config:downtown type "premium" delivery_fee "0" response_time "30"
+redis-cli HSET zone:config:west_end type "standard" delivery_fee "5" response_time "45"
+redis-cli HSET zone:config:franklin type "extended" delivery_fee "10" response_time "60"
+
+show_progress "Setting up location-based analytics..."
+
+# Geographic analytics configuration
+redis-cli HSET geo:config:analytics track_searches "true"
+redis-cli HSET geo:config:analytics track_visitors "true"
+redis-cli HSET geo:config:analytics heatmap_enabled "true"
+redis-cli HSET geo:config:analytics grid_size_miles "5"
+
+# Initialize daily analytics
+redis-cli HINCRBY geo:analytics:$(date +%Y%m%d) total_searches 0
+redis-cli HINCRBY geo:analytics:$(date +%Y%m%d) unique_visitors 0
+redis-cli HINCRBY geo:analytics:$(date +%Y%m%d) zone_queries 0
+redis-cli EXPIRE geo:analytics:$(date +%Y%m%d) 604800  # 7 days
+
+show_progress "Creating search optimization structures..."
+
+# Pre-computed search grids for performance
+redis-cli GEOADD search:grid:downtown -86.7833 36.1659 "grid:downtown:center"
+redis-cli GEOADD search:grid:downtown -86.7916 36.1627 "grid:downtown:west"
+redis-cli GEOADD search:grid:downtown -86.7750 36.1659 "grid:downtown:east"
+
+# Popular search areas
+redis-cli ZADD search:popular:areas 1000 "downtown_nashville"
+redis-cli ZADD search:popular:areas 750 "east_nashville"
+redis-cli ZADD search:popular:areas 500 "franklin"
+redis-cli ZADD search:popular:areas 400 "brentwood"
+
+show_progress "Setting up user location features..."
+
+# User location privacy settings
+redis-cli HSET location:privacy:defaults share_location "opt_in"
+redis-cli HSET location:privacy:defaults retention_hours "24"
+redis-cli HSET location:privacy:defaults precision_meters "100"
+
+echo ""
+echo "=== Geospatial Data Setup Summary ==="
+echo "Venues indexed: $(redis-cli ZCARD venues:locations)"
+echo "Active events: $(redis-cli ZCARD events:active:locations)"
+echo "Service zones: $(redis-cli ZCARD zones:service:nashville)"
+echo "Search grids: $(redis-cli ZCARD search:grid:downtown)"
+echo ""
+echo "✓ Complete geospatial data system created successfully!"

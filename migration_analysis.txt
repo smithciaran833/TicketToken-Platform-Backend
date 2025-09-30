@@ -1,0 +1,1221 @@
+PostgreSQL Migration Analysis Report
+====================================
+Generated: Mon Sep 29 12:54:39 EDT 2025
+
+----------------------------------------
+FILE: 001_initial_schema.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Migration: 001_initial_schema.sql
+-- =============================================
+-- Initial database setup for TicketToken platform
+-- Creates schemas, extensions, types, and base configuration
+
+Version Claims in Comments:
+-- Migration: 001_initial_schema.sql
+
+Schema Migration Insert:
+
+INSERT INTO public.schema_migrations (version, name) 
+VALUES (1, '001_initial_schema.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 4
+  Functions: 6
+  Triggers: 0
+  Views: 0
+  Indexes: 4
+  Extensions: 6
+
+----------------------------------------
+FILE: 002_create_users_table.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Create Users Table
+-- Version: 002
+-- Description: Creates the users table with authentication and profile data
+
+Version Claims in Comments:
+-- Version: 002
+
+Schema Migration Insert:
+
+INSERT INTO public.schema_migrations (version, name) 
+VALUES (2, '002_create_users_table.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 1
+  Functions: 5
+  Triggers: 3
+  Views: 0
+  Indexes: 19
+  Extensions: 24
+
+⚠️  WARNING: UUID extension created 24 times!
+
+----------------------------------------
+FILE: 003_create_venues_table.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Create Venues and Related Tables
+-- Version: 003
+-- Description: Creates venues table and all related venue management tables
+
+Version Claims in Comments:
+-- Version: 003
+
+Schema Migration Insert:
+
+INSERT INTO public.schema_migrations (version, name) 
+VALUES (3, '003_create_venues_table.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 6
+  Functions: 4
+  Triggers: 8
+  Views: 0
+  Indexes: 24
+  Extensions: 16
+
+⚠️  WARNING: UUID extension created 16 times!
+
+----------------------------------------
+FILE: 004_create_events_table.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Create Events and Related Tables
+-- Version: 004
+-- Description: Creates events table and all related event management tables
+
+Version Claims in Comments:
+-- Version: 004
+
+Schema Migration Insert:
+
+
+INSERT INTO public.schema_migrations (version, name) 
+VALUES (4, '004_create_events_table.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 6
+  Functions: 6
+  Triggers: 10
+  Views: 0
+  Indexes: 23
+  Extensions: 34
+
+⚠️  WARNING: UUID extension created 34 times!
+
+----------------------------------------
+FILE: 005_create_tickets_table.sql
+----------------------------------------
+Header Comments:
+-- Patch: ensure is_transferable column exists on tables used by partial indexes
+-- Patch: ensure is_valid column exists on tables used by partial indexes
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Create Tickets and Related Tables
+
+Version Claims in Comments:
+-- Version: 005
+
+Schema Migration Insert:
+
+
+INSERT INTO public.schema_migrations (version, name) 
+VALUES (5, '005_create_tickets_table.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 9
+  Functions: 7
+  Triggers: 10
+  Views: 0
+  Indexes: 33
+  Extensions: 34
+
+⚠️  WARNING: UUID extension created 34 times!
+
+----------------------------------------
+FILE: 006_create_payments_table.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Create Payments and Financial Tables
+-- Version: 006
+-- Description: Creates payment system tables with PCI compliance and encryption
+
+Version Claims in Comments:
+-- Version: 006
+
+Schema Migration Insert:
+
+
+INSERT INTO public.schema_migrations (version, name) 
+VALUES (6, '006_create_payments_table.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 7
+  Functions: 6
+  Triggers: 10
+  Views: 0
+  Indexes: 28
+  Extensions: 34
+
+⚠️  WARNING: UUID extension created 34 times!
+
+----------------------------------------
+FILE: 007_create_marketplace_table.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Create Marketplace Tables
+-- Version: 007
+-- Description: Creates secondary market tables for ticket resale with royalties and escrow
+
+Version Claims in Comments:
+-- Version: 007
+
+Schema Migration Insert:
+
+
+INSERT INTO public.schema_migrations (version, name)
+VALUES (7, '007_create_marketplace_table.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 9
+  Functions: 5
+  Triggers: 10
+  Views: 0
+  Indexes: 24
+  Extensions: 38
+
+⚠️  WARNING: UUID extension created 38 times!
+
+----------------------------------------
+FILE: 008_add_constraints.sql
+----------------------------------------
+Header Comments:
+-- 009_add_constraints.sql (minimal, clean)
+-- 1) Validate ticket status transitions
+-- 2) Check ticket availability before insert
+-- 3) Prevent self purchase
+-- 4) Validate ticket ownership before listing
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+
+INSERT INTO public.schema_migrations (version, name)
+VALUES (9, '009_add_constraints.sql')
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 0
+  Functions: 4
+  Triggers: 4
+  Views: 0
+  Indexes: 0
+  Extensions: 1
+
+----------------------------------------
+FILE: 008b_add_missing_fk_indexes.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Add Missing Foreign Key Indexes
+-- Version: 008b
+-- Description: Adds indexes for all foreign keys that don't have them
+
+Version Claims in Comments:
+-- Version: 008b
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 33
+  Extensions: 2
+
+⚠️  WARNING: UUID extension created 2 times!
+
+----------------------------------------
+FILE: 009_add_triggers.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- Ensure UUID extension is available
+-- Migration: Add Database Triggers (FINAL VERSION)
+-- Version: 010
+-- Description: Adds triggers that work with current schema
+
+Version Claims in Comments:
+-- Version: 010
+
+Schema Migration Insert:
+
+
+INSERT INTO schema_migrations (version, name, applied_at)
+VALUES (10, '010_add_triggers', CURRENT_TIMESTAMP)
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 2
+  Functions: 8
+  Triggers: 13
+  Views: 0
+  Indexes: 2
+  Extensions: 14
+
+⚠️  WARNING: UUID extension created 14 times!
+
+----------------------------------------
+FILE: 010_create_views.sql
+----------------------------------------
+Header Comments:
+-- Migration: Create Database Views
+-- Version: 011
+-- Description: Creates views for dashboards, reports, analytics, and real-time metrics
+-- Dependencies: Tables from migrations 001-010
+-- Estimated Duration: 30 seconds
+
+Version Claims in Comments:
+-- Version: 011
+-- Dependencies: Tables from migrations 001-010
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 2
+  Indexes: 5
+  Extensions: 10
+
+⚠️  WARNING: UUID extension created 10 times!
+
+----------------------------------------
+FILE: 010c_create_wallet_addresses.sql
+----------------------------------------
+Header Comments:
+-- Minimal table required by views (customer_360_view, etc.)
+-- Make wallet values unique; and add handy indexes the views can use
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 2
+  Extensions: 1
+
+----------------------------------------
+FILE: 010d_create_notifications.sql
+----------------------------------------
+Header Comments:
+-- Minimal notifications table used by 011_create_views.sql
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 2
+  Extensions: 1
+
+----------------------------------------
+FILE: 011_create_functions.sql
+----------------------------------------
+Header Comments:
+-- Migration: Create Stored Functions
+-- Version: 012
+-- Description: Creates functions for business logic, validation, utilities, analytics, security, and search
+-- Dependencies: Tables from migrations 001-010, Views from migration 011
+-- Estimated Duration: 45 seconds
+
+Version Claims in Comments:
+-- Version: 012
+-- Dependencies: Tables from migrations 001-010, Views from migration 011
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 17
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 26
+
+⚠️  WARNING: UUID extension created 26 times!
+
+----------------------------------------
+FILE: 012_add_partitioning.sql
+----------------------------------------
+Header Comments:
+-- Migration: Add Table Partitioning
+-- Version: 013
+-- Description: Implements partitioning for high-volume tables to improve performance and maintenance
+-- Dependencies: Tables from migrations 001-010
+-- Estimated Duration: 2-5 minutes (depending on data volume)
+
+Version Claims in Comments:
+-- Version: 013
+-- Dependencies: Tables from migrations 001-010
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 10
+  Functions: 6
+  Triggers: 0
+  Views: 0
+  Indexes: 29
+  Extensions: 20
+
+⚠️  WARNING: UUID extension created 20 times!
+
+----------------------------------------
+FILE: 013_fix_uuids.sql
+----------------------------------------
+Header Comments:
+-- Migration: Fix UUID generation functions
+-- This updates all existing UUID columns to use sequential UUIDs
+-- Ensure extension is available
+-- Log the change
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 1
+
+----------------------------------------
+FILE: 014_add_missing_indexes.sql
+----------------------------------------
+Header Comments:
+-- Migration: Add missing foreign key indexes
+-- Missing indexes found in testing
+-- Additional performance indexes
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 5
+  Extensions: 0
+
+----------------------------------------
+FILE: 015_add_partitioning.sql
+----------------------------------------
+Header Comments:
+-- Migration: Convert high-volume tables to partitioned tables
+-- 1. Rename existing tables
+-- 2. Create partitioned tables
+-- 3. Create initial partitions (3 months)
+-- Audit logs
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 16
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 016_tenant_support.sql
+----------------------------------------
+Header Comments:
+-- Migration: Add multi-tenant support
+-- 1. Create tenants table
+-- 2. Create default tenant for existing data
+-- 3. Add foreign key constraints for tenant_id
+-- Note: We already added tenant_id columns in the schema files
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 017_add_missing_core_tables.sql
+----------------------------------------
+Header Comments:
+-- Migration: Add missing core tables (roles, permissions, sessions)
+-- Create roles table
+-- Create permissions table
+-- Create sessions table
+-- Add indexes
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 3
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 6
+  Extensions: 0
+
+----------------------------------------
+FILE: 018_complete_alignment.sql
+----------------------------------------
+Header Comments:
+-- Migration: Complete the alignment (handle audit_logs)
+-- Get the default tenant ID
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 019_create_tenants_and_complete.sql
+----------------------------------------
+Header Comments:
+-- Migration: Create tenants table and complete alignment
+-- 1. Create tenants table
+-- 2. Insert default tenant
+-- 3. Update all tables with default tenant
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 020_fix_rls_policies.sql
+----------------------------------------
+Header Comments:
+-- Fix RLS policies to be stricter (no NULL bypass except for superuser)
+-- Drop existing permissive policies
+-- Create stricter policies that require tenant_id match
+-- Only bypass for postgres superuser role
+-- Orders - strict tenant isolation
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 021_create_app_user.sql
+----------------------------------------
+Header Comments:
+-- Create application user for proper RLS testing
+-- Create a role for the application if it doesn't exist
+-- Grant necessary permissions
+-- Grant permissions on all existing tables
+-- Grant permissions on sequences
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 022_create_analytics_tables.sql
+----------------------------------------
+Header Comments:
+-- Analytics Service Tables
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 5
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 023_create_file_service_tables.sql
+----------------------------------------
+Header Comments:
+-- File Service Tables
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 5
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 024_create_queue_service_tables.sql
+----------------------------------------
+Header Comments:
+-- Queue Service Tables
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 4
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 025_create_payment_webhook_tables.sql
+----------------------------------------
+Header Comments:
+-- Payment and Webhook Tables
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 4
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 026_create_order_management_tables.sql
+----------------------------------------
+Header Comments:
+-- ===================================================================
+-- MIGRATION: 026_create_order_management_tables.sql
+-- PURPOSE: Add order management tables with state machine
+-- CRITICAL: Required for payment processing and order tracking
+-- ===================================================================
+
+Version Claims in Comments:
+-- MIGRATION: 026_create_order_management_tables.sql
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 3
+  Functions: 4
+  Triggers: 4
+  Views: 0
+  Indexes: 14
+  Extensions: 0
+
+----------------------------------------
+FILE: 030_phase2_complete_operational_tables.sql
+----------------------------------------
+Header Comments:
+-- ===================================================================
+-- PHASE 2: COMPLETE OPERATIONAL TABLES FOR PRODUCTION
+-- ===================================================================
+-- This migration adds ALL operational tables needed for:
+-- - Order management with state machine
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 17
+  Functions: 6
+  Triggers: 4
+  Views: 0
+  Indexes: 70
+  Extensions: 0
+
+----------------------------------------
+FILE: 036_search_facets_materialized_view.sql
+----------------------------------------
+Header Comments:
+-- WP-8: Materialized view for fast faceted search (FIXED for actual schema)
+-- Indexes for fast refresh
+-- Function to refresh facets
+-- Create the search analytics table that was referenced
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 1
+  Triggers: 0
+  Views: 1
+  Indexes: 8
+  Extensions: 0
+
+----------------------------------------
+FILE: 040_security_audit_logs.sql
+----------------------------------------
+Header Comments:
+-- Security Audit Logs Table
+-- Indexes for performance
+-- Failed login attempts tracking
+-- Rate limiting tracking
+-- Security alerts
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 4
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 11
+  Extensions: 0
+
+----------------------------------------
+FILE: 041_add_event_tiers_view.sql
+----------------------------------------
+Header Comments:
+-- Migration: Add event_tiers view for backward compatibility
+-- This maps ticket_types to the expected event_tiers structure
+-- Grant permissions
+-- Add comment for documentation
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 042_create_new_schemas.sql
+----------------------------------------
+Header Comments:
+-- Migration: 001_create_new_schemas.sql
+-- Description: Create new schemas for analytics, partnerships, customer success, monitoring, and operations
+-- Safe: Only creates new schemas, does not modify existing objects
+-- Create new schemas
+-- Grant appropriate permissions
+
+Version Claims in Comments:
+-- Migration: 001_create_new_schemas.sql
+
+Schema Migration Insert:
+
+INSERT INTO core.schema_migrations (version, name, applied_at)
+VALUES ('001', 'create_new_schemas', CURRENT_TIMESTAMP)
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 043_add_analytics_tables.sql
+----------------------------------------
+Header Comments:
+-- Migration: 002_add_analytics_tables.sql
+-- Description: Add analytics tables for customer LTV and revenue projections
+-- Safe: Only creates new tables in analytics_v2 schema
+-- Customer LTV tracking
+-- Revenue projections
+
+Version Claims in Comments:
+-- Migration: 002_add_analytics_tables.sql
+
+Schema Migration Insert:
+
+INSERT INTO core.schema_migrations (version, name, applied_at)
+VALUES ('002', 'add_analytics_tables', CURRENT_TIMESTAMP)
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 3
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 5
+  Extensions: 0
+
+----------------------------------------
+FILE: 044_add_partnership_tables.sql
+----------------------------------------
+Header Comments:
+-- Migration: 003_add_partnership_tables.sql
+-- Description: Add partnership and commission tracking tables
+-- Safe: Only creates new tables in partnerships schema
+-- Partnership agreements
+-- Partnership commissions
+
+Version Claims in Comments:
+-- Migration: 003_add_partnership_tables.sql
+
+Schema Migration Insert:
+
+INSERT INTO core.schema_migrations (version, name, applied_at)
+VALUES ('003', 'add_partnership_tables', CURRENT_TIMESTAMP)
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 3
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 8
+  Extensions: 0
+
+----------------------------------------
+FILE: 045_add_monitoring_tables.sql
+----------------------------------------
+Header Comments:
+-- Migration: 004_add_monitoring_tables.sql
+-- Description: Add monitoring and SLA tracking tables
+-- Safe: Only creates new tables in monitoring schema
+-- SLA metrics tracking
+-- System health checks
+
+Version Claims in Comments:
+-- Migration: 004_add_monitoring_tables.sql
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 4
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 10
+  Extensions: 0
+
+----------------------------------------
+FILE: 046_add_international_columns.sql
+----------------------------------------
+Header Comments:
+-- Migration: 005_add_international_columns.sql
+-- Description: Add international support columns to payments
+-- Safe: Only adds columns with defaults, does not modify existing data
+-- Add currency support to transactions table
+-- Add index for currency queries
+
+Version Claims in Comments:
+-- Migration: 005_add_international_columns.sql
+
+Schema Migration Insert:
+
+INSERT INTO core.schema_migrations (version, name, applied_at)
+VALUES ('005', 'add_international_columns', CURRENT_TIMESTAMP)
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 3
+  Extensions: 0
+
+----------------------------------------
+FILE: 047_add_analytics_views.sql
+----------------------------------------
+Header Comments:
+-- Migration: 006_add_analytics_views.sql
+-- Description: Add analytics views for KPI tracking
+-- Safe: Only creates views, no data modification
+-- Venue KPIs view
+-- Customer engagement view
+
+Version Claims in Comments:
+-- Migration: 006_add_analytics_views.sql
+
+Schema Migration Insert:
+
+INSERT INTO core.schema_migrations (version, name, applied_at)
+VALUES ('006', 'add_analytics_views', CURRENT_TIMESTAMP)
+ON CONFLICT (version) DO NOTHING;
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 0
+  Extensions: 0
+
+----------------------------------------
+FILE: 048_wp1_rls_policies.sql
+----------------------------------------
+Header Comments:
+-- WP-1: Complete Database Schema Finalization & RLS
+-- This migration completes all remaining WP-1 tasks
+-- ============================================
+-- PART 1: Fix UUID Generation (68 tables)
+-- ============================================
+
+Version Claims in Comments:
+-- This migration completes all remaining WP-1 tasks
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 2
+  Extensions: 2
+
+----------------------------------------
+FILE: 049_wp2_atomic_reservations.sql
+----------------------------------------
+Header Comments:
+-- WP-2: Atomic Reservations System
+-- Goal: Prevent oversells with atomic inventory operations
+-- Add version column for optimistic locking on event_tiers
+-- Function for atomic reservation with SELECT FOR UPDATE
+-- Function to release expired reservations
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 3
+  Triggers: 0
+  Views: 0
+  Indexes: 2
+  Extensions: 0
+
+----------------------------------------
+FILE: 050_wp5_scanning_infrastructure.sql
+----------------------------------------
+Header Comments:
+-- =============================================
+-- WP-5: QR/Door Scanning Infrastructure
+-- =============================================
+-- Adds HMAC-based rotating QR codes, device management,
+-- and offline validation support
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 3
+  Functions: 2
+  Triggers: 1
+  Views: 0
+  Indexes: 6
+  Extensions: 0
+
+----------------------------------------
+FILE: 051_wp9_add_tax_fields.sql
+----------------------------------------
+Header Comments:
+-- Add tax fields to orders if they don't exist
+-- Create tax_collections table
+-- Verify tables were created
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 3
+  Extensions: 0
+
+----------------------------------------
+FILE: 052_wp9_tax_collections.sql
+----------------------------------------
+Header Comments:
+-- WP-9: Tax Collections and Compliance Tables
+-- This tracks all tax collected for reporting and remittance
+-- Tax remittances table for quarterly/monthly filings
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 2
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 6
+  Extensions: 0
+
+----------------------------------------
+FILE: 053_wp9_1099_generation.sql
+----------------------------------------
+Header Comments:
+-- 1099 Generation and Tracking Tables
+-- Handles 1099-DA (digital assets), 1099-K (payment cards), 1099-NEC (non-employee compensation)
+-- Tax form recipients (venues and users)
+-- 1099 forms generated
+-- Track individual transactions for 1099 reporting
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 4
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 5
+  Extensions: 0
+
+----------------------------------------
+FILE: 054_wp9_gdpr_data_rights.sql
+----------------------------------------
+Header Comments:
+-- GDPR/CCPA Data Rights Management System
+-- Handles data export, deletion, consent, and breach notifications
+-- User consent tracking
+-- Data export requests
+-- Data deletion requests
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 6
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 11
+  Extensions: 0
+
+----------------------------------------
+FILE: 055_fix_webhook_inbox.sql
+----------------------------------------
+Header Comments:
+-- Add missing columns to webhook_inbox table to match what the payment service expects
+-- Update existing rows if needed
+-- Create index on event_id for the ON CONFLICT clause
+-- Drop the old 'source' column if it exists and we're not using it
+-- ALTER TABLE webhook_inbox DROP COLUMN IF EXISTS source;
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 0
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 2
+  Extensions: 0
+
+----------------------------------------
+FILE: 056_create_settlement_tables.sql
+----------------------------------------
+Header Comments:
+-- Settlement reports table
+-- Venue balances table
+-- Webhook events table
+-- Indexes
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 3
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 3
+  Extensions: 0
+
+----------------------------------------
+FILE: 057_create_ticket_reservations.sql
+----------------------------------------
+Header Comments:
+-- Ticket reservations table for WP-2
+-- Indexes for performance
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 1
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 4
+  Extensions: 0
+
+----------------------------------------
+FILE: 058_wp3_complete_tables.sql
+----------------------------------------
+Header Comments:
+-- Idempotency keys table
+-- Dispute evidence packs
+-- PSP reconciliations
+-- Communications log (for dispute evidence)
+-- Ticket scans (for dispute evidence)
+
+Version Claims in Comments:
+
+Schema Migration Insert:
+  No schema_migrations insert found
+
+Database Objects Created:
+  Tables: 6
+  Functions: 0
+  Triggers: 0
+  Views: 0
+  Indexes: 9
+  Extensions: 0
+
+========================================
+SUMMARY
+========================================
+
+Files with Version Mismatches:
+
+Duplicate File Numbers:
+  Number 008:
+    - 008_add_constraints.sql
+  Number 010:
+    - 010_create_views.sql
+
+Missing Sequence Numbers:
+
+Analysis complete. Results saved to migration_analysis.txt

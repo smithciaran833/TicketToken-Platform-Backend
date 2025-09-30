@@ -1,0 +1,111 @@
+#!/bin/bash
+# leaderboards.redis
+# Purpose: Maintain rankings and top lists for venues, events, and users
+#
+# Leaderboard Types:
+# - Venue Rankings: By revenue, attendance, ratings
+# - Event Rankings: By popularity, sales, trending
+# - User Rankings: Loyalty points, purchases, engagement
+# - Time-Based: Daily, weekly, monthly, all-time
+
+echo "=== Setting up TicketToken Leaderboards ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to display progress
+show_progress() {
+    echo "[$(date +%H:%M:%S)] $1"
+}
+
+show_progress "Setting up leaderboard types..."
+
+# Leaderboard types configuration
+redis-cli HSET leaderboard:config:types "venues:revenue" "monthly,quarterly,yearly"
+redis-cli HSET leaderboard:config:types "venues:attendance" "daily,weekly,monthly"
+redis-cli HSET leaderboard:config:types "venues:ratings" "alltime"
+redis-cli HSET leaderboard:config:types "events:sales" "daily,weekly,monthly"
+redis-cli HSET leaderboard:config:types "events:trending" "hourly,daily"
+redis-cli HSET leaderboard:config:types "customers:loyalty" "monthly,alltime"
+redis-cli HSET leaderboard:config:types "customers:spending" "monthly,yearly"
+
+show_progress "Configuring retention policies..."
+
+# Retention policies (TTL in seconds)
+redis-cli HSET leaderboard:config:retention "hourly" "7200"      # 2 hours
+redis-cli HSET leaderboard:config:retention "daily" "604800"     # 7 days
+redis-cli HSET leaderboard:config:retention "weekly" "2592000"   # 30 days
+redis-cli HSET leaderboard:config:retention "monthly" "7776000"  # 90 days
+redis-cli HSET leaderboard:config:retention "quarterly" "15552000" # 180 days
+redis-cli HSET leaderboard:config:retention "yearly" "31536000"  # 365 days
+redis-cli HSET leaderboard:config:retention "alltime" "0"        # Never expire
+
+show_progress "Setting leaderboard size limits..."
+
+# Size limits to prevent unbounded growth
+redis-cli HSET leaderboard:config:max_size "default" "1000"
+redis-cli HSET leaderboard:config:max_size "trending" "100"
+redis-cli HSET leaderboard:config:max_size "alltime" "10000"
+redis-cli HSET leaderboard:config:max_size "hourly" "50"
+
+show_progress "Configuring update frequencies..."
+
+# Update frequency settings
+redis-cli HSET leaderboard:config:update_freq "realtime" "immediate"
+redis-cli HSET leaderboard:config:update_freq "near_realtime" "60"
+redis-cli HSET leaderboard:config:update_freq "periodic" "300"
+redis-cli HSET leaderboard:config:update_freq "batch" "3600"
+
+show_progress "Creating sample leaderboards..."
+
+# Current month for examples
+CURRENT_MONTH=$(date +%Y-%m)
+TODAY=$(date +%Y-%m-%d)
+CURRENT_HOUR=$(date +%Y%m%d%H)
+
+# Venue revenue leaderboard (monthly)
+redis-cli ZADD leaderboard:venues:revenue:${CURRENT_MONTH} 125000 "venue:1:ryman"
+redis-cli ZADD leaderboard:venues:revenue:${CURRENT_MONTH} 98000 "venue:2:bridgestone"
+redis-cli ZADD leaderboard:venues:revenue:${CURRENT_MONTH} 87500 "venue:3:ascend"
+redis-cli ZADD leaderboard:venues:revenue:${CURRENT_MONTH} 156000 "venue:4:opry"
+redis-cli EXPIRE leaderboard:venues:revenue:${CURRENT_MONTH} 7776000
+
+# Event trending (daily)
+redis-cli ZINCRBY leaderboard:events:trending:${TODAY} 1 "event:123"
+redis-cli ZINCRBY leaderboard:events:trending:${TODAY} 1 "event:456"
+redis-cli ZINCRBY leaderboard:events:trending:${TODAY} 1 "event:789"
+redis-cli EXPIRE leaderboard:events:trending:${TODAY} 604800
+
+# Customer loyalty (all-time)
+redis-cli ZADD leaderboard:customers:loyalty:alltime 5000 "user:101"
+redis-cli ZADD leaderboard:customers:loyalty:alltime 3500 "user:102"
+redis-cli ZADD leaderboard:customers:loyalty:alltime 7200 "user:103"
+# No expiration for all-time
+
+show_progress "Setting up leaderboard registry..."
+
+# Active leaderboards registry
+redis-cli SADD leaderboard:registry:active "venues:revenue:${CURRENT_MONTH}"
+redis-cli SADD leaderboard:registry:active "events:trending:${TODAY}"
+redis-cli SADD leaderboard:registry:active "customers:loyalty:alltime"
+
+# Leaderboard metadata
+redis-cli HSET leaderboard:metadata:global total_types "7"
+redis-cli HSET leaderboard:metadata:global last_cleanup $(date +%s)
+redis-cli HSET leaderboard:metadata:global version "1.0"
+
+show_progress "Initializing statistics..."
+
+# Global statistics
+redis-cli HINCRBY leaderboard:stats:global total_leaderboards 0
+redis-cli HINCRBY leaderboard:stats:global total_entries 0
+redis-cli HINCRBY leaderboard:stats:global updates_today 0
+redis-cli EXPIRE leaderboard:stats:global 604800  # Keep for 7 days
+
+echo ""
+echo "=== Leaderboards Setup Summary ==="
+echo "Leaderboard types configured: $(redis-cli HLEN leaderboard:config:types)"
+echo "Retention policies set: $(redis-cli HLEN leaderboard:config:retention)"
+echo "Size limits configured: $(redis-cli HLEN leaderboard:config:max_size)"
+echo "Active leaderboards: $(redis-cli SCARD leaderboard:registry:active)"
+echo ""
+echo "✓ Complete leaderboards system created successfully!"

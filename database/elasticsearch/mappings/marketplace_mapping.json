@@ -1,0 +1,482 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "index.refresh_interval": "5s",
+    "analysis": {
+      "analyzer": {
+        "marketplace_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "stop", "snowball"]
+        }
+      },
+      "normalizer": {
+        "lowercase_normalizer": {
+          "type": "custom",
+          "filter": ["lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "listingId": {
+        "type": "keyword"
+      },
+      "ticketId": {
+        "type": "keyword"
+      },
+      "eventId": {
+        "type": "keyword"
+      },
+      "venueId": {
+        "type": "keyword"
+      },
+      "sellerId": {
+        "type": "keyword"
+      },
+      "buyerId": {
+        "type": "keyword"
+      },
+      "transactionId": {
+        "type": "keyword"
+      },
+      "price": {
+        "type": "scaled_float",
+        "scaling_factor": 100
+      },
+      "originalPrice": {
+        "type": "scaled_float",
+        "scaling_factor": 100
+      },
+      "finalPrice": {
+        "type": "scaled_float",
+        "scaling_factor": 100
+      },
+      "currency": {
+        "type": "keyword"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "listingType": {
+        "type": "keyword"
+      },
+      "deliveryMethod": {
+        "type": "keyword"
+      },
+      "event": {
+        "properties": {
+          "name": {
+            "type": "text",
+            "analyzer": "marketplace_analyzer",
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              },
+              "suggest": {
+                "type": "completion",
+                "analyzer": "simple",
+                "preserve_separators": true,
+                "preserve_position_increments": true,
+                "max_input_length": 50
+              }
+            }
+          },
+          "date": {
+            "type": "date"
+          },
+          "category": {
+            "type": "keyword",
+            "normalizer": "lowercase_normalizer"
+          },
+          "subcategory": {
+            "type": "keyword",
+            "normalizer": "lowercase_normalizer"
+          },
+          "popularity": {
+            "type": "integer"
+          },
+          "daysUntilEvent": {
+            "type": "integer"
+          }
+        }
+      },
+      "ticket": {
+        "properties": {
+          "section": {
+            "type": "keyword",
+            "normalizer": "lowercase_normalizer"
+          },
+          "row": {
+            "type": "keyword"
+          },
+          "seat": {
+            "type": "keyword"
+          },
+          "type": {
+            "type": "keyword"
+          },
+          "quantity": {
+            "type": "integer"
+          },
+          "grouping": {
+            "type": "keyword"
+          },
+          "transferable": {
+            "type": "boolean"
+          },
+          "verified": {
+            "type": "boolean"
+          }
+        }
+      },
+      "venue": {
+        "properties": {
+          "name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              }
+            }
+          },
+          "city": {
+            "type": "keyword"
+          },
+          "state": {
+            "type": "keyword"
+          },
+          "country": {
+            "type": "keyword"
+          },
+          "location": {
+            "type": "geo_point"
+          },
+          "timezone": {
+            "type": "keyword"
+          }
+        }
+      },
+      "seller": {
+        "properties": {
+          "username": {
+            "type": "keyword"
+          },
+          "reputation": {
+            "type": "float"
+          },
+          "totalSales": {
+            "type": "integer"
+          },
+          "totalReviews": {
+            "type": "integer"
+          },
+          "responseTime": {
+            "type": "integer"
+          },
+          "responseRate": {
+            "type": "float"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "powerSeller": {
+            "type": "boolean"
+          },
+          "joinDate": {
+            "type": "date"
+          }
+        }
+      },
+      "buyer": {
+        "properties": {
+          "protection": {
+            "type": "boolean"
+          },
+          "guaranteeExpires": {
+            "type": "date"
+          }
+        }
+      },
+      "pricing": {
+        "properties": {
+          "listPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "fees": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "royalties": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "taxes": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "shipping": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "total": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "priceHistory": {
+            "type": "nested",
+            "properties": {
+              "price": {
+                "type": "scaled_float",
+                "scaling_factor": 100
+              },
+              "date": {
+                "type": "date"
+              },
+              "reason": {
+                "type": "keyword"
+              }
+            }
+          },
+          "comparablePrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "marketPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "pricePercentile": {
+            "type": "integer"
+          },
+          "discount": {
+            "properties": {
+              "amount": {
+                "type": "scaled_float",
+                "scaling_factor": 100
+              },
+              "percentage": {
+                "type": "float"
+              },
+              "code": {
+                "type": "keyword"
+              }
+            }
+          }
+        }
+      },
+      "offers": {
+        "type": "nested",
+        "properties": {
+          "offerId": {
+            "type": "keyword"
+          },
+          "buyerId": {
+            "type": "keyword"
+          },
+          "amount": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "message": {
+            "type": "text"
+          },
+          "status": {
+            "type": "keyword"
+          },
+          "createdAt": {
+            "type": "date"
+          },
+          "expiresAt": {
+            "type": "date"
+          },
+          "respondedAt": {
+            "type": "date"
+          },
+          "counterOffer": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          }
+        }
+      },
+      "blockchain": {
+        "properties": {
+          "nftId": {
+            "type": "keyword"
+          },
+          "contractAddress": {
+            "type": "keyword"
+          },
+          "tokenId": {
+            "type": "keyword"
+          },
+          "chainId": {
+            "type": "keyword"
+          },
+          "network": {
+            "type": "keyword"
+          },
+          "escrowAddress": {
+            "type": "keyword"
+          },
+          "transactionHash": {
+            "type": "keyword"
+          },
+          "blockNumber": {
+            "type": "long"
+          },
+          "mintDate": {
+            "type": "date"
+          }
+        }
+      },
+      "analytics": {
+        "properties": {
+          "views": {
+            "type": "integer"
+          },
+          "uniqueViews": {
+            "type": "integer"
+          },
+          "watchers": {
+            "type": "integer"
+          },
+          "shares": {
+            "type": "integer"
+          },
+          "favorites": {
+            "type": "integer"
+          },
+          "clickThroughRate": {
+            "type": "float"
+          },
+          "conversionRate": {
+            "type": "float"
+          },
+          "averageViewTime": {
+            "type": "integer"
+          },
+          "lastViewedAt": {
+            "type": "date"
+          }
+        }
+      },
+      "recommendations": {
+        "properties": {
+          "score": {
+            "type": "float"
+          },
+          "reasons": {
+            "type": "keyword"
+          },
+          "algorithm": {
+            "type": "keyword"
+          }
+        }
+      },
+      "compliance": {
+        "properties": {
+          "amlCheck": {
+            "type": "boolean"
+          },
+          "kycVerified": {
+            "type": "boolean"
+          },
+          "riskScore": {
+            "type": "float"
+          },
+          "flagged": {
+            "type": "boolean"
+          }
+        }
+      },
+      "shipping": {
+        "properties": {
+          "method": {
+            "type": "keyword"
+          },
+          "carrier": {
+            "type": "keyword"
+          },
+          "trackingNumber": {
+            "type": "keyword"
+          },
+          "cost": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "estimatedDays": {
+            "type": "integer"
+          },
+          "shippedAt": {
+            "type": "date"
+          }
+        }
+      },
+      "metadata": {
+        "properties": {
+          "source": {
+            "type": "keyword"
+          },
+          "affiliate": {
+            "type": "keyword"
+          },
+          "campaign": {
+            "type": "keyword"
+          },
+          "referrer": {
+            "type": "keyword"
+          }
+        }
+      },
+      "tags": {
+        "type": "keyword"
+      },
+      "flags": {
+        "type": "keyword"
+      },
+      "urgency": {
+        "type": "keyword"
+      },
+      "featured": {
+        "type": "boolean"
+      },
+      "promoted": {
+        "type": "boolean"
+      },
+      "spotlight": {
+        "type": "boolean"
+      },
+      "qualityScore": {
+        "type": "float"
+      },
+      "createdAt": {
+        "type": "date"
+      },
+      "updatedAt": {
+        "type": "date"
+      },
+      "publishedAt": {
+        "type": "date"
+      },
+      "expiresAt": {
+        "type": "date"
+      },
+      "soldAt": {
+        "type": "date"
+      },
+      "deliveredAt": {
+        "type": "date"
+      },
+      "completedAt": {
+        "type": "date"
+      },
+      "searchBoost": {
+        "type": "float"
+      }
+    }
+  }
+}

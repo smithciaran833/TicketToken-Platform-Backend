@@ -1,0 +1,23 @@
+{
+  "name": "@tickettoken/cache",
+  "version": "1.0.0",
+  "description": "Shared caching module with Redis L2 and LRU L1",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "dependencies": {
+    "ioredis": "^5.3.2",
+    "lru-cache": "^10.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.3",
+    "@types/jest": "^29.5.3",
+    "@types/node": "^20.5.0",
+    "jest": "^29.6.2",
+    "typescript": "^5.1.6"
+  }
+}

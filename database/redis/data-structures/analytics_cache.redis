@@ -1,0 +1,162 @@
+# TicketToken Platform - Analytics Cache Configuration
+# Purpose: Cache analytics data for fast dashboard and reporting access
+# 
+# Key Patterns:
+# - analytics:venue:{venue_id}:revenue:{period}:{date} - Revenue metrics
+# - analytics:venue:{venue_id}:attendance:{period}:{timestamp} - Attendance data
+# - analytics:event:{event_id}:funnel:{date} - Conversion funnel
+# - analytics:platform:performance:{date} - Platform metrics
+# - analytics:dashboard:{scope}:summary - Dashboard summaries
+# - analytics:top:{entity}:{metric}:{period} - Top performers
+# - analytics:kpi:realtime - Real-time KPIs
+
+# =============================================================================
+# REVENUE ANALYTICS
+# =============================================================================
+
+# Daily Revenue Cache (30-day retention)
+# Structure: Hash with total, tickets_sold, events_count, avg_ticket_price
+HSET analytics:venue:venue_123:revenue:daily:2025-07-19 total 15000.00
+HSET analytics:venue:venue_123:revenue:daily:2025-07-19 tickets_sold 300
+HSET analytics:venue:venue_123:revenue:daily:2025-07-19 events_count 5
+HSET analytics:venue:venue_123:revenue:daily:2025-07-19 avg_ticket_price 50.00
+EXPIRE analytics:venue:venue_123:revenue:daily:2025-07-19 2592000
+
+# Weekly Revenue Rollups (90-day retention)
+HINCRBY analytics:venue:venue_123:revenue:weekly:2025-W29 total 75000
+HINCRBY analytics:venue:venue_123:revenue:weekly:2025-W29 tickets_sold 1500
+EXPIRE analytics:venue:venue_123:revenue:weekly:2025-W29 7776000
+
+# Monthly Revenue Rollups (1-year retention)
+HINCRBY analytics:venue:venue_123:revenue:monthly:2025-07 total 300000
+HINCRBY analytics:venue:venue_123:revenue:monthly:2025-07 tickets_sold 6000
+EXPIRE analytics:venue:venue_123:revenue:monthly:2025-07 31536000
+
+# =============================================================================
+# ATTENDANCE ANALYTICS
+# =============================================================================
+
+# Hourly Attendance Patterns (48-hour retention)
+HSET analytics:venue:venue_123:attendance:hourly:2025071915 count 1500
+HSET analytics:venue:venue_123:attendance:hourly:2025071915 peak_time "20:30"
+HSET analytics:venue:venue_123:attendance:hourly:2025071915 entry_rate 25
+EXPIRE analytics:venue:venue_123:attendance:hourly:2025071915 172800
+
+# Peak Attendance Tracking (7-day retention)
+ZADD analytics:venue:venue_123:attendance:peak 1500 "2025-07-19:20"
+ZADD analytics:venue:venue_123:attendance:peak 1800 "2025-07-19:21"
+EXPIRE analytics:venue:venue_123:attendance:peak 604800
+
+# =============================================================================
+# CONVERSION FUNNEL ANALYTICS
+# =============================================================================
+
+# Event Conversion Funnel (30-day retention)
+HSET analytics:event:event_456:funnel:2025-07-19 page_views 10000
+HSET analytics:event:event_456:funnel:2025-07-19 clicked_tickets 2500
+HSET analytics:event:event_456:funnel:2025-07-19 started_checkout 1000
+HSET analytics:event:event_456:funnel:2025-07-19 completed_purchase 850
+HSET analytics:event:event_456:funnel:2025-07-19 conversion_rate 8.5
+EXPIRE analytics:event:event_456:funnel:2025-07-19 2592000
+
+# =============================================================================
+# PLATFORM PERFORMANCE METRICS
+# =============================================================================
+
+# Daily Platform Performance (7-day retention)
+HSET analytics:platform:performance:2025-07-19 avg_response_time 45
+HSET analytics:platform:performance:2025-07-19 total_requests 125000
+HSET analytics:platform:performance:2025-07-19 error_rate 0.02
+HSET analytics:platform:performance:2025-07-19 cache_hit_rate 0.85
+HSET analytics:platform:performance:2025-07-19 api_uptime 99.99
+EXPIRE analytics:platform:performance:2025-07-19 604800
+
+# =============================================================================
+# DASHBOARD CACHES
+# =============================================================================
+
+# Global Dashboard Summary (5-minute cache)
+HSET analytics:dashboard:global:summary total_revenue_today 125000.00
+HSET analytics:dashboard:global:summary active_events 45
+HSET analytics:dashboard:global:summary tickets_sold_today 2500
+HSET analytics:dashboard:global:summary active_users 15234
+EXPIRE analytics:dashboard:global:summary 300
+
+# Venue Dashboard Summary
+HSET analytics:dashboard:venue:venue_123:summary revenue_today 15000.00
+HSET analytics:dashboard:venue:venue_123:summary tickets_today 300
+HSET analytics:dashboard:venue:venue_123:summary events_active 5
+HSET analytics:dashboard:venue:venue_123:summary capacity_used 85.5
+HSET analytics:dashboard:venue:venue_123:summary last_updated 1737313889
+EXPIRE analytics:dashboard:venue:venue_123:summary 300
+
+# =============================================================================
+# TOP PERFORMERS & RANKINGS
+# =============================================================================
+
+# Top Venues by Revenue (1-hour cache)
+ZADD analytics:top:venues:revenue:2025-07 150000 "venue:1:ryman"
+ZADD analytics:top:venues:revenue:2025-07 125000 "venue:2:bridgestone"
+ZADD analytics:top:venues:revenue:2025-07 98000 "venue:3:ascend"
+EXPIRE analytics:top:venues:revenue:2025-07 3600
+
+# Top Events by Sales (30-minute cache)
+ZADD analytics:top:events:sales:2025-07-19 450 "event:123"
+ZADD analytics:top:events:sales:2025-07-19 380 "event:456"
+ZADD analytics:top:events:sales:2025-07-19 275 "event:789"
+EXPIRE analytics:top:events:sales:2025-07-19 1800
+
+# =============================================================================
+# REAL-TIME KPIs
+# =============================================================================
+
+# Real-time Platform KPIs (1-minute cache)
+HSET analytics:kpi:realtime active_users 1523
+HSET analytics:kpi:realtime transactions_per_minute 45
+HSET analytics:kpi:realtime avg_cart_value 125.50
+HSET analytics:kpi:realtime conversion_rate 12.5
+HSET analytics:kpi:realtime server_load 65.2
+EXPIRE analytics:kpi:realtime 60
+
+# =============================================================================
+# ANALYTICS CONFIGURATION
+# =============================================================================
+
+# Cache TTL Configuration
+HSET analytics:config:cache revenue_ttl "2592000"    # 30 days
+HSET analytics:config:cache dashboard_ttl "300"       # 5 minutes
+HSET analytics:config:cache kpi_ttl "60"             # 1 minute
+HSET analytics:config:cache report_ttl "86400"       # 24 hours
+HSET analytics:config:cache attendance_ttl "172800"  # 48 hours
+HSET analytics:config:cache top_ttl "3600"           # 1 hour
+
+# =============================================================================
+# TIME SERIES DATA
+# =============================================================================
+
+# Revenue Time Series (last 24 data points)
+LPUSH analytics:venue:venue_123:revenue:timeseries "{\"time\":\"15:11\",\"value\":1250}"
+LTRIM analytics:venue:venue_123:revenue:timeseries 0 23
+
+# Attendance Time Series
+LPUSH analytics:venue:venue_123:attendance:timeseries "{\"time\":\"15:11\",\"count\":1500}"
+LTRIM analytics:venue:venue_123:attendance:timeseries 0 23
+
+# =============================================================================
+# EXAMPLE QUERIES
+# =============================================================================
+
+# Get daily revenue for a venue:
+# HGETALL analytics:venue:venue_123:revenue:daily:2025-07-19
+
+# Get top venues by revenue:
+# ZREVRANGE analytics:top:venues:revenue:2025-07 0 4 WITHSCORES
+
+# Get real-time KPIs:
+# HGETALL analytics:kpi:realtime
+
+# Get conversion funnel:
+# HGETALL analytics:event:event_456:funnel:2025-07-19
+
+# Get attendance peaks:
+# ZREVRANGE analytics:venue:venue_123:attendance:peak 0 -1 WITHSCORES

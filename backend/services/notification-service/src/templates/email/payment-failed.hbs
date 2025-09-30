@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Payment Failed - TicketToken</title>
+  <style>
+    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { background: #ff4757; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
+    .content { background: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-top: none; }
+    .alert { background: #fff5f5; border-left: 4px solid #ff4757; padding: 15px; margin: 20px 0; }
+    .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>⚠️ Payment Failed</h1>
+      <p>We couldn't process your payment</p>
+    </div>
+    
+    <div class="content">
+      <p>Hi {{customerName}},</p>
+      
+      <div class="alert">
+        <strong>Your payment for order #{{orderId}} could not be processed.</strong>
+        <p>Reason: {{failureReason}}</p>
+      </div>
+      
+      <h3>What happened?</h3>
+      <p>{{failureMessage}}</p>
+      
+      <h3>What can you do?</h3>
+      <ul>
+        <li>Check your card details and try again</li>
+        <li>Ensure you have sufficient funds</li>
+        <li>Try a different payment method</li>
+        <li>Contact your bank if the problem persists</li>
+      </ul>
+      
+      <center>
+        <a href="{{retryUrl}}" class="button">Try Again</a>
+      </center>
+      
+      <p>Your tickets are still reserved for the next <strong>10 minutes</strong>. After that, they will be released to other customers.</p>
+      
+      <p>Need help? Contact our support team.</p>
+      
+      <p>Best regards,<br>
+      The TicketToken Team</p>
+    </div>
+  </div>
+</body>
+</html>

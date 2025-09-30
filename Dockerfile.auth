@@ -1,0 +1,21 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy both directories
+COPY backend/shared /app/shared
+COPY backend/services/auth-service /app/auth-service
+
+# Install and build shared module
+WORKDIR /app/shared
+RUN npm install
+RUN npm install lru-cache
+RUN npm run build || echo "No build script"
+
+# Install auth service dependencies
+WORKDIR /app/auth-service
+RUN sed -i 's|"@tickettoken/shared": "file:../../shared"|"@tickettoken/shared": "file:../shared"|' package.json && \
+    npm install
+
+EXPOSE 3001
+CMD ["npm", "run", "dev"]

@@ -1,0 +1,499 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "index.refresh_interval": "10s",
+    "analysis": {
+      "analyzer": {
+        "url_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "stop"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "analyticsId": {
+        "type": "keyword"
+      },
+      "@timestamp": {
+        "type": "date",
+        "format": "date_optional_time||epoch_millis"
+      },
+      "timestamp": {
+        "type": "date",
+        "format": "date_optional_time||epoch_millis"
+      },
+      "eventType": {
+        "type": "keyword"
+      },
+      "eventCategory": {
+        "type": "keyword"
+      },
+      "eventAction": {
+        "type": "keyword"
+      },
+      "eventLabel": {
+        "type": "keyword"
+      },
+      "eventValue": {
+        "type": "float"
+      },
+      "userId": {
+        "type": "keyword"
+      },
+      "anonymousId": {
+        "type": "keyword"
+      },
+      "sessionId": {
+        "type": "keyword"
+      },
+      "deviceId": {
+        "type": "keyword"
+      },
+      "metric": {
+        "type": "keyword"
+      },
+      "value": {
+        "type": "float"
+      },
+      "dimensions": {
+        "properties": {
+          "platform": {
+            "type": "keyword"
+          },
+          "browser": {
+            "type": "keyword"
+          },
+          "browserVersion": {
+            "type": "keyword"
+          },
+          "os": {
+            "type": "keyword"
+          },
+          "osVersion": {
+            "type": "keyword"
+          },
+          "device": {
+            "type": "keyword"
+          },
+          "deviceBrand": {
+            "type": "keyword"
+          },
+          "country": {
+            "type": "keyword"
+          },
+          "region": {
+            "type": "keyword"
+          },
+          "city": {
+            "type": "keyword"
+          },
+          "language": {
+            "type": "keyword"
+          },
+          "referrer": {
+            "type": "keyword"
+          },
+          "referrerDomain": {
+            "type": "keyword"
+          },
+          "utm_source": {
+            "type": "keyword"
+          },
+          "utm_medium": {
+            "type": "keyword"
+          },
+          "utm_campaign": {
+            "type": "keyword"
+          },
+          "utm_term": {
+            "type": "keyword"
+          },
+          "utm_content": {
+            "type": "keyword"
+          }
+        }
+      },
+      "page": {
+        "properties": {
+          "url": {
+            "type": "keyword",
+            "fields": {
+              "analyzed": {
+                "type": "text",
+                "analyzer": "url_analyzer"
+              }
+            }
+          },
+          "path": {
+            "type": "keyword"
+          },
+          "hostname": {
+            "type": "keyword"
+          },
+          "title": {
+            "type": "text"
+          },
+          "loadTime": {
+            "type": "integer"
+          },
+          "renderTime": {
+            "type": "integer"
+          },
+          "interactiveTime": {
+            "type": "integer"
+          },
+          "scrollDepth": {
+            "type": "integer"
+          },
+          "exitRate": {
+            "type": "float"
+          },
+          "bounceRate": {
+            "type": "float"
+          }
+        }
+      },
+      "user": {
+        "properties": {
+          "isNew": {
+            "type": "boolean"
+          },
+          "isReturning": {
+            "type": "boolean"
+          },
+          "cohort": {
+            "type": "keyword"
+          },
+          "segment": {
+            "type": "keyword"
+          },
+          "persona": {
+            "type": "keyword"
+          },
+          "lifetime_value": {
+            "type": "float"
+          },
+          "total_revenue": {
+            "type": "float"
+          },
+          "sessionCount": {
+            "type": "integer"
+          },
+          "pageviewCount": {
+            "type": "integer"
+          },
+          "daysSinceLastVisit": {
+            "type": "integer"
+          },
+          "daysSinceFirstVisit": {
+            "type": "integer"
+          },
+          "attributes": {
+            "type": "object",
+            "enabled": false
+          }
+        }
+      },
+      "session": {
+        "properties": {
+          "duration": {
+            "type": "integer"
+          },
+          "pageviews": {
+            "type": "integer"
+          },
+          "events": {
+            "type": "integer"
+          },
+          "bounced": {
+            "type": "boolean"
+          },
+          "entryPage": {
+            "type": "keyword"
+          },
+          "exitPage": {
+            "type": "keyword"
+          },
+          "quality": {
+            "type": "integer"
+          }
+        }
+      },
+      "ecommerce": {
+        "properties": {
+          "transactionId": {
+            "type": "keyword"
+          },
+          "orderId": {
+            "type": "keyword"
+          },
+          "revenue": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "tax": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "shipping": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "discount": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "coupon": {
+            "type": "keyword"
+          },
+          "currency": {
+            "type": "keyword"
+          },
+          "paymentMethod": {
+            "type": "keyword"
+          },
+          "items": {
+            "type": "nested",
+            "properties": {
+              "sku": {
+                "type": "keyword"
+              },
+              "productId": {
+                "type": "keyword"
+              },
+              "name": {
+                "type": "text"
+              },
+              "category": {
+                "type": "keyword"
+              },
+              "variant": {
+                "type": "keyword"
+              },
+              "brand": {
+                "type": "keyword"
+              },
+              "price": {
+                "type": "scaled_float",
+                "scaling_factor": 100
+              },
+              "quantity": {
+                "type": "integer"
+              },
+              "position": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "funnel": {
+        "properties": {
+          "name": {
+            "type": "keyword"
+          },
+          "funnelId": {
+            "type": "keyword"
+          },
+          "step": {
+            "type": "integer"
+          },
+          "stepName": {
+            "type": "keyword"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "abandoned": {
+            "type": "boolean"
+          },
+          "timeSpent": {
+            "type": "integer"
+          },
+          "exitPoint": {
+            "type": "keyword"
+          }
+        }
+      },
+      "goals": {
+        "type": "nested",
+        "properties": {
+          "goalId": {
+            "type": "keyword"
+          },
+          "goalName": {
+            "type": "keyword"
+          },
+          "goalType": {
+            "type": "keyword"
+          },
+          "completed": {
+            "type": "boolean"
+          },
+          "value": {
+            "type": "float"
+          },
+          "completionTime": {
+            "type": "date"
+          }
+        }
+      },
+      "experiments": {
+        "properties": {
+          "experimentId": {
+            "type": "keyword"
+          },
+          "experimentName": {
+            "type": "keyword"
+          },
+          "variant": {
+            "type": "keyword"
+          },
+          "variantIndex": {
+            "type": "integer"
+          },
+          "control": {
+            "type": "boolean"
+          }
+        }
+      },
+      "performance": {
+        "properties": {
+          "dns": {
+            "type": "integer"
+          },
+          "tcp": {
+            "type": "integer"
+          },
+          "request": {
+            "type": "integer"
+          },
+          "response": {
+            "type": "integer"
+          },
+          "domProcessing": {
+            "type": "integer"
+          },
+          "domContentLoaded": {
+            "type": "integer"
+          },
+          "loadComplete": {
+            "type": "integer"
+          },
+          "firstPaint": {
+            "type": "integer"
+          },
+          "firstContentfulPaint": {
+            "type": "integer"
+          },
+          "largestContentfulPaint": {
+            "type": "integer"
+          }
+        }
+      },
+      "realtime": {
+        "properties": {
+          "activeUsers": {
+            "type": "integer"
+          },
+          "activeSessions": {
+            "type": "integer"
+          },
+          "eventsPerSecond": {
+            "type": "float"
+          },
+          "pageviewsPerSecond": {
+            "type": "float"
+          }
+        }
+      },
+      "custom": {
+        "properties": {
+          "dimension1": {
+            "type": "keyword"
+          },
+          "dimension2": {
+            "type": "keyword"
+          },
+          "dimension3": {
+            "type": "keyword"
+          },
+          "dimension4": {
+            "type": "keyword"
+          },
+          "dimension5": {
+            "type": "keyword"
+          },
+          "metric1": {
+            "type": "float"
+          },
+          "metric2": {
+            "type": "float"
+          },
+          "metric3": {
+            "type": "float"
+          },
+          "metric4": {
+            "type": "float"
+          },
+          "metric5": {
+            "type": "float"
+          }
+        }
+      },
+      "context": {
+        "properties": {
+          "ip": {
+            "type": "ip"
+          },
+          "userAgent": {
+            "type": "text"
+          },
+          "viewport": {
+            "type": "keyword"
+          },
+          "screenResolution": {
+            "type": "keyword"
+          },
+          "colorDepth": {
+            "type": "integer"
+          },
+          "timezone": {
+            "type": "keyword"
+          }
+        }
+      },
+      "privacy": {
+        "properties": {
+          "doNotTrack": {
+            "type": "boolean"
+          },
+          "consentGiven": {
+            "type": "boolean"
+          },
+          "consentCategories": {
+            "type": "keyword"
+          }
+        }
+      },
+      "properties": {
+        "type": "object",
+        "enabled": false
+      },
+      "metadata": {
+        "type": "object",
+        "enabled": false
+      },
+      "source": {
+        "type": "keyword"
+      },
+      "version": {
+        "type": "keyword"
+      }
+    }
+  }
+}

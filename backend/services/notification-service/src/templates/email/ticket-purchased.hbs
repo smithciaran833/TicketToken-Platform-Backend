@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Your Tickets Are Ready!</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: white; }
+        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
+        .content { padding: 30px; }
+        .ticket-box { background: #f8f9fa; border: 2px dashed #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }
+        .qr-code { text-align: center; margin: 20px 0; }
+        .button { display: inline-block; padding: 14px 28px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
+        .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px; }
+        .important { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎫 Your Tickets Are Ready!</h1>
+        </div>
+        <div class="content">
+            <p>Hi {{user.name}},</p>
+            <p>Great news! Your tickets have been successfully purchased and are ready for use.</p>
+            
+            <div class="ticket-box">
+                <h2>📍 Event Details</h2>
+                <p><strong>Event:</strong> {{event.name}}</p>
+                <p><strong>Date:</strong> {{event.date}}</p>
+                <p><strong>Time:</strong> {{event.time}}</p>
+                <p><strong>Venue:</strong> {{event.venue}}</p>
+                <p><strong>Tickets:</strong> {{ticketCount}} × {{ticketType}}</p>
+                <p><strong>Order ID:</strong> #{{orderId}}</p>
+            </div>
+            
+            {{#if nftMinted}}
+            <div class="important">
+                <strong>🎉 NFT Tickets Minted!</strong><br>
+                Your tickets have been minted as NFTs and are available in your wallet.
+                Transaction ID: {{transactionId}}
+            </div>
+            {{/if}}
+            
+            <div style="text-align: center; margin: 30px 0;">
+                <a href="{{ticketUrl}}" class="button">View Your Tickets</a>
+            </div>
+            
+            <h3>What's Next?</h3>
+            <ul>
+                <li>Save this email for your records</li>
+                <li>Add the event to your calendar</li>
+                <li>Download the TicketToken mobile app for easy entry</li>
+                {{#if transferable}}
+                <li>You can transfer or sell these tickets on our marketplace</li>
+                {{/if}}
+            </ul>
+            
+            <p>If you have any questions, contact us at {{supportEmail}}</p>
+        </div>
+        <div class="footer">
+            <p>© 2024 TicketToken. All rights reserved.</p>
+            <p><a href="{{unsubscribeUrl}}">Unsubscribe</a> | <a href="{{privacyUrl}}">Privacy Policy</a></p>
+        </div>
+    </div>
+</body>
+</html>

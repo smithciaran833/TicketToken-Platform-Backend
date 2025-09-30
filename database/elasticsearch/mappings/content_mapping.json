@@ -1,0 +1,359 @@
+{
+  "settings": {
+    "number_of_shards": 2,
+    "number_of_replicas": 1,
+    "analysis": {
+      "analyzer": {
+        "content_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "stop", "snowball"]
+        },
+        "tag_analyzer": {
+          "type": "custom",
+          "tokenizer": "keyword",
+          "filter": ["lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "contentId": {
+        "type": "keyword"
+      },
+      "contentType": {
+        "type": "keyword"
+      },
+      "entityType": {
+        "type": "keyword"
+      },
+      "entityId": {
+        "type": "keyword"
+      },
+      "parentId": {
+        "type": "keyword"
+      },
+      "title": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          },
+          "suggest": {
+            "type": "completion",
+            "analyzer": "simple",
+            "preserve_separators": true,
+            "preserve_position_increments": true,
+            "max_input_length": 50
+          }
+        }
+      },
+      "slug": {
+        "type": "keyword"
+      },
+      "body": {
+        "type": "text",
+        "analyzer": "english",
+        "fields": {
+          "standard": {
+            "type": "text",
+            "analyzer": "standard"
+          },
+          "content": {
+            "type": "text",
+            "analyzer": "content_analyzer"
+          }
+        }
+      },
+      "excerpt": {
+        "type": "text",
+        "analyzer": "standard"
+      },
+      "author": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "contributors": {
+        "type": "keyword"
+      },
+      "tags": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text",
+            "analyzer": "tag_analyzer"
+          }
+        }
+      },
+      "categories": {
+        "type": "keyword"
+      },
+      "metadata": {
+        "properties": {
+          "metaTitle": {
+            "type": "text"
+          },
+          "metaDescription": {
+            "type": "text"
+          },
+          "keywords": {
+            "type": "keyword"
+          },
+          "canonicalUrl": {
+            "type": "keyword"
+          },
+          "ogImage": {
+            "type": "keyword",
+            "index": false
+          },
+          "readTime": {
+            "type": "integer"
+          },
+          "wordCount": {
+            "type": "integer"
+          }
+        }
+      },
+      "media": {
+        "type": "nested",
+        "properties": {
+          "mediaId": {
+            "type": "keyword"
+          },
+          "type": {
+            "type": "keyword"
+          },
+          "url": {
+            "type": "keyword",
+            "index": false
+          },
+          "thumbnailUrl": {
+            "type": "keyword",
+            "index": false
+          },
+          "caption": {
+            "type": "text"
+          },
+          "altText": {
+            "type": "text"
+          },
+          "credit": {
+            "type": "text"
+          },
+          "dimensions": {
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
+            }
+          },
+          "fileSize": {
+            "type": "integer"
+          }
+        }
+      },
+      "reviews": {
+        "type": "nested",
+        "properties": {
+          "reviewId": {
+            "type": "keyword"
+          },
+          "userId": {
+            "type": "keyword"
+          },
+          "userName": {
+            "type": "keyword"
+          },
+          "rating": {
+            "type": "half_float"
+          },
+          "comment": {
+            "type": "text"
+          },
+          "helpful": {
+            "type": "integer"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "date"
+          },
+          "updatedAt": {
+            "type": "date"
+          }
+        }
+      },
+      "translations": {
+        "type": "nested",
+        "properties": {
+          "language": {
+            "type": "keyword"
+          },
+          "title": {
+            "type": "text"
+          },
+          "body": {
+            "type": "text"
+          },
+          "excerpt": {
+            "type": "text"
+          },
+          "status": {
+            "type": "keyword"
+          },
+          "translatedBy": {
+            "type": "keyword"
+          },
+          "translatedAt": {
+            "type": "date"
+          },
+          "approvedBy": {
+            "type": "keyword"
+          },
+          "approvedAt": {
+            "type": "date"
+          }
+        }
+      },
+      "richContent": {
+        "properties": {
+          "hasVideo": {
+            "type": "boolean"
+          },
+          "hasAudio": {
+            "type": "boolean"
+          },
+          "hasGallery": {
+            "type": "boolean"
+          },
+          "hasInteractive": {
+            "type": "boolean"
+          },
+          "hasPoll": {
+            "type": "boolean"
+          },
+          "embedCodes": {
+            "type": "text",
+            "index": false
+          }
+        }
+      },
+      "engagement": {
+        "properties": {
+          "views": {
+            "type": "integer"
+          },
+          "uniqueViews": {
+            "type": "integer"
+          },
+          "likes": {
+            "type": "integer"
+          },
+          "shares": {
+            "type": "integer"
+          },
+          "comments": {
+            "type": "integer"
+          },
+          "bookmarks": {
+            "type": "integer"
+          },
+          "averageRating": {
+            "type": "half_float"
+          },
+          "totalRatings": {
+            "type": "integer"
+          },
+          "averageTimeOnPage": {
+            "type": "integer"
+          }
+        }
+      },
+      "seo": {
+        "properties": {
+          "score": {
+            "type": "integer"
+          },
+          "focusKeyword": {
+            "type": "keyword"
+          },
+          "readabilityScore": {
+            "type": "integer"
+          }
+        }
+      },
+      "workflow": {
+        "properties": {
+          "stage": {
+            "type": "keyword"
+          },
+          "assignedTo": {
+            "type": "keyword"
+          },
+          "dueDate": {
+            "type": "date"
+          },
+          "priority": {
+            "type": "keyword"
+          }
+        }
+      },
+      "language": {
+        "type": "keyword"
+      },
+      "version": {
+        "type": "integer"
+      },
+      "revisions": {
+        "type": "integer"
+      },
+      "publishedAt": {
+        "type": "date"
+      },
+      "scheduledAt": {
+        "type": "date"
+      },
+      "expiresAt": {
+        "type": "date"
+      },
+      "lastModifiedBy": {
+        "type": "keyword"
+      },
+      "createdAt": {
+        "type": "date"
+      },
+      "updatedAt": {
+        "type": "date"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "visibility": {
+        "type": "keyword"
+      },
+      "featured": {
+        "type": "boolean"
+      },
+      "sticky": {
+        "type": "boolean"
+      },
+      "archived": {
+        "type": "boolean"
+      },
+      "searchBoost": {
+        "type": "float"
+      }
+    }
+  }
+}

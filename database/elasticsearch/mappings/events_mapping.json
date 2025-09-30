@@ -1,0 +1,208 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "analysis": {
+      "analyzer": {
+        "event_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "stop", "snowball"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "eventId": {
+        "type": "keyword"
+      },
+      "title": {
+        "type": "text",
+        "analyzer": "standard",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          },
+          "suggest": {
+            "type": "completion",
+            "analyzer": "simple",
+            "preserve_separators": true,
+            "preserve_position_increments": true,
+            "max_input_length": 50
+          }
+        }
+      },
+      "description": {
+        "type": "text",
+        "analyzer": "english",
+        "fields": {
+          "standard": {
+            "type": "text",
+            "analyzer": "standard"
+          }
+        }
+      },
+      "category": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "subcategory": {
+        "type": "keyword"
+      },
+      "tags": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "eventDate": {
+        "type": "date",
+        "format": "date_optional_time||epoch_millis"
+      },
+      "endDate": {
+        "type": "date",
+        "format": "date_optional_time||epoch_millis"
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "featured": {
+        "type": "boolean"
+      },
+      "venue": {
+        "properties": {
+          "venueId": {
+            "type": "keyword"
+          },
+          "name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              }
+            }
+          },
+          "city": {
+            "type": "keyword",
+            "fields": {
+              "text": {
+                "type": "text"
+              }
+            }
+          },
+          "state": {
+            "type": "keyword"
+          },
+          "country": {
+            "type": "keyword"
+          },
+          "location": {
+            "type": "geo_point"
+          },
+          "address": {
+            "type": "text",
+            "index": false
+          }
+        }
+      },
+      "performers": {
+        "type": "nested",
+        "properties": {
+          "performerId": {
+            "type": "keyword"
+          },
+          "name": {
+            "type": "text",
+            "fields": {
+              "keyword": {
+                "type": "keyword"
+              },
+              "suggest": {
+                "type": "completion"
+              }
+            }
+          },
+          "headliner": {
+            "type": "boolean"
+          },
+          "genre": {
+            "type": "keyword"
+          }
+        }
+      },
+      "pricing": {
+        "properties": {
+          "minPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "maxPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "averagePrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "currency": {
+            "type": "keyword"
+          }
+        }
+      },
+      "capacity": {
+        "type": "integer"
+      },
+      "ticketsSold": {
+        "type": "integer"
+      },
+      "images": {
+        "type": "nested",
+        "properties": {
+          "url": {
+            "type": "keyword",
+            "index": false
+          },
+          "type": {
+            "type": "keyword"
+          },
+          "primary": {
+            "type": "boolean"
+          }
+        }
+      },
+      "metadata": {
+        "properties": {
+          "createdAt": {
+            "type": "date"
+          },
+          "updatedAt": {
+            "type": "date"
+          },
+          "createdBy": {
+            "type": "keyword"
+          },
+          "source": {
+            "type": "keyword"
+          },
+          "externalId": {
+            "type": "keyword"
+          }
+        }
+      },
+      "searchBoost": {
+        "type": "float"
+      },
+      "visibility": {
+        "type": "keyword"
+      }
+    }
+  }
+}

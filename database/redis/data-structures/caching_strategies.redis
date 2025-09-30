@@ -1,0 +1,101 @@
+#!/bin/bash
+# caching_strategies.redis
+# Purpose: Define caching patterns for different data types to improve performance
+#
+# Cache Strategies:
+# - Cache-Aside Pattern (for user profiles, venue info)
+#   Check cache first, load from DB if miss
+#   TTL: 15 minutes for users, 1 hour for venues
+#
+# - Write-Through Pattern (for event data, ticket counts)
+#   Update cache immediately on write
+#   TTL: 5 minutes for active events
+#
+# - Write-Behind Pattern (for analytics, non-critical updates)
+#   Update cache first, sync to DB later
+#   TTL: 24 hours
+
+echo "=== Setting up TicketToken Caching Strategies ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to display progress
+show_progress() {
+    echo "[$(date +%H:%M:%S)] $1"
+}
+
+show_progress "Setting up cache TTL configurations..."
+
+# TTL configurations for different data types
+redis-cli HSET cache_config:ttl "user_profile" "900"        # 15 minutes
+redis-cli HSET cache_config:ttl "user_session" "3600"       # 1 hour
+redis-cli HSET cache_config:ttl "venue_info" "3600"         # 1 hour
+redis-cli HSET cache_config:ttl "venue_events" "600"        # 10 minutes
+redis-cli HSET cache_config:ttl "event_details" "300"       # 5 minutes
+redis-cli HSET cache_config:ttl "event_stats" "60"          # 1 minute
+redis-cli HSET cache_config:ttl "ticket_availability" "30"  # 30 seconds
+redis-cli HSET cache_config:ttl "price_data" "60"           # 1 minute
+redis-cli HSET cache_config:ttl "search_results" "180"      # 3 minutes
+redis-cli HSET cache_config:ttl "analytics_data" "86400"    # 24 hours
+
+show_progress "Configuring cache strategies..."
+
+# Cache strategy configuration
+redis-cli HSET cache_config:strategies "users" "cache_aside"
+redis-cli HSET cache_config:strategies "venues" "cache_aside"
+redis-cli HSET cache_config:strategies "events" "write_through"
+redis-cli HSET cache_config:strategies "tickets" "write_through"
+redis-cli HSET cache_config:strategies "analytics" "write_behind"
+redis-cli HSET cache_config:strategies "searches" "cache_aside"
+
+show_progress "Setting up cache namespaces..."
+
+# Define cache namespaces
+redis-cli SADD cache:namespaces "user"
+redis-cli SADD cache:namespaces "venue"
+redis-cli SADD cache:namespaces "event"
+redis-cli SADD cache:namespaces "ticket"
+redis-cli SADD cache:namespaces "search"
+redis-cli SADD cache:namespaces "analytics"
+redis-cli SADD cache:namespaces "session"
+
+show_progress "Configuring cache warming..."
+
+# Cache warming configuration
+redis-cli HSET cache_config:warming "venue_list" "startup"
+redis-cli HSET cache_config:warming "popular_events" "hourly"
+redis-cli HSET cache_config:warming "featured_events" "daily"
+redis-cli HSET cache_config:warming "user_preferences" "on_login"
+redis-cli HSET cache_config:warming "price_tiers" "on_change"
+
+show_progress "Setting up cache invalidation rules..."
+
+# Invalidation rules
+redis-cli HSET cache_config:invalidation "user_update" "pattern:cache:user:{user_id}:*"
+redis-cli HSET cache_config:invalidation "venue_update" "pattern:cache:venue:{venue_id}:*"
+redis-cli HSET cache_config:invalidation "event_update" "tag:event:{event_id}"
+redis-cli HSET cache_config:invalidation "ticket_purchase" "keys:cache:event:{event_id}:tickets"
+
+show_progress "Initializing cache statistics..."
+
+# Initialize daily cache statistics
+redis-cli HSET cache:stats:$(date +%Y%m%d) hits 0
+redis-cli HSET cache:stats:$(date +%Y%m%d) misses 0
+redis-cli HSET cache:stats:$(date +%Y%m%d) invalidations 0
+redis-cli HSET cache:stats:$(date +%Y%m%d) expirations 0
+redis-cli EXPIRE cache:stats:$(date +%Y%m%d) 604800  # Keep for 7 days
+
+# Write-behind queue configuration
+redis-cli HSET cache_config:write_behind "batch_size" "100"
+redis-cli HSET cache_config:write_behind "flush_interval" "60"  # seconds
+redis-cli HSET cache_config:write_behind "max_retries" "3"
+
+echo ""
+echo "=== Caching Strategies Setup Summary ==="
+echo "TTL configurations: $(redis-cli HLEN cache_config:ttl)"
+echo "Cache strategies: $(redis-cli HLEN cache_config:strategies)"
+echo "Namespaces defined: $(redis-cli SCARD cache:namespaces)"
+echo "Warming rules: $(redis-cli HLEN cache_config:warming)"
+echo "Invalidation rules: $(redis-cli HLEN cache_config:invalidation)"
+echo ""
+echo "✓ Complete caching strategies system created successfully!"

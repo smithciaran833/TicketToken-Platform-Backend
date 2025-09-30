@@ -1,0 +1,43 @@
+{
+  "dashboard": {
+    "title": "TicketToken Database Overview",
+    "panels": [
+      {
+        "title": "Database Connections",
+        "targets": [
+          {
+            "expr": "postgresql_connections_active{job='postgres'}"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0}
+      },
+      {
+        "title": "Query Performance",
+        "targets": [
+          {
+            "expr": "rate(postgresql_queries_total[5m])"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "title": "Cache Hit Rate",
+        "targets": [
+          {
+            "expr": "redis_keyspace_hits_total / (redis_keyspace_hits_total + redis_keyspace_misses_total) * 100"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "title": "Disk Usage",
+        "targets": [
+          {
+            "expr": "node_filesystem_avail_bytes{mountpoint='/'} / node_filesystem_size_bytes{mountpoint='/'} * 100"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      }
+    ]
+  }
+}

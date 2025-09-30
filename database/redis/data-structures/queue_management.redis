@@ -1,0 +1,125 @@
+#!/bin/bash
+# queue_management.redis
+# Purpose: Implement reliable job queues for background processing
+#
+# Queue Types:
+# - Email Queues: Transactional, marketing, alerts
+# - NFT Processing: Minting, transfers, metadata updates
+# - Payment Queues: Captures, refunds, settlements
+# - Analytics Queues: Event tracking, aggregations
+
+echo "=== Setting up TicketToken Queue Management ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to display progress
+show_progress() {
+    echo "[$(date +%H:%M:%S)] $1"
+}
+
+show_progress "Setting up queue types..."
+
+# Define all queue types
+redis-cli SADD queue:types "email:transactional"
+redis-cli SADD queue:types "email:marketing"
+redis-cli SADD queue:types "email:alerts"
+redis-cli SADD queue:types "payment:captures"
+redis-cli SADD queue:types "payment:refunds"
+redis-cli SADD queue:types "payment:settlements"
+redis-cli SADD queue:types "nft:mint"
+redis-cli SADD queue:types "nft:transfer"
+redis-cli SADD queue:types "nft:metadata"
+redis-cli SADD queue:types "analytics:events"
+redis-cli SADD queue:types "analytics:aggregations"
+
+show_progress "Configuring queue settings..."
+
+# Email queue configurations
+redis-cli HSET queue:config:email:transactional batch_size "10"
+redis-cli HSET queue:config:email:transactional workers "5"
+redis-cli HSET queue:config:email:transactional timeout "30"
+redis-cli HSET queue:config:email:transactional priority "high"
+
+redis-cli HSET queue:config:email:marketing batch_size "100"
+redis-cli HSET queue:config:email:marketing workers "2"
+redis-cli HSET queue:config:email:marketing timeout "60"
+redis-cli HSET queue:config:email:marketing priority "low"
+
+# Payment queue configurations
+redis-cli HSET queue:config:payment:captures batch_size "1"
+redis-cli HSET queue:config:payment:captures workers "3"
+redis-cli HSET queue:config:payment:captures timeout "60"
+redis-cli HSET queue:config:payment:captures priority "critical"
+
+redis-cli HSET queue:config:payment:refunds batch_size "1"
+redis-cli HSET queue:config:payment:refunds workers "2"
+redis-cli HSET queue:config:payment:refunds timeout "120"
+redis-cli HSET queue:config:payment:refunds priority "high"
+
+# NFT queue configurations
+redis-cli HSET queue:config:nft:mint batch_size "1"
+redis-cli HSET queue:config:nft:mint workers "2"
+redis-cli HSET queue:config:nft:mint timeout "300"
+redis-cli HSET queue:config:nft:mint priority "medium"
+
+show_progress "Setting up retry policies..."
+
+# Retry configurations
+redis-cli HSET queue:config:retry:email max_retries "3"
+redis-cli HSET queue:config:retry:email retry_delay "300"
+redis-cli HSET queue:config:retry:email backoff_multiplier "2"
+
+redis-cli HSET queue:config:retry:payment max_retries "5"
+redis-cli HSET queue:config:retry:payment retry_delay "60"
+redis-cli HSET queue:config:retry:payment backoff_multiplier "1.5"
+
+redis-cli HSET queue:config:retry:nft max_retries "10"
+redis-cli HSET queue:config:retry:nft retry_delay "600"
+redis-cli HSET queue:config:retry:nft backoff_multiplier "1"
+
+redis-cli HSET queue:config:retry:analytics max_retries "3"
+redis-cli HSET queue:config:retry:analytics retry_delay "900"
+redis-cli HSET queue:config:retry:analytics backoff_multiplier "1"
+
+show_progress "Configuring queue alerts..."
+
+# Queue depth alert thresholds
+redis-cli HSET queue:alerts:thresholds email:transactional:warning "1000"
+redis-cli HSET queue:alerts:thresholds email:transactional:critical "5000"
+redis-cli HSET queue:alerts:thresholds payment:captures:warning "100"
+redis-cli HSET queue:alerts:thresholds payment:captures:critical "500"
+redis-cli HSET queue:alerts:thresholds nft:mint:warning "50"
+redis-cli HSET queue:alerts:thresholds nft:mint:critical "200"
+
+# Dead letter queue settings
+redis-cli HSET queue:config:dlq max_retention_days "30"
+redis-cli HSET queue:config:dlq alert_threshold "100"
+redis-cli HSET queue:config:dlq auto_retry "false"
+
+show_progress "Initializing queue statistics..."
+
+# Initialize daily statistics
+redis-cli HINCRBY queue:stats:$(date +%Y%m%d) total_enqueued 0
+redis-cli HINCRBY queue:stats:$(date +%Y%m%d) total_processed 0
+redis-cli HINCRBY queue:stats:$(date +%Y%m%d) total_failed 0
+redis-cli HINCRBY queue:stats:$(date +%Y%m%d) total_retried 0
+redis-cli EXPIRE queue:stats:$(date +%Y%m%d) 604800  # Keep for 7 days
+
+# Initialize queue health monitoring
+redis-cli HSET queue:health:global status "healthy"
+redis-cli HSET queue:health:global total_workers "0"
+redis-cli HSET queue:health:global total_queues "11"
+redis-cli HSET queue:health:global last_check $(date +%s)
+
+echo ""
+echo "=== Queue Management Setup Summary ==="
+echo "Queue types registered: $(redis-cli SCARD queue:types)"
+echo "Email queues configured: ✓"
+echo "Payment queues configured: ✓"
+echo "NFT queues configured: ✓"
+echo "Analytics queues configured: ✓"
+echo "Retry policies set: ✓"
+echo "Alert thresholds configured: ✓"
+echo "Dead letter queue ready: ✓"
+echo ""
+echo "✓ Complete queue management system created successfully!"

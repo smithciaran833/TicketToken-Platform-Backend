@@ -1,0 +1,116 @@
+#!/bin/bash
+# real_time_data.redis
+# Purpose: Handle real-time updates for live events and dynamic data
+#
+# Real-Time Features:
+# - Live Counters:
+#   * Current attendance per venue
+#   * Tickets sold in real-time
+#   * Active users on platform
+#
+# - Dynamic Pricing Updates:
+#   * Current ticket prices
+#   * Surge pricing multipliers
+#   * Last update timestamps
+#
+# - Live Event Status:
+#   * Doors open/closed
+#   * Show started/ended
+#   * Emergency notifications
+
+echo "=== Setting up TicketToken Real-Time Data ==="
+echo "Date: $(date)"
+echo ""
+
+# Function to display progress
+show_progress() {
+    echo "[$(date +%H:%M:%S)] $1"
+}
+
+show_progress "Setting up live counters..."
+
+# Live attendance counters
+redis-cli SET venue:venue_123:attendance:current 0
+redis-cli SET venue:venue_123:attendance:capacity 2500
+redis-cli SET venue:venue_789:attendance:current 0
+redis-cli SET venue:venue_789:attendance:capacity 5000
+
+# Platform-wide active users (with TTL)
+redis-cli SETEX platform:stats:active_users 300 "0"
+redis-cli SETEX platform:stats:active_sessions 300 "0"
+
+# Real-time sales tracking
+redis-cli HINCRBY platform:stats:realtime:$(date +%Y%m%d) total_sales 0
+redis-cli HINCRBY platform:stats:realtime:$(date +%Y%m%d) tickets_sold 0
+redis-cli HINCRBY platform:stats:realtime:$(date +%Y%m%d) revenue 0
+
+show_progress "Configuring dynamic pricing..."
+
+# Dynamic pricing configuration
+redis-cli HSET pricing:config surge_enabled "true"
+redis-cli HSET pricing:config base_surge_threshold "0.8"  # 80% capacity
+redis-cli HSET pricing:config time_based_surge "true"
+redis-cli HSET pricing:config max_surge_multiplier "2.0"
+
+# Surge pricing rules
+redis-cli HSET pricing:rules:surge tickets_remaining_threshold "100"
+redis-cli HSET pricing:rules:surge time_until_event_hours "24"
+redis-cli HSET pricing:rules:surge demand_spike_threshold "50"
+redis-cli HSET pricing:rules:surge cooldown_minutes "15"
+
+show_progress "Setting up event status tracking..."
+
+# Event status templates
+redis-cli HSET event:status:states "scheduled" "Event scheduled"
+redis-cli HSET event:status:states "doors_open" "Doors are open"
+redis-cli HSET event:status:states "show_started" "Show in progress"
+redis-cli HSET event:status:states "show_ended" "Show has ended"
+redis-cli HSET event:status:states "cancelled" "Event cancelled"
+redis-cli HSET event:status:states "postponed" "Event postponed"
+
+# Emergency notification types
+redis-cli HSET emergency:types "weather" "severe"
+redis-cli HSET emergency:types "security" "critical"
+redis-cli HSET emergency:types "medical" "high"
+redis-cli HSET emergency:types "technical" "medium"
+
+show_progress "Configuring WebSocket pub/sub channels..."
+
+# Pub/Sub channel definitions
+redis-cli HSET pubsub:channels "event_updates" "event:{event_id}:updates"
+redis-cli HSET pubsub:channels "pricing_updates" "pricing:{event_id}:updates"
+redis-cli HSET pubsub:channels "attendance_updates" "venue:{venue_id}:attendance:updates"
+redis-cli HSET pubsub:channels "emergency_alerts" "global:emergency:alerts"
+redis-cli HSET pubsub:channels "ticket_availability" "tickets:{event_id}:availability"
+redis-cli HSET pubsub:channels "user_notifications" "user:{user_id}:notifications"
+
+# Real-time update frequencies (in seconds)
+redis-cli HSET realtime:config:update_intervals attendance "5"
+redis-cli HSET realtime:config:update_intervals pricing "30"
+redis-cli HSET realtime:config:update_intervals availability "10"
+redis-cli HSET realtime:config:update_intervals metrics "60"
+
+show_progress "Initializing real-time metrics..."
+
+# Initialize hourly metrics
+redis-cli HINCRBY realtime:metrics:$(date +%Y%m%d%H) page_views 0
+redis-cli HINCRBY realtime:metrics:$(date +%Y%m%d%H) searches 0
+redis-cli HINCRBY realtime:metrics:$(date +%Y%m%d%H) cart_adds 0
+redis-cli HINCRBY realtime:metrics:$(date +%Y%m%d%H) purchases 0
+redis-cli EXPIRE realtime:metrics:$(date +%Y%m%d%H) 172800  # Keep for 48 hours
+
+# WebSocket connection monitoring
+redis-cli SETEX websocket:connections:active 60 "0"
+redis-cli HSET websocket:config max_connections_per_user "5"
+redis-cli HSET websocket:config heartbeat_interval "30"
+redis-cli HSET websocket:config reconnect_timeout "60"
+
+echo ""
+echo "=== Real-Time Data Setup Summary ==="
+echo "Live counters initialized: ✓"
+echo "Dynamic pricing configured: ✓"
+echo "Event status tracking ready: ✓"
+echo "Pub/Sub channels defined: $(redis-cli HLEN pubsub:channels)"
+echo "Update intervals configured: $(redis-cli HLEN realtime:config:update_intervals)"
+echo ""
+echo "✓ Complete real-time data system created successfully!"

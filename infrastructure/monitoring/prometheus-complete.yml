@@ -1,0 +1,88 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['localhost:3000']
+  
+  - job_name: 'auth-service'
+    static_configs:
+      - targets: ['localhost:3001']
+  
+  - job_name: 'venue-service'
+    static_configs:
+      - targets: ['localhost:3002']
+  
+  - job_name: 'event-service'
+    static_configs:
+      - targets: ['localhost:3003']
+  
+  - job_name: 'ticket-service'
+    static_configs:
+      - targets: ['localhost:3004']
+  
+  - job_name: 'order-service'
+    static_configs:
+      - targets: ['localhost:3006']
+  
+  - job_name: 'payment-service'
+    static_configs:
+      - targets: ['localhost:3005']
+  
+  - job_name: 'marketplace-service'
+    static_configs:
+      - targets: ['localhost:3007']
+  
+  - job_name: 'scanning-service'
+    static_configs:
+      - targets: ['localhost:3009']
+  
+  - job_name: 'notification-service'
+    static_configs:
+      - targets: ['localhost:3010']
+  
+  - job_name: 'queue-service'
+    static_configs:
+      - targets: ['localhost:3011']
+  
+  - job_name: 'blockchain-service'
+    static_configs:
+      - targets: ['localhost:3012']
+  
+  - job_name: 'blockchain-indexer'
+    static_configs:
+      - targets: ['localhost:3013']
+  
+  - job_name: 'compliance-service'
+    static_configs:
+      - targets: ['localhost:3015']
+  
+  - job_name: 'analytics-service'
+    static_configs:
+      - targets: ['localhost:3016']
+  
+  - job_name: 'search-service'
+    static_configs:
+      - targets: ['localhost:3017']
+  
+  - job_name: 'file-service'
+    static_configs:
+      - targets: ['localhost:3018']
+  
+  - job_name: 'integration-service'
+    static_configs:
+      - targets: ['localhost:3019']
+  
+  - job_name: 'monitoring-service'
+    static_configs:
+      - targets: ['localhost:3020']
+  
+  - job_name: 'minting-service'
+    static_configs:
+      - targets: ['localhost:3008']
+  
+  - job_name: 'transfer-service'
+    static_configs:
+      - targets: ['localhost:3014']

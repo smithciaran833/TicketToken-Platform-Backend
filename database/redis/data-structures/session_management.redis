@@ -1,0 +1,193 @@
+# Redis Session Management for TicketToken Platform
+# Phase 1: Basic Session Storage
+
+# ============================================
+# BASIC SESSION HASH
+# ============================================
+
+# Create a user session
+HSET session:user123:abc456 user_id "123"
+HSET session:user123:abc456 email "user@tickettoken.com"
+HSET session:user123:abc456 created_at "1737000000"
+HSET session:user123:abc456 last_activity "1737000000"
+
+# Set session expiration (1 hour)
+EXPIRE session:user123:abc456 3600
+
+# Get session data
+HGETALL session:user123:abc456
+
+# Update last activity
+HSET session:user123:abc456 last_activity "1737001000"
+
+# Check TTL
+TTL session:user123:abc456
+
+# ============================================
+# PHASE 2: ADVANCED SESSION FEATURES
+# ============================================
+
+# Track user's active sessions
+SADD user:123:sessions "session:user123:abc456"
+SADD user:123:sessions "session:user123:def789"
+
+# Session metadata with device info
+HMSET session:user123:abc456 \
+  device_type "mobile" \
+  device_id "iPhone-X" \
+  ip_address "192.168.1.100" \
+  user_agent "Mozilla/5.0..."
+
+# Track session activity timestamps
+ZADD user:123:session_activity \
+  1737000000 "session:user123:abc456" \
+  1737001000 "session:user123:def789"
+
+# Get user's most recent session
+ZREVRANGE user:123:session_activity 0 0
+
+# Count active sessions
+SCARD user:123:sessions
+
+# Remove expired session
+SREM user:123:sessions "session:user123:old123"
+ZREM user:123:session_activity "session:user123:old123"
+
+# Atomic session refresh (sliding expiration)
+MULTI
+EXPIRE session:user123:abc456 3600
+HSET session:user123:abc456 last_activity "1737002000"
+ZADD user:123:session_activity 1737002000 "session:user123:abc456"
+EXEC
+
+# ============================================
+# PHASE 3: RATE LIMITING & SECURITY
+# ============================================
+
+# Login attempt rate limiting (5 attempts per 15 minutes)
+INCR login_attempts:user@tickettoken.com
+EXPIRE login_attempts:user@tickettoken.com 900
+
+# Check login attempts
+GET login_attempts:user@tickettoken.com
+
+# API rate limiting (sliding window - 100 requests per hour)
+ZADD api_requests:user123 1737000000 "req1"
+ZADD api_requests:user123 1737000060 "req2"
+ZADD api_requests:user123 1737000120 "req3"
+
+# Remove old entries (older than 1 hour)
+ZREMRANGEBYSCORE api_requests:user123 -inf (1736996400
+
+# Count requests in last hour
+ZCOUNT api_requests:user123 1736996400 +inf
+
+# Concurrent session limiting
+SCARD user:123:sessions
+# If > 5, remove oldest session
+ZRANGE user:123:session_activity 0 0
+
+# Failed login tracking
+LPUSH failed_logins:192.168.1.100 "1737000000:user@tickettoken.com"
+LTRIM failed_logins:192.168.1.100 0 99
+EXPIRE failed_logins:192.168.1.100 3600
+
+# Session invalidation list (logout across devices)
+SADD invalidated_sessions "session:user123:abc456"
+# Check if session is invalidated
+SISMEMBER invalidated_sessions "session:user123:abc456"
+
+# ============================================
+# PHASE 4: LUA SCRIPTS & ADVANCED PATTERNS
+# ============================================
+
+# Lua script for atomic session creation with checks
+EVAL "
+  local user_id = ARGV[1]
+  local session_id = ARGV[2]
+  local session_data = cjson.decode(ARGV[3])
+  local max_sessions = tonumber(ARGV[4])
+  
+  -- Check concurrent sessions
+  local session_count = redis.call('SCARD', 'user:' .. user_id .. ':sessions')
+  if session_count >= max_sessions then
+    -- Remove oldest session
+    local oldest = redis.call('ZRANGE', 'user:' .. user_id .. ':session_activity', 0, 0)
+    if oldest[1] then
+      redis.call('DEL', oldest[1])
+      redis.call('SREM', 'user:' .. user_id .. ':sessions', oldest[1])
+      redis.call('ZREM', 'user:' .. user_id .. ':session_activity', oldest[1])
+    end
+  end
+  
+  -- Create new session
+  local session_key = 'session:user' .. user_id .. ':' .. session_id
+  redis.call('HMSET', session_key, 
+    'user_id', session_data.user_id,
+    'email', session_data.email,
+    'created_at', session_data.created_at,
+    'last_activity', session_data.last_activity
+  )
+  redis.call('EXPIRE', session_key, 3600)
+  redis.call('SADD', 'user:' .. user_id .. ':sessions', session_key)
+  redis.call('ZADD', 'user:' .. user_id .. ':session_activity', session_data.created_at, session_key)
+  
+  return 'OK'
+" 0 "123" "xyz789" "{\"user_id\":\"123\",\"email\":\"user@tickettoken.com\",\"created_at\":1737003000,\"last_activity\":1737003000}" "5"
+
+# Lua script for sliding window rate limiting
+EVAL "
+  local key = KEYS[1]
+  local window = tonumber(ARGV[1])
+  local limit = tonumber(ARGV[2])
+  local now = tonumber(ARGV[3])
+  local uuid = ARGV[4]
+  
+  -- Remove old entries
+  redis.call('ZREMRANGEBYSCORE', key, '-inf', now - window)
+  
+  -- Count current requests
+  local current = redis.call('ZCARD', key)
+  if current < limit then
+    redis.call('ZADD', key, now, uuid)
+    redis.call('EXPIRE', key, window)
+    return 1  -- Allowed
+  else
+    return 0  -- Rate limited
+  end
+" 1 "api_requests:user123" "3600" "100" "1737003000" "req_uuid_123"
+
+# Session refresh with sliding expiration
+SCRIPT LOAD "
+  local session_key = KEYS[1]
+  local user_id = ARGV[1]
+  local new_activity = ARGV[2]
+  local ttl = tonumber(ARGV[3])
+  
+  -- Check if session exists and not invalidated
+  if redis.call('EXISTS', session_key) == 0 then
+    return 'SESSION_NOT_FOUND'
+  end
+  
+  if redis.call('SISMEMBER', 'invalidated_sessions', session_key) == 1 then
+    return 'SESSION_INVALIDATED'
+  end
+  
+  -- Update session
+  redis.call('HSET', session_key, 'last_activity', new_activity)
+  redis.call('EXPIRE', session_key, ttl)
+  redis.call('ZADD', 'user:' .. user_id .. ':session_activity', new_activity, session_key)
+  
+  return 'OK'
+"
+
+# USAGE EXAMPLES:
+#
+# Create session with limit check:
+# EVALSHA <sha1> 0 "456" "abc123" "{...}" "5"
+#
+# Check rate limit:
+# EVALSHA <sha1> 1 "api_requests:user456" "3600" "100" "1737004000" "req_456"
+#
+# Refresh session:
+# EVALSHA <sha1> 1 "session:user456:abc123" "456" "1737004000" "3600"

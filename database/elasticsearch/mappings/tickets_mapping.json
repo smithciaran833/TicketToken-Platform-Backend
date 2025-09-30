@@ -1,0 +1,361 @@
+{
+  "settings": {
+    "number_of_shards": 3,
+    "number_of_replicas": 1,
+    "analysis": {
+      "analyzer": {
+        "ticket_analyzer": {
+          "type": "custom",
+          "tokenizer": "standard",
+          "filter": ["lowercase", "stop"]
+        }
+      },
+      "normalizer": {
+        "lowercase_normalizer": {
+          "type": "custom",
+          "filter": ["lowercase"]
+        }
+      }
+    }
+  },
+  "mappings": {
+    "properties": {
+      "ticketId": {
+        "type": "keyword"
+      },
+      "eventId": {
+        "type": "keyword"
+      },
+      "venueId": {
+        "type": "keyword"
+      },
+      "userId": {
+        "type": "keyword"
+      },
+      "originalUserId": {
+        "type": "keyword"
+      },
+      "ticketNumber": {
+        "type": "keyword",
+        "fields": {
+          "search": {
+            "type": "text",
+            "analyzer": "simple"
+          }
+        }
+      },
+      "ticketType": {
+        "type": "keyword",
+        "fields": {
+          "text": {
+            "type": "text"
+          }
+        }
+      },
+      "category": {
+        "type": "keyword"
+      },
+      "section": {
+        "type": "keyword",
+        "normalizer": "lowercase_normalizer"
+      },
+      "row": {
+        "type": "keyword"
+      },
+      "seat": {
+        "type": "keyword"
+      },
+      "seatView": {
+        "type": "keyword",
+        "index": false
+      },
+      "barcode": {
+        "type": "keyword"
+      },
+      "qrCode": {
+        "type": "keyword"
+      },
+      "accessCode": {
+        "type": "keyword"
+      },
+      "securityCode": {
+        "type": "keyword"
+      },
+      "pricing": {
+        "properties": {
+          "originalPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "purchasePrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "currentValue": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "fees": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "taxes": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "royalties": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "currency": {
+            "type": "keyword"
+          },
+          "priceHistory": {
+            "type": "nested",
+            "properties": {
+              "price": {
+                "type": "scaled_float",
+                "scaling_factor": 100
+              },
+              "date": {
+                "type": "date"
+              },
+              "reason": {
+                "type": "keyword"
+              }
+            }
+          }
+        }
+      },
+      "transferHistory": {
+        "type": "nested",
+        "properties": {
+          "fromUserId": {
+            "type": "keyword"
+          },
+          "toUserId": {
+            "type": "keyword"
+          },
+          "transferDate": {
+            "type": "date"
+          },
+          "transferType": {
+            "type": "keyword"
+          },
+          "transferPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "transactionHash": {
+            "type": "keyword"
+          },
+          "status": {
+            "type": "keyword"
+          }
+        }
+      },
+      "marketplace": {
+        "properties": {
+          "isListed": {
+            "type": "boolean"
+          },
+          "listingId": {
+            "type": "keyword"
+          },
+          "listingPrice": {
+            "type": "scaled_float",
+            "scaling_factor": 100
+          },
+          "listingDate": {
+            "type": "date"
+          },
+          "expiryDate": {
+            "type": "date"
+          },
+          "viewCount": {
+            "type": "integer"
+          },
+          "watchCount": {
+            "type": "integer"
+          },
+          "offerCount": {
+            "type": "integer"
+          }
+        }
+      },
+      "blockchain": {
+        "properties": {
+          "nftId": {
+            "type": "keyword"
+          },
+          "contractAddress": {
+            "type": "keyword"
+          },
+          "tokenId": {
+            "type": "keyword"
+          },
+          "mintTx": {
+            "type": "keyword"
+          },
+          "chainId": {
+            "type": "keyword"
+          },
+          "metadataUri": {
+            "type": "keyword",
+            "index": false
+          },
+          "attributes": {
+            "type": "object",
+            "enabled": false
+          },
+          "royaltyPercentage": {
+            "type": "half_float"
+          }
+        }
+      },
+      "validation": {
+        "properties": {
+          "lastValidated": {
+            "type": "date"
+          },
+          "validationCount": {
+            "type": "integer"
+          },
+          "validationHistory": {
+            "type": "nested",
+            "properties": {
+              "timestamp": {
+                "type": "date"
+              },
+              "location": {
+                "type": "geo_point"
+              },
+              "gate": {
+                "type": "keyword"
+              },
+              "staffId": {
+                "type": "keyword"
+              },
+              "result": {
+                "type": "keyword"
+              }
+            }
+          },
+          "entryGate": {
+            "type": "keyword"
+          },
+          "isUsed": {
+            "type": "boolean"
+          },
+          "usedAt": {
+            "type": "date"
+          }
+        }
+      },
+      "delivery": {
+        "properties": {
+          "method": {
+            "type": "keyword"
+          },
+          "status": {
+            "type": "keyword"
+          },
+          "trackingNumber": {
+            "type": "keyword"
+          },
+          "deliveryDate": {
+            "type": "date"
+          },
+          "email": {
+            "type": "keyword"
+          }
+        }
+      },
+      "perks": {
+        "type": "keyword"
+      },
+      "restrictions": {
+        "type": "keyword"
+      },
+      "specialInstructions": {
+        "type": "text",
+        "analyzer": "ticket_analyzer"
+      },
+      "notes": {
+        "type": "text"
+      },
+      "tags": {
+        "type": "keyword"
+      },
+      "metadata": {
+        "properties": {
+          "source": {
+            "type": "keyword"
+          },
+          "affiliate": {
+            "type": "keyword"
+          },
+          "campaign": {
+            "type": "keyword"
+          },
+          "referrer": {
+            "type": "keyword"
+          }
+        }
+      },
+      "status": {
+        "type": "keyword"
+      },
+      "statusHistory": {
+        "type": "nested",
+        "properties": {
+          "status": {
+            "type": "keyword"
+          },
+          "timestamp": {
+            "type": "date"
+          },
+          "reason": {
+            "type": "text"
+          }
+        }
+      },
+      "flags": {
+        "type": "keyword"
+      },
+      "isTransferable": {
+        "type": "boolean"
+      },
+      "isResellable": {
+        "type": "boolean"
+      },
+      "isRefundable": {
+        "type": "boolean"
+      },
+      "isUpgradeable": {
+        "type": "boolean"
+      },
+      "purchaseDate": {
+        "type": "date"
+      },
+      "validFrom": {
+        "type": "date"
+      },
+      "validUntil": {
+        "type": "date"
+      },
+      "expiryDate": {
+        "type": "date"
+      },
+      "createdAt": {
+        "type": "date"
+      },
+      "updatedAt": {
+        "type": "date"
+      },
+      "searchScore": {
+        "type": "float"
+      }
+    }
+  }
+}
