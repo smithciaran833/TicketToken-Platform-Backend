@@ -1,7 +1,24 @@
 import { createClient } from 'redis';
 import { v4 as uuidv4 } from 'uuid';
+import jwt from 'jsonwebtoken';
 import { config } from '../../config';
 import { query } from '../../config/database';
+
+// SECURITY FIX: Phase 2.2 - Use cryptographically signed JWT tokens
+const QUEUE_TOKEN_SECRET = process.env.QUEUE_TOKEN_SECRET || (() => {
+  console.error('WARNING: QUEUE_TOKEN_SECRET not set. Using default for development only.');
+  return 'dev-secret-change-in-production';
+})();
+
+export interface QueueTokenPayload {
+  sub: string;      // userId
+  evt: string;      // eventId  
+  qid: string;      // queueId
+  scope: 'queue';
+  iat: number;
+  exp: number;
+  jti: string;      // unique token ID
+}
 
 export class WaitingRoomService {
   private redis: any; // TODO: Add proper Redis client type
@@ -14,7 +31,7 @@ export class WaitingRoomService {
         port: config.redis.port
       }
     });
-    
+
     this.redis.connect().catch(console.error);
   }
 
@@ -98,7 +115,7 @@ export class WaitingRoomService {
     const activeSlots = await this.getActiveSlots(eventId);
 
     if (position <= activeSlots) {
-      // Generate access token
+      // Generate access token - SECURITY FIX: Use JWT instead of predictable string
       const accessToken = await this.generateAccessToken(eventId, queueId);
 
       return {
@@ -188,40 +205,87 @@ export class WaitingRoomService {
     return minutes;
   }
 
+  // SECURITY FIX: Phase 2.2 - Replace predictable token with signed JWT
   private async generateAccessToken(
     eventId: string,
-    queueId: string
+    queueId: string,
+    userId?: string
   ): Promise<string> {
-    const token = `access_${eventId}_${queueId}_${Date.now()}`;
-    const tokenKey = `access_token:${token}`;
+    // Get userId from queue if not provided
+    if (!userId) {
+      const queueKey = `waiting_room:${eventId}`;
+      const members = await this.redis.zRange(queueKey, 0, -1) || [];
+      for (const memberJson of members) {
+        const member = JSON.parse(memberJson);
+        if (member.queueId === queueId) {
+          userId = member.userId;
+          break;
+        }
+      }
+    }
 
-    // Store token with 10-minute expiry
+    const payload: QueueTokenPayload = {
+      sub: userId || 'unknown',
+      evt: eventId,
+      qid: queueId,
+      scope: 'queue',
+      iat: Math.floor(Date.now() / 1000),
+      exp: Math.floor(Date.now() / 1000) + 600, // 10 min validity
+      jti: uuidv4() // Unique token ID
+    };
+
+    // Sign the token
+    const token = jwt.sign(payload, QUEUE_TOKEN_SECRET, {
+      algorithm: 'HS256',
+      issuer: 'waiting-room'
+    });
+
+    // Still store in Redis for quick validation and revocation
+    const tokenKey = `access_token:${payload.jti}`;
     await this.redis.setEx(tokenKey, 600, JSON.stringify({
       eventId,
       queueId,
+      userId: userId || 'unknown',
       grantedAt: new Date()
     }));
 
     return token;
   }
 
+  // SECURITY FIX: Phase 2.2 - Validate JWT signature
   async validateAccessToken(token: string): Promise<{
     valid: boolean;
     eventId?: string;
   }> {
-    const tokenKey = `access_token:${token}`;
+    try {
+      // Verify JWT signature
+      const decoded = jwt.verify(token, QUEUE_TOKEN_SECRET, {
+        algorithms: ['HS256'],
+        issuer: 'waiting-room'
+      }) as QueueTokenPayload;
 
-    const data = await this.redis.get(tokenKey);
+      // Check if token scope is correct
+      if (decoded.scope !== 'queue') {
+        return { valid: false };
+      }
 
-    if (!data) {
+      // Check if token still exists in Redis (for revocation)
+      const tokenKey = `access_token:${decoded.jti}`;
+      const redisData = await this.redis.get(tokenKey);
+
+      if (!redisData) {
+        // Token was revoked or expired in Redis
+        return { valid: false };
+      }
+
+      return {
+        valid: true,
+        eventId: decoded.evt
+      };
+    } catch (err) {
+      // Invalid signature, expired, or malformed token
       return { valid: false };
     }
-
-    const tokenData = JSON.parse(data);
-    return {
-      valid: true,
-      eventId: tokenData.eventId
-    };
   }
 
   private async getActiveSlots(eventId: string): Promise<number> {
