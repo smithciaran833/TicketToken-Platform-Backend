@@ -37,13 +37,13 @@ export class AnalyticsService {
         metric: 'total_sent',
         increment: 1
       });
-      
+
       logger.debug('Tracked notification sent', data);
     } catch (error) {
       logger.error('Failed to track sent notification', { error, data });
     }
   }
-  
+
   // Track delivery status
   async trackDelivery(data: {
     notificationId: string;
@@ -54,9 +54,9 @@ export class AnalyticsService {
       const notification = await db('notification_history')
         .where('id', data.notificationId)
         .first();
-      
+
       if (!notification) return;
-      
+
       const metric = `total_${data.status}`;
       await this.updateHourlyMetrics({
         channel: notification.channel,
@@ -66,13 +66,13 @@ export class AnalyticsService {
         increment: 1,
         deliveryTimeMs: data.deliveryTimeMs
       });
-      
+
       logger.debug('Tracked delivery status', data);
     } catch (error) {
       logger.error('Failed to track delivery', { error, data });
     }
   }
-  
+
   // Track engagement (open/click)
   async trackEngagement(data: {
     notificationId: string;
@@ -94,20 +94,20 @@ export class AnalyticsService {
         })
         .onConflict(['notification_id', 'user_id', 'action'])
         .ignore();
-      
+
       // Update metrics
       if (data.action === 'opened') {
         await this.updateMetricForNotification(data.notificationId, 'total_opened');
       } else if (data.action === 'clicked') {
         await this.updateMetricForNotification(data.notificationId, 'total_clicked');
       }
-      
+
       logger.debug('Tracked engagement', data);
     } catch (error) {
       logger.error('Failed to track engagement', { error, data });
     }
   }
-  
+
   // Track link clicks
   async trackClick(data: {
     notificationId: string;
@@ -127,20 +127,20 @@ export class AnalyticsService {
         ip_address: data.ipAddress,
         user_agent: data.userAgent
       });
-      
+
       await this.trackEngagement({
         notificationId: data.notificationId,
         userId: data.userId,
         action: 'clicked',
         metadata: { linkId: data.linkId }
       });
-      
+
       logger.debug('Tracked link click', data);
     } catch (error) {
       logger.error('Failed to track click', { error, data });
     }
   }
-  
+
   // Get metrics for date range
   async getMetrics(
     startDate: Date,
@@ -159,19 +159,19 @@ export class AnalyticsService {
         db.raw('AVG(avg_delivery_time_ms) as avg_delivery_time'),
         db.raw('SUM(total_cost) / 100.0 as total_cost')
       );
-    
+
     if (channel) {
       query.where('channel', channel);
     }
-    
+
     const result = await query.first();
-    
+
     // Calculate rates
     const sent = parseInt(result.sent) || 0;
     const delivered = parseInt(result.delivered) || 0;
     const opened = parseInt(result.opened) || 0;
     const clicked = parseInt(result.clicked) || 0;
-    
+
     return {
       sent,
       delivered,
@@ -186,7 +186,7 @@ export class AnalyticsService {
       totalCost: result.total_cost || 0
     };
   }
-  
+
   // Get metrics by channel
   async getChannelMetrics(
     startDate: Date,
@@ -194,28 +194,28 @@ export class AnalyticsService {
   ): Promise<ChannelMetrics> {
     const channels = ['email', 'sms', 'push'];
     const metrics: any = {};
-    
+
     for (const channel of channels) {
       metrics[channel] = await this.getMetrics(startDate, endDate, channel);
     }
-    
+
     return metrics;
   }
-  
+
   // Get hourly breakdown
   async getHourlyBreakdown(date: Date, channel?: string): Promise<any[]> {
     const query = db('notification_analytics')
       .where('date', date)
       .select('hour', 'channel', 'total_sent', 'total_delivered', 'total_failed')
       .orderBy('hour');
-    
+
     if (channel) {
       query.where('channel', channel);
     }
-    
+
     return query;
   }
-  
+
   // Get top notification types
   async getTopNotificationTypes(
     startDate: Date,
@@ -233,29 +233,29 @@ export class AnalyticsService {
       .orderBy('count', 'desc')
       .limit(limit);
   }
-  
+
   // Get user engagement stats
   async getUserEngagement(userId: string): Promise<any> {
     const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    
+
     const notifications = await db('notification_history')
       .where('user_id', userId)
       .where('created_at', '>=', thirtyDaysAgo)
       .count('id as total')
       .first();
-    
+
     const engagement = await db('notification_engagement')
       .where('user_id', userId)
       .where('action_timestamp', '>=', thirtyDaysAgo)
       .select('action')
       .count('id as count')
       .groupBy('action');
-    
+
     const engagementMap: any = {};
     engagement.forEach(row => {
       engagementMap[row.action] = parseInt(String(row.count));
     });
-    
+
     return {
       totalReceived: parseInt(String(notifications?.total || 0)) || 0,
       opened: engagementMap.opened || 0,
@@ -263,7 +263,7 @@ export class AnalyticsService {
       unsubscribed: engagementMap.unsubscribed || 0
     };
   }
-  
+
   // Private helper methods
   private async updateHourlyMetrics(data: {
     channel: string;
@@ -276,34 +276,70 @@ export class AnalyticsService {
     const now = new Date();
     const date = now.toISOString().split('T')[0];
     const hour = now.getHours();
+
+    // SECURITY FIX: Whitelist allowed metric columns
+    const allowedMetrics = [
+      'total_sent',
+      'total_delivered', 
+      'total_failed',
+      'total_bounced',
+      'total_opened',
+      'total_clicked'
+    ];
+
+    if (!allowedMetrics.includes(data.metric)) {
+      throw new Error(`Invalid metric column: ${data.metric}`);
+    }
+
+    // Build update data object safely
+    const updateData: any = {};
     
-    const updateData: any = {
-      [`${data.metric}`]: db.raw(`COALESCE(${data.metric}, 0) + ?`, [data.increment])
-    };
-    
+    // Since the metric is now validated, we can use it in the raw query
+    // But we'll use a different approach to avoid any SQL injection
+    if (data.metric === 'total_sent') {
+      updateData.total_sent = db.raw('COALESCE(total_sent, 0) + ?', [data.increment]);
+    } else if (data.metric === 'total_delivered') {
+      updateData.total_delivered = db.raw('COALESCE(total_delivered, 0) + ?', [data.increment]);
+    } else if (data.metric === 'total_failed') {
+      updateData.total_failed = db.raw('COALESCE(total_failed, 0) + ?', [data.increment]);
+    } else if (data.metric === 'total_bounced') {
+      updateData.total_bounced = db.raw('COALESCE(total_bounced, 0) + ?', [data.increment]);
+    } else if (data.metric === 'total_opened') {
+      updateData.total_opened = db.raw('COALESCE(total_opened, 0) + ?', [data.increment]);
+    } else if (data.metric === 'total_clicked') {
+      updateData.total_clicked = db.raw('COALESCE(total_clicked, 0) + ?', [data.increment]);
+    }
+
     if (data.deliveryTimeMs) {
       updateData.avg_delivery_time_ms = db.raw(
-        `(COALESCE(avg_delivery_time_ms * total_delivered, 0) + ?) / NULLIF(total_delivered + 1, 0)`,
+        '(COALESCE(avg_delivery_time_ms * total_delivered, 0) + ?) / NULLIF(total_delivered + 1, 0)',
         [data.deliveryTimeMs]
       );
     }
+
+    const insertData: any = {
+      date,
+      hour,
+      channel: data.channel,
+      type: data.type,
+      provider: data.provider,
+      created_at: now,
+      updated_at: now
+    };
+
+    // Set the initial value for the metric
+    insertData[data.metric] = data.increment;
     
+    if (data.deliveryTimeMs) {
+      insertData.avg_delivery_time_ms = data.deliveryTimeMs;
+    }
+
     await db('notification_analytics')
-      .insert({
-        date,
-        hour,
-        channel: data.channel,
-        type: data.type,
-        provider: data.provider,
-        [data.metric]: data.increment,
-        avg_delivery_time_ms: data.deliveryTimeMs,
-        created_at: now,
-        updated_at: now
-      })
+      .insert(insertData)
       .onConflict(['date', 'hour', 'channel', 'type', 'provider'])
       .merge(updateData);
   }
-  
+
   private async updateMetricForNotification(
     notificationId: string,
     metric: string
@@ -311,9 +347,9 @@ export class AnalyticsService {
     const notification = await db('notification_history')
       .where('id', notificationId)
       .first();
-    
+
     if (!notification) return;
-    
+
     await this.updateHourlyMetrics({
       channel: notification.channel,
       type: notification.type,
@@ -322,14 +358,14 @@ export class AnalyticsService {
       increment: 1
     });
   }
-  
+
   // Generate tracking pixel
   generateTrackingPixel(notificationId: string, userId: string): string {
     const trackingId = crypto.randomBytes(16).toString('hex');
     const baseUrl = process.env.API_URL || 'https://api.tickettoken.com';
     return `${baseUrl}/track/open/${trackingId}?n=${notificationId}&u=${userId}`;
   }
-  
+
   // Generate tracked link
   generateTrackedLink(
     notificationId: string,

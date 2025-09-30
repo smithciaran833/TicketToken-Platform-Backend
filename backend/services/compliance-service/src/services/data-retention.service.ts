@@ -29,7 +29,7 @@ export class DataRetentionService {
        WHERE customer_id = $1`,
       [customerId]
     );
-    
+
     // Clear preferences (different columns)
     await db.query(
       `UPDATE customer_preferences SET
@@ -39,7 +39,7 @@ export class DataRetentionService {
        WHERE customer_id = $1`,
       [customerId]
     );
-    
+
     // Clear analytics
     await db.query(
       `DELETE FROM customer_analytics WHERE customer_id = $1`,
@@ -48,9 +48,24 @@ export class DataRetentionService {
   }
 
   private async deleteOldRecords(table: string, days: number): Promise<void> {
-    await db.query(
-      `DELETE FROM ${table} WHERE created_at < NOW() - INTERVAL '${days} days'`
-    );
+    // SECURITY FIX: Whitelist table names and use parameterized queries
+    const allowedTables = Object.keys(this.retentionPolicies);
+    
+    if (!allowedTables.includes(table)) {
+      throw new Error(`Invalid table name: ${table}`);
+    }
+
+    // Validate days parameter
+    const daysNum = Number.parseInt(String(days), 10);
+    if (!Number.isFinite(daysNum) || daysNum < 0 || daysNum > 10000) {
+      throw new Error('Invalid days parameter: must be 0-10000');
+    }
+
+    // Since we can't parameterize table names in PostgreSQL, we use a whitelist approach
+    // The table name is now guaranteed to be from our predefined list
+    // We use parameterized query for the days value
+    const query = `DELETE FROM ${table} WHERE created_at < NOW() - make_interval(days => $1)`;
+    await db.query(query, [daysNum]);
   }
 }
 

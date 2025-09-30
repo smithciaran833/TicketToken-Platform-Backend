@@ -7,7 +7,7 @@ export class QuickBooksProvider implements IntegrationProvider {
   private accessToken: string = '';
   private realmId: string = '';
   private baseUrl: string;
-  
+
   constructor() {
     this.baseUrl = process.env.QUICKBOOKS_SANDBOX === 'true'
       ? 'https://sandbox-quickbooks.api.intuit.com/v3'
@@ -68,7 +68,7 @@ export class QuickBooksProvider implements IntegrationProvider {
             }
           }
         );
-        
+
         syncedCount++;
       } catch (error: any) {
         failedCount++;
@@ -76,9 +76,9 @@ export class QuickBooksProvider implements IntegrationProvider {
           productId: product.id,
           error: error.message
         });
-        logger.error('Failed to sync product to QuickBooks', { 
-          productId: product.id, 
-          error 
+        logger.error('Failed to sync product to QuickBooks', {
+          productId: product.id,
+          error
         });
       }
     }
@@ -127,7 +127,7 @@ export class QuickBooksProvider implements IntegrationProvider {
             }
           }
         );
-        
+
         syncedCount++;
       } catch (error) {
         failedCount++;
@@ -178,7 +178,7 @@ export class QuickBooksProvider implements IntegrationProvider {
             }
           }
         );
-        
+
         syncedCount++;
       } catch (error) {
         failedCount++;
@@ -196,11 +196,27 @@ export class QuickBooksProvider implements IntegrationProvider {
 
   async fetchTransactions(startDate: Date, endDate: Date): Promise<any[]> {
     try {
-      const query = `SELECT * FROM Invoice WHERE TxnDate >= '${startDate.toISOString().split('T')[0]}' AND TxnDate <= '${endDate.toISOString().split('T')[0]}'`;
+      // SECURITY FIX: Use QuickBooks API parameters instead of building SQL-like query
+      if (!(startDate instanceof Date) || !(endDate instanceof Date)) {
+        throw new Error('Invalid date parameters');
+      }
       
+      const startDateStr = startDate.toISOString().split('T')[0];
+      const endDateStr = endDate.toISOString().split('T')[0];
+      
+      const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+      if (!dateRegex.test(startDateStr) || !dateRegex.test(endDateStr)) {
+        throw new Error('Invalid date format');
+      }
+      
+      // Use QuickBooks filter parameters directly - no string concatenation
       const response = await axios.get(
-        `${this.baseUrl}/company/${this.realmId}/query?query=${encodeURIComponent(query)}`,
+        `${this.baseUrl}/company/${this.realmId}/invoice`,
         {
+          params: {
+            mindate: startDateStr,
+            maxdate: endDateStr
+          },
           headers: {
             'Authorization': `Bearer ${this.accessToken}`,
             'Accept': 'application/json'
@@ -219,7 +235,7 @@ export class QuickBooksProvider implements IntegrationProvider {
     const clientId = process.env.QUICKBOOKS_CLIENT_ID;
     const redirectUri = `${process.env.API_URL}/api/v1/integrations/oauth/callback/quickbooks`;
     const scope = 'com.intuit.quickbooks.accounting';
-    
+
     return `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}`;
   }
 
@@ -261,24 +277,22 @@ export class QuickBooksProvider implements IntegrationProvider {
   }
 
   validateWebhookSignature(payload: string, signature: string): boolean {
-    // QuickBooks webhook validation
     const crypto = require('crypto');
     const webhookToken = process.env.QUICKBOOKS_WEBHOOK_TOKEN || '';
-    
+
     const hash = crypto
       .createHmac('sha256', webhookToken)
       .update(payload)
       .digest('base64');
-    
+
     return hash === signature;
   }
 
   async handleWebhook(event: any): Promise<void> {
-    logger.info('Handling QuickBooks webhook', { 
-      eventType: event.eventNotifications?.[0]?.eventType 
+    logger.info('Handling QuickBooks webhook', {
+      eventType: event.eventNotifications?.[0]?.eventType
     });
-    
-    // QuickBooks webhook handling
+
     for (const notification of event.eventNotifications || []) {
       switch (notification.eventType) {
         case 'CREATE':

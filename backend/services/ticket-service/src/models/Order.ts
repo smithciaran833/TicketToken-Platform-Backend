@@ -17,6 +17,18 @@ export interface IOrder {
 export class OrderModel {
   constructor(private pool: Pool) {}
 
+  // SECURITY: Whitelist of allowed update fields
+  private readonly UPDATABLE_FIELDS = [
+    'user_id',
+    'event_id',
+    'status',
+    'total_amount',
+    'currency',
+    'tickets',
+    'payment_id',
+    'metadata'
+  ];
+
   async create(data: IOrder): Promise<IOrder> {
     const query = `
       INSERT INTO orders (user_id, event_id, status, total_amount, currency, tickets, payment_id, metadata)
@@ -45,9 +57,24 @@ export class OrderModel {
   }
 
   async update(id: string, data: Partial<IOrder>): Promise<IOrder | null> {
-    const fields = Object.keys(data).map((key, idx) => `${key} = $${idx + 2}`).join(', ');
+    // SECURITY FIX: Validate fields against whitelist
+    const validFields: string[] = [];
+    const validValues: any[] = [];
+    
+    Object.keys(data).forEach(key => {
+      if (this.UPDATABLE_FIELDS.includes(key)) {
+        validFields.push(key);
+        validValues.push((data as any)[key]);
+      }
+    });
+
+    if (validFields.length === 0) {
+      throw new Error('No valid fields to update');
+    }
+
+    const fields = validFields.map((key, idx) => `${key} = $${idx + 2}`).join(', ');
     const query = `UPDATE orders SET ${fields}, updated_at = NOW() WHERE id = $1 RETURNING *`;
-    const values = [id, ...Object.values(data)];
+    const values = [id, ...validValues];
     const result = await this.pool.query(query, values);
     return result.rows[0] || null;
   }

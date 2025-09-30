@@ -85,42 +85,37 @@ app.put('/api/v1/events/:id',
         return;
       }
 
-      // Build update query dynamically
+      // SECURITY FIX: Whitelist allowed update fields
+      const allowedFields = [
+        'name',
+        'description',
+        'venue_id',
+        'start_date',
+        'starts_at',
+        'end_date',
+        'ends_at',
+        'status',
+        'total_tickets',
+        'available_tickets'
+      ];
+
+      // Build update query dynamically but safely
       const updateFields = [];
       const values = [];
       let paramCount = 1;
 
-      if (updates.name) {
-        updateFields.push(`name = $${paramCount++}`);
-        values.push(updates.name);
-      }
-      if (updates.description !== undefined) {
-        updateFields.push(`description = $${paramCount++}`);
-        values.push(updates.description);
-      }
-      if (updates.venue_id) {
-        updateFields.push(`venue_id = $${paramCount++}`);
-        values.push(updates.venue_id);
-      }
-      if (updates.start_date || updates.starts_at) {
-        updateFields.push(`start_date = $${paramCount++}`);
-        values.push(updates.start_date || updates.starts_at);
-      }
-      if (updates.end_date || updates.ends_at) {
-        updateFields.push(`end_date = $${paramCount++}`);
-        values.push(updates.end_date || updates.ends_at);
-      }
-      if (updates.status) {
-        updateFields.push(`status = $${paramCount++}`);
-        values.push(updates.status);
-      }
-      if (updates.total_tickets !== undefined) {
-        updateFields.push(`total_tickets = $${paramCount++}`);
-        values.push(updates.total_tickets);
-      }
-      if (updates.available_tickets !== undefined) {
-        updateFields.push(`available_tickets = $${paramCount++}`);
-        values.push(updates.available_tickets);
+      // Only process whitelisted fields
+      for (const field of allowedFields) {
+        if (field === 'start_date' && (updates.start_date || updates.starts_at)) {
+          updateFields.push(`start_date = $${paramCount++}`);
+          values.push(updates.start_date || updates.starts_at);
+        } else if (field === 'end_date' && (updates.end_date || updates.ends_at)) {
+          updateFields.push(`end_date = $${paramCount++}`);
+          values.push(updates.end_date || updates.ends_at);
+        } else if (updates[field] !== undefined && field !== 'starts_at' && field !== 'ends_at') {
+          updateFields.push(`${field} = $${paramCount++}`);
+          values.push(updates[field]);
+        }
       }
 
       if (updateFields.length === 0) {
@@ -132,6 +127,10 @@ app.put('/api/v1/events/:id',
       values.push(new Date());
       values.push(id);
 
+      // SECURITY NOTE: This is safe because:
+      // 1. Field names are from our whitelist only
+      // 2. Values are parameterized ($1, $2, etc.)
+      // 3. No user input is directly interpolated
       const query = `UPDATE events SET ${updateFields.join(', ')} WHERE id = $${paramCount} RETURNING *`;
       const result = await db.query(query, values);
 

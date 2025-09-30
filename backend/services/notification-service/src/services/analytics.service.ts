@@ -67,7 +67,7 @@ export class NotificationAnalyticsService {
     for (const row of statusCounts) {
       const count = parseInt(row.count as string);
       total += count;
-      
+
       switch (row.status) {
         case 'sent':
           metrics.sent = count;
@@ -124,7 +124,7 @@ export class NotificationAnalyticsService {
     const total = await query.clone().count('* as count').first();
     const opened = await query.clone().whereNotNull('opened_at').count('* as count').first();
     const clicked = await query.clone().whereNotNull('clicked_at').count('* as count').first();
-    
+
     const totalCount = parseInt(total?.count as string || '0');
     const openedCount = parseInt(opened?.count as string || '0');
     const clickedCount = parseInt(clicked?.count as string || '0');
@@ -159,7 +159,7 @@ export class NotificationAnalyticsService {
     }
 
     const costs = await query.select('channel', 'venue_id').sum('cost as total').groupBy('channel', 'venue_id');
-    
+
     const metrics: CostMetrics = {
       totalCost: 0,
       emailCost: 0,
@@ -171,15 +171,15 @@ export class NotificationAnalyticsService {
     for (const row of costs) {
       const cost = parseFloat(row.total as string || '0');
       metrics.totalCost += cost;
-      
+
       if (row.channel === 'email') {
         metrics.emailCost += cost;
       } else if (row.channel === 'sms') {
         metrics.smsCost += cost;
       }
-      
+
       if (row.venue_id) {
-        metrics.costByVenue[row.venue_id] = 
+        metrics.costByVenue[row.venue_id] =
           (metrics.costByVenue[row.venue_id] || 0) + cost;
       }
     }
@@ -204,21 +204,21 @@ export class NotificationAnalyticsService {
     // Calculate a health score based on various metrics
     const delivery = await this.getDeliveryMetrics(venueId);
     const engagement = await this.getEngagementMetrics(venueId);
-    
+
     let score = 100;
-    
+
     // Deduct points for poor metrics
     if (delivery.bounceRate > 5) score -= 10;
     if (delivery.bounceRate > 10) score -= 20;
     if (delivery.failureRate > 5) score -= 10;
     if (engagement.openRate < 20) score -= 10;
     if (engagement.clickRate < 2) score -= 10;
-    
+
     // Bonus points for good metrics
     if (delivery.deliveryRate > 95) score += 5;
     if (engagement.openRate > 30) score += 5;
     if (engagement.clickRate > 5) score += 5;
-    
+
     return Math.max(0, Math.min(100, score));
   }
 
@@ -229,12 +229,26 @@ export class NotificationAnalyticsService {
     startDate: Date,
     endDate: Date
   ) {
-    const truncateFunc = {
+    // SECURITY FIX: Use whitelist approach for date truncation
+    const periodFunctions: Record<string, string> = {
       hour: "date_trunc('hour', created_at)",
       day: "date_trunc('day', created_at)",
       week: "date_trunc('week', created_at)",
       month: "date_trunc('month', created_at)",
-    }[period];
+    };
+
+    // Validate period parameter is in whitelist
+    if (!periodFunctions[period]) {
+      throw new Error(`Invalid period: ${period}. Must be one of: hour, day, week, month`);
+    }
+
+    // Validate metric parameter is in allowed list
+    const allowedMetrics = ['sent', 'delivered', 'opened', 'clicked'];
+    if (!allowedMetrics.includes(metric)) {
+      throw new Error(`Invalid metric: ${metric}. Must be one of: ${allowedMetrics.join(', ')}`);
+    }
+
+    const truncateFunc = periodFunctions[period];
 
     let query = db('notification_tracking')
       .select(db.raw(`${truncateFunc} as period`))
@@ -260,7 +274,7 @@ export class NotificationAnalyticsService {
     }
 
     const results = await query;
-    
+
     return results.map(row => ({
       period: row.period,
       value: parseInt(row.value as string),
@@ -285,17 +299,17 @@ export class NotificationAnalyticsService {
     }
 
     const results = await query;
-    
+
     return results.map(row => ({
       template: row.template,
       total: parseInt(row.total as string),
       opens: parseInt(row.opens as string || '0'),
       clicks: parseInt(row.clicks as string || '0'),
-      openRate: parseInt(row.total as string) > 0 
-        ? (parseInt(row.opens as string || '0') / parseInt(row.total as string)) * 100 
+      openRate: parseInt(row.total as string) > 0
+        ? (parseInt(row.opens as string || '0') / parseInt(row.total as string)) * 100
         : 0,
-      clickRate: parseInt(row.total as string) > 0 
-        ? (parseInt(row.clicks as string || '0') / parseInt(row.total as string)) * 100 
+      clickRate: parseInt(row.total as string) > 0
+        ? (parseInt(row.clicks as string || '0') / parseInt(row.total as string)) * 100
         : 0,
     }));
   }

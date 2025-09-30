@@ -20,10 +20,16 @@ export class MetricsAggregator {
 
   async aggregateSalesMetrics(options: AggregationOptions) {
     const { venueId, startDate, endDate, granularity } = options;
-    
-    // Define date truncation based on granularity
+
+    // SECURITY FIX: Validate and whitelist granularity
+    const validGranularities = ['hour', 'day', 'week', 'month'];
+    if (!validGranularities.includes(granularity)) {
+      throw new Error(`Invalid granularity: ${granularity}. Must be one of: ${validGranularities.join(', ')}`);
+    }
+
+    // Define date truncation based on granularity - now safe because granularity is validated
     const dateTrunc = this.getDateTruncExpression(granularity);
-    
+
     const results = await this.mainDb('tickets')
       .select(
         this.mainDb.raw(`${dateTrunc} as period`),
@@ -44,7 +50,7 @@ export class MetricsAggregator {
 
   async aggregateCustomerMetrics(options: AggregationOptions) {
     const { venueId, startDate, endDate } = options;
-    
+
     // Get customer behavior metrics
     const customerStats: CustomerStat[] = await this.mainDb('tickets')
       .select(
@@ -72,7 +78,7 @@ export class MetricsAggregator {
     customerStats.forEach((customer: CustomerStat) => {
       const daysSinceFirst = (now.getTime() - new Date(customer.first_purchase).getTime()) / (1000 * 60 * 60 * 24);
       const daysSinceLast = (now.getTime() - new Date(customer.last_purchase).getTime()) / (1000 * 60 * 60 * 24);
-      
+
       if (daysSinceFirst < 30) segments.newCustomers++;
       if (customer.purchase_count > 1) segments.returningCustomers++;
       if (parseFloat(customer.total_spent) > 500) segments.vipCustomers++;
@@ -120,22 +126,22 @@ export class MetricsAggregator {
   }
 
   private getDateTruncExpression(granularity: string): string {
-    switch (granularity) {
-      case 'hour':
-        return "DATE_TRUNC('hour', tickets.created_at)";
-      case 'week':
-        return "DATE_TRUNC('week', tickets.created_at)";
-      case 'month':
-        return "DATE_TRUNC('month', tickets.created_at)";
-      default:
-        return "DATE_TRUNC('day', tickets.created_at)";
-    }
+    // SECURITY: This is now safe because granularity is validated in aggregateSalesMetrics
+    // But we'll still use a whitelist approach for defense in depth
+    const expressions: Record<string, string> = {
+      'hour': "DATE_TRUNC('hour', tickets.created_at)",
+      'week': "DATE_TRUNC('week', tickets.created_at)",
+      'month': "DATE_TRUNC('month', tickets.created_at)",
+      'day': "DATE_TRUNC('day', tickets.created_at)"
+    };
+    
+    return expressions[granularity] || expressions['day'];
   }
 
   private enhanceWithCalculatedMetrics(results: any[]) {
     return results.map((row: any, index: number) => {
       const previousRow = index > 0 ? results[index - 1] : null;
-      
+
       return {
         period: row.period,
         ticketsSold: parseInt(row.tickets_sold),

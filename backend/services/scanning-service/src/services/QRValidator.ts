@@ -81,6 +81,12 @@ class QRValidator {
     const pool = getPool();
     const redis = getRedis();
 
+    // Input validation - SECURITY FIX
+    const minutes = Number.parseInt(String(windowMinutes), 10);
+    if (!Number.isFinite(minutes) || minutes < 0 || minutes > 1440) { // Max 24 hours
+      throw new Error('Invalid window: must be 0-1440 minutes');
+    }
+
     // Quick check in Redis first
     const redisKey = `scan:duplicate:${ticketId}`;
     const cached = await redis.get(redisKey);
@@ -88,20 +94,20 @@ class QRValidator {
       return { isDuplicate: true, lastScan: cached };
     }
 
-    // Check database for recent scans
+    // Check database for recent scans - FIXED SQL INJECTION
     const result = await pool.query(`
       SELECT scanned_at
       FROM scans
       WHERE ticket_id = $1
         AND result = 'ALLOW'
-        AND scanned_at > NOW() - INTERVAL '${windowMinutes} minutes'
+        AND scanned_at > NOW() - make_interval(mins => $2)
       ORDER BY scanned_at DESC
       LIMIT 1
-    `, [ticketId]);
+    `, [ticketId, minutes]);
 
     if (result.rows.length > 0) {
       // Cache in Redis for quick lookup
-      await redis.setex(redisKey, windowMinutes * 60, result.rows[0].scanned_at);
+      await redis.setex(redisKey, minutes * 60, result.rows[0].scanned_at);
       return { isDuplicate: true, lastScan: result.rows[0].scanned_at };
     }
 
@@ -332,7 +338,7 @@ class QRValidator {
 
         if (!reentryCheck.allowed) {
           const reason = reentryCheck.reason!;
-          
+
           if (reason === 'NO_REENTRY' || reason === 'REENTRY_DISABLED') {
             await this.logScan(client, ticketId, device.id, 'DENY', 'DUPLICATE');
             await client.query('COMMIT');
@@ -445,6 +451,25 @@ class QRValidator {
   async getScanStats(eventId: string, timeRange: string = '1 hour'): Promise<any> {
     const pool = getPool();
 
+    // SECURITY FIX: Validate and whitelist time range values
+    const validRanges: Record<string, number> = {
+      '1 hour': 1,
+      '6 hours': 6,
+      '12 hours': 12,
+      '24 hours': 24,
+      '1 day': 24,
+      '7 days': 168,
+      '1 week': 168,
+      '30 days': 720,
+      '1 month': 720
+    };
+
+    const hours = validRanges[timeRange];
+    if (!hours) {
+      throw new Error('Invalid time range. Valid options: 1 hour, 6 hours, 12 hours, 24 hours, 7 days, 30 days');
+    }
+
+    // FIXED SQL INJECTION using parameterized query
     const result = await pool.query(`
       SELECT
         COUNT(*) FILTER (WHERE result = 'ALLOW') as allowed,
@@ -456,8 +481,8 @@ class QRValidator {
       FROM scans s
       JOIN tickets t ON s.ticket_id = t.id
       WHERE t.event_id = $1
-        AND s.scanned_at > NOW() - INTERVAL '${timeRange}'
-    `, [eventId]);
+        AND s.scanned_at > NOW() - make_interval(hours => $2)
+    `, [eventId, hours]);
 
     return result.rows[0];
   }

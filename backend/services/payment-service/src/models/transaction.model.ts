@@ -88,6 +88,9 @@ export class TransactionModel {
   }
 
   static async update(id: string, data: Partial<Transaction>): Promise<Transaction> {
+    // SECURITY NOTE: Building parameterized query safely
+    // The paramIndex is only used to create placeholder numbers ($1, $2, etc.)
+    // The actual values are passed separately in the values array
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
@@ -129,6 +132,8 @@ export class TransactionModel {
     updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(id);
 
+    // SECURITY: This query is parameterized - the values are in the values array
+    // The ${updates.join(', ')} only contains column names and parameter placeholders
     const text = `
       UPDATE transactions
       SET ${updates.join(', ')}

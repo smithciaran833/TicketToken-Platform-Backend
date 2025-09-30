@@ -15,6 +15,17 @@ export interface IPurchase {
 export class PurchaseModel {
   constructor(private pool: Pool) {}
 
+  // SECURITY: Whitelist of allowed update fields
+  private readonly UPDATABLE_FIELDS = [
+    'order_id',
+    'user_id',
+    'ticket_ids',
+    'amount',
+    'payment_method',
+    'status',
+    'completed_at'
+  ];
+
   async create(data: IPurchase): Promise<IPurchase> {
     const query = `
       INSERT INTO purchases (order_id, user_id, ticket_ids, amount, payment_method, status)
@@ -42,9 +53,24 @@ export class PurchaseModel {
   }
 
   async update(id: string, data: Partial<IPurchase>): Promise<IPurchase | null> {
-    const fields = Object.keys(data).map((key, idx) => `${key} = $${idx + 2}`).join(', ');
+    // SECURITY FIX: Validate fields against whitelist
+    const validFields: string[] = [];
+    const validValues: any[] = [];
+    
+    Object.keys(data).forEach(key => {
+      if (this.UPDATABLE_FIELDS.includes(key)) {
+        validFields.push(key);
+        validValues.push((data as any)[key]);
+      }
+    });
+
+    if (validFields.length === 0) {
+      throw new Error('No valid fields to update');
+    }
+
+    const fields = validFields.map((key, idx) => `${key} = $${idx + 2}`).join(', ');
     const query = `UPDATE purchases SET ${fields} WHERE id = $1 RETURNING *`;
-    const values = [id, ...Object.values(data)];
+    const values = [id, ...validValues];
     const result = await this.pool.query(query, values);
     return result.rows[0] || null;
   }

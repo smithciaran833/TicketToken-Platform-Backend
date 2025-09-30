@@ -45,11 +45,24 @@ export async function connectDatabases() {
       },
     });
 
-    // Set tenant context for each query
+    // SECURITY FIX: Set tenant context using parameterized query
     db.on('query', (query: any) => {
       if ((global as any).currentTenant) {
-        query.on('query', () => {
-          db.raw(`SET app.current_tenant = '${(global as any).currentTenant}'`);
+        query.on('query', async () => {
+          // Use parameterized query to prevent SQL injection
+          // PostgreSQL doesn't allow parameterization of SET statements directly,
+          // but we can validate the tenant ID format
+          const tenantId = (global as any).currentTenant;
+          
+          // Validate tenant ID (should be UUID or similar safe format)
+          if (!isValidTenantId(tenantId)) {
+            logger.error(`Invalid tenant ID format: ${tenantId}`);
+            throw new Error('Invalid tenant ID');
+          }
+          
+          // Since SET doesn't support parameters, we validate and escape
+          const escapedTenantId = escapeTenantId(tenantId);
+          await db.raw(`SET app.current_tenant = ?`, [escapedTenantId]);
         });
       }
     });
@@ -57,12 +70,29 @@ export async function connectDatabases() {
     // Test connections
     await db.raw('SELECT 1');
     await analyticsDb.raw('SELECT 1');
-    
+
     logger.info('Database connections established');
   } catch (error) {
     logger.error('Failed to connect to databases:', error);
     throw error;
   }
+}
+
+// Validate tenant ID format (adjust regex based on your tenant ID format)
+function isValidTenantId(tenantId: string): boolean {
+  // Example: UUID format validation
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  // Or alphanumeric with underscores/hyphens
+  const alphanumericRegex = /^[a-zA-Z0-9_-]+$/;
+  
+  return uuidRegex.test(tenantId) || alphanumericRegex.test(tenantId);
+}
+
+// Escape tenant ID for safe SQL usage
+function escapeTenantId(tenantId: string): string {
+  // Remove any potentially dangerous characters
+  // This is a backup in case validation fails
+  return tenantId.replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
 export function getDb() {
