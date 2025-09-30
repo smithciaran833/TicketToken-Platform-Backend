@@ -32,31 +32,53 @@ export class PaymentController {
     console.log("[DEBUG] processPayment called");
     try {
       const paymentRequest: PaymentRequest = req.body;
-      
+
       if (!req.user) {
         return res.status(401).json({ error: 'Authentication required' });
       }
-      
+
       const userId = req.user.id;
       const sessionId = req.sessionId || '';
 
-      // 1. Check waiting room status
-    console.log('[DEBUG] Checking waiting room...');
-      if (req.headers['x-access-token']) {
-        const tokenValid = await this.waitingRoom.validateAccessToken(
-          req.headers['x-access-token'] as string
-        );
-
+      // 1. Check waiting room status - PHASE 2.2 FIX: Make token required for high-demand events
+      console.log('[DEBUG] Checking waiting room...');
+      
+      // Check if this event has an active waiting room
+      const queueStats = await this.waitingRoom.getQueueStats(paymentRequest.eventId);
+      const hasActiveWaitingRoom = queueStats.totalInQueue > 0 || queueStats.activeUsers > 0;
+      
+      if (hasActiveWaitingRoom) {
+        // SECURITY: Phase 2.2 - Require valid queue token for high-demand events
+        const accessToken = req.headers['x-access-token'] as string;
+        
+        if (!accessToken) {
+          return res.status(403).json({
+            error: 'This is a high-demand event. Queue token required.',
+            code: 'QUEUE_TOKEN_REQUIRED',
+            waitingRoomActive: true
+          });
+        }
+        
+        const tokenValid = await this.waitingRoom.validateAccessToken(accessToken);
+        
         if (!tokenValid.valid) {
           return res.status(403).json({
-            error: 'Invalid or expired access token',
+            error: 'Invalid or expired queue token',
             code: 'INVALID_ACCESS_TOKEN'
+          });
+        }
+        
+        // Verify token is for the correct event
+        if (tokenValid.eventId !== paymentRequest.eventId) {
+          return res.status(403).json({
+            error: 'Queue token is for a different event',
+            code: 'TOKEN_EVENT_MISMATCH'
           });
         }
       }
 
       // 2. Bot detection
-    console.log('[DEBUG] Starting bot detection...');
+      console.log('[DEBUG] Starting bot detection...');
       const botCheck = await this.botDetector.detectBot({
         userId,
         sessionId,
@@ -74,7 +96,7 @@ export class PaymentController {
       }
 
       // 3. Fraud checks
-    console.log('[DEBUG] Starting fraud checks...');
+      console.log('[DEBUG] Starting fraud checks...');
       const fraudCheck = await this.scalperDetector.detectScalper(
         userId,
         {
@@ -93,7 +115,7 @@ export class PaymentController {
       }
 
       // 4. Velocity checks
-    console.log('[DEBUG] Starting velocity checks...');
+      console.log('[DEBUG] Starting velocity checks...');
       const velocityCheck = await this.velocityChecker.checkVelocity(
         userId,
         paymentRequest.eventId,
@@ -110,7 +132,7 @@ export class PaymentController {
       }
 
       // 5. Calculate fees
-    console.log('[DEBUG] Calculating fees...');
+      console.log('[DEBUG] Calculating fees...');
       const totalAmount = paymentRequest.tickets.reduce(
         (sum, t) => sum + (t.price * t.quantity),
         0
@@ -127,7 +149,7 @@ export class PaymentController {
       );
 
       // 6. Process payment
-    console.log('[DEBUG] Processing payment...');
+      console.log('[DEBUG] Processing payment...');
       const transaction = await this.paymentProcessor.processPayment({
         ...paymentRequest,
         userId,
