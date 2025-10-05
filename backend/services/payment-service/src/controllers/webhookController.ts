@@ -1,4 +1,4 @@
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from "@tickettoken/shared";
 import { serviceCache } from '../services/cache-integration';
 import { Request, Response } from 'express';
 import { DatabaseService } from '../services/databaseService';

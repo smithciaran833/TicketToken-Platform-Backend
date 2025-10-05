@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import knex from 'knex';
-import { percentOfCents, addCents, formatCents } from '@tickettoken/shared/utils/money';
+import { percentOfCents, addCents, formatCents } from '@tickettoken/shared';
 
 const db = knex({
   client: 'pg',

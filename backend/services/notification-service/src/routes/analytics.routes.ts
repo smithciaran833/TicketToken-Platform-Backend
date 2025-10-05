@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { analyticsService } from '../services/analytics';
+import { analyticsService } from '../services/notification-metrics.service';
 import { logger } from '../config/logger';
 
 const router = Router();

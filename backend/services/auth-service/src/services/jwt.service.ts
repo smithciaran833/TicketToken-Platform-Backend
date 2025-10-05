@@ -1,5 +1,7 @@
 import jwt, { SignOptions } from 'jsonwebtoken';
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { env } from '../config/env';
 import { redis } from '../config/redis';
 import { TokenError } from '../errors';
@@ -28,14 +30,28 @@ interface RefreshTokenData {
   userAgent: string;
 }
 
+// Load RSA keys on module initialization
+const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH || 
+  path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-private.pem');
+const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || 
+  path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
+
+let privateKey: string;
+let publicKey: string;
+
+try {
+  privateKey = fs.readFileSync(privateKeyPath, 'utf8');
+  publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+  console.log('✓ JWT RS256 keys loaded successfully');
+} catch (error) {
+  console.error('✗ Failed to load JWT keys:', error);
+  throw new Error('JWT keys not found. Run: openssl genrsa -out ~/tickettoken-secrets/jwt-private.pem 4096');
+}
+
 export class JWTService {
-  private readonly accessSecret: string;
-  private readonly refreshSecret: string;
   private readonly issuer: string;
 
   constructor() {
-    this.accessSecret = env.JWT_ACCESS_SECRET;
-    this.refreshSecret = env.JWT_REFRESH_SECRET;
     this.issuer = env.JWT_ISSUER;
   }
 
@@ -64,10 +80,11 @@ export class JWTService {
       expiresIn: env.JWT_ACCESS_EXPIRES_IN as any,
       issuer: this.issuer,
       audience: this.issuer,
-      algorithm: 'HS256',
+      algorithm: 'RS256',  // Changed from HS256
+      keyid: '1',          // Added for key rotation support
     };
 
-    const accessToken = jwt.sign(accessTokenPayload, this.accessSecret, accessTokenOptions);
+    const accessToken = jwt.sign(accessTokenPayload, privateKey, accessTokenOptions);
 
     // Refresh token - also includes tenant_id for consistency
     const refreshTokenId = crypto.randomUUID();
@@ -83,10 +100,11 @@ export class JWTService {
 
     const refreshTokenOptions: SignOptions = {
       expiresIn: env.JWT_REFRESH_EXPIRES_IN as any,
-      algorithm: 'HS256',
+      algorithm: 'RS256',  // Changed from HS256
+      keyid: '1',
     };
 
-    const refreshToken = jwt.sign(refreshTokenPayload, this.refreshSecret, refreshTokenOptions);
+    const refreshToken = jwt.sign(refreshTokenPayload, privateKey, refreshTokenOptions);
 
     // Store refresh token metadata with tenant_id
     const refreshData: RefreshTokenData = {
@@ -109,10 +127,10 @@ export class JWTService {
 
   async verifyAccessToken(token: string): Promise<TokenPayload> {
     try {
-      const decoded = jwt.verify(token, this.accessSecret, {
+      const decoded = jwt.verify(token, publicKey, {
         issuer: this.issuer,
         audience: this.issuer,
-        algorithms: ['HS256'],
+        algorithms: ['RS256'],  // Changed from HS256
       }) as TokenPayload;
 
       if (decoded.type !== 'access') {
@@ -136,8 +154,8 @@ export class JWTService {
   async refreshTokens(refreshToken: string, ipAddress: string, userAgent: string): Promise<{ accessToken: string; refreshToken: string }> {
     try {
       // Verify refresh token
-      const decoded = jwt.verify(refreshToken, this.refreshSecret, {
-        algorithms: ['HS256'],
+      const decoded = jwt.verify(refreshToken, publicKey, {
+        algorithms: ['RS256'],  // Changed from HS256
       }) as TokenPayload;
 
       if (decoded.type !== 'refresh') {
@@ -220,16 +238,21 @@ export class JWTService {
   }
 
   decode(token: string): any {
-    const jwt = require('jsonwebtoken');
     return jwt.decode(token);
   }
 
   async verifyRefreshToken(token: string): Promise<any> {
-    const jwt = require('jsonwebtoken');
     try {
-      return jwt.verify(token, this.refreshSecret);
+      return jwt.verify(token, publicKey, {
+        algorithms: ['RS256'],  // Changed from HS256
+      });
     } catch {
       throw new Error('Invalid refresh token');
     }
+  }
+
+  // Export public key for JWKS endpoint (future use)
+  getPublicKey(): string {
+    return publicKey;
   }
 }

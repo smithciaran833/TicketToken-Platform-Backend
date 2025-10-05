@@ -1,6 +1,8 @@
 import { QueueService as queueService } from '../services/queueService';
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from '@tickettoken/shared';
 import { v4 as uuidv4 } from 'uuid';
+import { withLock, LockKeys } from '@tickettoken/shared';
+import { LockTimeoutError, LockContentionError, LockSystemError } from '@tickettoken/shared';
 import { DatabaseService } from './databaseService';
 import { RedisService } from './redisService';
 import {
@@ -40,7 +42,7 @@ export class TicketService {
       data.description || null,
       data.price,
       data.quantity,
-      data.quantity, // available_quantity starts as total quantity
+      data.quantity,
       data.maxPerPurchase,
       data.saleStartDate,
       data.saleEndDate,
@@ -82,253 +84,288 @@ export class TicketService {
   }
 
   async createReservation(purchaseRequest: PurchaseRequest): Promise<TicketReservation> {
-    return await DatabaseService.transaction(async (client) => {
-      const reservationId = uuidv4();
-      const expiresAt = new Date(Date.now() + config.limits.reservationTimeout * 1000);
+    const firstTicketType = purchaseRequest.tickets[0];
+    const lockKey = LockKeys.inventory(purchaseRequest.eventId, firstTicketType.ticketTypeId);
 
-      // Check availability and lock ticket types
-      for (const ticketRequest of purchaseRequest.tickets) {
-        const lockQuery = `
-          SELECT * FROM ticket_types
-          WHERE id = $1 AND event_id = $2
-          FOR UPDATE
-        `;
+    try {
+      return await withLock(
+        lockKey,
+        10000,
+        async () => {
+          return await DatabaseService.transaction(async (client) => {
+            const reservationId = uuidv4();
+            const expiresAt = new Date(Date.now() + config.limits.reservationTimeout * 1000);
 
-        const result = await client.query(lockQuery, [
-          ticketRequest.ticketTypeId,
-          purchaseRequest.eventId
-        ]);
+            for (const ticketRequest of purchaseRequest.tickets) {
+              const lockQuery = `
+                SELECT * FROM ticket_types
+                WHERE id = $1 AND event_id = $2
+                FOR UPDATE
+              `;
 
-        if (result.rows.length === 0) {
-          throw new NotFoundError('Ticket type');
-        }
+              const result = await client.query(lockQuery, [
+                ticketRequest.ticketTypeId,
+                purchaseRequest.eventId
+              ]);
 
-        const ticketType = result.rows[0];
-        if (ticketType.available_quantity < ticketRequest.quantity) {
-          throw new ConflictError(`Not enough tickets available for ${ticketType.name}`);
-        }
+              if (result.rows.length === 0) {
+                throw new NotFoundError('Ticket type');
+              }
 
-        // Update available quantity
-        await client.query(
-          'UPDATE ticket_types SET available_quantity = available_quantity - $1 WHERE id = $2',
-          [ticketRequest.quantity, ticketRequest.ticketTypeId]
-        );
-      }
+              const ticketType = result.rows[0];
+              if (ticketType.available_quantity < ticketRequest.quantity) {
+                throw new ConflictError(`Not enough tickets available for ${ticketType.name}`);
+              }
 
-      // Create reservation
-      const totalQuantity = purchaseRequest.tickets.reduce((sum: number, t: any) => sum + t.quantity, 0);
-      const firstTicketType = purchaseRequest.tickets[0];
+              await client.query(
+                'UPDATE ticket_types SET available_quantity = available_quantity - $1 WHERE id = $2',
+                [ticketRequest.quantity, ticketRequest.ticketTypeId]
+              );
+            }
 
-      const reservationQuery = `
-        INSERT INTO reservations (
-          id, user_id, event_id, ticket_type_id, quantity, tickets, expires_at, status, type_name, created_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-        RETURNING *
-      `;
+            const totalQuantity = purchaseRequest.tickets.reduce((sum: number, t: any) => sum + t.quantity, 0);
 
-      // Get the first ticket type name for the trigger
-      const firstTypeQuery = 'SELECT name FROM ticket_types WHERE id = $1';
-      const firstTypeResult = await client.query(firstTypeQuery, [firstTicketType.ticketTypeId]);
-      const typeName = firstTypeResult.rows[0]?.name || 'General';
+            const reservationQuery = `
+              INSERT INTO reservations (
+                id, user_id, event_id, ticket_type_id, quantity, tickets, expires_at, status, type_name, created_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+              RETURNING *
+            `;
 
-      const reservationResult = await client.query(reservationQuery, [
-        reservationId,
-        purchaseRequest.userId,
-        purchaseRequest.eventId,
-        firstTicketType.ticketTypeId,
-        totalQuantity,
-        JSON.stringify(purchaseRequest.tickets),
-        expiresAt,
-        'ACTIVE',
-        typeName,
-        new Date()
-      ]);
+            const firstTypeQuery = 'SELECT name FROM ticket_types WHERE id = $1';
+            const firstTypeResult = await client.query(firstTypeQuery, [firstTicketType.ticketTypeId]);
+            const typeName = firstTypeResult.rows[0]?.name || 'General';
 
-      // Also insert into ticket_reservations for compatibility
-      await client.query(
-        `INSERT INTO ticket_reservations (id, ticket_type_id, user_id, expires_at, created_at, status, tickets)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (id) DO NOTHING`,
-        [
-          reservationId,
-          firstTicketType.ticketTypeId,
-          purchaseRequest.userId,
-          expiresAt,
-          new Date(),
-          'ACTIVE',
-          JSON.stringify(purchaseRequest.tickets)
-        ]
-      ).catch(() => {}); // Ignore if table doesn't exist
+            const reservationResult = await client.query(reservationQuery, [
+              reservationId,
+              purchaseRequest.userId,
+              purchaseRequest.eventId,
+              firstTicketType.ticketTypeId,
+              totalQuantity,
+              JSON.stringify(purchaseRequest.tickets),
+              expiresAt,
+              'ACTIVE',
+              typeName,
+              new Date()
+            ]);
 
-      // Store in Redis
-      await RedisService.set(
-        `reservation:${reservationId}`,
-        JSON.stringify(reservationResult.rows[0]),
-        config.redis.ttl.reservation
+            // Reservation already inserted above - no duplicate table needed
+
+            await RedisService.set(
+              `reservation:${reservationId}`,
+              JSON.stringify(reservationResult.rows[0]),
+              config.redis.ttl.reservation
+            );
+
+            return reservationResult.rows[0];
+          });
+        },
+        { service: 'ticket-service', lockType: 'inventory' }
       );
-
-      return reservationResult.rows[0];
-    });
+    } catch (error: any) {
+      if (error instanceof LockTimeoutError) {
+        this.log.error('Lock timeout - createReservation', {
+          eventId: purchaseRequest.eventId,
+          userId: purchaseRequest.userId,
+          timeoutMs: error.timeoutMs
+        });
+        throw new ConflictError('Unable to reserve tickets due to high demand. Please try again.');
+      }
+      if (error instanceof LockContentionError) {
+        this.log.error('Lock contention - createReservation', {
+          eventId: purchaseRequest.eventId,
+          userId: purchaseRequest.userId
+        });
+        throw new ConflictError('These tickets are currently being reserved. Please try again.');
+      }
+      if (error instanceof LockSystemError) {
+        this.log.error('Lock system error - createReservation', {
+          originalError: error.originalError?.message
+        });
+        throw new ConflictError('System temporarily unavailable. Please try again.');
+      }
+      throw error;
+    }
   }
 
   async confirmPurchase(reservationId: string, paymentId: string): Promise<Ticket[]> {
-    return await DatabaseService.transaction(async (client) => {
-      // Get reservation - check both tables for compatibility
-      let reservation = null;
-      let eventId = null;
+    const lockKey = LockKeys.reservation(reservationId);
 
-      // First try ticket_reservations table
-      const ticketResQuery = 'SELECT * FROM ticket_reservations WHERE id = $1 FOR UPDATE';
-      const ticketResResult = await client.query(ticketResQuery, [reservationId]);
+    try {
+      return await withLock(
+        lockKey,
+        5000,
+        async () => {
+          return await DatabaseService.transaction(async (client) => {
+            let reservation = null;
+            let eventId = null;
 
-      if (ticketResResult.rows.length > 0) {
-        reservation = ticketResResult.rows[0];
-        // ticket_reservations doesn't have event_id, so get it from ticket_types
-        const ticketTypeQuery = 'SELECT event_id FROM ticket_types WHERE id = $1';
-        const ticketTypeResult = await client.query(ticketTypeQuery, [reservation.ticket_type_id]);
-        if (ticketTypeResult.rows.length > 0) {
-          eventId = ticketTypeResult.rows[0].event_id;
-        }
-      } else {
-        // Fall back to reservations table
-        const resQuery = 'SELECT * FROM reservations WHERE id = $1 FOR UPDATE';
-        const resResult = await client.query(resQuery, [reservationId]);
-        if (resResult.rows.length > 0) {
-          reservation = resResult.rows[0];
-          eventId = reservation.event_id;  // reservations table has event_id
-        }
-      }
+            const ticketResQuery = 'SELECT * FROM ticket_reservations WHERE id = $1 FOR UPDATE';
+            const ticketResResult = await client.query(ticketResQuery, [reservationId]);
 
-      if (!reservation) {
-        throw new NotFoundError('Reservation');
-      }
+            if (ticketResResult.rows.length > 0) {
+              reservation = ticketResResult.rows[0];
+              const ticketTypeQuery = 'SELECT event_id FROM ticket_types WHERE id = $1';
+              const ticketTypeResult = await client.query(ticketTypeQuery, [reservation.ticket_type_id]);
+              if (ticketTypeResult.rows.length > 0) {
+                eventId = ticketTypeResult.rows[0].event_id;
+              }
+            } else {
+              const resQuery = 'SELECT * FROM reservations WHERE id = $1 FOR UPDATE';
+              const resResult = await client.query(resQuery, [reservationId]);
+              if (resResult.rows.length > 0) {
+                reservation = resResult.rows[0];
+                eventId = reservation.event_id;
+              }
+            }
 
-      if (reservation.status !== 'ACTIVE') {
-        throw new ConflictError('Reservation is no longer active');
-      }
+            if (!reservation) {
+              throw new NotFoundError('Reservation');
+            }
 
-      // Create tickets
-      const tickets: Ticket[] = [];
-      const ticketData = reservation.tickets || [{ ticketTypeId: reservation.ticket_type_id, quantity: reservation.quantity || 1 }];
+            if (reservation.status !== 'ACTIVE') {
+              throw new ConflictError('Reservation is no longer active');
+            }
 
-      for (const ticketRequest of ticketData) {
-        // Get ticket type info
-        const typeQuery = 'SELECT * FROM ticket_types WHERE id = $1';
-        const typeResult = await client.query(typeQuery, [ticketRequest.ticketTypeId || reservation.ticket_type_id]);
+            const tickets: Ticket[] = [];
+            const ticketData = reservation.tickets || [{ ticketTypeId: reservation.ticket_type_id, quantity: reservation.quantity || 1 }];
 
-        if (typeResult.rows.length === 0) {
-          throw new NotFoundError('Ticket type not found');
-        }
+            for (const ticketRequest of ticketData) {
+              const typeQuery = 'SELECT * FROM ticket_types WHERE id = $1';
+              const typeResult = await client.query(typeQuery, [ticketRequest.ticketTypeId || reservation.ticket_type_id]);
 
-        const ticketType = typeResult.rows[0];
-        
-        // Use the event_id from ticket_type if we still don't have it
-        if (!eventId) {
-          eventId = ticketType.event_id;
-        }
+              if (typeResult.rows.length === 0) {
+                throw new NotFoundError('Ticket type not found');
+              }
 
-        // Create individual tickets
-        const quantity = ticketRequest.quantity || 1;
-        for (let i = 0; i < quantity; i++) {
-          const ticketId = uuidv4();
+              const ticketType = typeResult.rows[0];
 
-          // Insert ticket with all required fields for triggers
-          const ticketQuery = `
-            INSERT INTO tickets (
-              id,
-              event_id,
-              ticket_type_id,
-              owner_id,
-              owner_user_id,
-              user_id,
-              status,
-              price,
-              payment_id,
-              purchased_at,
-              metadata,
-              total_paid,
-              blockchain_status
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            RETURNING *
-          `;
+              if (!eventId) {
+                eventId = ticketType.event_id;
+              }
 
-          const values = [
-            ticketId,                                           // $1 id
-            eventId,                                           // $2 event_id - FIXED: now using the correct eventId
-            ticketRequest.ticketTypeId || reservation.ticket_type_id, // $3 ticket_type_id
-            reservation.user_id,                                // $4 owner_id
-            reservation.user_id,                                // $5 owner_user_id
-            reservation.user_id,                                // $6 user_id
-            'SOLD',                                            // $7 status
-            ticketType.price || 0,                            // $8 price
-            paymentId || reservation.user_id,                  // $9 payment_id
-            new Date(),                                        // $10 purchased_at
-            JSON.stringify({                                   // $11 metadata
-              ticketTypeName: ticketType.name,
-              reservationId: reservationId,
-              purchaseDate: new Date().toISOString()
-            }),
-            ticketType.price || 0,                            // $12 total_paid
-            'pending'                                          // $13 blockchain_status
-          ];
+              const quantity = ticketRequest.quantity || 1;
+              for (let i = 0; i < quantity; i++) {
+                const ticketId = uuidv4();
 
-          try {
-            const ticketResult = await client.query(ticketQuery, values);
-            tickets.push(ticketResult.rows[0]);
-          } catch (error: any) {
-            this.log.error('Failed to create ticket:', error);
-            throw new Error(`Failed to create ticket: ${error.message}`);
-          }
+                const ticketQuery = `
+                  INSERT INTO tickets (
+                    id,
+                    event_id,
+                    ticket_type_id,
+                    owner_id,
+                    owner_user_id,
+                    user_id,
+                    status,
+                    price,
+                    payment_id,
+                    purchased_at,
+                    metadata,
+                    total_paid,
+                    blockchain_status
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                  RETURNING *
+                `;
 
-          // Queue NFT minting
-          try {
-            await queueService.publish(config.rabbitmq.queues.nftMinting, {
-              ticketId,
-              userId: reservation.user_id,
-              eventId: eventId,
-              ticketType: ticketType.name,
-              price: ticketType.price
-            });
-          } catch (error) {
-            this.log.warn('Failed to queue NFT minting:', error);
-            // Don't fail the transaction if queuing fails
-          }
-        }
-      }
+                const values = [
+                  ticketId,
+                  eventId,
+                  ticketRequest.ticketTypeId || reservation.ticket_type_id,
+                  reservation.user_id,
+                  reservation.user_id,
+                  reservation.user_id,
+                  'SOLD',
+                  ticketType.price || 0,
+                  paymentId || reservation.user_id,
+                  new Date(),
+                  JSON.stringify({
+                    ticketTypeName: ticketType.name,
+                    reservationId: reservationId,
+                    purchaseDate: new Date().toISOString()
+                  }),
+                  ticketType.price || 0,
+                  'pending'
+                ];
 
-      // Update reservation status in both tables - FIXED: correct status values
-      await client.query(
-        'UPDATE ticket_reservations SET status = $1 WHERE id = $2',
-        ['expired', reservationId]  // ticket_reservations uses lowercase 'expired'
-      ).catch(() => {}); // Ignore if not in this table
+                try {
+                  const ticketResult = await client.query(ticketQuery, values);
+                  tickets.push(ticketResult.rows[0]);
+                } catch (error: any) {
+                  this.log.error('Failed to create ticket:', error);
+                  throw new Error(`Failed to create ticket: ${error.message}`);
+                }
 
-      await client.query(
-        'UPDATE reservations SET status = $1 WHERE id = $2',
-        ['EXPIRED', reservationId]  // reservations uses uppercase 'EXPIRED'
-      ).catch(() => {}); // Ignore if not in this table
+                try {
+                  await queueService.publish(config.rabbitmq.queues.nftMinting, {
+                    ticketId,
+                    userId: reservation.user_id,
+                    eventId: eventId,
+                    ticketType: ticketType.name,
+                    price: ticketType.price
+                  });
+                } catch (error) {
+                  this.log.warn('Failed to queue NFT minting:', error);
+                }
+              }
+            }
 
-      // Clear reservation from Redis
-      await RedisService.del(`reservation:${reservationId}`);
+            // REMOVED .catch(() => {}) - let errors bubble up
+            await client.query(
+              'UPDATE ticket_reservations SET status = $1 WHERE id = $2',
+              ['expired', reservationId]
+            );
 
-      // Publish event
-      try {
-        await queueService.publish(config.rabbitmq.queues.ticketEvents, {
-          type: 'tickets.purchased',
-          userId: reservation.user_id,
-          eventId: eventId,
-          ticketIds: tickets.map((t: any) => t.id),
-          timestamp: new Date()
+            await client.query(
+              'UPDATE reservations SET status = $1 WHERE id = $2',
+              ['EXPIRED', reservationId]
+            );
+
+            await RedisService.del(`reservation:${reservationId}`);
+
+            try {
+              await queueService.publish(config.rabbitmq.queues.ticketEvents, {
+                type: 'tickets.purchased',
+                userId: reservation.user_id,
+                eventId: eventId,
+                ticketIds: tickets.map((t: any) => t.id),
+                timestamp: new Date()
+              });
+            } catch (error) {
+              this.log.warn('Failed to publish ticket event:', error);
+            }
+
+            return tickets;
+          });
+        },
+        { service: 'ticket-service', lockType: 'reservation' }
+      );
+    } catch (error: any) {
+      if (error instanceof LockTimeoutError) {
+        this.log.error('Lock timeout - confirmPurchase', {
+          reservationId,
+          paymentId,
+          timeoutMs: error.timeoutMs
         });
-      } catch (error) {
-        this.log.warn('Failed to publish ticket event:', error);
+        throw new ConflictError('Unable to confirm purchase due to high demand. Please try again.');
       }
-
-      return tickets;
-    });
+      if (error instanceof LockContentionError) {
+        this.log.error('Lock contention - confirmPurchase', {
+          reservationId,
+          paymentId
+        });
+        throw new ConflictError('This reservation is currently being processed. Please try again.');
+      }
+      if (error instanceof LockSystemError) {
+        this.log.error('Lock system error - confirmPurchase', {
+          originalError: error.originalError?.message
+        });
+        throw new ConflictError('System temporarily unavailable. Please try again.');
+      }
+      throw error;
+    }
   }
 
   async getTicket(ticketId: string): Promise<any> {
-    // Check cache first
     const cached = await RedisService.get(`ticket:${ticketId}`);
     if (cached) {
       return JSON.parse(cached);
@@ -349,7 +386,6 @@ export class TicketService {
 
     const ticket = result.rows[0];
 
-    // Cache for future requests
     await RedisService.set(
       `ticket:${ticketId}`,
       JSON.stringify(ticket),
@@ -385,7 +421,6 @@ export class TicketService {
     const query = 'UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2';
     await DatabaseService.query(query, [status, ticketId]);
 
-    // Clear cache
     await RedisService.del(`ticket:${ticketId}`);
   }
 
@@ -399,7 +434,6 @@ export class TicketService {
 
     const result = await DatabaseService.query(query);
 
-    // Release tickets for expired reservations
     for (const reservation of result.rows) {
       const tickets = reservation.tickets || [];
 
@@ -410,11 +444,9 @@ export class TicketService {
         );
       }
 
-      // Clear from Redis
       await RedisService.del(`reservation:${reservation.id}`);
     }
 
-    // Also expire in ticket_reservations table
     await DatabaseService.query(
       `UPDATE ticket_reservations SET status = 'expired' WHERE status = 'ACTIVE' AND expires_at < NOW()`
     );
@@ -422,49 +454,77 @@ export class TicketService {
     this.log.info(`Expired ${result.rowCount} reservations`);
   }
 
-  // NEW METHOD: Release Reservation (L2.1-018) - FIXED to use EXPIRED status
   async releaseReservation(reservationId: string, userId: string): Promise<any> {
-    return await DatabaseService.transaction(async (client) => {
-      const resQuery = `
-        SELECT * FROM reservations
-        WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'
-        FOR UPDATE
-      `;
-      const resResult = await client.query(resQuery, [reservationId, userId]);
+    const lockKey = LockKeys.reservation(reservationId);
 
-      if (resResult.rows.length === 0) {
-        throw new NotFoundError('Reservation not found or already processed');
-      }
+    try {
+      return await withLock(
+        lockKey,
+        5000,
+        async () => {
+          return await DatabaseService.transaction(async (client) => {
+            const resQuery = `
+              SELECT * FROM reservations
+              WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'
+              FOR UPDATE
+            `;
+            const resResult = await client.query(resQuery, [reservationId, userId]);
 
-      const reservation = resResult.rows[0];
+            if (resResult.rows.length === 0) {
+              throw new NotFoundError('Reservation not found or already processed');
+            }
 
-      // Update reservation status to EXPIRED (valid status)
-      await client.query(
-        `UPDATE reservations SET status = 'EXPIRED', updated_at = NOW() WHERE id = $1`,
-        [reservationId]
+            const reservation = resResult.rows[0];
+
+            await client.query(
+              `UPDATE reservations SET status = 'EXPIRED', updated_at = NOW() WHERE id = $1`,
+              [reservationId]
+            );
+
+            const tickets = reservation.tickets || [];
+            for (const ticket of tickets) {
+              await client.query(
+                'UPDATE ticket_types SET available_quantity = available_quantity + $1 WHERE id = $2',
+                [ticket.quantity, ticket.ticketTypeId]
+              );
+            }
+
+            await RedisService.del(`reservation:${reservationId}`);
+
+            return { success: true, reservation: reservation };
+          });
+        },
+        { service: 'ticket-service', lockType: 'reservation' }
       );
-
-      // Release the ticket quantities
-      const tickets = reservation.tickets || [];
-      for (const ticket of tickets) {
-        await client.query(
-          'UPDATE ticket_types SET available_quantity = available_quantity + $1 WHERE id = $2',
-          [ticket.quantity, ticket.ticketTypeId]
-        );
+    } catch (error: any) {
+      if (error instanceof LockTimeoutError) {
+        this.log.error('Lock timeout - releaseReservation', {
+          reservationId,
+          userId,
+          timeoutMs: error.timeoutMs
+        });
+        throw new ConflictError('Unable to release reservation due to high demand. Please try again.');
       }
-
-      // Clear from Redis
-      await RedisService.del(`reservation:${reservationId}`);
-
-      return { success: true, reservation: reservation };
-    });
+      if (error instanceof LockContentionError) {
+        this.log.error('Lock contention - releaseReservation', {
+          reservationId,
+          userId
+        });
+        throw new ConflictError('This reservation is currently being processed. Please try again.');
+      }
+      if (error instanceof LockSystemError) {
+        this.log.error('Lock system error - releaseReservation', {
+          originalError: error.originalError?.message
+        });
+        throw new ConflictError('System temporarily unavailable. Please try again.');
+      }
+      throw error;
+    }
   }
 
-  // NEW METHOD: Generate QR (L2.1-020)
   async generateQR(ticketId: string): Promise<any> {
     const ticket = await this.getTicket(ticketId);
 
-    // The database returns snake_case, so use those field names
     const qrPayload = {
       ticketId: ticket.id,
       eventId: ticket.event_id,
@@ -482,22 +542,17 @@ export class TicketService {
     };
   }
 
-  // NEW METHOD: Validate QR (L2.1-019) - FIXED to handle both formats
   async validateQR(qrData: string): Promise<any> {
     try {
       let payload;
-      
-      // Check if it's encrypted format (has ':' separator) or base64 JSON
+
       if (qrData.includes(':')) {
-        // It's our encrypted format
         const decrypted = this.decryptData(qrData);
         payload = JSON.parse(decrypted);
       } else {
-        // It's base64 JSON from the database trigger
         const decoded = Buffer.from(qrData, 'base64').toString('utf-8');
         const parsedData = JSON.parse(decoded);
-        
-        // Map the database format to our expected format
+
         payload = {
           ticketId: parsedData.ticket_id,
           eventId: parsedData.event_id,
@@ -507,7 +562,6 @@ export class TicketService {
 
       const ticket = await this.getTicket(payload.ticketId);
 
-      // Check if ticket is valid - database uses snake_case
       const isValid = ticket.status === 'SOLD' && !ticket.used_at && !ticket.validated_at;
 
       return {
@@ -526,7 +580,6 @@ export class TicketService {
     }
   }
 
-  // Helper: Encrypt data for QR codes
   private encryptData(data: string): string {
     const algorithm = 'aes-256-cbc';
     const key = Buffer.from(process.env.QR_ENCRYPTION_KEY || 'defaultkeychangethisto32charlong');
@@ -539,7 +592,6 @@ export class TicketService {
     return iv.toString('base64') + ':' + encrypted;
   }
 
-  // Helper: Decrypt data from QR codes
   private decryptData(data: string): string {
     const algorithm = 'aes-256-cbc';
     const key = Buffer.from(process.env.QR_ENCRYPTION_KEY || 'defaultkeychangethisto32charlong');
@@ -556,8 +608,6 @@ export class TicketService {
   }
 
   private generateQRCode(ticketId: string): string {
-    // Generate a unique QR code
-    // In production, this would include encryption
     return `TKT:${ticketId}:${Date.now()}`;
   }
 }

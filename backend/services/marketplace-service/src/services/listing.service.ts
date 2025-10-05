@@ -1,90 +1,138 @@
 import { logger } from '../utils/logger';
+import { withLock, LockKeys } from '@tickettoken/shared/utils/distributed-lock';
+import { listingModel } from '../models/listing.model';
 
 class ListingServiceClass {
   private log = logger.child({ component: 'ListingService' });
 
   async updateListingPrice(params: {
     listingId: string;
-    newPrice: number;  // INTEGER CENTS
+    newPrice: number;
     userId: string;
   }) {
     const { listingId, newPrice, userId } = params;
+    const lockKey = LockKeys.listing(listingId);
 
-    if (newPrice <= 0) {
-      throw new Error('Price must be greater than zero');
-    }
+    return await withLock(lockKey, 5000, async () => {
+      if (newPrice <= 0) {
+        throw new Error('Price must be greater than zero');
+      }
 
-    const originalPriceQuery = `
-      SELECT l.*, t.ticket_type_id, tt.price_cents as original_price
-      FROM listings l
-      JOIN tickets t ON l.ticket_id = t.id
-      JOIN ticket_types tt ON t.ticket_type_id = tt.id
-      WHERE l.id = $1 AND l.seller_id = $2
-    `;
+      const listing = await listingModel.findById(listingId);
 
-    const maxMarkupPercent = 300;
-    const originalPriceCents = 10000; // $100 in cents
-    const maxAllowedPriceCents = Math.floor(originalPriceCents * (1 + maxMarkupPercent / 100));
+      if (!listing) {
+        throw new Error(`Listing not found: ${listingId}`);
+      }
 
-    if (newPrice > maxAllowedPriceCents) {
-      throw new Error(`Price cannot exceed ${maxMarkupPercent}% markup. Maximum allowed: $${maxAllowedPriceCents / 100}`);
-    }
+      if (listing.sellerId !== userId) {
+        throw new Error('Unauthorized: Not the listing owner');
+      }
 
-    // Calculate markup percentage (no decimals needed for logging)
-    const markupPercent = Math.floor(((newPrice - originalPriceCents) / originalPriceCents) * 10000) / 100;
+      if (listing.status !== 'active') {
+        throw new Error(`Cannot update price for listing with status: ${listing.status}`);
+      }
 
-    this.log.info('Listing price updated', {
-      listingId,
-      oldPriceCents: originalPriceCents,
-      newPriceCents: newPrice,
-      markupPercent: `${markupPercent}%`
+      const originalPriceCents = listing.originalFaceValue;
+      const maxMarkupPercent = 300;
+      const maxAllowedPriceCents = Math.floor(originalPriceCents * (1 + maxMarkupPercent / 100));
+
+      if (newPrice > maxAllowedPriceCents) {
+        throw new Error(`Price cannot exceed ${maxMarkupPercent}% markup. Maximum allowed: $${maxAllowedPriceCents / 100}`);
+      }
+
+      const updated = await listingModel.update(listingId, { price: newPrice });
+      const markupPercent = Math.floor(((newPrice - originalPriceCents) / originalPriceCents) * 10000) / 100;
+
+      this.log.info('Listing price updated with distributed lock', {
+        listingId,
+        oldPriceCents: listing.price,
+        newPriceCents: newPrice,
+        markupPercent: `${markupPercent}%`
+      });
+
+      return updated;
     });
-
-    return {
-      id: listingId,
-      price: newPrice,
-      status: 'active'
-    };
   }
 
   async createListing(data: any) {
-    const { ticketId, sellerId, walletAddress } = data;
+    const { ticketId, sellerId, walletAddress, eventId, venueId, originalFaceValue } = data;
+    const lockKey = LockKeys.ticket(ticketId);
 
-    if (data.price) {
-      this.log.warn('Client attempted to set listing price directly', {
+    return await withLock(lockKey, 5000, async () => {
+      if (data.price) {
+        this.log.warn('Client attempted to set listing price directly', {
+          ticketId,
+          attemptedPrice: data.price,
+          sellerId
+        });
+      }
+
+      const existingListing = await listingModel.findByTicketId(ticketId);
+      
+      if (existingListing && existingListing.status === 'active') {
+        throw new Error('Ticket already has an active listing');
+      }
+
+      const ticketValueCents = originalFaceValue || await this.getTicketMarketValue(ticketId);
+
+      const listing = await listingModel.create({
         ticketId,
-        attemptedPrice: data.price,
-        sellerId
+        sellerId,
+        eventId,
+        venueId,
+        price: ticketValueCents,
+        originalFaceValue: ticketValueCents,
+        walletAddress,
+        requiresApproval: false
       });
-    }
 
-    const ticketValueCents = await this.getTicketMarketValue(ticketId);
+      this.log.info('Listing created with distributed lock', {
+        listingId: listing.id,
+        ticketId,
+        sellerId,
+        priceCents: ticketValueCents
+      });
 
-    return {
-      id: `listing_${Date.now()}`,
-      ticketId,
-      sellerId,
-      price: ticketValueCents,
-      walletAddress,
-      status: 'active',
-      createdAt: new Date()
-    };
+      return listing;
+    });
   }
 
   private async getTicketMarketValue(ticketId: string): Promise<number> {
-    return 10000; // $100 in cents
+    return 10000;
   }
 
   async cancelListing(listingId: string, userId: string) {
-    return {
-      id: listingId,
-      status: 'cancelled'
-    };
+    const lockKey = LockKeys.listing(listingId);
+
+    return await withLock(lockKey, 5000, async () => {
+      const listing = await listingModel.findById(listingId);
+      
+      if (!listing) {
+        throw new Error(`Listing not found: ${listingId}`);
+      }
+
+      if (listing.sellerId !== userId) {
+        throw new Error('Unauthorized: Not the listing owner');
+      }
+
+      if (listing.status !== 'active') {
+        throw new Error(`Cannot cancel listing with status: ${listing.status}`);
+      }
+
+      const updated = await listingModel.updateStatus(listingId, 'cancelled', {
+        cancelled_at: new Date()
+      });
+
+      this.log.info('Listing cancelled with distributed lock', {
+        listingId,
+        sellerId: userId
+      });
+
+      return updated;
+    });
   }
 
   async getListingById(listingId: string) {
-    const { listingModel } = await import('../models/listing.model');
-
     const listing = await listingModel.findById(listingId);
     if (!listing) {
       throw new Error(`Listing not found: ${listingId}`);
@@ -105,8 +153,6 @@ class ListingServiceClass {
     limit?: number;
     offset?: number;
   }) {
-    const { listingModel } = await import('../models/listing.model');
-
     if (params.sellerId) {
       return await listingModel.findBySellerId(
         params.sellerId,
@@ -129,25 +175,37 @@ class ListingServiceClass {
   }
 
   async markListingAsSold(listingId: string, buyerId?: string) {
-    const { listingModel } = await import('../models/listing.model');
+    const lockKey = LockKeys.listing(listingId);
 
-    const listing = await listingModel.updateStatus(listingId, 'sold', {
-      sold_at: new Date(),
-      buyer_id: buyerId || 'unknown'
+    return await withLock(lockKey, 5000, async () => {
+      const listing = await listingModel.findById(listingId);
+
+      if (!listing) {
+        throw new Error(`Listing not found: ${listingId}`);
+      }
+
+      if (listing.status !== 'active' && listing.status !== 'pending_approval') {
+        throw new Error(`Cannot mark listing as sold. Current status: ${listing.status}`);
+      }
+
+      const updated = await listingModel.updateStatus(listingId, 'sold', {
+        sold_at: new Date(),
+        buyer_id: buyerId || 'unknown'
+      });
+
+      if (!updated) {
+        throw new Error(`Failed to mark listing as sold: ${listingId}`);
+      }
+
+      this.log.info('Listing marked as sold with distributed lock', {
+        listingId,
+        sellerId: listing.sellerId,
+        buyerId: buyerId || 'unknown',
+        priceCents: listing.price
+      });
+
+      return updated;
     });
-
-    if (!listing) {
-      throw new Error(`Failed to mark listing as sold: ${listingId}`);
-    }
-
-    this.log.info('Listing marked as sold', {
-      listingId,
-      sellerId: listing.sellerId,
-      buyerId: buyerId || 'unknown',
-      priceCents: listing.price
-    });
-
-    return listing;
   }
 }
 

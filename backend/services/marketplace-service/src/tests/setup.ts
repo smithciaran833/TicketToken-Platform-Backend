@@ -1,22 +1,28 @@
+import dotenv from 'dotenv';
+import path from 'path';
+
+dotenv.config({ path: path.resolve(__dirname, '../../.env.test') });
+
 import { db } from '../config/database';
 
-// Before all tests
 beforeAll(async () => {
-  // Run migrations for test database
-  await db.migrate.latest();
-});
+  try {
+    await db.raw('SELECT 1');
+    console.log('Database connected for tests');
+  } catch (error) {
+    console.error('Database connection failed:', error);
+    throw error;
+  }
+}, 30000);
 
-// Before each test - start a transaction
 beforeEach(async () => {
   await db.raw('BEGIN');
 });
 
-// After each test - rollback to keep tests isolated
 afterEach(async () => {
   await db.raw('ROLLBACK');
 });
 
-// After all tests - clean up
 afterAll(async () => {
   await db.destroy();
 });

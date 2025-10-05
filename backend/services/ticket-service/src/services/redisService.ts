@@ -1,7 +1,70 @@
 import Redis from 'ioredis';
 import { config } from '../config';
 import { logger } from '../utils/logger';
-import { withTimeout, CircuitBreaker } from '@tickettoken/shared/utils/async-handler';
+
+// Simple timeout utility
+function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => 
+      setTimeout(() => reject(new Error(errorMessage)), ms)
+    )
+  ]);
+}
+
+// Simple circuit breaker implementation
+class CircuitBreaker {
+  private failures = 0;
+  private lastFailureTime = 0;
+  private state: 'closed' | 'open' | 'half-open' = 'closed';
+  
+  constructor(
+    private threshold: number,
+    private timeout: number,
+    private resetTimeout: number
+  ) {}
+
+  async execute<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.state === 'open') {
+      if (Date.now() - this.lastFailureTime > this.resetTimeout) {
+        this.state = 'half-open';
+      } else {
+        throw new Error('Circuit breaker is open');
+      }
+    }
+
+    try {
+      const result = await fn();
+      this.recordSuccess();
+      return result;
+    } catch (error) {
+      this.recordFailure();
+      throw error;
+    }
+  }
+
+  recordFailure(): void {
+    this.failures++;
+    this.lastFailureTime = Date.now();
+    if (this.failures >= this.threshold) {
+      this.state = 'open';
+    }
+  }
+
+  recordSuccess(): void {
+    this.failures = 0;
+    this.state = 'closed';
+  }
+
+  reset(): void {
+    this.failures = 0;
+    this.state = 'closed';
+  }
+
+  getState(): string {
+    return this.state;
+  }
+}
 
 class RedisServiceClass {
   private client: Redis | null = null;
@@ -15,10 +78,10 @@ class RedisServiceClass {
       this.client = new Redis(config.redis.url, {
         retryStrategy: (times) => {
           this.reconnectAttempts = times;
-          
+
           if (times > this.maxReconnectAttempts) {
             this.log.error('Max Redis reconnection attempts reached');
-            return null; // Stop retrying
+            return null;
           }
 
           const delay = Math.min(times * 100, 3000);
@@ -34,18 +97,16 @@ class RedisServiceClass {
         reconnectOnError: (err) => {
           const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT'];
           if (targetErrors.some(e => err.message.includes(e))) {
-            return true; // Reconnect on these errors
+            return true;
           }
           return false;
         }
       });
 
-      // Set up event handlers
       this.setupEventHandlers();
 
-      // Test connection
       await withTimeout(this.client.ping(), 5000, 'Redis ping timeout');
-      
+
       this.log.info('Redis connected successfully');
     } catch (error) {
       this.log.error('Failed to initialize Redis:', error);
@@ -58,7 +119,6 @@ class RedisServiceClass {
 
     this.client.on('error', (err) => {
       this.log.error('Redis error:', err);
-      // Don't throw, let retry strategy handle it
     });
 
     this.client.on('connect', () => {
@@ -99,9 +159,7 @@ class RedisServiceClass {
     fn: () => Promise<T>
   ): Promise<T> {
     try {
-      // Use circuit breaker for all Redis operations
       return await this.circuitBreaker.execute(async () => {
-        // Add timeout to all operations
         return await withTimeout(fn(), 5000, `Redis ${operation} timeout`);
       });
     } catch (error: any) {
@@ -109,18 +167,17 @@ class RedisServiceClass {
         error: error.message,
         state: this.circuitBreaker.getState()
       });
-      
-      // For read operations, we might return null/default
+
       if (operation === 'get' || operation === 'exists') {
         return null as any;
       }
-      
+
       throw error;
     }
   }
 
   async get(key: string): Promise<string | null> {
-    return this.executeCommand('get', () => 
+    return this.executeCommand('get', () =>
       this.getClient().get(key)
     );
   }
@@ -137,47 +194,47 @@ class RedisServiceClass {
   }
 
   async del(key: string): Promise<void> {
-    await this.executeCommand('del', () => 
+    await this.executeCommand('del', () =>
       this.getClient().del(key).then(() => undefined)
     );
   }
 
   async exists(key: string): Promise<boolean> {
-    const result = await this.executeCommand('exists', () => 
+    const result = await this.executeCommand('exists', () =>
       this.getClient().exists(key)
     );
     return result === 1;
   }
 
   async incr(key: string): Promise<number> {
-    return this.executeCommand('incr', () => 
+    return this.executeCommand('incr', () =>
       this.getClient().incr(key)
     );
   }
 
   async expire(key: string, ttl: number): Promise<void> {
-    await this.executeCommand('expire', () => 
+    await this.executeCommand('expire', () =>
       this.getClient().expire(key, ttl).then(() => undefined)
     );
   }
 
   async mget(keys: string[]): Promise<(string | null)[]> {
     if (keys.length === 0) return [];
-    
-    return this.executeCommand('mget', () => 
+
+    return this.executeCommand('mget', () =>
       this.getClient().mget(...keys)
     );
   }
 
   async mset(pairs: { key: string; value: string }[]): Promise<void> {
     if (pairs.length === 0) return;
-    
+
     const args: string[] = [];
     pairs.forEach(({ key, value }) => {
       args.push(key, value);
     });
 
-    await this.executeCommand('mset', () => 
+    await this.executeCommand('mset', () =>
       this.getClient().mset(...args).then(() => undefined)
     );
   }
@@ -189,27 +246,23 @@ class RedisServiceClass {
         this.log.info('Redis connection closed');
       } catch (error) {
         this.log.error('Error closing Redis connection:', error);
-        // Force disconnect if quit fails
         this.client.disconnect();
       }
     }
   }
 
-  /**
-   * Health check for Redis connection
-   */
   async isHealthy(): Promise<boolean> {
     try {
       if (!this.client || this.client.status !== 'ready') {
         return false;
       }
-      
+
       const result = await withTimeout(
         this.client.ping(),
         1000,
         'Health check timeout'
       );
-      
+
       return result === 'PONG';
     } catch {
       return false;

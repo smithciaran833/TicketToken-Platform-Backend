@@ -1,6 +1,6 @@
 import winston from 'winston';
 import { config } from '../config';
-import { PIISanitizer } from '@tickettoken/shared/utils/pii-sanitizer';
+import { PIISanitizer } from '@tickettoken/shared';
 
 // Custom format that sanitizes before logging
 const sanitizingFormat = winston.format((info) => {

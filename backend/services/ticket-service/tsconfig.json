@@ -22,12 +22,7 @@
     "noUnusedLocals": false,
     "noUnusedParameters": false,
     "noImplicitReturns": true,
-    "noFallthroughCasesInSwitch": true,
-    "baseUrl": ".",
-    "paths": {
-      "@tickettoken/shared/*": ["../../shared/dist/*"],
-      "@tickettoken/shared": ["../../shared/dist/index.js"]
-    }
+    "noFallthroughCasesInSwitch": true
   },
   "include": [
     "src/**/*"

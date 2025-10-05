@@ -10,14 +10,11 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true,
-    "moduleResolution": "node",
-    "baseUrl": ".",
-    "paths": {
-      "@tickettoken/shared/*": ["../../shared/dist/*"],
-      "@tickettoken/shared": ["../../shared/dist/index.js"]
-    }
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "moduleResolution": "node"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "test", "**/*.test.ts", "**/*.spec.ts", "src/old-versions"]
+  "exclude": ["node_modules", "dist", "**/*.test.ts"]
 }

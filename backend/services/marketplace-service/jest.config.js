@@ -2,14 +2,19 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/src'],
+  roots: ['<rootDir>/src', '<rootDir>/tests'],
   testMatch: ['**/__tests__/**/*.ts', '**/*.test.ts'],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         esModuleInterop: true,
         allowSyntheticDefaultImports: true,
-        moduleResolution: 'node'
+        moduleResolution: 'node',
+        baseUrl: '.',
+        paths: {
+          '@tickettoken/shared/*': ['../../shared/dist/*'],
+          '@tickettoken/shared': ['../../shared/dist/index.js']
+        }
       }
     }]
   },
@@ -18,7 +23,9 @@ module.exports = {
   ],
   extensionsToTreatAsEsm: ['.ts'],
   moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/src/$1'
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '^@tickettoken/shared/(.*)$': '<rootDir>/../../shared/dist/$1',
+    '^@tickettoken/shared$': '<rootDir>/../../shared/dist/index.js'
   },
   setupFilesAfterEnv: ['<rootDir>/src/tests/setup.ts'],
   collectCoverageFrom: [

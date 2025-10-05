@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { Pool } from 'pg';
-import { formatCents } from '@tickettoken/shared/utils/money';
+import { formatCents } from '@tickettoken/shared';
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL

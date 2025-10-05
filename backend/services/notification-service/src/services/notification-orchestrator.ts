@@ -1,6 +1,6 @@
 import { db } from '../config/database';
-import { notificationServiceV2 } from './notification.service.v2';
-import { notificationAnalytics } from './analytics.service';
+import { notificationService } from './notification.service';
+import { notificationAnalytics } from './delivery-metrics.service';
 import { walletPassService } from './wallet-pass.service';
 import { automationService } from './automation.service';
 import { i18nService } from './i18n.service';
@@ -161,7 +161,7 @@ export class NotificationOrchestrator {
 
       // const _htmlContent = richMediaService.generateEmailHTML(richMedia);
 
-      await notificationServiceV2.send({
+      await notificationService.send({
         recipientId: data.customerId,
         recipient: {
           id: data.customerId,

@@ -35,25 +35,11 @@ class DatabaseServiceClass {
     return this.pool;
   }
 
-  getStats() {
-    if (!this.pool) {
-      return { total: 0, idle: 0, waiting: 0 };
-    }
-    return {
-      total: this.pool.totalCount,
-      idle: this.pool.idleCount,
-      waiting: this.pool.waitingCount
-    };
-  }
-
-  getPoolManager() {
-    return this.pool;
-  }
-
   async query<T = any>(text: string, params?: any[]): Promise<{ rows: T[]; rowCount: number | null }> {
     if (!this.pool) {
       throw new Error('Database not initialized');
     }
+
     const result = await this.pool.query(text, params);
     return { rows: result.rows, rowCount: result.rowCount };
   }
@@ -62,11 +48,21 @@ class DatabaseServiceClass {
     if (!this.pool) {
       throw new Error('Database not initialized');
     }
+
     const client = await this.pool.connect();
+    
     try {
       await client.query('BEGIN');
       const result = await callback(client);
-      await client.query('COMMIT');
+      
+      // CRITICAL: Explicitly wait for COMMIT to complete
+      const commitResult = await client.query('COMMIT');
+      console.log('✅ COMMIT response:', commitResult);
+      
+      // Force a flush by querying transaction status
+      const statusCheck = await client.query('SELECT txid_current_if_assigned()');
+      console.log('Transaction ID after commit:', statusCheck.rows[0]);
+      
       return result;
     } catch (error) {
       await client.query('ROLLBACK');
@@ -86,6 +82,7 @@ class DatabaseServiceClass {
     if (!this.pool) {
       return false;
     }
+
     try {
       await this.pool.query('SELECT 1');
       return true;

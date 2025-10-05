@@ -1,5 +1,5 @@
 import { DatabaseService } from './databaseService';
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from "@tickettoken/shared";
 import { QueueService } from './queueService';
 import { logger } from '../utils/logger';
 import { StripeMock } from './providers/stripeMock';

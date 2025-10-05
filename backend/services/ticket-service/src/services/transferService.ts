@@ -1,5 +1,5 @@
 import { QueueService as queueService } from '../services/queueService';
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from '@tickettoken/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { RedisService } from './redisService';

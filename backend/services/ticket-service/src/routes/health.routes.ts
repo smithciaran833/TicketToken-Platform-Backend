@@ -71,16 +71,11 @@ router.get('/ready', async (req: Request, res: Response) => {
 // Detailed health check with metrics
 router.get('/health/detailed', async (req: Request, res: Response) => {
   try {
-    const dbStats = DatabaseService.getStats();
-
+    // FIXED: Removed DatabaseService.getStats() call - method doesn't exist
     res.status(200).json({
       status: 'healthy',
       database: {
-        pool: {
-          total: dbStats.total,
-          idle: dbStats.idle,
-          waiting: dbStats.waiting
-        }
+        connected: await DatabaseService.isHealthy()
       },
       redis: {
         connected: await RedisService.isHealthy()
@@ -125,7 +120,7 @@ router.post('/health/circuit-breakers/reset', async (req: Request, res: Response
     // Reinitialize database connection
     await DatabaseService.close();
     await DatabaseService.initialize();
-
+    
     res.status(200).json({
       status: 'reset',
       message: 'Circuit breakers reset successfully'

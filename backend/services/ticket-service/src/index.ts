@@ -7,8 +7,8 @@ import { DatabaseService } from './services/databaseService';
 import { RedisService } from './services/redisService';
 import { QueueService } from './services/queueService';
 import { ReservationCleanupWorker } from './workers/reservation-cleanup.worker';
-import { setupGlobalErrorHandlers, asyncHandler } from '@tickettoken/shared/utils/async-handler';
-import { loggingMiddleware, errorLoggingMiddleware } from '@tickettoken/shared/middleware/logging.middleware';
+import { setupGlobalErrorHandlers, asyncHandler } from './utils/async-handler';
+import { loggingMiddleware, errorLoggingMiddleware } from './middleware/logging.middleware';
 
 // Import middleware
 import { authMiddleware } from './middleware/auth';
