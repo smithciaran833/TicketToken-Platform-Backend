@@ -1,12 +1,37 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { ComplianceController } from '../controllers/compliance.controller';
 import { authenticate } from '../middleware/auth';
 
-const router = Router();
-const controller = new ComplianceController();
+export default async function complianceRoutes(fastify: FastifyInstance) {
+  const controller = new ComplianceController();
 
-router.get('/tax-forms/:year', authenticate, (req, res, next) => controller.getTaxForm(req, res, next));
-router.get('/tax-forms/:year/download', authenticate, (req, res, next) => controller.downloadTaxForm(req, res, next));
-router.get('/tax-summary', authenticate, (req, res, next) => controller.getTaxSummary(req, res, next));
+  fastify.get(
+    '/tax-forms/:year',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getTaxForm(request, reply);
+    }
+  );
 
-export default router;
+  fastify.get(
+    '/tax-forms/:year/download',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.downloadTaxForm(request, reply);
+    }
+  );
+
+  fastify.get(
+    '/tax-summary',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getTaxSummary(request, reply);
+    }
+  );
+}

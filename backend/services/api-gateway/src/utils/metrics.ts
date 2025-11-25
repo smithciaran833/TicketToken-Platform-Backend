@@ -1,133 +1,297 @@
-import { createLogger } from './logger';
+import { Registry, Counter, Histogram, Gauge } from 'prom-client';
 
-const logger = createLogger('metrics');
+// Create a Registry for metrics
+export const register = new Registry();
 
-// Simple in-memory metrics collector
-// TODO: Replace with Prometheus client when ready
-class MetricsCollector {
-  private counters: Map<string, number> = new Map();
-  private gauges: Map<string, number> = new Map();
-  private histograms: Map<string, number[]> = new Map();
+// Default labels for all metrics
+register.setDefaultLabels({
+  service: 'api-gateway',
+  environment: process.env.NODE_ENV || 'development',
+});
 
-  // Increment a counter
-  inc(name: string, value: number = 1, labels?: Record<string, string>): void {
-    const key = this.buildKey(name, labels);
-    const current = this.counters.get(key) || 0;
-    this.counters.set(key, current + value);
-  }
+// ================================
+// HTTP REQUEST METRICS
+// ================================
 
-  // Set a gauge value
-  gauge(name: string, value: number, labels?: Record<string, string>): void {
-    const key = this.buildKey(name, labels);
-    this.gauges.set(key, value);
-  }
+export const httpRequestsTotal = new Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code'],
+  registers: [register],
+});
 
-  // Record a histogram value
-  histogram(name: string, value: number, labels?: Record<string, string>): void {
-    const key = this.buildKey(name, labels);
-    const values = this.histograms.get(key) || [];
-    values.push(value);
-    this.histograms.set(key, values);
-  }
+export const httpRequestDuration = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10],
+  registers: [register],
+});
 
-  // Get all metrics
-  getMetrics(): any {
-    const metrics: any = {
-      counters: {},
-      gauges: {},
-      histograms: {},
-    };
+export const httpRequestSize = new Histogram({
+  name: 'http_request_size_bytes',
+  help: 'HTTP request size in bytes',
+  labelNames: ['method', 'route'],
+  buckets: [100, 1000, 5000, 10000, 50000, 100000, 500000, 1000000],
+  registers: [register],
+});
 
-    // Convert counters
-    for (const [key, value] of this.counters) {
-      metrics.counters[key] = value;
-    }
+export const httpResponseSize = new Histogram({
+  name: 'http_response_size_bytes',
+  help: 'HTTP response size in bytes',
+  labelNames: ['method', 'route'],
+  buckets: [100, 1000, 5000, 10000, 50000, 100000, 500000, 1000000],
+  registers: [register],
+});
 
-    // Convert gauges
-    for (const [key, value] of this.gauges) {
-      metrics.gauges[key] = value;
-    }
+// ================================
+// AUTHENTICATION METRICS
+// ================================
 
-    // Convert histograms to summary stats
-    for (const [key, values] of this.histograms) {
-      if (values.length > 0) {
-        metrics.histograms[key] = {
-          count: values.length,
-          sum: values.reduce((a, b) => a + b, 0),
-          avg: values.reduce((a, b) => a + b, 0) / values.length,
-          min: Math.min(...values),
-          max: Math.max(...values),
-          p50: this.percentile(values, 0.5),
-          p95: this.percentile(values, 0.95),
-          p99: this.percentile(values, 0.99),
-        };
-      }
-    }
+export const authAttemptsTotal = new Counter({
+  name: 'auth_attempts_total',
+  help: 'Total number of authentication attempts',
+  labelNames: ['status'], // success, failure, expired
+  registers: [register],
+});
 
-    return metrics;
-  }
+export const authDuration = new Histogram({
+  name: 'auth_duration_seconds',
+  help: 'Authentication duration in seconds',
+  buckets: [0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1],
+  registers: [register],
+});
 
-  // Reset all metrics
-  reset(): void {
-    this.counters.clear();
-    this.gauges.clear();
-    this.histograms.clear();
-  }
+export const jwtValidationErrors = new Counter({
+  name: 'jwt_validation_errors_total',
+  help: 'Total number of JWT validation errors',
+  labelNames: ['error_type'], // expired, invalid, malformed, missing
+  registers: [register],
+});
 
-  private buildKey(name: string, labels?: Record<string, string>): string {
-    if (!labels || Object.keys(labels).length === 0) {
-      return name;
-    }
+// ================================
+// CIRCUIT BREAKER METRICS
+// ================================
 
-    const labelStr = Object.entries(labels)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}="${v}"`)
-      .join(',');
+export const circuitBreakerState = new Gauge({
+  name: 'circuit_breaker_state',
+  help: 'Circuit breaker state (0=closed, 1=open, 2=half-open)',
+  labelNames: ['service'],
+  registers: [register],
+});
 
-    return `${name}{${labelStr}}`;
-  }
+export const circuitBreakerFailures = new Counter({
+  name: 'circuit_breaker_failures_total',
+  help: 'Total number of circuit breaker failures',
+  labelNames: ['service'],
+  registers: [register],
+});
 
-  private percentile(values: number[], p: number): number {
-    const sorted = [...values].sort((a, b) => a - b);
-    const index = Math.ceil(sorted.length * p) - 1;
-    return sorted[index];
-  }
+export const circuitBreakerSuccesses = new Counter({
+  name: 'circuit_breaker_successes_total',
+  help: 'Total number of circuit breaker successes',
+  labelNames: ['service'],
+  registers: [register],
+});
+
+export const circuitBreakerTimeouts = new Counter({
+  name: 'circuit_breaker_timeouts_total',
+  help: 'Total number of circuit breaker timeouts',
+  labelNames: ['service'],
+  registers: [register],
+});
+
+export const circuitBreakerRejects = new Counter({
+  name: 'circuit_breaker_rejects_total',
+  help: 'Total number of circuit breaker rejects (open circuit)',
+  labelNames: ['service'],
+  registers: [register],
+});
+
+// ================================
+// DOWNSTREAM SERVICE METRICS
+// ================================
+
+export const downstreamRequestsTotal = new Counter({
+  name: 'downstream_requests_total',
+  help: 'Total number of requests to downstream services',
+  labelNames: ['service', 'status_code'],
+  registers: [register],
+});
+
+export const downstreamRequestDuration = new Histogram({
+  name: 'downstream_request_duration_seconds',
+  help: 'Downstream service request duration in seconds',
+  labelNames: ['service'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60],
+  registers: [register],
+});
+
+export const downstreamErrors = new Counter({
+  name: 'downstream_errors_total',
+  help: 'Total number of downstream service errors',
+  labelNames: ['service', 'error_type'],
+  registers: [register],
+});
+
+// ================================
+// CACHE METRICS
+// ================================
+
+export const cacheHits = new Counter({
+  name: 'cache_hits_total',
+  help: 'Total number of cache hits',
+  labelNames: ['cache_type'], // user, venue_access
+  registers: [register],
+});
+
+export const cacheMisses = new Counter({
+  name: 'cache_misses_total',
+  help: 'Total number of cache misses',
+  labelNames: ['cache_type'],
+  registers: [register],
+});
+
+export const cacheErrors = new Counter({
+  name: 'cache_errors_total',
+  help: 'Total number of cache errors',
+  labelNames: ['cache_type', 'operation'], // get, set, delete
+  registers: [register],
+});
+
+// ================================
+// TENANT ISOLATION METRICS
+// ================================
+
+export const tenantRequests = new Counter({
+  name: 'tenant_requests_total',
+  help: 'Total number of requests per tenant',
+  labelNames: ['tenant_id'],
+  registers: [register],
+});
+
+export const tenantAuthFailures = new Counter({
+  name: 'tenant_auth_failures_total',
+  help: 'Total number of authentication failures per tenant',
+  labelNames: ['tenant_id', 'reason'],
+  registers: [register],
+});
+
+export const crossTenantAttempts = new Counter({
+  name: 'cross_tenant_attempts_total',
+  help: 'Total number of attempted cross-tenant access (security violation)',
+  labelNames: ['source_tenant', 'target_tenant'],
+  registers: [register],
+});
+
+// ================================
+// SECURITY METRICS
+// ================================
+
+export const securityViolations = new Counter({
+  name: 'security_violations_total',
+  help: 'Total number of security violations detected',
+  labelNames: ['violation_type'], // header_manipulation, tenant_bypass, auth_bypass
+  registers: [register],
+});
+
+export const dangerousHeadersFiltered = new Counter({
+  name: 'dangerous_headers_filtered_total',
+  help: 'Total number of dangerous headers filtered',
+  labelNames: ['header_name'],
+  registers: [register],
+});
+
+export const rateLimitExceeded = new Counter({
+  name: 'rate_limit_exceeded_total',
+  help: 'Total number of rate limit violations',
+  labelNames: ['endpoint', 'tenant_id'],
+  registers: [register],
+});
+
+// ================================
+// SYSTEM METRICS
+// ================================
+
+export const activeConnections = new Gauge({
+  name: 'active_connections',
+  help: 'Number of active connections',
+  registers: [register],
+});
+
+export const memoryUsage = new Gauge({
+  name: 'memory_usage_bytes',
+  help: 'Memory usage in bytes',
+  labelNames: ['type'], // heapUsed, heapTotal, rss, external
+  registers: [register],
+});
+
+export const eventLoopLag = new Histogram({
+  name: 'event_loop_lag_seconds',
+  help: 'Event loop lag in seconds',
+  buckets: [0.001, 0.01, 0.05, 0.1, 0.5, 1, 2],
+  registers: [register],
+});
+
+// ================================
+// HEALTH CHECK METRICS
+// ================================
+
+export const healthCheckStatus = new Gauge({
+  name: 'health_check_status',
+  help: 'Health check status (1=healthy, 0=unhealthy)',
+  labelNames: ['check_type'], // redis, auth_service, venue_service
+  registers: [register],
+});
+
+export const healthCheckDuration = new Histogram({
+  name: 'health_check_duration_seconds',
+  help: 'Health check duration in seconds',
+  labelNames: ['check_type'],
+  buckets: [0.001, 0.01, 0.05, 0.1, 0.5, 1, 2],
+  registers: [register],
+});
+
+// ================================
+// UTILITY FUNCTIONS
+// ================================
+
+/**
+ * Update system metrics (call this periodically)
+ */
+export function updateSystemMetrics(): void {
+  const memUsage = process.memoryUsage();
+  memoryUsage.set({ type: 'heapUsed' }, memUsage.heapUsed);
+  memoryUsage.set({ type: 'heapTotal' }, memUsage.heapTotal);
+  memoryUsage.set({ type: 'rss' }, memUsage.rss);
+  memoryUsage.set({ type: 'external' }, memUsage.external);
 }
 
-// Global metrics instance
-export const metrics = new MetricsCollector();
+/**
+ * Measure event loop lag
+ */
+export function measureEventLoopLag(): void {
+  const start = Date.now();
+  setImmediate(() => {
+    const lag = (Date.now() - start) / 1000;
+    eventLoopLag.observe(lag);
+  });
+}
 
-// Common metric names
-export const METRIC_NAMES = {
-  // HTTP metrics
-  HTTP_REQUESTS_TOTAL: 'http_requests_total',
-  HTTP_REQUEST_DURATION: 'http_request_duration_ms',
-  HTTP_REQUEST_SIZE: 'http_request_size_bytes',
-  HTTP_RESPONSE_SIZE: 'http_response_size_bytes',
+// Start periodic system metrics updates
+setInterval(updateSystemMetrics, 10000); // Every 10 seconds
+setInterval(measureEventLoopLag, 5000); // Every 5 seconds
 
-  // Circuit breaker metrics
-  CIRCUIT_BREAKER_STATE: 'circuit_breaker_state',
-  CIRCUIT_BREAKER_FAILURES: 'circuit_breaker_failures_total',
+/**
+ * Get all metrics in Prometheus format
+ */
+export async function getMetrics(): Promise<string> {
+  return register.metrics();
+}
 
-  // Rate limit metrics
-  RATE_LIMIT_EXCEEDED: 'rate_limit_exceeded_total',
-  RATE_LIMIT_REMAINING: 'rate_limit_remaining',
-
-  // Service metrics
-  SERVICE_CALLS_TOTAL: 'service_calls_total',
-  SERVICE_CALL_DURATION: 'service_call_duration_ms',
-  SERVICE_CALL_ERRORS: 'service_call_errors_total',
-
-  // Business metrics
-  TICKET_PURCHASES: 'ticket_purchases_total',
-  TICKET_VALIDATIONS: 'ticket_validations_total',
-  NFT_MINTS: 'nft_mints_total',
-} as const;
-
-// Log metrics periodically
-export function startMetricsLogging(intervalMs: number = 60000): void {
-  setInterval(() => {
-    const currentMetrics = metrics.getMetrics();
-    logger.info({ metrics: currentMetrics }, 'Metrics snapshot');
-  }, intervalMs);
+/**
+ * Get metrics content type
+ */
+export function getMetricsContentType(): string {
+  return register.contentType;
 }

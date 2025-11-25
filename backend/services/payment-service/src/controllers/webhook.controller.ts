@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import Stripe from 'stripe';
 import * as crypto from 'crypto';
 import { db } from '../config/database';
@@ -17,25 +17,28 @@ export class WebhookController {
     });
   }
 
-  async handleStripeWebhook(req: Request, res: Response, next: NextFunction) {
-    const sig = req.headers['stripe-signature'] as string;
+  async handleStripeWebhook(request: FastifyRequest, reply: FastifyReply) {
+    const sig = request.headers['stripe-signature'] as string;
     let event: Stripe.Event;
 
     // 1. Verify webhook signature
+    // CRITICAL: Fastify provides rawBody when content type parser is configured
+    const rawBody = (request as any).rawBody || request.body;
+    
     try {
       event = this.stripe.webhooks.constructEvent(
-        req.body,
+        rawBody,
         sig,
         config.stripe.webhookSecret
       );
     } catch (err) {
       log.warn('Invalid webhook signature', { err: err instanceof Error ? err.message : 'Unknown' });
-      return res.status(400).send(`Webhook Error: ${err instanceof Error ? err.message : "Unknown error"}`);
+      return reply.status(400).send(`Webhook Error: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
 
     // 2. Deduplicate by event ID using Redis
     const eventKey = `webhook:stripe:${event.id}`;
-    
+
     try {
       const exists = await RedisService.get(eventKey);
 
@@ -48,7 +51,7 @@ export class WebhookController {
         });
 
         // Return 200 to prevent Stripe from retrying
-        return res.json({ received: true, duplicate: true });
+        return reply.send({ received: true, duplicate: true });
       }
 
       // 3. Mark as processing (TTL = 7 days, matches Stripe's retry window)
@@ -98,7 +101,7 @@ export class WebhookController {
         604800  // Keep for 7 days
       );
 
-      return res.json({ received: true });
+      return reply.send({ received: true });
 
     } catch (err) {
       log.error('Webhook processing failed', {
@@ -112,7 +115,7 @@ export class WebhookController {
         log.error('Failed to delete webhook key', { err: delErr });
       });
 
-      return res.status(500).json({ error: 'Processing failed' });
+      return reply.status(500).send({ error: 'Processing failed' });
     }
   }
 
@@ -145,8 +148,8 @@ export class WebhookController {
       amount: paymentIntent.amount
     });
 
-    // Update transaction status in database
-    await db('transactions')
+    // Update transaction status in database (using payment_transactions not transactions)
+    await db('payment_transactions')
       .where({ stripe_intent_id: paymentIntent.id })
       .update({
         status: 'completed',
@@ -159,7 +162,7 @@ export class WebhookController {
       paymentIntentId: paymentIntent.id
     });
 
-    await db('transactions')
+    await db('payment_transactions')
       .where({ stripe_intent_id: paymentIntent.id })
       .update({
         status: 'failed',
@@ -182,7 +185,7 @@ export class WebhookController {
       paymentIntentId: paymentIntent.id
     });
 
-    await db('transactions')
+    await db('payment_transactions')
       .where({ stripe_intent_id: paymentIntent.id })
       .update({
         status: 'canceled',
@@ -190,12 +193,12 @@ export class WebhookController {
       });
   }
 
-  async handleSquareWebhook(req: Request, res: Response, next: NextFunction) {
-    const signature = req.headers['x-square-signature'] as string;
+  async handleSquareWebhook(request: FastifyRequest, reply: FastifyReply) {
+    const signature = request.headers['x-square-signature'] as string;
 
     try {
       // Verify Square signature
-      const body = JSON.stringify(req.body);
+      const body = JSON.stringify(request.body);
       const hash = crypto
         .createHmac('sha256', process.env.SQUARE_WEBHOOK_SECRET || "")
         .update(body)
@@ -205,14 +208,14 @@ export class WebhookController {
         throw new Error('Invalid signature');
       }
 
-      const event = req.body;
+      const event = request.body as any;
       const eventKey = `webhook:square:${event.event_id || event.id}`;
 
       // Deduplicate
       const exists = await RedisService.get(eventKey);
       if (exists) {
         log.info('Duplicate Square webhook ignored', { eventId: event.event_id });
-        return res.json({ received: true, duplicate: true });
+        return reply.send({ received: true, duplicate: true });
       }
 
       // Mark as processed (7 day TTL)
@@ -241,10 +244,10 @@ export class WebhookController {
 
       log.info('Square webhook stored', { eventId: event.event_id });
 
-      res.status(200).json({ received: true });
+      return reply.status(200).send({ received: true });
     } catch (error) {
       log.error('Square webhook error', { err: error });
-      res.status(500).json({ error: 'Processing failed' });
+      return reply.status(500).send({ error: 'Processing failed' });
     }
   }
 }

@@ -1,20 +1,53 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/tests', '<rootDir>/src'],
-  testMatch: ['**/*.test.ts'],
-  moduleFileExtensions: ['ts', 'js', 'json'],
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/**/*.d.ts',
+  
+  // Test files
+  roots: ['<rootDir>/tests'],
+  testMatch: [
+    '**/*.test.ts',
+    '**/*.spec.ts'
   ],
+  
+  // Module resolution
+  moduleFileExtensions: ['ts', 'js', 'json'],
   moduleNameMapper: {
     '^@tickettoken/shared/utils/(.*)$': '<rootDir>/../../shared/dist/utils/$1',
     '^@tickettoken/shared/(.*)$': '<rootDir>/../../shared/dist/$1',
     '^@tickettoken/shared$': '<rootDir>/../../shared/dist/index.js',
   },
+  
+  // Transform
   transformIgnorePatterns: [
     'node_modules/(?!@tickettoken)',
   ],
-  displayName: 'ticket-service',
+  
+  // Coverage
+  collectCoverageFrom: [
+    'src/**/*.ts',
+    '!src/**/*.d.ts',
+    '!src/index.ts',
+    '!src/server.ts',
+    '!src/migrations/**',
+    '!src/types/**',
+  ],
+  coverageThreshold: {
+    global: {
+      statements: 70,
+      branches: 65,
+      functions: 70,
+      lines: 70,
+    },
+  },
+  
+  // Performance
+  maxWorkers: 4,
+  testTimeout: 30000,  // 30 seconds per test
+  
+  // Reporting
+  verbose: true,
+  
+  // Error handling
+  bail: false,
+  errorOnDeprecated: true,
 };

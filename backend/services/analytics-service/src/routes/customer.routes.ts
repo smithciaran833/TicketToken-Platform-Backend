@@ -1,106 +1,134 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { customerController } from '../controllers/customer.controller';
 
-const router = Router();
+const venueParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const customerParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId', 'customerId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', minLength: 1 }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const journeySchema = {
+  params: {
+    type: 'object',
+    required: ['venueId', 'customerId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', minLength: 1 }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' }
+    }
+  }
+} as const;
 
-// Get customer segments
-router.get(
-  '/venue/:venueId/segments',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID()
-  ]),
-  customerController.getCustomerSegments
-);
+const searchSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['q'],
+    properties: {
+      q: { type: 'string', minLength: 1 },
+      segment: { type: 'string' },
+      page: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 }
+    }
+  }
+} as const;
 
-// Get customer profile
-router.get(
-  '/venue/:venueId/:customerId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('customerId').isString().notEmpty()
-  ]),
-  customerController.getCustomerProfile
-);
+const segmentAnalysisSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId', 'segment'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      segment: { type: 'string', minLength: 1 }
+    }
+  }
+} as const;
 
-// Get customer insights
-router.get(
-  '/venue/:venueId/:customerId/insights',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('customerId').isString().notEmpty()
-  ]),
-  customerController.getCustomerInsights
-);
+export default async function customerRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Get customer journey
-router.get(
-  '/venue/:venueId/:customerId/journey',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('customerId').isString().notEmpty(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601()
-  ]),
-  customerController.getCustomerJourney
-);
+  // Get customer segments
+  app.get('/venue/:venueId/segments', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: venueParamsSchema,
+    handler: customerController.getCustomerSegments
+  });
 
-// Get RFM analysis
-router.get(
-  '/venue/:venueId/:customerId/rfm',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('customerId').isString().notEmpty()
-  ]),
-  customerController.getRFMAnalysis
-);
+  // Get customer profile
+  app.get('/venue/:venueId/:customerId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: customerParamsSchema,
+    handler: customerController.getCustomerProfile
+  });
 
-// Get customer lifetime value
-router.get(
-  '/venue/:venueId/:customerId/clv',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('customerId').isString().notEmpty()
-  ]),
-  customerController.getCustomerLifetimeValue
-);
+  // Get customer insights
+  app.get('/venue/:venueId/:customerId/insights', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: customerParamsSchema,
+    handler: customerController.getCustomerInsights
+  });
 
-// Search customers
-router.get(
-  '/venue/:venueId/search',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('q').isString().notEmpty(),
-    query('segment').optional().isString(),
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
-  ]),
-  customerController.searchCustomers
-);
+  // Get customer journey
+  app.get('/venue/:venueId/:customerId/journey', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: journeySchema,
+    handler: customerController.getCustomerJourney
+  });
 
-// Get segment analysis
-router.get(
-  '/venue/:venueId/segments/:segment/analysis',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('segment').isString().notEmpty()
-  ]),
-  customerController.getSegmentAnalysis
-);
+  // Get RFM analysis
+  app.get('/venue/:venueId/:customerId/rfm', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: customerParamsSchema,
+    handler: customerController.getRFMAnalysis
+  });
 
-export { router as customerRouter };
+  // Get customer lifetime value
+  app.get('/venue/:venueId/:customerId/clv', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: customerParamsSchema,
+    handler: customerController.getCustomerLifetimeValue
+  });
+
+  // Search customers
+  app.get('/venue/:venueId/search', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: searchSchema,
+    handler: customerController.searchCustomers
+  });
+
+  // Get segment analysis
+  app.get('/venue/:venueId/segments/:segment/analysis', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: segmentAnalysisSchema,
+    handler: customerController.getSegmentAnalysis
+  });
+}

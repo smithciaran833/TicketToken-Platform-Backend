@@ -1,35 +1,59 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { QueueController } from '../controllers/queue.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
-const router = Router();
 const queueController = new QueueController();
 
-// All routes require authentication
-router.use(authenticate);
+async function queueRoutes(fastify: FastifyInstance) {
+  // Basic authenticated routes
+  fastify.get(
+    '/',
+    {
+      preHandler: [authenticate]
+    },
+    queueController.listQueues.bind(queueController)
+  );
 
-// Basic authenticated routes
-router.get('/', queueController.listQueues.bind(queueController));
-router.get('/:name/status', queueController.getQueueStatus.bind(queueController));
-router.get('/:name/jobs', queueController.getQueueJobs.bind(queueController));
+  fastify.get(
+    '/:name/status',
+    {
+      preHandler: [authenticate]
+    },
+    queueController.getQueueStatus.bind(queueController)
+  );
 
-// Admin only routes
-router.post(
-  '/:name/pause',
-  authorize('admin'),
-  queueController.pauseQueue.bind(queueController)
-);
+  fastify.get(
+    '/:name/jobs',
+    {
+      preHandler: [authenticate]
+    },
+    queueController.getQueueJobs.bind(queueController)
+  );
 
-router.post(
-  '/:name/resume',
-  authorize('admin'),
-  queueController.resumeQueue.bind(queueController)
-);
+  // Admin only routes
+  fastify.post(
+    '/:name/pause',
+    {
+      preHandler: [authenticate, authorize('admin')]
+    },
+    queueController.pauseQueue.bind(queueController)
+  );
 
-router.post(
-  '/:name/clear',
-  authorize('admin'),
-  queueController.clearQueue.bind(queueController)
-);
+  fastify.post(
+    '/:name/resume',
+    {
+      preHandler: [authenticate, authorize('admin')]
+    },
+    queueController.resumeQueue.bind(queueController)
+  );
 
-export default router;
+  fastify.post(
+    '/:name/clear',
+    {
+      preHandler: [authenticate, authorize('admin')]
+    },
+    queueController.clearQueue.bind(queueController)
+  );
+}
+
+export default queueRoutes;

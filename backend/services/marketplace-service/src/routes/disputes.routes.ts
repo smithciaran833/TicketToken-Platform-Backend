@@ -1,22 +1,28 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { disputeController } from '../controllers/dispute.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 
-const router = Router();
+export default async function disputesRoutes(fastify: FastifyInstance) {
+  // All dispute routes require authentication
+  const securePreHandler = [authMiddleware];
 
-// All dispute routes require authentication
-router.use(authMiddleware);
+  // Create dispute
+  fastify.post('/', {
+    preHandler: securePreHandler
+  }, disputeController.create.bind(disputeController));
 
-// Create dispute
-router.post('/', disputeController.create);
+  // Get user's disputes
+  fastify.get('/my-disputes', {
+    preHandler: securePreHandler
+  }, disputeController.getMyDisputes.bind(disputeController));
 
-// Get user's disputes
-router.get('/my-disputes', disputeController.getMyDisputes);
+  // Get specific dispute
+  fastify.get('/:disputeId', {
+    preHandler: securePreHandler
+  }, disputeController.getById.bind(disputeController));
 
-// Get specific dispute
-router.get('/:disputeId', disputeController.getById);
-
-// Add evidence to dispute
-router.post('/:disputeId/evidence', disputeController.addEvidence);
-
-export default router;
+  // Add evidence to dispute
+  fastify.post('/:disputeId/evidence', {
+    preHandler: securePreHandler
+  }, disputeController.addEvidence.bind(disputeController));
+}

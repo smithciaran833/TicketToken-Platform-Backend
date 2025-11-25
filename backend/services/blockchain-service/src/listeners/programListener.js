@@ -1,110 +1,88 @@
-const BaseListener = require('./baseListener');
-const { PublicKey } = require('@solana/web3.js');
-
-class ProgramEventListener extends BaseListener {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.ProgramEventListener = void 0;
+const baseListener_1 = require("./baseListener");
+const web3_js_1 = require("@solana/web3.js");
+class ProgramEventListener extends baseListener_1.BaseListener {
+    programId;
     constructor(connection, db, programId) {
         super(connection, db);
-        this.programId = new PublicKey(programId);
+        this.programId = new web3_js_1.PublicKey(programId);
     }
-    
     async setupSubscriptions() {
         try {
-            // Subscribe to program logs
-            const logsSubscription = this.connection.onLogs(
-                this.programId,
-                async (logs) => {
-                    await this.processLogs(logs);
-                },
-                'confirmed'
-            );
-            
+            const logsSubscription = this.connection.onLogs(this.programId, async (logs) => {
+                await this.processLogs(logs);
+            }, 'confirmed');
             this.subscriptions.set('logs', logsSubscription);
             console.log(`Listening to program logs for ${this.programId.toString()}`);
-            
-        } catch (error) {
+        }
+        catch (error) {
             await this.handleError(error, { programId: this.programId.toString() });
         }
     }
-    
     async processLogs(logs) {
         try {
             console.log(`Processing logs for signature: ${logs.signature}`);
-            
-            // Store raw logs
             await this.storeRawLogs(logs);
-            
-            // Parse events from logs
             const events = this.parseEvents(logs.logs);
-            
-            // Process each event
             for (const event of events) {
                 await this.processEvent(event, logs.signature);
             }
-            
-        } catch (error) {
+        }
+        catch (error) {
             await this.handleError(error, { logs });
         }
     }
-    
     parseEvents(logs) {
         const events = [];
-        
         for (const log of logs) {
-            // Look for specific event patterns
             if (log.includes('TicketMinted')) {
                 events.push({
                     type: 'TICKET_MINTED',
                     data: this.extractEventData(log)
                 });
-            } else if (log.includes('TicketTransferred')) {
+            }
+            else if (log.includes('TicketTransferred')) {
                 events.push({
                     type: 'TICKET_TRANSFERRED',
                     data: this.extractEventData(log)
                 });
-            } else if (log.includes('TicketUsed')) {
+            }
+            else if (log.includes('TicketUsed')) {
                 events.push({
                     type: 'TICKET_USED',
                     data: this.extractEventData(log)
                 });
             }
         }
-        
         return events;
     }
-    
     extractEventData(log) {
-        // Try to extract JSON data from log
         try {
             const jsonMatch = log.match(/\{.*\}/);
             if (jsonMatch) {
                 return JSON.parse(jsonMatch[0]);
             }
-        } catch (e) {
-            // Not JSON, return raw log
+        }
+        catch (e) {
         }
         return { raw: log };
     }
-    
     async processEvent(event, signature) {
         console.log(`Processing event: ${event.type}`);
-        
-        // Store event in database
         await this.db.query(`
-            INSERT INTO blockchain_events (
-                event_type,
-                program_id,
-                transaction_signature,
-                event_data,
-                processed,
-                created_at
-            )
-            VALUES ($1, $2, $3, $4, false, NOW())
-        `, [event.type, this.programId.toString(), signature, JSON.stringify(event.data)]);
-        
-        // Emit event for other parts of the system
+      INSERT INTO blockchain_events (
+        event_type,
+        program_id,
+        transaction_signature,
+        event_data,
+        processed,
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, false, NOW())
+    `, [event.type, this.programId.toString(), signature, JSON.stringify(event.data)]);
         this.emit('blockchain:event', { type: event.type, data: event.data, signature });
-        
-        // Handle specific event types
         switch (event.type) {
             case 'TICKET_MINTED':
                 await this.handleTicketMinted(event.data, signature);
@@ -117,44 +95,36 @@ class ProgramEventListener extends BaseListener {
                 break;
         }
     }
-    
     async handleTicketMinted(data, signature) {
         console.log('Ticket minted event:', data);
-        // Update ticket in database if we have the ticket ID
         if (data.ticketId) {
             await this.db.query(`
-                UPDATE tickets 
-                SET on_chain_confirmed = true,
-                    confirmation_signature = $1
-                WHERE id = $2
-            `, [signature, data.ticketId]);
+        UPDATE tickets
+        SET on_chain_confirmed = true,
+            confirmation_signature = $1
+        WHERE id = $2
+      `, [signature, data.ticketId]);
         }
     }
-    
     async handleTicketTransferred(data, signature) {
         console.log('Ticket transferred event:', data);
-        // Record transfer in database
     }
-    
     async handleTicketUsed(data, signature) {
         console.log('Ticket used event:', data);
-        // Mark ticket as used
     }
-    
     async storeRawLogs(logs) {
-        // Store raw logs for debugging/audit
         await this.db.query(`
-            INSERT INTO blockchain_events (
-                event_type,
-                program_id,
-                transaction_signature,
-                slot,
-                event_data,
-                processed,
-                created_at
-            )
-            VALUES ('RAW_LOGS', $1, $2, $3, $4, true, NOW())
-        `, [
+      INSERT INTO blockchain_events (
+        event_type,
+        program_id,
+        transaction_signature,
+        slot,
+        event_data,
+        processed,
+        created_at
+      )
+      VALUES ('RAW_LOGS', $1, $2, $3, $4, true, NOW())
+    `, [
             this.programId.toString(),
             logs.signature,
             logs.slot,
@@ -162,5 +132,6 @@ class ProgramEventListener extends BaseListener {
         ]);
     }
 }
-
-module.exports = ProgramEventListener;
+exports.ProgramEventListener = ProgramEventListener;
+exports.default = ProgramEventListener;
+//# sourceMappingURL=programListener.js.map

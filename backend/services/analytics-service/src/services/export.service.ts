@@ -1,8 +1,9 @@
-import { ExportModel } from '../models';
+import { ExportModel, Export as DBExport } from '../models';
 import {
   ExportRequest,
   ExportStatus,
   ExportFormat,
+  ExportType,
   FinancialExportData,
   CustomerExportData
 } from '../types';
@@ -26,21 +27,52 @@ export class ExportService {
     return this.instance;
   }
 
+  private mapDBExportToExportRequest(dbExport: DBExport): ExportRequest {
+    const dateRange = dbExport.parameters?.dateRange || {
+      start: new Date(),
+      end: new Date()
+    };
+
+    return {
+      id: dbExport.id,
+      venueId: dbExport.tenant_id,
+      userId: dbExport.requested_by,
+      type: (dbExport.export_type as ExportType) || ExportType.ANALYTICS_REPORT,
+      format: (dbExport.format as ExportFormat) || ExportFormat.CSV,
+      status: (dbExport.status as ExportStatus) || ExportStatus.PENDING,
+      filters: {
+        dateRange: {
+          start: new Date(dateRange.start),
+          end: new Date(dateRange.end)
+        },
+        ...(dbExport.parameters || {})
+      },
+      options: dbExport.parameters?.options || {},
+      fileUrl: dbExport.file_url,
+      fileSize: dbExport.file_size,
+      error: dbExport.error_message,
+      createdAt: dbExport.created_at,
+      completedAt: dbExport.updated_at
+    };
+  }
+
   async createExport(
     request: Omit<ExportRequest, 'id' | 'createdAt' | 'status'>
   ): Promise<ExportRequest> {
     try {
-      const exportRequest = await ExportModel.createExport({
+      const dbExport = await ExportModel.createExport({
         ...request,
         status: ExportStatus.PENDING
       });
 
+      const exportRequest = this.mapDBExportToExportRequest(dbExport);
+
       // Queue export for processing
-      this.processExportAsync(exportRequest.id);
+      this.processExportAsync(dbExport.id);
 
       return exportRequest;
     } catch (error) {
-      this.log.error('Failed to create export', { error });
+      this.log.error('Failed to create export', error);
       throw error;
     }
   }
@@ -51,21 +83,23 @@ export class ExportService {
       await ExportModel.updateExportStatus(exportId, ExportStatus.PROCESSING);
 
       // Get export details
-      const exportRequest = await ExportModel.findById(exportId);
-      if (!exportRequest) {
+      const dbExport = await ExportModel.findById(exportId);
+      if (!dbExport) {
         throw new Error('Export request not found');
       }
+
+      const exportRequest = this.mapDBExportToExportRequest(dbExport);
 
       // Generate export based on type
       let filePath: string;
       switch (exportRequest.type) {
-        case 'analytics_report':
+        case ExportType.ANALYTICS_REPORT:
           filePath = await this.generateAnalyticsReport(exportRequest);
           break;
-        case 'customer_list':
+        case ExportType.CUSTOMER_LIST:
           filePath = await this.generateCustomerList(exportRequest);
           break;
-        case 'financial_report':
+        case ExportType.FINANCIAL_REPORT:
           filePath = await this.generateFinancialReport(exportRequest);
           break;
         default:
@@ -100,7 +134,7 @@ export class ExportService {
       // Clean up temp file
       await fs.unlink(filePath);
     } catch (error) {
-      this.log.error('Failed to process export', { error, exportId });
+      this.log.error('Failed to process export', error, { exportId });
 
       await ExportModel.updateExportStatus(exportId, ExportStatus.FAILED, {
         error: error instanceof Error ? error.message : 'Unknown error'
@@ -291,7 +325,8 @@ export class ExportService {
   }
 
   async getExportStatus(exportId: string): Promise<ExportRequest | null> {
-    return await ExportModel.findById(exportId);
+    const dbExport = await ExportModel.findById(exportId);
+    return dbExport ? this.mapDBExportToExportRequest(dbExport) : null;
   }
 
   async getUserExports(
@@ -299,7 +334,8 @@ export class ExportService {
     venueId: string,
     limit: number = 50
   ): Promise<ExportRequest[]> {
-    return await ExportModel.getExportsByUser(userId, venueId, limit);
+    const exports = await ExportModel.getExportsByUser(userId, venueId, limit);
+    return exports.map(exp => this.mapDBExportToExportRequest(exp));
   }
 }
 

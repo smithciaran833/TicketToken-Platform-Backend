@@ -1,15 +1,11 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { purchaseController } from '../controllers/purchaseController';
 import { authMiddleware } from '../middleware/auth';
-import { tenantMiddleware } from '../middleware/tenant-simple';
+import { tenantMiddleware } from '../middleware/tenant';
 
-const router = Router();
-
-// Purchase route - requires auth AND tenant context
-router.post('/', 
-  authMiddleware,
-  tenantMiddleware,
-  purchaseController.createOrder.bind(purchaseController)
-);
-
-export default router;
+export default async function purchaseRoutes(fastify: FastifyInstance) {
+  // Purchase route - requires auth AND tenant context
+  fastify.post('/', {
+    preHandler: [authMiddleware, tenantMiddleware]
+  }, (request, reply) => purchaseController.createOrder(request, reply));
+}

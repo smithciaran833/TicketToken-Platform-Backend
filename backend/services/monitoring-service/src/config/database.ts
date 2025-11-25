@@ -1,15 +1,24 @@
 import knex from 'knex';
+import path from 'path';
 
 export const db = knex({
   client: 'postgresql',
-  connection: process.env.DATABASE_URL || {
-    host: process.env.DB_HOST || 'postgres',
-    port: parseInt(process.env.DB_PORT || '5432'),
+  connection: {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '6432'),
     database: process.env.DB_NAME || 'tickettoken_db',
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres'
   },
-  pool: { min: 2, max: 10 }
+  pool: {
+    min: 2,
+    max: 10
+  },
+  migrations: {
+    directory: path.join(__dirname, '../migrations'),
+    tableName: 'knex_migrations_monitoring',
+    extension: 'js'
+  }
 });
 
 export default db;

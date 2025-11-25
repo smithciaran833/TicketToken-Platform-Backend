@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Thanks for attending!</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="text-align: center; padding: 40px 0;">
+    <h1 style="color: #2c3e50;">Thank You for Attending!</h1>
+    <p style="font-size: 18px; color: #7f8c8d;">We hope you had an amazing time at {{eventName}}</p>
+  </div>
+  
+  <div style="padding: 20px 0;">
+    <p>Hi {{customerName}},</p>
+    
+    <p>We hope you enjoyed <strong>{{eventName}}</strong>! Your support means everything to us.</p>
+    
+    <div style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; margin: 20px 0; text-align: center;">
+      <h3 style="color: #3498db; margin-top: 0;">Share Your Experience</h3>
+      <p>How was your experience? We'd love to hear from you!</p>
+      <a href="{{feedbackUrl}}" style="background-color: #3498db; color: white; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px 0;">
+        Leave Feedback
+      </a>
+    </div>
+    
+    {{#if upcomingEvents}}
+    <div style="border-top: 2px solid #eee; padding-top: 30px; margin-top: 30px;">
+      <h3 style="color: #2c3e50;">Upcoming Events You Might Like</h3>
+      
+      {{#each upcomingEvents}}
+      <div style="background-color: white; border: 1px solid #ddd; border-radius: 5px; padding: 15px; margin: 15px 0; display: flex; align-items: center;">
+        <div style="flex: 1;">
+          <h4 style="margin: 0 0 5px 0; color: #2c3e50;">{{name}}</h4>
+          <p style="margin: 5px 0; color: #7f8c8d; font-size: 14px;">{{formatDate date}} • {{venue}}</p>
+        </div>
+        <a href="{{url}}" style="background-color: #2ecc71; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; white-space: nowrap;">
+          Get Tickets
+        </a>
+      </div>
+      {{/each}}
+    </div>
+    {{/if}}
+    
+    <div style="text-align: center; margin: 30px 0;">
+      <p style="color: #7f8c8d;">Want to be the first to know about upcoming events?</p>
+      <a href="{{newsletterUrl}}" style="color: #3498db; text-decoration: none; font-weight: bold;">
+        Subscribe to Our Newsletter →
+      </a>
+    </div>
+  </div>
+  
+  <div style="text-align: center; margin-top: 30px; color: #95a5a6; font-size: 12px;">
+    <p>
+      <a href="{{unsubscribeUrl}}" style="color: #95a5a6;">Unsubscribe</a> |
+      <a href="{{preferencesUrl}}" style="color: #95a5a6;">Email Preferences</a>
+    </p>
+  </div>
+</body>
+</html>

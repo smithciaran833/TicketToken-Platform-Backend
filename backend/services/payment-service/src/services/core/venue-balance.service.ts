@@ -1,6 +1,9 @@
 import { VenueBalanceModel } from '../../models';
 import { VenueBalance } from '../../types';
 import { chargebackReserves, payoutThresholds } from '../../config/fees';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'VenueBalanceService' });
 
 export class VenueBalanceService {
   async getBalance(venueId: string): Promise<VenueBalance> {
@@ -63,6 +66,6 @@ export class VenueBalanceService {
     
     // In production, would initiate actual bank transfer here
     // For now, just mark as processed
-    console.log(`Processing payout of $${amount} for venue ${venueId}`);
+    log.info('Processing payout', { amount, venueId });
   }
 }

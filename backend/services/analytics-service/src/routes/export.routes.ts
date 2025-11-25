@@ -1,84 +1,99 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { exportController } from '../controllers/export.controller';
 
-const router = Router();
+const getExportsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['pending', 'processing', 'completed', 'failed'] },
+      type: { type: 'string' },
+      page: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const exportParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['exportId'],
+    properties: {
+      exportId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const createExportSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'type', 'format'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      type: { type: 'string', enum: ['analytics_report', 'customer_list', 'financial_report', 'custom'] },
+      format: { type: 'string', enum: ['csv', 'xlsx', 'pdf', 'json'] },
+      filters: { type: 'object' },
+      dateRange: {
+        type: 'object',
+        properties: {
+          startDate: { type: 'string', format: 'date-time' },
+          endDate: { type: 'string', format: 'date-time' }
+        }
+      }
+    }
+  }
+} as const;
 
-// Get export history
-router.get(
-  '/venue/:venueId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('status').optional().isIn(['pending', 'processing', 'completed', 'failed']),
-    query('type').optional().isString(),
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
-  ]),
-  exportController.getExports
-);
+export default async function exportRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Get export status
-router.get(
-  '/:exportId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('exportId').isUUID()
-  ]),
-  exportController.getExportStatus
-);
+  // Get export history
+  app.get('/venue/:venueId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: getExportsSchema,
+    handler: exportController.getExports
+  });
 
-// Create export
-router.post(
-  '/',
-  authorize(['analytics.export']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('type').isIn(['analytics_report', 'customer_list', 'financial_report', 'custom']),
-    body('format').isIn(['csv', 'xlsx', 'pdf', 'json']),
-    body('filters').optional().isObject(),
-    body('dateRange').optional().isObject(),
-    body('dateRange.startDate').optional().isISO8601(),
-    body('dateRange.endDate').optional().isISO8601()
-  ]),
-  exportController.createExport
-);
+  // Get export status
+  app.get('/:exportId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: exportParamsSchema,
+    handler: exportController.getExportStatus
+  });
 
-// Download export
-router.get(
-  '/:exportId/download',
-  authorize(['analytics.export']),
-  validateRequest([
-    param('exportId').isUUID()
-  ]),
-  exportController.downloadExport
-);
+  // Create export
+  app.post('/', {
+    preHandler: [authorize(['analytics.export'])],
+    schema: createExportSchema,
+    handler: exportController.createExport
+  });
 
-// Cancel export
-router.post(
-  '/:exportId/cancel',
-  authorize(['analytics.export']),
-  validateRequest([
-    param('exportId').isUUID()
-  ]),
-  exportController.cancelExport
-);
+  // Download export
+  app.get('/:exportId/download', {
+    preHandler: [authorize(['analytics.export'])],
+    schema: exportParamsSchema,
+    handler: exportController.downloadExport
+  });
 
-// Retry failed export
-router.post(
-  '/:exportId/retry',
-  authorize(['analytics.export']),
-  validateRequest([
-    param('exportId').isUUID()
-  ]),
-  exportController.retryExport
-);
+  // Cancel export
+  app.post('/:exportId/cancel', {
+    preHandler: [authorize(['analytics.export'])],
+    schema: exportParamsSchema,
+    handler: exportController.cancelExport
+  });
 
-export { router as exportRouter };
+  // Retry failed export
+  app.post('/:exportId/retry', {
+    preHandler: [authorize(['analytics.export'])],
+    schema: exportParamsSchema,
+    handler: exportController.retryExport
+  });
+}

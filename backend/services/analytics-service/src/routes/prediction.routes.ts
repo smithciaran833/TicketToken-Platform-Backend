@@ -1,97 +1,145 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { predictionController } from '../controllers/prediction.controller';
 
-const router = Router();
+const predictDemandSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'eventId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      eventId: { type: 'string', format: 'uuid' },
+      daysAhead: { type: 'integer', minimum: 1, maximum: 365 }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const optimizePricingSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'eventId', 'ticketTypeId', 'currentPrice'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      eventId: { type: 'string', format: 'uuid' },
+      ticketTypeId: { type: 'string', format: 'uuid' },
+      currentPrice: { type: 'number' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const predictChurnSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'customerId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', minLength: 1 }
+    }
+  }
+} as const;
 
-// Predict demand
-router.post(
-  '/demand',
-  authorize(['analytics.read']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('eventId').isUUID(),
-    body('daysAhead').optional().isInt({ min: 1, max: 365 })
-  ]),
-  predictionController.predictDemand
-);
+const predictCLVSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'customerId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', minLength: 1 }
+    }
+  }
+} as const;
 
-// Optimize pricing
-router.post(
-  '/pricing',
-  authorize(['analytics.read']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('eventId').isUUID(),
-    body('ticketTypeId').isUUID(),
-    body('currentPrice').isNumeric()
-  ]),
-  predictionController.optimizePricing
-);
+const predictNoShowSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'ticketId', 'customerId', 'eventId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      ticketId: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', minLength: 1 },
+      eventId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Predict churn
-router.post(
-  '/churn',
-  authorize(['analytics.read']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('customerId').isString().notEmpty()
-  ]),
-  predictionController.predictChurn
-);
+const whatIfScenarioSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'scenario'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      scenario: {
+        type: 'object',
+        required: ['type', 'parameters'],
+        properties: {
+          type: { type: 'string', enum: ['pricing', 'capacity', 'marketing'] },
+          parameters: { type: 'object' }
+        }
+      }
+    }
+  }
+} as const;
 
-// Predict customer lifetime value
-router.post(
-  '/clv',
-  authorize(['analytics.read']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('customerId').isString().notEmpty()
-  ]),
-  predictionController.predictCLV
-);
+const modelPerformanceSchema = {
+  params: {
+    type: 'object',
+    required: ['modelType'],
+    properties: {
+      modelType: { type: 'string', enum: ['demand', 'pricing', 'churn', 'clv', 'no_show'] }
+    }
+  }
+} as const;
 
-// Predict no-show
-router.post(
-  '/no-show',
-  authorize(['analytics.read']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('ticketId').isUUID(),
-    body('customerId').isString().notEmpty(),
-    body('eventId').isUUID()
-  ]),
-  predictionController.predictNoShow
-);
+export default async function predictionRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Run what-if scenario
-router.post(
-  '/what-if',
-  authorize(['analytics.read']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('scenario').isObject(),
-    body('scenario.type').isIn(['pricing', 'capacity', 'marketing']),
-    body('scenario.parameters').isObject()
-  ]),
-  predictionController.runWhatIfScenario
-);
+  // Predict demand
+  app.post('/demand', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: predictDemandSchema,
+    handler: predictionController.predictDemand
+  });
 
-// Get model performance
-router.get(
-  '/models/:modelType/performance',
-  authorize(['analytics.admin']),
-  validateRequest([
-    param('modelType').isIn(['demand', 'pricing', 'churn', 'clv', 'no_show'])
-  ]),
-  predictionController.getModelPerformance
-);
+  // Optimize pricing
+  app.post('/pricing', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: optimizePricingSchema,
+    handler: predictionController.optimizePricing
+  });
 
-export { router as predictionRouter };
+  // Predict churn
+  app.post('/churn', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: predictChurnSchema,
+    handler: predictionController.predictChurn
+  });
+
+  // Predict customer lifetime value
+  app.post('/clv', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: predictCLVSchema,
+    handler: predictionController.predictCLV
+  });
+
+  // Predict no-show
+  app.post('/no-show', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: predictNoShowSchema,
+    handler: predictionController.predictNoShow
+  });
+
+  // Run what-if scenario
+  app.post('/what-if', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: whatIfScenarioSchema,
+    handler: predictionController.runWhatIfScenario
+  });
+
+  // Get model performance
+  app.get('/models/:modelType/performance', {
+    preHandler: [authorize(['analytics.admin'])],
+    schema: modelPerformanceSchema,
+    handler: predictionController.getModelPerformance
+  });
+}

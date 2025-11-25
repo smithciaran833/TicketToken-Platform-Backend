@@ -1,13 +1,90 @@
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { DatabaseService } from '../services/databaseService';
 import { logger } from '../utils/logger';
+import { auditService } from '@tickettoken/shared';
 import { v4 as uuidv4 } from 'uuid';
+import Stripe from 'stripe';
 
 const log = logger.child({ component: 'RefundController' });
 
-// Add validation schema
+// Initialize Stripe (reuse same validation logic)
+function getStripe(): Stripe {
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeKey) {
+    throw new Error('STRIPE_SECRET_KEY must be set');
+  }
+  return new Stripe(stripeKey, {
+    apiVersion: '2023-10-16',
+    timeout: 20000,
+    maxNetworkRetries: 0,
+  });
+}
+
+const stripe = getStripe();
+
+// ============================================================================
+// RETRY LOGIC FOR REFUNDS
+// ============================================================================
+
+interface RetryOptions {
+  maxAttempts: number;
+  delayMs: number;
+  operation: string;
+}
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  options: RetryOptions
+): Promise<T> {
+  const { maxAttempts, delayMs, operation } = options;
+  let lastError: any;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (error: any) {
+      lastError = error;
+
+      // Don't retry on 4xx client errors
+      if (error.statusCode && error.statusCode >= 400 && error.statusCode < 500) {
+        log.warn('Client error, not retrying', {
+          operation,
+          attempt,
+          statusCode: error.statusCode,
+          message: error.message
+        });
+        throw error;
+      }
+
+      // Retry on 5xx server errors or network errors
+      if (attempt < maxAttempts) {
+        const delay = delayMs * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        log.warn('Refund API call failed, retrying', {
+          operation,
+          attempt,
+          maxAttempts,
+          delayMs: delay,
+          error: error.message
+        });
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+
+  log.error('Refund API call failed after all retries', {
+    operation,
+    attempts: maxAttempts,
+    error: lastError.message
+  });
+  throw lastError;
+}
+
+// ============================================================================
+// REFUND CONTROLLER
+// ============================================================================
+
 const refundSchema = z.object({
   paymentIntentId: z.string(),
   amount: z.number().positive(),
@@ -15,29 +92,26 @@ const refundSchema = z.object({
 });
 
 export class RefundController {
-  async createRefund(req: Request, res: Response) {
+  async createRefund(request: FastifyRequest, reply: FastifyReply) {
     try {
-      // Check authentication
-      const user = (req as any).user;
-      const tenantId = (req as any).tenantId;
-      
+      const user = (request as any).user;
+      const tenantId = (request as any).tenantId;
+
       if (!user) {
-        return res.status(401).json({ error: 'Authentication required' });
-      }
-      
-      if (!tenantId) {
-        return res.status(403).json({ error: 'Tenant context required' });
+        return reply.code(401).send({ error: 'Authentication required' });
       }
 
-      // Validate input
-      const validated = refundSchema.parse(req.body);
+      if (!tenantId) {
+        return reply.code(403).send({ error: 'Tenant context required' });
+      }
+
+      const validated = refundSchema.parse(request.body);
       const { paymentIntentId, amount, reason } = validated;
 
       const db = DatabaseService.getPool();
-      
-      // CRITICAL: Verify the payment intent belongs to this tenant
+
       const paymentCheck = await db.query(
-        `SELECT pi.*, o.tenant_id 
+        `SELECT pi.*, o.tenant_id
          FROM payment_intents pi
          JOIN orders o ON pi.order_id = o.id
          WHERE pi.stripe_intent_id = $1 AND o.tenant_id = $2`,
@@ -46,56 +120,112 @@ export class RefundController {
 
       if (paymentCheck.rows.length === 0) {
         log.warn('Refund attempt for unauthorized payment intent', {
-          paymentIntentId,
-          tenantId,
-          userId: user.id
+          paymentIntentId, tenantId, userId: user.id
         });
-        return res.status(403).json({ error: 'Payment intent not found or unauthorized' });
+        return reply.code(403).send({ error: 'Payment intent not found or unauthorized' });
       }
 
       const paymentIntent = paymentCheck.rows[0];
 
-      // Verify refund amount doesn't exceed original amount
       if (amount > paymentIntent.amount) {
-        return res.status(400).json({ error: 'Refund amount exceeds original payment' });
+        return reply.code(400).send({ error: 'Refund amount exceeds original payment' });
       }
 
-      // Check if already refunded
       if (paymentIntent.status === 'refunded') {
-        return res.status(400).json({ error: 'Payment already refunded' });
+        return reply.code(400).send({ error: 'Payment already refunded' });
       }
 
-      // Mock Stripe refund (in production, use real Stripe SDK)
-      const mockRefund = {
-        id: `re_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-        payment_intent: paymentIntentId,
-        amount: amount,
-        status: 'succeeded',
-        reason: reason || 'requested_by_customer'
-      };
+      // ================================================================
+      // CALL REAL STRIPE REFUND API WITH RETRY LOGIC
+      // ================================================================
+      
+      const idempotencyKey = (request as any).idempotencyKey || uuidv4();
 
-      // Start transaction
+      let stripeRefund;
+      try {
+        stripeRefund = await retryWithBackoff(
+          () => stripe.refunds.create({
+            payment_intent: paymentIntentId,
+            amount: amount,
+            reason: (reason === 'other' ? 'requested_by_customer' : reason as any) || 'requested_by_customer',
+          }, {
+            idempotencyKey: idempotencyKey, // Use idempotency key for safety
+          }),
+          {
+            maxAttempts: 3,
+            delayMs: 1000,
+            operation: 'createRefund'
+          }
+        );
+
+        log.info('Stripe refund created successfully', {
+          refundId: stripeRefund.id,
+          paymentIntentId,
+          amount,
+          status: stripeRefund.status
+        });
+      } catch (error: any) {
+        log.error('Failed to create Stripe refund', {
+          error: error.message,
+          paymentIntentId,
+          amount,
+          userId: user.id
+        });
+
+        await auditService.logAction({
+          service: 'payment-service',
+          action: 'create_refund',
+          actionType: 'UPDATE',
+          userId: user.id,
+          userRole: user.role,
+          resourceType: 'payment',
+          resourceId: paymentIntentId,
+          metadata: { 
+            amount, 
+            reason,
+            error: error.message 
+          },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+          success: false,
+          errorMessage: error.message,
+        });
+
+        return reply.code(500).send({ 
+          error: 'Refund failed',
+          message: 'Unable to process refund through payment provider. Please try again or contact support.'
+        });
+      }
+
+      // ================================================================
+      // UPDATE DATABASE WITH REAL STRIPE REFUND DATA
+      // ================================================================
+
       const client = await db.connect();
       try {
         await client.query('BEGIN');
-        
-        // Set tenant context for RLS
         await client.query("SELECT set_config('app.tenant_id', $1, false)", [tenantId]);
 
-        // Store refund record with tenant_id
+        // Store refund with REAL Stripe refund ID
         await client.query(
-          `INSERT INTO refunds (id, payment_intent_id, amount, status, reason, tenant_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-          [mockRefund.id, paymentIntentId, amount, mockRefund.status, mockRefund.reason, tenantId]
+          `INSERT INTO refunds (id, payment_intent_id, amount, status, reason, tenant_id, stripe_refund_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+          [
+            stripeRefund.id,  // Use Stripe's refund ID
+            paymentIntentId,
+            amount,
+            stripeRefund.status,
+            reason || 'requested_by_customer',
+            tenantId,
+            stripeRefund.id  // Store Stripe refund ID for tracking
+          ]
         );
 
-        // Update payment intent status
         await client.query(
           `UPDATE payment_intents SET status = 'refunded' WHERE stripe_intent_id = $1`,
           [paymentIntentId]
         );
 
-        // Write to outbox with tenant context
         const outboxId = uuidv4();
         await client.query(
           `INSERT INTO outbox (aggregate_id, aggregate_type, event_type, payload, tenant_id)
@@ -105,7 +235,11 @@ export class RefundController {
             'refund',
             'refund.completed',
             JSON.stringify({
-              ...mockRefund,
+              refundId: stripeRefund.id,
+              stripeRefundId: stripeRefund.id,
+              paymentIntentId,
+              amount,
+              status: stripeRefund.status,
               tenantId,
               userId: user.id,
               timestamp: new Date().toISOString()
@@ -115,17 +249,44 @@ export class RefundController {
         );
 
         await client.query('COMMIT');
-        
-        log.info('Refund processed', { 
-          refundId: mockRefund.id,
-          tenantId,
-          userId: user.id
+
+        await auditService.logAction({
+          service: 'payment-service',
+          action: 'create_refund',
+          actionType: 'UPDATE',
+          userId: user.id,
+          userRole: user.role,
+          resourceType: 'payment',
+          resourceId: paymentIntentId,
+          previousValue: { status: paymentIntent.status, amount: paymentIntent.amount },
+          newValue: { 
+            status: 'refunded', 
+            refundAmount: amount, 
+            refundId: stripeRefund.id,
+            stripeRefundId: stripeRefund.id 
+          },
+          metadata: {
+            refundReason: reason || 'requested_by_customer',
+            refundPercentage: (amount / paymentIntent.amount) * 100,
+            tenantId,
+          },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+          success: true,
         });
 
-        return res.json({
-          refundId: mockRefund.id,
-          status: mockRefund.status,
-          amount: amount
+        log.info('Refund processed successfully', { 
+          refundId: stripeRefund.id, 
+          stripeRefundId: stripeRefund.id,
+          tenantId, 
+          userId: user.id,
+          amount
+        });
+
+        return reply.send({ 
+          refundId: stripeRefund.id, 
+          status: stripeRefund.status, 
+          amount: amount 
         });
       } catch (error) {
         await client.query('ROLLBACK');
@@ -135,11 +296,25 @@ export class RefundController {
       }
     } catch (error) {
       if (error instanceof z.ZodError) {
-        return res.status(400).json({ error: 'Validation failed', details: (error as any).errors });
+        return reply.code(400).send({ error: 'Validation failed', details: (error as any).errors });
       }
-      
-      log.error('Refund failed', error);
-      return res.status(500).json({ error: 'Refund failed' });
+
+      await auditService.logAction({
+        service: 'payment-service',
+        action: 'create_refund',
+        actionType: 'UPDATE',
+        userId: (request as any).user?.id || 'unknown',
+        resourceType: 'payment',
+        resourceId: (request.body as any)?.paymentIntentId,
+        metadata: { attemptedAmount: (request.body as any)?.amount },
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      log.error('Refund failed', { error: error instanceof Error ? error.message : error });
+      return reply.code(500).send({ error: 'Refund failed' });
     }
   }
 }

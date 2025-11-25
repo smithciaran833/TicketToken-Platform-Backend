@@ -1,7 +1,7 @@
-import { Application } from 'express';
-import { createApp } from './app';
+import { FastifyInstance } from 'fastify';
+import { buildApp } from './app';
 
-export function createServer(): Application {
-  const app = createApp();
+export async function createServer(): Promise<FastifyInstance> {
+  const app = await buildApp();
   return app;
 }

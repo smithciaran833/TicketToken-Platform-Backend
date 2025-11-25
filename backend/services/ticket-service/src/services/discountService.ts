@@ -5,17 +5,18 @@ interface Discount {
   id: string;
   code: string;
   type: 'percentage' | 'fixed' | 'bogo' | 'early_bird';
-  value: number;
-  priority: number;  // Lower number = higher priority
+  value_percentage?: number;
+  value_cents?: number;
+  priority: number;
   stackable: boolean;
-  maxUses?: number;
-  currentUses?: number;
-  minPurchaseAmount?: number;
-  maxDiscountAmount?: number;
-  validFrom: Date;
-  validUntil: Date;
-  eventId?: string;
-  ticketTypeIds?: string[];
+  max_uses?: number;
+  current_uses?: number;
+  min_purchase_cents?: number;  // Fixed: was minPurchaseAmount
+  max_discount_cents?: number;  // Fixed: was maxDiscountAmount
+  valid_from: Date;
+  valid_until: Date;
+  event_id?: string;
+  ticket_type_ids?: string[];
 }
 
 interface DiscountApplication {
@@ -29,7 +30,6 @@ interface DiscountApplication {
 export class DiscountService {
   private log = logger.child({ component: 'DiscountService' });
 
-  // ISSUE #23 FIX: Validate and apply discounts with proper stacking rules
   async applyDiscounts(
     orderAmountCents: number,
     discountCodes: string[],
@@ -48,10 +48,7 @@ export class DiscountService {
       };
     }
 
-    // Get all valid discounts
     const validDiscounts = await this.getValidDiscounts(discountCodes, eventId);
-    
-    // Sort by priority (lower number = higher priority)
     validDiscounts.sort((a, b) => a.priority - b.priority);
 
     const discountsApplied: DiscountApplication[] = [];
@@ -59,7 +56,6 @@ export class DiscountService {
     let hasNonStackable = false;
 
     for (const discount of validDiscounts) {
-      // ISSUE #23 FIX: Check stacking rules
       if (hasNonStackable) {
         this.log.info('Skipping discount due to non-stackable discount already applied', {
           code: discount.code,
@@ -69,7 +65,6 @@ export class DiscountService {
       }
 
       if (!discount.stackable) {
-        // If this is non-stackable and we already have discounts, skip it
         if (discountsApplied.length > 0) {
           this.log.info('Skipping non-stackable discount as other discounts already applied', {
             code: discount.code
@@ -79,47 +74,41 @@ export class DiscountService {
         hasNonStackable = true;
       }
 
-      // Check minimum purchase requirement
-      if (discount.minPurchaseAmount && orderAmountCents < discount.minPurchaseAmount * 100) {
+      // FIXED: Don't multiply by 100, min_purchase_cents is already in cents
+      if (discount.min_purchase_cents && orderAmountCents < discount.min_purchase_cents) {
         this.log.info('Discount minimum purchase not met', {
           code: discount.code,
-          required: discount.minPurchaseAmount,
-          actual: orderAmountCents / 100
+          required: discount.min_purchase_cents,
+          actual: orderAmountCents
         });
         continue;
       }
 
-      // Calculate discount amount
       let discountAmountCents = 0;
-      
+
       switch (discount.type) {
         case 'percentage':
-          // Percentage off the current amount (after previous discounts)
-          discountAmountCents = Math.round((currentAmountCents * discount.value) / 100);
+          discountAmountCents = Math.round((currentAmountCents * (discount.value_percentage || 0)) / 100);
           break;
-          
+
         case 'fixed':
-          // Fixed amount off (in dollars, convert to cents)
-          discountAmountCents = Math.min(discount.value * 100, currentAmountCents);
+          discountAmountCents = Math.min((discount.value_cents || 0), currentAmountCents);
           break;
-          
+
         case 'early_bird':
-          // Early bird discount (percentage)
-          discountAmountCents = Math.round((currentAmountCents * discount.value) / 100);
+          discountAmountCents = Math.round((currentAmountCents * (discount.value_percentage || 0)) / 100);
           break;
-          
+
         case 'bogo':
-          // Buy one get one - 50% off for even quantities
-          discountAmountCents = Math.round(currentAmountCents * 0.25); // Approximation
+          discountAmountCents = Math.round(currentAmountCents * 0.25);
           break;
       }
 
-      // Apply max discount cap if specified
-      if (discount.maxDiscountAmount) {
-        discountAmountCents = Math.min(discountAmountCents, discount.maxDiscountAmount * 100);
+      // FIXED: Don't multiply by 100, max_discount_cents is already in cents
+      if (discount.max_discount_cents) {
+        discountAmountCents = Math.min(discountAmountCents, discount.max_discount_cents);
       }
 
-      // Ensure we don't discount more than the remaining amount
       discountAmountCents = Math.min(discountAmountCents, currentAmountCents);
 
       if (discountAmountCents > 0) {
@@ -132,8 +121,6 @@ export class DiscountService {
         });
 
         currentAmountCents -= discountAmountCents;
-
-        // Record discount usage
         await this.recordDiscountUsage(discount.id);
       }
     }
@@ -156,7 +143,7 @@ export class DiscountService {
 
   private async getValidDiscounts(codes: string[], eventId?: string): Promise<Discount[]> {
     const query = `
-      SELECT * FROM discounts 
+      SELECT * FROM discounts
       WHERE code = ANY($1)
         AND valid_from <= NOW()
         AND valid_until >= NOW()
@@ -177,7 +164,7 @@ export class DiscountService {
 
   private async recordDiscountUsage(discountId: string): Promise<void> {
     const query = `
-      UPDATE discounts 
+      UPDATE discounts
       SET current_uses = COALESCE(current_uses, 0) + 1,
           last_used_at = NOW()
       WHERE id = $1
@@ -193,10 +180,10 @@ export class DiscountService {
   async validateDiscountCode(code: string, eventId?: string): Promise<{
     valid: boolean;
     reason?: string;
-    discount?: Partial<Discount>;
+    discount?: any;
   }> {
     const query = `
-      SELECT * FROM discounts 
+      SELECT * FROM discounts
       WHERE code = $1
         AND (event_id IS NULL OR event_id = $2)
       LIMIT 1
@@ -204,33 +191,32 @@ export class DiscountService {
 
     try {
       const result = await DatabaseService.query<Discount>(query, [code, eventId || null]);
-      
+
       if (result.rows.length === 0) {
         return { valid: false, reason: 'Invalid discount code' };
       }
 
       const discount = result.rows[0];
-
-      // Check validity
       const now = new Date();
-      if (new Date(discount.validFrom) > now) {
+
+      if (new Date(discount.valid_from) > now) {
         return { valid: false, reason: 'Discount not yet active' };
       }
 
-      if (new Date(discount.validUntil) < now) {
+      if (new Date(discount.valid_until) < now) {
         return { valid: false, reason: 'Discount has expired' };
       }
 
-      // Fix for TypeScript error - check both maxUses and currentUses properly
-      if (discount.maxUses && discount.currentUses !== undefined && discount.currentUses >= discount.maxUses) {
+      if (discount.max_uses && discount.current_uses !== undefined && discount.current_uses >= discount.max_uses) {
         return { valid: false, reason: 'Discount usage limit reached' };
       }
 
-      return { 
-        valid: true, 
+      return {
+        valid: true,
         discount: {
           type: discount.type,
-          value: discount.value,
+          value_percentage: discount.value_percentage,
+          value_cents: discount.value_cents,
           stackable: discount.stackable
         }
       };

@@ -31,7 +31,7 @@ class InterServiceClientClass {
   }
 
   private initializeClients() {
-    const services = ['auth', 'event', 'payment', 'user', 'notification'];
+    const services = ['auth', 'event', 'payment', 'notification'];
 
     for (const service of services) {
       const serviceUrl = this.getServiceUrl(service);

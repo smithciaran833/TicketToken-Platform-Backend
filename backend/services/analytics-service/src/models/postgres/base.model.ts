@@ -1,90 +1,68 @@
 import { getDb } from '../../config/database';
-import { logger } from '../../utils/logger';
 
-export abstract class BaseModel {
-  protected static tableName: string;
-  protected static db = getDb;
-  
-  protected static async query(sql: string, params?: any[]): Promise<any> {
-    try {
-      const db = this.db();
-      return await db.raw(sql, params);
-    } catch (error) {
-      logger.error(`Query error in ${this.tableName}:`, error);
-      throw error;
-    }
-  }
-  
-  protected static async transaction<T>(
-    callback: (trx: any) => Promise<T>
-  ): Promise<T> {
-    const db = this.db();
-    return await db.transaction(callback);
-  }
-  
-  static async findById(id: string): Promise<any> {
-    const db = this.db();
-    const result = await db(this.tableName)
-      .where('id', id)
+export interface BaseEntity {
+  id: string;
+  tenant_id: string;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export abstract class BaseModel<T extends BaseEntity> {
+  protected abstract tableName: string;
+
+  async findById(id: string, tenantId: string): Promise<T | null> {
+    const db = getDb();
+    const record = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
       .first();
-    return result;
+    return record || null;
   }
-  
-  static async findAll(
-    filters: Record<string, any> = {},
-    options: {
-      limit?: number;
-      offset?: number;
-      orderBy?: string;
-      order?: 'asc' | 'desc';
-    } = {}
-  ): Promise<any[]> {
-    const db = this.db();
-    let query = db(this.tableName).where(filters);
-    
+
+  async findAll(tenantId: string, options: { limit?: number; offset?: number } = {}): Promise<T[]> {
+    const db = getDb();
+    let query = db(this.tableName)
+      .where({ tenant_id: tenantId })
+      .orderBy('created_at', 'desc');
+
     if (options.limit) {
       query = query.limit(options.limit);
     }
-    
     if (options.offset) {
       query = query.offset(options.offset);
     }
-    
-    if (options.orderBy) {
-      query = query.orderBy(options.orderBy, options.order || 'asc');
-    }
-    
-    return await query;
+
+    return query;
   }
-  
-  static async create(data: Record<string, any>): Promise<any> {
-    const db = this.db();
-    const [result] = await db(this.tableName)
-      .insert(data)
+
+  async create(data: Omit<T, 'id' | 'created_at' | 'updated_at'>): Promise<T> {
+    const db = getDb();
+    const [created] = await db(this.tableName).insert(data).returning('*');
+    return created;
+  }
+
+  async update(id: string, tenantId: string, updates: Partial<T>): Promise<T | null> {
+    const db = getDb();
+    const [updated] = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .update(updates)
       .returning('*');
-    return result;
+    return updated || null;
   }
-  
-  static async update(
-    id: string,
-    data: Record<string, any>
-  ): Promise<any> {
-    const db = this.db();
-    const [result] = await db(this.tableName)
-      .where('id', id)
-      .update({
-        ...data,
-        updated_at: new Date()
-      })
-      .returning('*');
-    return result;
-  }
-  
-  static async delete(id: string): Promise<boolean> {
-    const db = this.db();
-    const result = await db(this.tableName)
-      .where('id', id)
+
+  async delete(id: string, tenantId: string): Promise<boolean> {
+    const db = getDb();
+    const deleted = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
       .delete();
-    return result > 0;
+    return deleted > 0;
+  }
+
+  async count(tenantId: string, conditions: Partial<T> = {}): Promise<number> {
+    const db = getDb();
+    const result = await db(this.tableName)
+      .where({ tenant_id: tenantId, ...conditions })
+      .count('* as count')
+      .first();
+    return parseInt(result?.count as string) || 0;
   }
 }

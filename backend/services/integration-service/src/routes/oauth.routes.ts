@@ -1,10 +1,32 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { oauthController } from '../controllers/oauth.controller';
 import { authenticate } from '../middleware/auth.middleware';
+import { validateFastify } from '../middleware/validation.middleware';
+import {
+  oauthCallbackParamsSchema,
+  oauthCallbackQuerySchema,
+  refreshTokenSchema,
+} from '../validators/schemas';
 
-export const oauthRoutes = Router();
-
-// OAuth callbacks don't need auth (they come from external providers)
-// But refresh needs auth
-oauthRoutes.get('/callback/:provider', oauthController.handleCallback);
-oauthRoutes.post('/refresh/:provider', authenticate, oauthController.refreshToken);
+export async function oauthRoutes(fastify: FastifyInstance) {
+  // GET /callback/:provider - OAuth callback from external providers (no auth required)
+  fastify.get('/callback/:provider', {
+    onRequest: [
+      validateFastify({
+        params: oauthCallbackParamsSchema,
+        query: oauthCallbackQuerySchema,
+      }),
+    ]
+  }, oauthController.handleCallback);
+  
+  // POST /refresh/:provider - Refresh OAuth token (requires auth)
+  fastify.post('/refresh/:provider', {
+    onRequest: [
+      authenticate,
+      validateFastify({
+        params: oauthCallbackParamsSchema,
+        body: refreshTokenSchema,
+      }),
+    ]
+  }, oauthController.refreshToken);
+}

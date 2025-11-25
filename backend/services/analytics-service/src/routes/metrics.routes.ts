@@ -1,107 +1,183 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { metricsController } from '../controllers/metrics.controller';
 
-const router = Router();
+const recordMetricSchema = {
+  body: {
+    type: 'object',
+    required: ['metricType', 'value', 'venueId'],
+    properties: {
+      metricType: { type: 'string' },
+      value: { type: 'number' },
+      venueId: { type: 'string', format: 'uuid' },
+      dimensions: { type: 'object' },
+      metadata: { type: 'object' }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const bulkRecordSchema = {
+  body: {
+    type: 'object',
+    required: ['metrics'],
+    properties: {
+      metrics: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          required: ['metricType', 'value', 'venueId'],
+          properties: {
+            metricType: { type: 'string' },
+            value: { type: 'number' },
+            venueId: { type: 'string', format: 'uuid' }
+          }
+        }
+      }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const getMetricsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['metricType', 'startDate', 'endDate'],
+    properties: {
+      metricType: { type: 'string' },
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' },
+      granularity: { type: 'string' }
+    }
+  }
+} as const;
 
-// Record a metric
-router.post(
-  '/',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('metricType').isString().notEmpty(),
-    body('value').isNumeric(),
-    body('venueId').isUUID(),
-    body('dimensions').optional().isObject(),
-    body('metadata').optional().isObject()
-  ]),
-  metricsController.recordMetric
-);
+const realTimeMetricsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Bulk record metrics
-router.post(
-  '/bulk',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('metrics').isArray().notEmpty(),
-    body('metrics.*.metricType').isString().notEmpty(),
-    body('metrics.*.value').isNumeric(),
-    body('metrics.*.venueId').isUUID()
-  ]),
-  metricsController.bulkRecordMetrics
-);
+const metricTrendsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['metricType', 'periods', 'periodUnit'],
+    properties: {
+      metricType: { type: 'string' },
+      periods: { type: 'integer', minimum: 1, maximum: 100 },
+      periodUnit: { type: 'string', enum: ['hour', 'day', 'week', 'month'] }
+    }
+  }
+} as const;
 
-// Get metrics
-router.get(
-  '/:venueId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('metricType').isString().notEmpty(),
-    query('startDate').isISO8601(),
-    query('endDate').isISO8601(),
-    query('granularity').optional().isString()
-  ]),
-  metricsController.getMetrics
-);
+const compareMetricsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['metricType', 'currentStartDate', 'currentEndDate', 'previousStartDate', 'previousEndDate'],
+    properties: {
+      metricType: { type: 'string' },
+      currentStartDate: { type: 'string', format: 'date-time' },
+      currentEndDate: { type: 'string', format: 'date-time' },
+      previousStartDate: { type: 'string', format: 'date-time' },
+      previousEndDate: { type: 'string', format: 'date-time' }
+    }
+  }
+} as const;
 
-// Get real-time metrics
-router.get(
-  '/:venueId/realtime',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID()
-  ]),
-  metricsController.getRealTimeMetrics
-);
+const aggregateMetricSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['metricType', 'startDate', 'endDate', 'aggregation'],
+    properties: {
+      metricType: { type: 'string' },
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' },
+      aggregation: { type: 'string', enum: ['sum', 'avg', 'min', 'max', 'count'] }
+    }
+  }
+} as const;
 
-// Get metric trends
-router.get(
-  '/:venueId/trends',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('metricType').isString().notEmpty(),
-    query('periods').isInt({ min: 1, max: 100 }),
-    query('periodUnit').isIn(['hour', 'day', 'week', 'month'])
-  ]),
-  metricsController.getMetricTrends
-);
+export default async function metricsRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Compare metrics
-router.get(
-  '/:venueId/compare',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('metricType').isString().notEmpty(),
-    query('currentStartDate').isISO8601(),
-    query('currentEndDate').isISO8601(),
-    query('previousStartDate').isISO8601(),
-    query('previousEndDate').isISO8601()
-  ]),
-  metricsController.compareMetrics
-);
+  // Record a metric
+  app.post('/', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: recordMetricSchema,
+    handler: metricsController.recordMetric
+  });
 
-// Get aggregated metrics
-router.get(
-  '/:venueId/aggregate',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('metricType').isString().notEmpty(),
-    query('startDate').isISO8601(),
-    query('endDate').isISO8601(),
-    query('aggregation').isIn(['sum', 'avg', 'min', 'max', 'count'])
-  ]),
-  metricsController.getAggregatedMetric
-);
+  // Bulk record metrics
+  app.post('/bulk', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: bulkRecordSchema,
+    handler: metricsController.bulkRecordMetrics
+  });
 
-export { router as metricsRouter };
+  // Get metrics
+  app.get('/:venueId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: getMetricsSchema,
+    handler: metricsController.getMetrics
+  });
+
+  // Get real-time metrics
+  app.get('/:venueId/realtime', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: realTimeMetricsSchema,
+    handler: metricsController.getRealTimeMetrics
+  });
+
+  // Get metric trends
+  app.get('/:venueId/trends', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: metricTrendsSchema,
+    handler: metricsController.getMetricTrends
+  });
+
+  // Compare metrics
+  app.get('/:venueId/compare', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: compareMetricsSchema,
+    handler: metricsController.compareMetrics
+  });
+
+  // Get aggregated metrics
+  app.get('/:venueId/aggregate', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: aggregateMetricSchema,
+    handler: metricsController.getAggregatedMetric
+  });
+}

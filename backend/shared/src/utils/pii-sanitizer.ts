@@ -19,15 +19,15 @@ export class PIISanitizer {
     }
 
     if (Array.isArray(data)) {
-      return data.map(item => this.sanitize(item));
+      return data.map((item) => this.sanitize(item));
     }
 
     if (typeof data === 'object') {
       const sanitized: any = {};
       for (const key of Object.keys(data)) {
-        // Redact sensitive keys entirely
+        // Redact sensitive keys with specific labels
         if (this.isSensitiveKey(key)) {
-          sanitized[key] = '[REDACTED]';
+          sanitized[key] = this.getSpecificLabel(key, data[key]);
         } else {
           sanitized[key] = this.sanitize(data[key]);
         }
@@ -49,26 +49,58 @@ export class PIISanitizer {
 
   private static sanitizeString(str: string): string {
     let sanitized = str;
-    
+
     // Replace PII patterns
     sanitized = sanitized.replace(this.PII_PATTERNS.email, '[EMAIL]');
     sanitized = sanitized.replace(this.PII_PATTERNS.ssn, '[SSN]');
     sanitized = sanitized.replace(this.PII_PATTERNS.creditCard, '[CARD]');
     sanitized = sanitized.replace(this.PII_PATTERNS.phone, '[PHONE]');
-    
+
     return sanitized;
   }
 
   private static isSensitiveKey(key: string): boolean {
     const sensitiveKeys = [
-      'password', 'token', 'secret', 'apiKey', 'api_key',
-      'privateKey', 'private_key', 'creditCard', 'ssn',
-      'authorization', 'cookie'
+      'password',
+      'pwd',
+      'pass',
+      'user_password',
+      'user_pass',
+      'token',
+      'secret',
+      'apiKey',
+      'api_key',
+      'privateKey',
+      'private_key',
+      'creditCard',
+      'ssn',
+      'authorization',
+      'cookie',
     ];
-    
-    return sensitiveKeys.some(sensitive => 
-      key.toLowerCase().includes(sensitive.toLowerCase())
-    );
+
+    return sensitiveKeys.some((sensitive) => key.toLowerCase().includes(sensitive.toLowerCase()));
+  }
+
+  private static getSpecificLabel(key: string, value: any): string {
+    const keyLower = key.toLowerCase();
+
+    // Check for SSN pattern in value
+    if (keyLower.includes('ssn') || this.PII_PATTERNS.ssn.test(String(value))) {
+      return '[SSN]';
+    }
+
+    // Check for credit card
+    if (keyLower.includes('card') || keyLower.includes('creditcard')) {
+      return '[CARD]';
+    }
+
+    // Check for password variations
+    if (keyLower.includes('password') || keyLower.includes('pwd') || keyLower.includes('pass')) {
+      return '[REDACTED]';
+    }
+
+    // Default redaction
+    return '[REDACTED]';
   }
 
   private static maskIP(ip: string): string {

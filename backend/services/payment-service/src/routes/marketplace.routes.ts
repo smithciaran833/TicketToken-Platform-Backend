@@ -1,46 +1,63 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { MarketplaceController } from '../controllers/marketplace.controller';
 import { authenticate } from '../middleware/auth';
 import { validateRequest } from '../middleware/validation';
 
-const router = Router();
-const controller = new MarketplaceController();
+export default async function marketplaceRoutes(fastify: FastifyInstance) {
+  const controller = new MarketplaceController();
 
-// Create resale listing
-router.post(
-  '/listings',
-  authenticate,
-  validateRequest('createListing'),
-  (req, res, next) => controller.createListing(req, res, next)
-);
+  // Create resale listing
+  fastify.post(
+    '/listings',
+    {
+      preHandler: [authenticate, validateRequest('createListing')]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.createListing(request, reply);
+    }
+  );
 
-// Purchase resale ticket
-router.post(
-  '/purchase',
-  authenticate,
-  validateRequest('purchaseResale'),
-  (req, res, next) => controller.purchaseResaleTicket(req, res, next)
-);
+  // Purchase resale ticket
+  fastify.post(
+    '/purchase',
+    {
+      preHandler: [authenticate, validateRequest('purchaseResale')]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.purchaseResaleTicket(request, reply);
+    }
+  );
 
-// Confirm transfer
-router.post(
-  '/escrow/:escrowId/confirm',
-  authenticate,
-  (req, res, next) => controller.confirmTransfer(req, res, next)
-);
+  // Confirm transfer
+  fastify.post(
+    '/escrow/:escrowId/confirm',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.confirmTransfer(request, reply);
+    }
+  );
 
-// Get royalty report
-router.get(
-  '/venues/:venueId/royalties',
-  authenticate,
-  (req, res, next) => controller.getRoyaltyReport(req, res, next)
-);
+  // Get royalty report
+  fastify.get(
+    '/venues/:venueId/royalties',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getRoyaltyReport(request, reply);
+    }
+  );
 
-// Get pricing analytics
-router.get(
-  '/venues/:venueId/pricing-analytics',
-  authenticate,
-  (req, res, next) => controller.getPricingAnalytics(req, res, next)
-);
-
-export default router;
+  // Get pricing analytics
+  fastify.get(
+    '/venues/:venueId/pricing-analytics',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getPricingAnalytics(request, reply);
+    }
+  );
+}

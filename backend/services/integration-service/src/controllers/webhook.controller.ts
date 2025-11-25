@@ -1,241 +1,289 @@
-// serviceCache is not used - removed
-import { Request, Response, NextFunction } from 'express';
-import { db } from '../config/database';
-import { logger } from '../utils/logger';
-import { queues } from '../config/queue';
-import { v4 as uuidv4 } from 'uuid';
+import { Request, Response } from 'express';
+import crypto from 'crypto';
+import { mailchimpSyncService } from '../services/providers/mailchimp-sync.service';
+import { squareSyncService } from '../services/providers/square-sync.service';
+import { stripeSyncService } from '../services/providers/stripe-sync.service';
+import { credentialEncryptionService } from '../services/credential-encryption.service';
 
+/**
+ * Webhook Controller
+ * 
+ * Handles incoming webhook events from third-party providers
+ */
 export class WebhookController {
-  async handleSquareWebhook(req: Request, res: Response, _next: NextFunction) {
+  /**
+   * Handle Mailchimp webhooks
+   * Note: Mailchimp uses IP whitelisting for webhook security, not HMAC signatures
+   * Whitelist IPs: 205.201.131.0/24, 198.2.179.0/24, 148.105.8.0/24
+   */
+  async handleMailchimpWebhook(req: Request, res: Response): Promise<void> {
+    try {
+      const venueId = req.params.venueId;
+      const clientIp = req.ip || req.connection.remoteAddress || '';
+
+      // Verify request is from Mailchimp's IP ranges
+      if (!this.isMailchimpIP(clientIp)) {
+        console.warn(`Webhook rejected from unauthorized IP: ${clientIp}`);
+        res.status(401).json({ error: 'Unauthorized IP address' });
+        return;
+      }
+
+      const { type, data } = req.body;
+
+      // Process webhook event
+      console.log(`Mailchimp webhook received: ${type}`, data);
+
+      // Handle different event types
+      switch (type) {
+        case 'subscribe':
+        case 'unsubscribe':
+        case 'profile':
+        case 'cleaned':
+          // Handle email list events
+          await this.processMailchimpEvent(venueId, type, data);
+          break;
+        default:
+          console.log(`Unhandled Mailchimp event type: ${type}`);
+      }
+
+      res.status(200).json({ received: true });
+    } catch (error) {
+      console.error('Mailchimp webhook error:', error);
+      res.status(500).json({ error: 'Webhook processing failed' });
+    }
+  }
+
+  /**
+   * Handle Square webhooks
+   */
+  async handleSquareWebhook(req: Request, res: Response): Promise<void> {
     try {
       const signature = req.headers['x-square-signature'] as string;
-      const body = JSON.stringify(req.body);
+      const venueId = req.params.venueId;
 
-      // Verify signature
-      const provider = new (require('../providers/square/square.provider').SquareProvider)();
-      const isValid = provider.validateWebhookSignature(body, signature);
+      // Verify webhook signature
+      const isValid = await this.verifySquareSignature(
+        JSON.stringify(req.body),
+        signature,
+        venueId
+      );
 
       if (!isValid) {
-        logger.warn('Invalid Square webhook signature');
-        return res.status(401).json({ error: 'Invalid signature' });
+        res.status(401).json({ error: 'Invalid webhook signature' });
+        return;
       }
 
-      // Store webhook event
-      const webhookId = uuidv4();
-      await db('integration_webhooks').insert({
-        id: webhookId,
-        integration_type: 'square',
-        event_type: req.body.type,
-        event_id: req.body.event_id,
-        headers: JSON.stringify(req.headers),
-        payload: req.body,
-        signature,
-        external_id: req.body.event_id
-      });
+      const { type, data } = req.body;
 
-      // Queue for processing
-      await queues.high.add('webhook', {
-        webhookId,
-        provider: 'square',
-        event: req.body
-      });
+      // Process webhook event
+      await squareSyncService.processWebhookEvent(type, data);
 
-      res.json({ received: true });
+      res.status(200).json({ received: true });
     } catch (error) {
-      logger.error('Square webhook error', error);
+      console.error('Square webhook error:', error);
       res.status(500).json({ error: 'Webhook processing failed' });
     }
-    return; // Added missing return
   }
 
-  async handleStripeWebhook(req: Request, res: Response, _next: NextFunction) {
+  /**
+   * Handle Stripe webhooks
+   */
+  async handleStripeWebhook(req: Request, res: Response): Promise<void> {
     try {
       const signature = req.headers['stripe-signature'] as string;
-      const body = JSON.stringify(req.body);
+      const venueId = req.params.venueId;
 
-      // Verify signature
-      const provider = new (require('../providers/stripe/stripe.provider').StripeProvider)();
-      const isValid = provider.validateWebhookSignature(body, signature);
+      // Get webhook secret
+      const credentials = await credentialEncryptionService.retrieveApiKeys(
+        venueId,
+        'stripe',
+        'webhook_secret'
+      );
 
-      if (!isValid) {
-        logger.warn('Invalid Stripe webhook signature');
-        return res.status(401).json({ error: 'Invalid signature' });
+      if (!credentials) {
+        res.status(401).json({ error: 'Webhook secret not configured' });
+        return;
       }
 
-      // Store webhook event
-      const webhookId = uuidv4();
-      await db('integration_webhooks').insert({
-        id: webhookId,
-        integration_type: 'stripe',
-        event_type: req.body.type,
-        event_id: req.body.id,
-        headers: JSON.stringify(req.headers),
-        payload: req.body,
+      // Construct and verify event
+      const event = stripeSyncService.constructWebhookEvent(
+        req.body,
         signature,
-        external_id: req.body.id
-      });
+        credentials.apiKey
+      );
 
-      // Queue for processing
-      await queues.high.add('webhook', {
-        webhookId,
-        provider: 'stripe',
-        event: req.body
-      });
+      // Process webhook event
+      await stripeSyncService.processWebhookEvent(event);
 
-      res.json({ received: true });
+      res.status(200).json({ received: true });
     } catch (error) {
-      logger.error('Stripe webhook error', error);
-      res.status(500).json({ error: 'Webhook processing failed' });
-    }
-    return; // Added missing return
-  }
-
-  async handleMailchimpWebhook(req: Request, res: Response, _next: NextFunction) {
-    try {
-      // Mailchimp webhooks work differently
-      const { type, fired_at } = req.body;
-      // data is not used, removed from destructuring
-
-      // Store webhook event
-      const webhookId = uuidv4();
-      await db('integration_webhooks').insert({
-        id: webhookId,
-        integration_type: 'mailchimp',
-        event_type: type,
-        headers: JSON.stringify(req.headers),
-        payload: req.body,
-        external_id: `${type}_${fired_at}`
-      });
-
-      // Queue for processing
-      await queues.normal.add('webhook', {
-        webhookId,
-        provider: 'mailchimp',
-        event: req.body
-      });
-
-      res.json({ received: true });
-    } catch (error) {
-      logger.error('Mailchimp webhook error', error);
-      res.status(500).json({ error: 'Webhook processing failed' });
+      console.error('Stripe webhook error:', error);
+      res.status(401).json({ error: 'Webhook signature verification failed' });
     }
   }
 
-  async handleQuickBooksWebhook(req: Request, res: Response, _next: NextFunction) {
+  /**
+   * Handle QuickBooks webhooks
+   */
+  async handleQuickBooksWebhook(req: Request, res: Response): Promise<void> {
     try {
       const signature = req.headers['intuit-signature'] as string;
-      const body = JSON.stringify(req.body);
+      const venueId = req.params.venueId;
 
-      // Verify signature
-      const provider = new (require('../providers/quickbooks/quickbooks.provider').QuickBooksProvider)();
-      const isValid = provider.validateWebhookSignature(body, signature);
+      // Verify webhook signature
+      const isValid = await this.verifyQuickBooksSignature(
+        JSON.stringify(req.body),
+        signature,
+        venueId
+      );
 
       if (!isValid) {
-        logger.warn('Invalid QuickBooks webhook signature');
-        return res.status(401).json({ error: 'Invalid signature' });
+        res.status(401).json({ error: 'Invalid webhook signature' });
+        return;
       }
 
-      // Store webhook events
-      for (const notification of req.body.eventNotifications || []) {
-        const webhookId = uuidv4();
-        await db('integration_webhooks').insert({
-          id: webhookId,
-          integration_type: 'quickbooks',
-          event_type: notification.eventType,
-          headers: JSON.stringify(req.headers),
-          payload: notification,
-          signature,
-          venue_id: notification.realmId
-        });
+      const { eventNotifications } = req.body;
 
-        // Queue for processing
-        await queues.normal.add('webhook', {
-          webhookId,
-          provider: 'quickbooks',
-          event: notification
-        });
+      // Process each notification
+      for (const notification of eventNotifications) {
+        const { realmId, dataChangeEvent } = notification;
+
+        for (const entity of dataChangeEvent.entities) {
+          console.log(
+            `QuickBooks webhook: ${entity.name} ${entity.operation}`,
+            entity.id
+          );
+
+          // Handle different entity types
+          await this.processQuickBooksEvent(venueId, entity);
+        }
       }
 
-      res.json({ received: true });
+      res.status(200).json({ received: true });
     } catch (error) {
-      logger.error('QuickBooks webhook error', error);
+      console.error('QuickBooks webhook error:', error);
       res.status(500).json({ error: 'Webhook processing failed' });
     }
-    return; // Added missing return
   }
 
-  async getWebhookEvents(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Verify request is from Mailchimp's official IP ranges
+   * Mailchimp IP ranges: 205.201.131.0/24, 198.2.179.0/24, 148.105.8.0/24
+   */
+  private isMailchimpIP(ip: string): boolean {
+    if (!ip) return false;
+    
+    // Extract IPv4 if it's IPv6-mapped
+    const normalizedIp = ip.includes(':') ? ip.split(':').pop() : ip;
+    
+    const mailchimpRanges = [
+      '205.201.131.',
+      '198.2.179.',
+      '148.105.8.'
+    ];
+
+    return mailchimpRanges.some(range => normalizedIp?.startsWith(range));
+  }
+
+  /**
+   * Verify Square webhook signature
+   */
+  private async verifySquareSignature(
+    payload: string,
+    signature: string,
+    venueId: string
+  ): Promise<boolean> {
     try {
-      const { provider } = req.params;
-      const { limit = 50, offset = 0, status } = req.query;
+      const credentials = await credentialEncryptionService.retrieveApiKeys(
+        venueId,
+        'square',
+        'webhook_secret'
+      );
 
-      let query = db('integration_webhooks')
-        .where('integration_type', provider)
-        .orderBy('received_at', 'desc')
-        .limit(Number(limit))
-        .offset(Number(offset));
-
-      if (status) {
-        query = query.where('status', status);
+      if (!credentials) {
+        return false;
       }
 
-      const events = await query;
+      const url = process.env.SQUARE_WEBHOOK_URL || '';
+      const hmac = crypto
+        .createHmac('sha256', credentials.apiKey)
+        .update(url + payload)
+        .digest('base64');
 
-      res.json({
-        success: true,
-        data: events
-      });
+      return crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(hmac)
+      );
     } catch (error) {
-      next(error);
+      console.error('Square signature verification failed:', error);
+      return false;
     }
   }
 
-  async retryWebhook(req: Request, res: Response, next: NextFunction) {
+  /**
+   * Verify QuickBooks webhook signature
+   */
+  private async verifyQuickBooksSignature(
+    payload: string,
+    signature: string,
+    venueId: string
+  ): Promise<boolean> {
     try {
-      const { webhookId } = req.body;
+      const credentials = await credentialEncryptionService.retrieveApiKeys(
+        venueId,
+        'quickbooks',
+        'webhook_secret'
+      );
 
-      if (!webhookId) {
-        return res.status(400).json({
-          success: false,
-          error: 'Webhook ID is required'
-        });
+      if (!credentials) {
+        return false;
       }
 
-      const webhook = await db('integration_webhooks')
-        .where('id', webhookId)
-        .first();
+      const hmac = crypto
+        .createHmac('sha256', credentials.apiKey)
+        .update(payload)
+        .digest('base64');
 
-      if (!webhook) {
-        return res.status(404).json({
-          success: false,
-          error: 'Webhook not found'
-        });
-      }
-
-      // Re-queue for processing
-      await queues.normal.add('webhook', {
-        webhookId,
-        provider: webhook.integration_type,
-        event: webhook.payload,
-        isRetry: true
-      });
-
-      // Update status
-      await db('integration_webhooks')
-        .where('id', webhookId)
-        .update({
-          status: 'pending',
-          retry_count: db.raw('retry_count + 1')
-        });
-
-      res.json({
-        success: true,
-        message: 'Webhook queued for retry'
-      });
+      return crypto.timingSafeEqual(
+        Buffer.from(signature),
+        Buffer.from(hmac)
+      );
     } catch (error) {
-      next(error);
+      console.error('QuickBooks signature verification failed:', error);
+      return false;
     }
-    return; // Added missing return
+  }
+
+  /**
+   * Process Mailchimp event
+   */
+  private async processMailchimpEvent(
+    venueId: string,
+    type: string,
+    data: any
+  ): Promise<void> {
+    // Implement event processing logic
+    console.log(`Processing Mailchimp ${type} event for venue ${venueId}`, data);
+
+    // Example: Update local customer record based on subscription change
+    // This would integrate with your customer service
+  }
+
+  /**
+   * Process QuickBooks event
+   */
+  private async processQuickBooksEvent(
+    venueId: string,
+    entity: any
+  ): Promise<void> {
+    // Implement event processing logic
+    console.log(
+      `Processing QuickBooks ${entity.name} ${entity.operation} for venue ${venueId}`,
+      entity.id
+    );
+
+    // Example: Sync updated customer/invoice data
+    // This would trigger a sync job for the specific entity
   }
 }
 

@@ -1,12 +1,12 @@
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { getPool } from '../config/database.config';
 import { getRedisClient } from '../config/redis.config';
 import { QueueFactory } from '../queues/factories/queue.factory';
 import { logger } from '../utils/logger';
 
 export class HealthController {
-  async checkHealth(req: Request, res: Response): Promise<void> {
+  async checkHealth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
       const checks = {
         service: 'healthy',
@@ -14,7 +14,7 @@ export class HealthController {
         redis: 'unknown',
         queues: 'unknown'
       };
-      
+
       // Check database
       try {
         const pool = getPool();
@@ -24,7 +24,7 @@ export class HealthController {
         checks.database = 'unhealthy';
         logger.error('Database health check failed:', error);
       }
-      
+
       // Check Redis
       try {
         const redis = getRedisClient();
@@ -34,7 +34,7 @@ export class HealthController {
         checks.redis = 'unhealthy';
         logger.error('Redis health check failed:', error);
       }
-      
+
       // Check queues
       try {
         await QueueFactory.getQueueMetrics('money');
@@ -43,39 +43,39 @@ export class HealthController {
         checks.queues = 'unhealthy';
         logger.error('Queue health check failed:', error);
       }
-      
+
       const isHealthy = Object.values(checks).every(status => status === 'healthy');
-      
-      res.status(isHealthy ? 200 : 503).json({
+
+      return reply.code(isHealthy ? 200 : 503).send({
         status: isHealthy ? 'healthy' : 'degraded',
         checks,
         timestamp: new Date().toISOString()
       });
     } catch (error) {
       logger.error('Health check failed:', error);
-      res.status(503).json({
+      return reply.code(503).send({
         status: 'unhealthy',
         error: 'Health check failed'
       });
     }
   }
-  
-  async checkReadiness(req: Request, res: Response): Promise<void> {
+
+  async checkReadiness(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
       // Check if service is ready to accept traffic
       const pool = getPool();
       await pool.query('SELECT 1');
-      
+
       const redis = getRedisClient();
       await redis.ping();
-      
-      res.json({
+
+      return reply.send({
         status: 'ready',
         timestamp: new Date().toISOString()
       });
     } catch (error) {
       logger.error('Readiness check failed:', error);
-      res.status(503).json({
+      return reply.code(503).send({
         status: 'not ready',
         error: 'Service not ready'
       });

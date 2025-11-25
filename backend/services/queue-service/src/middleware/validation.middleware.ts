@@ -1,72 +1,66 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import Joi from 'joi';
 import { logger } from '../utils/logger';
 
 export function validateBody(schema: Joi.Schema) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      const validated = await schema.validateAsync(req.body, {
+      const validated = await schema.validateAsync(request.body, {
         abortEarly: false,
         stripUnknown: true
       });
-      req.body = validated;
-      next();
+      request.body = validated;
     } catch (error) {
       if (error instanceof Joi.ValidationError) {
         const errors = error.details.map(detail => ({
           field: detail.path.join('.'),
           message: detail.message
         }));
-        
+
         logger.warn('Validation error:', errors);
-        
-        res.status(400).json({
+
+        return reply.code(400).send({
           error: 'Validation failed',
           details: errors
         });
-        return;
       }
-      next(error);
+      throw error;
     }
   };
 }
 
 export function validateQuery(schema: Joi.Schema) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      const validated = await schema.validateAsync(req.query, {
+      const validated = await schema.validateAsync(request.query, {
         abortEarly: false
       });
-      req.query = validated;
-      next();
+      request.query = validated;
     } catch (error) {
       if (error instanceof Joi.ValidationError) {
-        res.status(400).json({
+        return reply.code(400).send({
           error: 'Invalid query parameters',
           details: error.details
         });
-        return;
       }
-      next(error);
+      throw error;
     }
   };
 }
 
 export function validateParams(schema: Joi.Schema) {
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
-      const validated = await schema.validateAsync(req.params);
-      req.params = validated;
-      next();
+      const validated = await schema.validateAsync(request.params);
+      request.params = validated;
     } catch (error) {
       if (error instanceof Joi.ValidationError) {
-        res.status(400).json({
+        return reply.code(400).send({
           error: 'Invalid parameters',
           details: error.details
         });
-        return;
       }
-      next(error);
+      throw error;
     }
   };
 }

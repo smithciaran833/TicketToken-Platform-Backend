@@ -28,19 +28,20 @@ export class TicketService {
     const id = uuidv4();
     const query = `
       INSERT INTO ticket_types (
-        id, event_id, name, description, price,
+        id, tenant_id, event_id, name, description, price_cents,
         quantity, available_quantity, max_per_purchase,
         sale_start_date, sale_end_date, metadata
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *
     `;
 
     const values = [
       id,
+      data.tenant_id,
       data.eventId,
       data.name,
       data.description || null,
-      data.price,
+      data.priceCents,
       data.quantity,
       data.quantity,
       data.maxPerPurchase,
@@ -53,14 +54,14 @@ export class TicketService {
     return result.rows[0];
   }
 
-  async getTicketTypes(eventId: string): Promise<TicketType[]> {
+  async getTicketTypes(eventId: string, tenantId: string): Promise<TicketType[]> {
     const query = `
       SELECT * FROM ticket_types
-      WHERE event_id = $1
-      ORDER BY price ASC
+      WHERE event_id = $1 AND tenant_id = $2
+      ORDER BY price_cents ASC
     `;
 
-    const result = await DatabaseService.query<TicketType>(query, [eventId]);
+    const result = await DatabaseService.query<TicketType>(query, [eventId, tenantId]);
     return result.rows;
   }
 
@@ -127,7 +128,7 @@ export class TicketService {
 
             const reservationQuery = `
               INSERT INTO reservations (
-                id, user_id, event_id, ticket_type_id, quantity, tickets, expires_at, status, type_name, created_at
+                id, user_id, event_id, ticket_type_id, total_quantity, tickets, expires_at, status, type_name, created_at
               ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
               RETURNING *
             `;
@@ -149,13 +150,16 @@ export class TicketService {
               new Date()
             ]);
 
-            // Reservation already inserted above - no duplicate table needed
-
-            await RedisService.set(
-              `reservation:${reservationId}`,
-              JSON.stringify(reservationResult.rows[0]),
-              config.redis.ttl.reservation
-            );
+            // Try to cache reservation, but don't fail if Redis is down
+            try {
+              await RedisService.set(
+                `reservation:${reservationId}`,
+                JSON.stringify(reservationResult.rows[0]),
+                config.redis.ttl.reservation
+              );
+            } catch (error) {
+              this.log.warn('Redis cache failed for reservation, continuing anyway', { reservationId });
+            }
 
             return reservationResult.rows[0];
           });
@@ -197,38 +201,22 @@ export class TicketService {
         5000,
         async () => {
           return await DatabaseService.transaction(async (client) => {
-            let reservation = null;
-            let eventId = null;
+            const resQuery = 'SELECT * FROM reservations WHERE id = $1 FOR UPDATE';
+            const resResult = await client.query(resQuery, [reservationId]);
 
-            const ticketResQuery = 'SELECT * FROM ticket_reservations WHERE id = $1 FOR UPDATE';
-            const ticketResResult = await client.query(ticketResQuery, [reservationId]);
-
-            if (ticketResResult.rows.length > 0) {
-              reservation = ticketResResult.rows[0];
-              const ticketTypeQuery = 'SELECT event_id FROM ticket_types WHERE id = $1';
-              const ticketTypeResult = await client.query(ticketTypeQuery, [reservation.ticket_type_id]);
-              if (ticketTypeResult.rows.length > 0) {
-                eventId = ticketTypeResult.rows[0].event_id;
-              }
-            } else {
-              const resQuery = 'SELECT * FROM reservations WHERE id = $1 FOR UPDATE';
-              const resResult = await client.query(resQuery, [reservationId]);
-              if (resResult.rows.length > 0) {
-                reservation = resResult.rows[0];
-                eventId = reservation.event_id;
-              }
-            }
-
-            if (!reservation) {
+            if (resResult.rows.length === 0) {
               throw new NotFoundError('Reservation');
             }
+
+            const reservation = resResult.rows[0];
+            const eventId = reservation.event_id;
 
             if (reservation.status !== 'ACTIVE') {
               throw new ConflictError('Reservation is no longer active');
             }
 
             const tickets: Ticket[] = [];
-            const ticketData = reservation.tickets || [{ ticketTypeId: reservation.ticket_type_id, quantity: reservation.quantity || 1 }];
+            const ticketData = reservation.tickets || [{ ticketTypeId: reservation.ticket_type_id, quantity: reservation.total_quantity || 1 }];
 
             for (const ticketRequest of ticketData) {
               const typeQuery = 'SELECT * FROM ticket_types WHERE id = $1';
@@ -239,99 +227,62 @@ export class TicketService {
               }
 
               const ticketType = typeResult.rows[0];
-
-              if (!eventId) {
-                eventId = ticketType.event_id;
-              }
-
               const quantity = ticketRequest.quantity || 1;
+
               for (let i = 0; i < quantity; i++) {
                 const ticketId = uuidv4();
 
-                const ticketQuery = `
+                const insertQuery = `
                   INSERT INTO tickets (
-                    id,
-                    event_id,
-                    ticket_type_id,
-                    owner_id,
-                    owner_user_id,
-                    user_id,
-                    status,
-                    price,
-                    payment_id,
-                    purchased_at,
-                    metadata,
-                    total_paid,
-                    blockchain_status
-                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                    id, event_id, ticket_type_id, user_id, status, price_cents,
+                    is_transferable, transfer_count, payment_id, purchased_at
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, NOW())
                   RETURNING *
                 `;
 
-                const values = [
+                const ticketResult = await client.query(insertQuery, [
                   ticketId,
                   eventId,
-                  ticketRequest.ticketTypeId || reservation.ticket_type_id,
-                  reservation.user_id,
-                  reservation.user_id,
+                  ticketType.id,
                   reservation.user_id,
                   'SOLD',
-                  ticketType.price || 0,
-                  paymentId || reservation.user_id,
-                  new Date(),
-                  JSON.stringify({
-                    ticketTypeName: ticketType.name,
-                    reservationId: reservationId,
-                    purchaseDate: new Date().toISOString()
-                  }),
-                  ticketType.price || 0,
-                  'pending'
-                ];
+                  ticketType.price_cents,
+                  true,
+                  paymentId
+                ]);
 
-                try {
-                  const ticketResult = await client.query(ticketQuery, values);
-                  tickets.push(ticketResult.rows[0]);
-                } catch (error: any) {
-                  this.log.error('Failed to create ticket:', error);
-                  throw new Error(`Failed to create ticket: ${error.message}`);
-                }
+                tickets.push(ticketResult.rows[0]);
+              }
 
-                try {
-                  await queueService.publish(config.rabbitmq.queues.nftMinting, {
-                    ticketId,
-                    userId: reservation.user_id,
-                    eventId: eventId,
-                    ticketType: ticketType.name,
-                    price: ticketType.price
-                  });
-                } catch (error) {
-                  this.log.warn('Failed to queue NFT minting:', error);
-                }
+              await client.query(
+                'UPDATE ticket_types SET sold_quantity = sold_quantity + $1, reserved_quantity = reserved_quantity - $1 WHERE id = $2',
+                [quantity, ticketType.id]
+              );
+            }
+
+            await client.query(
+              `UPDATE reservations SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+              [reservationId]
+            );
+
+            // Queue NFT minting jobs
+            for (const ticket of tickets) {
+              try {
+                await queueService.publish(QUEUES.TICKET_MINT, {
+                  ticketId: ticket.id,
+                  userId: reservation.user_id,
+                  eventId: eventId
+                });
+              } catch (error) {
+                this.log.warn('Failed to queue NFT mint job', { ticketId: ticket.id, error });
               }
             }
 
-            // REMOVED .catch(() => {}) - let errors bubble up
-            await client.query(
-              'UPDATE ticket_reservations SET status = $1 WHERE id = $2',
-              ['expired', reservationId]
-            );
-
-            await client.query(
-              'UPDATE reservations SET status = $1 WHERE id = $2',
-              ['EXPIRED', reservationId]
-            );
-
-            await RedisService.del(`reservation:${reservationId}`);
-
+            // Try to clear Redis cache, but don't fail if Redis is down
             try {
-              await queueService.publish(config.rabbitmq.queues.ticketEvents, {
-                type: 'tickets.purchased',
-                userId: reservation.user_id,
-                eventId: eventId,
-                ticketIds: tickets.map((t: any) => t.id),
-                timestamp: new Date()
-              });
+              await RedisService.del(`reservation:${reservationId}`);
             } catch (error) {
-              this.log.warn('Failed to publish ticket event:', error);
+              this.log.warn('Redis delete failed, continuing anyway', { reservationId });
             }
 
             return tickets;
@@ -365,20 +316,33 @@ export class TicketService {
     }
   }
 
-  async getTicket(ticketId: string): Promise<any> {
-    const cached = await RedisService.get(`ticket:${ticketId}`);
-    if (cached) {
-      return JSON.parse(cached);
+  async getTicket(ticketId: string, tenantId?: string): Promise<any> {
+    const cacheKey = `ticket:${ticketId}`;
+    
+    try {
+      const cached = await RedisService.get(cacheKey);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+    } catch (error) {
+      this.log.warn('Redis cache read failed, continuing with DB query', { ticketId });
     }
 
-    const query = `
+    let query = `
       SELECT t.*, tt.name as ticket_type_name, tt.description as ticket_type_description
       FROM tickets t
       JOIN ticket_types tt ON t.ticket_type_id = tt.id
       WHERE t.id = $1
     `;
 
-    const result = await DatabaseService.query(query, [ticketId]);
+    const params: any[] = [ticketId];
+    
+    if (tenantId) {
+      query += ' AND t.tenant_id = $2';
+      params.push(tenantId);
+    }
+
+    const result = await DatabaseService.query(query, params);
 
     if (result.rows.length === 0) {
       throw new NotFoundError('Ticket');
@@ -386,28 +350,32 @@ export class TicketService {
 
     const ticket = result.rows[0];
 
-    await RedisService.set(
-      `ticket:${ticketId}`,
-      JSON.stringify(ticket),
-      config.redis.ttl.cache
-    );
+    try {
+      await RedisService.set(
+        `ticket:${ticketId}`,
+        JSON.stringify(ticket),
+        config.redis.ttl.cache
+      );
+    } catch (error) {
+      this.log.warn('Redis cache write failed, returning ticket anyway', { ticketId });
+    }
 
     return ticket;
   }
 
-  async getUserTickets(userId: string, eventId?: string): Promise<Ticket[]> {
+  async getUserTickets(userId: string, tenantId: string, eventId?: string): Promise<Ticket[]> {
     let query = `
       SELECT t.*, tt.name as ticket_type_name, e.name as event_name
       FROM tickets t
       JOIN ticket_types tt ON t.ticket_type_id = tt.id
       JOIN events e ON t.event_id = e.id
-      WHERE t.owner_id = $1
+      WHERE t.user_id = $1 AND t.tenant_id = $2
     `;
 
-    const params: any[] = [userId];
-
+    const params: any[] = [userId, tenantId];
+    
     if (eventId) {
-      query += ' AND t.event_id = $2';
+      query += ' AND t.event_id = $3';
       params.push(eventId);
     }
 
@@ -421,35 +389,20 @@ export class TicketService {
     const query = 'UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2';
     await DatabaseService.query(query, [status, ticketId]);
 
-    await RedisService.del(`ticket:${ticketId}`);
+    try {
+      await RedisService.del(`ticket:${ticketId}`);
+    } catch (error) {
+      this.log.warn('Redis delete failed', { ticketId });
+    }
   }
 
   async expireReservations(): Promise<void> {
-    const query = `
-      UPDATE reservations
-      SET status = 'EXPIRED'
-      WHERE status = 'ACTIVE' AND expires_at < NOW()
-      RETURNING *
-    `;
+    const result = await DatabaseService.query('SELECT release_expired_reservations() as count', []);
 
-    const result = await DatabaseService.query(query);
-
-    for (const reservation of result.rows) {
-      const tickets = reservation.tickets || [];
-
-      for (const ticket of tickets) {
-        await DatabaseService.query(
-          'UPDATE ticket_types SET available_quantity = available_quantity + $1 WHERE id = $2',
-          [ticket.quantity, ticket.ticketTypeId]
-        );
-      }
-
-      await RedisService.del(`reservation:${reservation.id}`);
+    if (!result.rows[0]?.count) {
+      this.log.info('No expired reservations to release');
+      return;
     }
-
-    await DatabaseService.query(
-      `UPDATE ticket_reservations SET status = 'expired' WHERE status = 'ACTIVE' AND expires_at < NOW()`
-    );
 
     this.log.info(`Expired ${result.rowCount} reservations`);
   }
@@ -477,7 +430,7 @@ export class TicketService {
             const reservation = resResult.rows[0];
 
             await client.query(
-              `UPDATE reservations SET status = 'EXPIRED', updated_at = NOW() WHERE id = $1`,
+              `UPDATE reservations SET status = 'CANCELLED', updated_at = NOW() WHERE id = $1`,
               [reservationId]
             );
 
@@ -489,7 +442,12 @@ export class TicketService {
               );
             }
 
-            await RedisService.del(`reservation:${reservationId}`);
+            // Try to clear Redis cache, but don't fail if Redis is down
+            try {
+              await RedisService.del(`reservation:${reservationId}`);
+            } catch (error) {
+              this.log.warn('Redis delete failed, continuing anyway', { reservationId });
+            }
 
             return { success: true, reservation: reservation };
           });
@@ -528,7 +486,7 @@ export class TicketService {
     const qrPayload = {
       ticketId: ticket.id,
       eventId: ticket.event_id,
-      userId: ticket.owner_id || ticket.owner_user_id || ticket.user_id,
+      userId: ticket.user_id,
       timestamp: Date.now()
     };
 
@@ -556,7 +514,7 @@ export class TicketService {
         payload = {
           ticketId: parsedData.ticket_id,
           eventId: parsedData.event_id,
-          userId: parsedData.owner_id
+          userId: parsedData.user_id
         };
       }
 
@@ -580,9 +538,79 @@ export class TicketService {
     }
   }
 
+  async getTicketType(id: string, tenantId: string): Promise<TicketType | null> {
+    const query = `
+      SELECT * FROM ticket_types
+      WHERE id = $1 AND tenant_id = $2
+    `;
+
+    const result = await DatabaseService.query<TicketType>(query, [id, tenantId]);
+    return result.rows[0] || null;
+  }
+
+  async updateTicketType(id: string, data: Partial<TicketType>, tenantId: string): Promise<TicketType> {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramCount = 1;
+
+    if (data.name !== undefined) {
+      updates.push(`name = $${paramCount++}`);
+      values.push(data.name);
+    }
+    if (data.description !== undefined) {
+      updates.push(`description = $${paramCount++}`);
+      values.push(data.description);
+    }
+    if (data.priceCents !== undefined) {
+      updates.push(`price_cents = $${paramCount++}`);
+      values.push(data.priceCents);
+    }
+    if (data.quantity !== undefined) {
+      updates.push(`quantity = $${paramCount++}`);
+      values.push(data.quantity);
+    }
+    if (data.maxPerPurchase !== undefined) {
+      updates.push(`max_per_purchase = $${paramCount++}`);
+      values.push(data.maxPerPurchase);
+    }
+    if (data.saleStartDate !== undefined) {
+      updates.push(`sale_start_date = $${paramCount++}`);
+      values.push(data.saleStartDate);
+    }
+    if (data.saleEndDate !== undefined) {
+      updates.push(`sale_end_date = $${paramCount++}`);
+      values.push(data.saleEndDate);
+    }
+
+    updates.push(`updated_at = NOW()`);
+
+    values.push(id);
+    values.push(tenantId);
+
+    const query = `
+      UPDATE ticket_types
+      SET ${updates.join(', ')}
+      WHERE id = $${paramCount} AND tenant_id = $${paramCount + 1}
+      RETURNING *
+    `;
+
+    const result = await DatabaseService.query<TicketType>(query, values);
+
+    if (result.rows.length === 0) {
+      throw new NotFoundError('Ticket type');
+    }
+
+    return result.rows[0];
+  }
+
   private encryptData(data: string): string {
     const algorithm = 'aes-256-cbc';
-    const key = Buffer.from(process.env.QR_ENCRYPTION_KEY || 'defaultkeychangethisto32charlong');
+    
+    if (!process.env.QR_ENCRYPTION_KEY) {
+      throw new Error('QR_ENCRYPTION_KEY environment variable is required but not set');
+    }
+    
+    const key = Buffer.from(process.env.QR_ENCRYPTION_KEY);
     const iv = crypto.randomBytes(16);
 
     const cipher = crypto.createCipheriv(algorithm, key, iv);
@@ -594,7 +622,12 @@ export class TicketService {
 
   private decryptData(data: string): string {
     const algorithm = 'aes-256-cbc';
-    const key = Buffer.from(process.env.QR_ENCRYPTION_KEY || 'defaultkeychangethisto32charlong');
+    
+    if (!process.env.QR_ENCRYPTION_KEY) {
+      throw new Error('QR_ENCRYPTION_KEY environment variable is required but not set');
+    }
+    
+    const key = Buffer.from(process.env.QR_ENCRYPTION_KEY);
 
     const parts = data.split(':');
     const iv = Buffer.from(parts[0], 'base64');

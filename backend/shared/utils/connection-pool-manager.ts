@@ -1,4 +1,4 @@
-import { Pool, PoolClient, PoolConfig } from 'pg';
+import { Pool, PoolClient, PoolConfig, QueryResult, QueryResultRow } from 'pg';
 import { logger } from './logger';
 import { EventEmitter } from 'events';
 
@@ -23,7 +23,7 @@ interface EnhancedPoolConfig extends PoolConfig {
 }
 
 export class ConnectionPoolManager extends EventEmitter {
-  private pool: Pool;
+  private pool!: Pool;
   private config: EnhancedPoolConfig;
   private metrics: PoolMetrics;
   private circuitBreakerFailures: number = 0;
@@ -54,7 +54,7 @@ export class ConnectionPoolManager extends EventEmitter {
       circuitBreakerTimeout: 60000,
       maxWaitingRequests: 100,
       healthCheckInterval: 30000,
-      slowQueryThreshold: 5000
+      slowQueryThreshold: 5000,
     };
 
     this.config = { ...defaultConfig, ...config };
@@ -66,12 +66,12 @@ export class ConnectionPoolManager extends EventEmitter {
       totalRequests: 0,
       errors: 0,
       avgResponseTime: 0,
-      circuitState: 'CLOSED'
+      circuitState: 'CLOSED',
     };
 
     this.log = logger.child({
       component: 'ConnectionPoolManager',
-      pool: this.config.name
+      pool: this.config.name,
     });
 
     this.initializePool();
@@ -87,9 +87,9 @@ export class ConnectionPoolManager extends EventEmitter {
     this.pool.on('connect', (client) => {
       this.metrics.totalConnections++;
       this.log.debug('New client connected', {
-        total: this.metrics.totalConnections
+        total: this.metrics.totalConnections,
       });
-      this.onClientConnect(client).catch(err =>
+      this.onClientConnect(client).catch((err) =>
         this.log.error('Failed to configure client', err)
       );
     });
@@ -134,7 +134,7 @@ export class ConnectionPoolManager extends EventEmitter {
     this.log.error('Pool error', {
       error: err.message,
       code: err.code,
-      totalErrors: this.metrics.errors
+      totalErrors: this.metrics.errors,
     });
 
     this.circuitBreakerFailures++;
@@ -153,7 +153,7 @@ export class ConnectionPoolManager extends EventEmitter {
     this.metrics.circuitState = 'OPEN';
     this.log.warn('Circuit breaker OPENED', {
       failures: this.circuitBreakerFailures,
-      lastFailure: this.circuitBreakerLastFailure
+      lastFailure: this.circuitBreakerLastFailure,
     });
 
     setTimeout(() => {
@@ -198,17 +198,14 @@ export class ConnectionPoolManager extends EventEmitter {
         await client.query('SELECT 1');
         const duration = Date.now() - start;
 
-        this.metrics.avgResponseTime =
-          (this.metrics.avgResponseTime * 0.9) + (duration * 0.1);
+        this.metrics.avgResponseTime = this.metrics.avgResponseTime * 0.9 + duration * 0.1;
 
         if (this.metrics.circuitState === 'HALF_OPEN') {
           this.closeCircuitBreaker();
         }
-
       } finally {
         client.release();
       }
-
     } catch (error) {
       this.log.error('Health check failed', error);
       this.handlePoolError(error as Error);
@@ -231,42 +228,42 @@ export class ConnectionPoolManager extends EventEmitter {
       const client = await this.acquireWithTimeout(5000);
 
       const originalQuery = client.query.bind(client);
-      client.query = (async (...args: any[]) => {
+      client.query = ((...args: any[]) => {
         const start = Date.now();
-        const queryText = typeof args[0] === 'string' ? args[0] : args[0].text;
+        const queryText = typeof args[0] === 'string' ? args[0] : args[0]?.text;
 
         this.activeClients.set(client, {
           query: queryText?.substring(0, 100) || 'unknown',
-          startTime: start
+          startTime: start,
         });
 
-        try {
-          const result = await originalQuery(...args);
-          const duration = Date.now() - start;
+        return (async () => {
+          try {
+            const result = await originalQuery(args[0], args[1], args[2]);
+            const duration = Date.now() - start;
 
-          if (duration > (this.config.slowQueryThreshold || 5000)) {
-            this.log.warn('Slow query detected', {
-              query: queryText?.substring(0, 100),
-              duration
-            });
+            if (duration > (this.config.slowQueryThreshold || 5000)) {
+              this.log.warn('Slow query detected', {
+                query: queryText?.substring(0, 100),
+                duration,
+              });
+            }
+
+            this.metrics.avgResponseTime = this.metrics.avgResponseTime * 0.95 + duration * 0.05;
+
+            if (this.metrics.circuitState === 'HALF_OPEN') {
+              this.closeCircuitBreaker();
+            }
+
+            return result;
+          } catch (error) {
+            this.handlePoolError(error as Error, client);
+            throw error;
           }
-
-          this.metrics.avgResponseTime =
-            (this.metrics.avgResponseTime * 0.95) + (duration * 0.05);
-
-          if (this.metrics.circuitState === 'HALF_OPEN') {
-            this.closeCircuitBreaker();
-          }
-
-          return result;
-        } catch (error) {
-          this.handlePoolError(error as Error, client);
-          throw error;
-        }
+        })();
       }) as any;
 
       return client;
-
     } catch (error) {
       this.metrics.errors++;
       this.circuitBreakerFailures++;
@@ -285,34 +282,33 @@ export class ConnectionPoolManager extends EventEmitter {
         reject(new Error(`Failed to acquire database connection within ${timeout}ms`));
       }, timeout);
 
-      this.pool.connect()
-        .then(client => {
+      this.pool
+        .connect()
+        .then((client) => {
           clearTimeout(timer);
           resolve(client);
         })
-        .catch(error => {
+        .catch((error) => {
           clearTimeout(timer);
           reject(error);
         });
     });
   }
 
-  async query<T = any>(
+  async query<T extends QueryResultRow = any>(
     text: string,
     params?: any[]
-  ): Promise<{ rows: T[]; rowCount: number | null }> {
+  ): Promise<QueryResult<T>> {
     const client = await this.getClient();
 
     try {
-      return await client.query(text, params);
+      return await client.query<T>(text, params);
     } finally {
       client.release();
     }
   }
 
-  async transaction<T>(
-    callback: (client: PoolClient) => Promise<T>
-  ): Promise<T> {
+  async transaction<T>(callback: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.getClient();
 
     try {
@@ -329,21 +325,21 @@ export class ConnectionPoolManager extends EventEmitter {
   }
 
   getMetrics(): PoolMetrics {
-    const poolStats = (this.pool as any);
+    const poolStats = this.pool as any;
 
     return {
       ...this.metrics,
       totalConnections: poolStats.totalCount || this.metrics.totalConnections,
       idleConnections: poolStats.idleCount || this.metrics.idleConnections,
-      waitingRequests: poolStats.waitingCount || this.requestQueue.length
+      waitingRequests: poolStats.waitingCount || this.requestQueue.length,
     };
   }
 
   getActiveQueries(): Array<{ query: string; duration: number }> {
     const now = Date.now();
-    return Array.from(this.activeClients.values()).map(info => ({
+    return Array.from(this.activeClients.values()).map((info) => ({
       query: info.query,
-      duration: now - info.startTime
+      duration: now - info.startTime,
     }));
   }
 
@@ -371,7 +367,7 @@ export class ConnectionPoolManager extends EventEmitter {
 
     this.log.info('Adjusting pool size', {
       from: this.config.max,
-      to: targetSize
+      to: targetSize,
     });
 
     const oldPool = this.pool;
@@ -385,7 +381,8 @@ export class ConnectionPoolManager extends EventEmitter {
 
     try {
       const appName = this.config.application_name || this.config.name;
-      const result = await this.query<{ pid: number; query: string; duration: string }>(`
+      const result = await this.query<{ pid: number; query: string; duration: string }>(
+        `
         SELECT
           pid,
           query,
@@ -396,7 +393,9 @@ export class ConnectionPoolManager extends EventEmitter {
           AND query NOT ILIKE '%pg_stat_activity%'
           AND now() - pg_stat_activity.query_start > interval '${thresholdMs} milliseconds'
           AND application_name = $1
-      `, [appName]);
+      `,
+        [appName]
+      );
 
       for (const row of result.rows) {
         try {
@@ -410,7 +409,6 @@ export class ConnectionPoolManager extends EventEmitter {
       if (killed.length > 0) {
         this.log.warn(`Killed ${killed.length} long-running queries`, { killed });
       }
-
     } catch (error) {
       this.log.error('Failed to check for long-running queries', error);
     }

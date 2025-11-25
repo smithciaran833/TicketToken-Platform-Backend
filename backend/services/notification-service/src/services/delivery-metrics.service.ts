@@ -1,5 +1,5 @@
 import { db } from '../config/database';
-import { redisHelper } from '../config/redis';
+import { redis } from '../config/redis';
 
 interface DeliveryMetrics {
   sent: number;
@@ -95,10 +95,10 @@ export class NotificationAnalyticsService {
     }
 
     // Cache metrics for dashboard
-    await redisHelper.setWithTTL(
+    await redis.setex(
       `metrics:delivery:${venueId || 'all'}`,
-      metrics,
-      300 // 5 minutes
+      300, // 5 minutes
+      JSON.stringify(metrics)
     );
 
     return metrics;

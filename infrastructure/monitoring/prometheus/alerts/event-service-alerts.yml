@@ -1,0 +1,185 @@
+groups:
+  - name: event_service_alerts
+    interval: 30s
+    rules:
+      # Service Health Alerts
+      - alert: EventServiceDown
+        expr: up{job="event-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: event-service
+        annotations:
+          summary: "Event Service is down"
+          description: "Event Service has been down for more than 2 minutes"
+
+      # Performance Alerts
+      - alert: HighResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="event-service"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High response time detected"
+          description: "P95 response time is above 1 second: {{ $value }}s"
+
+      - alert: CriticalResponseTime
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service="event-service"}[5m])) > 3
+        for: 2m
+        labels:
+          severity: critical
+          service: event-service
+        annotations:
+          summary: "Critical response time detected"
+          description: "P95 response time is above 3 seconds: {{ $value }}s"
+
+      # Error Rate Alerts
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{service="event-service",status=~"5.."}[5m]) / rate(http_requests_total{service="event-service"}[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 5%: {{ $value | humanizePercentage }}"
+
+      - alert: CriticalErrorRate
+        expr: rate(http_requests_total{service="event-service",status=~"5.."}[5m]) / rate(http_requests_total{service="event-service"}[5m]) > 0.10
+        for: 2m
+        labels:
+          severity: critical
+          service: event-service
+        annotations:
+          summary: "Critical error rate detected"
+          description: "Error rate is above 10%: {{ $value | humanizePercentage }}"
+
+      # Database Alerts
+      - alert: DatabaseConnectionPoolExhausted
+        expr: db_pool_active{service="event-service"} / db_pool_total{service="event-service"} > 0.9
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "Database connection pool near capacity"
+          description: "Database pool usage is at {{ $value | humanizePercentage }}"
+
+      - alert: DatabaseSlowQueries
+        expr: histogram_quantile(0.95, rate(db_query_duration_seconds_bucket{service="event-service"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "Slow database queries detected"
+          description: "P95 query time is above 2 seconds: {{ $value }}s"
+
+      # Redis Alerts
+      - alert: RedisConnectionDown
+        expr: redis_connected{service="event-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: event-service
+        annotations:
+          summary: "Redis connection down"
+          description: "Event Service cannot connect to Redis"
+
+      # Cache Performance Alerts
+      - alert: LowCacheHitRate
+        expr: rate(cache_hits_total{service="event-service"}[5m]) / (rate(cache_hits_total{service="event-service"}[5m]) + rate(cache_misses_total{service="event-service"}[5m])) < 0.5
+        for: 10m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is below 50%: {{ $value | humanizePercentage }}"
+
+      # Rate Limiting Alerts
+      - alert: HighRateLimitBlocking
+        expr: rate(rate_limit_blocked_total{service="event-service"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High rate of requests being blocked"
+          description: "{{ $value }} requests per second are being rate limited"
+
+      # Resource Alerts
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes{service="event-service"} > 1073741824
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is above 1GB: {{ $value | humanize1024 }}B"
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total{service="event-service"}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is above 80%: {{ $value }}%"
+
+      # Integration Health Alerts
+      - alert: VenueServiceDown
+        expr: venue_service_health{service="event-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: event-service
+        annotations:
+          summary: "Venue Service integration down"
+          description: "Event Service cannot communicate with Venue Service"
+
+      - alert: AuthServiceDown
+        expr: auth_service_health{service="event-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: event-service
+        annotations:
+          summary: "Auth Service integration down"
+          description: "Event Service cannot communicate with Auth Service"
+
+      # Background Job Alerts
+      - alert: ReservationCleanupJobFailing
+        expr: increase(reservation_cleanup_errors_total{service="event-service"}[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "Reservation cleanup job failing"
+          description: "Cleanup job has encountered {{ $value }} errors in the last 10 minutes"
+
+      # Business Logic Alerts
+      - alert: HighEventCancellationRate
+        expr: rate(event_cancelled_total{service="event-service"}[1h]) / rate(event_created_total{service="event-service"}[1h]) > 0.2
+        for: 30m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High event cancellation rate"
+          description: "More than 20% of events are being cancelled"
+
+      # Tenant-Specific Alerts
+      - alert: TenantHighErrorRate
+        expr: rate(http_requests_total{service="event-service",status=~"5..",tenant_id!=""}[5m]) by (tenant_id) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: event-service
+        annotations:
+          summary: "High error rate for tenant {{ $labels.tenant_id }}"
+          description: "Tenant {{ $labels.tenant_id }} experiencing {{ $value }} errors/sec"

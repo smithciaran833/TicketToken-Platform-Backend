@@ -1,26 +1,23 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../utils/logger';
 
-export function loggingMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
+export async function loggingMiddleware(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
   const start = Date.now();
-  
+
   // Log request
-  logger.info(`${req.method} ${req.path}`, {
-    query: req.query,
-    ip: req.ip
+  logger.info(`${request.method} ${request.url}`, {
+    query: request.query,
+    ip: request.ip
   });
-  
-  // Log response
-  res.on('finish', () => {
+
+  // Log response on completion
+  reply.raw.on('finish', () => {
     const duration = Date.now() - start;
-    logger.info(`${req.method} ${req.path} - ${res.statusCode}`, {
+    logger.info(`${request.method} ${request.url} - ${reply.statusCode}`, {
       duration: `${duration}ms`
     });
   });
-  
-  next();
 }

@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use crate::errors::TicketTokenError;
 
 #[account]
 pub struct Event {
@@ -41,14 +42,14 @@ impl Event {
         32 +                          // merkle_tree
         1;                            // bump
     // Total: 455 bytes (updated from spec to include merkle_tree)
-    
-    pub fn is_active(&self) -> bool {
+
+    pub fn is_active(&self) -> Result<bool> {
         let now = Clock::get().map_err(|_| TicketTokenError::ClockError)?.unix_timestamp;
-        now < self.start_time && self.tickets_sold < self.total_tickets
+        Ok(now < self.start_time && self.tickets_sold < self.total_tickets)
     }
-    
-    pub fn can_refund(&self) -> bool {
+
+    pub fn can_refund(&self) -> Result<bool> {
         let now = Clock::get().map_err(|_| TicketTokenError::ClockError)?.unix_timestamp;
-        now < self.start_time.saturating_add(self.refund_window)
+        Ok(now < self.start_time.saturating_add(self.refund_window))
     }
 }

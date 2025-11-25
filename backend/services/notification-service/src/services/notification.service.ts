@@ -1,17 +1,18 @@
 import * as fs from 'fs';
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from "@tickettoken/shared";
 import * as path from 'path';
 import * as handlebars from 'handlebars';
+import axios from 'axios';
 import { EmailProvider } from '../providers/email/email.provider';
 import { SMSProvider } from '../providers/sms/sms.provider';
 import { PushProvider } from '../providers/push/push.provider';
 import { NotificationRequest, NotificationResponse } from '../types/notification.types';
 import { logger } from '../config/logger';
 import { db } from '../config/database';
+import { metricsService } from './metrics.service';
 
 export class NotificationService {
   async getNotificationStatus(_id: string): Promise<'queued'|'sent'|'failed'|'unknown'> {
-    // compile-time stub; replace with real lookup when wired
     return 'queued';
   }
 
@@ -29,10 +30,10 @@ export class NotificationService {
 
   private loadTemplates() {
     const templateDir = path.join(__dirname, '../templates/email');
-    
+
     try {
       const files = fs.readdirSync(templateDir);
-      
+
       files.forEach(file => {
         if (file.endsWith('.hbs')) {
           const templateName = file.replace('.hbs', '');
@@ -50,7 +51,40 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Fetch venue branding from venue-service
+   */
+  private async getVenueBranding(venueId: string): Promise<any> {
+    try {
+      const venueServiceUrl = process.env.VENUE_SERVICE_URL || 'http://venue-service:3002';
+      const response = await axios.get(
+        `${venueServiceUrl}/api/v1/branding/${venueId}`,
+        { timeout: 2000 }
+      );
+
+      return response.data.branding;
+    } catch (error: any) {
+      logger.warn(`Failed to fetch branding for venue ${venueId}:`, error.message);
+      return null;
+    }
+  }
+
+  /**
+   * Check if venue has white-label tier
+   */
+  private async isWhiteLabel(venueId: string): Promise<boolean> {
+    try {
+      const venue = await db('venues').where('id', venueId).first();
+      return venue?.hide_platform_branding || false;
+    } catch (error) {
+      return false;
+    }
+  }
+
   async send(request: NotificationRequest): Promise<NotificationResponse> {
+    const startTime = Date.now();
+    const provider = this.getProviderName(request.channel);
+    
     try {
       // Check consent
       const hasConsent = await this.checkConsent(
@@ -69,7 +103,7 @@ export class NotificationService {
 
       // Process based on channel
       let result: NotificationResponse;
-      
+
       switch (request.channel) {
         case 'email':
           result = await this.sendEmail(request);
@@ -87,10 +121,33 @@ export class NotificationService {
       // Update notification status
       await this.updateNotificationStatus(notificationId, result.status);
 
+      // Track metrics
+      const duration = (Date.now() - startTime) / 1000;
+      metricsService.trackNotificationSent(
+        request.channel,
+        request.type,
+        result.status,
+        provider
+      );
+      metricsService.recordNotificationSendDuration(
+        request.channel,
+        provider,
+        request.type,
+        duration
+      );
+
       return result;
-      
-    } catch (error) {
+
+    } catch (error: any) {
       logger.error('Failed to send notification:', error);
+      
+      // Track error metrics
+      metricsService.trackNotificationError(
+        error.message || 'unknown_error',
+        provider,
+        request.channel
+      );
+      
       throw error;
     }
   }
@@ -98,23 +155,60 @@ export class NotificationService {
   private async sendEmail(request: NotificationRequest): Promise<NotificationResponse> {
     // Get template
     const template = this.templates.get(request.template);
-    
+
     if (!template) {
       throw new Error(`Template not found: ${request.template}`);
     }
 
-    // Render template with data
-    const html = template(request.data);
+    // Fetch venue branding if venueId provided
+    let branding = null;
+    let isWhiteLabel = false;
+    let fromEmail = process.env.EMAIL_FROM || 'noreply@tickettoken.com';
+    let fromName = 'TicketToken';
+
+    if (request.venueId) {
+      branding = await this.getVenueBranding(request.venueId);
+      isWhiteLabel = await this.isWhiteLabel(request.venueId);
+
+      // Use venue's custom email settings if white-label
+      if (branding && isWhiteLabel) {
+        if (branding.email_reply_to) {
+          fromEmail = branding.email_reply_to;
+        }
+        if (branding.email_from_name) {
+          fromName = branding.email_from_name;
+        }
+      }
+    }
+
+    // Merge branding data into template data
+    const templateData = {
+      ...request.data,
+      branding: branding || {},
+      isWhiteLabel
+    };
+
+    // Render template with data and track duration
+    const renderStart = Date.now();
+    const html = template(templateData);
+    const renderDuration = (Date.now() - renderStart) / 1000;
     
+    // Track template render metrics
+    metricsService.recordTemplateRenderDuration(
+      request.template,
+      'email',
+      renderDuration
+    );
+
     // Extract subject from template or use default
-    const subject = request.data.subject || this.getSubjectForTemplate(request.template);
+    const subject = request.data.subject || this.getSubjectForTemplate(request.template, fromName);
 
     // Send via provider
     return await this.emailProvider.send({
       to: request.recipient.email!,
       subject,
       html,
-      from: process.env.EMAIL_FROM || 'noreply@tickettoken.com'
+      from: `${fromName} <${fromEmail}>`
     });
   }
 
@@ -174,14 +268,32 @@ export class NotificationService {
       });
   }
 
-  private getSubjectForTemplate(template: string): string {
+  private getSubjectForTemplate(template: string, brandName: string = 'TicketToken'): string {
     const subjects: Record<string, string> = {
-      'order-confirmation': 'Order Confirmed - Your tickets are ready!',
-      'payment-failed': 'Payment Failed - Action required',
-      'refund-processed': 'Refund Processed Successfully'
+      'order-confirmation': `Order Confirmed - Your tickets are ready!`,
+      'ticket-purchased': `Your Tickets for {{eventName}} are Ready!`,
+      'payment-failed': `Payment Failed - Action required`,
+      'refund-processed': `Refund Processed Successfully`,
+      'event-reminder': `Reminder: {{eventName}} is coming up!`,
+      'abandoned-cart': `Complete your ticket purchase`,
+      'post-event-followup': `Thank you for attending {{eventName}}!`,
+      'newsletter': `Latest updates from ${brandName}`
     };
 
-    return subjects[template] || 'TicketToken Notification';
+    return subjects[template] || `${brandName} Notification`;
+  }
+
+  private getProviderName(channel: string): string {
+    switch (channel) {
+      case 'email':
+        return process.env.NOTIFICATION_MODE === 'production' ? 'sendgrid' : 'mock';
+      case 'sms':
+        return process.env.NOTIFICATION_MODE === 'production' ? 'twilio' : 'mock';
+      case 'push':
+        return 'mock';
+      default:
+        return 'unknown';
+    }
   }
 }
 

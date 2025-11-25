@@ -10,7 +10,7 @@ use instructions::*;
 use state::MintTicketArgs;
 use state::CreateEventParams;
 
-declare_id!("E7D92vNoSj2rqB1PnuZihFZ9hDstnbJMwCFkxx9TxQBL");
+declare_id!("2Pt5c9QcKSxMe9cBpfhdmfWHUwq8NUk7kFmJREJsNm2b");
 
 #[program]
 pub mod tickettoken {

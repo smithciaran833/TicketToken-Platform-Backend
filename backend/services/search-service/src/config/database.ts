@@ -5,7 +5,7 @@ export const dbConfig = {
   client: 'postgresql',
   connection: {
     host: process.env.DB_HOST || 'postgres',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
+    port: parseInt(process.env.DB_PORT || '6432', 10),
     database: process.env.DB_NAME || 'tickettoken_db',
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',

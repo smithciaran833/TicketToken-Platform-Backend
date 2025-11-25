@@ -1,220 +1,205 @@
-import { Request, Response } from 'express';
-import { db } from '../config/database';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
-import { withLock, LockKeys } from '@tickettoken/shared/utils/distributed-lock';
+import { withLock, LockKeys } from '@tickettoken/shared';
+import { transferService } from '../services/transfer.service';
+import { blockchainService } from '../services/blockchain.service';
+import { listingModel } from '../models/listing.model';
 
 export class BuyController extends EventEmitter {
-  async buyListing(req: Request, res: Response): Promise<void> {
-    const { listingId } = req.params;
-    const buyerId = (req as any).user.id;
-    const { offeredPrice } = req.body;
+  private log = logger.child({ component: 'BuyController' });
+
+  async buyListing(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const { listingId } = request.params as { listingId: string };
+    const buyerId = (request as any).user.id;
+    const buyerWallet = (request as any).user.walletAddress;
+    const { offeredPrice } = request.body as { offeredPrice?: number };
+
+    if (!buyerWallet) {
+      reply.status(400).send({ error: 'Wallet address required for purchase' });
+      return;
+    }
 
     const lockKey = LockKeys.listing(listingId);
-    
+
     try {
       await withLock(lockKey, 10000, async () => {
-        const trx = await db.transaction();
+        // Get listing details
+        const listing = await listingModel.findById(listingId);
+
+        if (!listing) {
+          reply.status(404).send({ error: 'Listing not found' });
+          return;
+        }
+
+        if (listing.status !== 'active') {
+          reply.status(409).send({
+            error: 'Listing unavailable',
+            reason: `Listing status is ${listing.status}`
+          });
+          return;
+        }
+
+        if (listing.sellerId === buyerId) {
+          reply.status(400).send({ error: 'Cannot buy your own listing' });
+          return;
+        }
+
+        // Validate price if offered
+        const purchasePrice = offeredPrice || listing.price;
+        if (offeredPrice && offeredPrice < listing.price) {
+          reply.status(400).send({
+            error: 'Offered price below listing price',
+            listingPrice: listing.price,
+            offeredPrice
+          });
+          return;
+        }
 
         try {
-          const listing = await trx('marketplace_listings')
-            .where({ id: listingId, status: 'active' })
-            .forUpdate()
-            .skipLocked()
-            .first();
-
-          if (!listing) {
-            await trx.rollback();
-            res.status(409).json({
-              error: 'Listing unavailable',
-              reason: 'Already sold or locked by another buyer'
-            });
-            return;
-          }
-
-          const policy = await this.getVenuePolicy(trx, listing.venue_id);
-
-          if (!this.validatePurchase(listing, policy, offeredPrice)) {
-            await trx.rollback();
-            res.status(400).json({
-              error: 'Purchase violates venue policy',
-              maxPrice: policy.maxResalePrice,
-              saleWindow: policy.saleWindow
-            });
-            return;
-          }
-
-          if (listing.seller_id === buyerId) {
-            await trx.rollback();
-            res.status(400).json({ error: 'Cannot buy your own listing' });
-            return;
-          }
-
-          const [purchase] = await trx('marketplace_purchases')
-            .insert({
-              listing_id: listingId,
-              buyer_id: buyerId,
-              seller_id: listing.seller_id,
-              ticket_id: listing.ticket_id,
-              price: offeredPrice || listing.price,
-              venue_fee: this.calculateVenueFee(listing.price, policy),
-              platform_fee: this.calculatePlatformFee(listing.price),
-              status: 'pending',
-              created_at: new Date()
-            })
-            .returning('*');
-
-          await trx('marketplace_listings')
-            .where({ id: listingId })
-            .update({
-              status: 'sold',
-              sold_at: new Date(),
-              buyer_id: buyerId
-            });
-
-          await trx('outbox').insert({
-            topic: 'marketplace.ticket.sold',
-            payload: JSON.stringify({
-              purchaseId: purchase.id,
-              listingId,
-              buyerId,
-              sellerId: listing.seller_id,
-              ticketId: listing.ticket_id,
-              price: purchase.price,
-              timestamp: new Date().toISOString()
-            }),
-            created_at: new Date()
-          });
-
-          await trx.commit();
-
-          this.emit('ticket.sold', {
-            purchaseId: purchase.id,
+          // Step 1: Initiate transfer (creates transfer record)
+          this.log.info('Initiating transfer', { listingId, buyerId, purchasePrice });
+          
+          const transfer = await transferService.initiateTransfer({
+            listingId,
             buyerId,
-            sellerId: listing.seller_id,
-            price: purchase.price
+            buyerWallet,
+            paymentCurrency: 'USDC',
+            eventStartTime: new Date(listing.eventId) // TODO: Get actual event start time
           });
 
-          logger.info(`Ticket ${listing.ticket_id} sold to ${buyerId} for ${purchase.price}`);
+          this.log.info('Transfer initiated', { transferId: transfer.id });
 
-          res.json({
+          // Step 2: Execute blockchain transfer
+          this.log.info('Executing blockchain transfer', { transferId: transfer.id });
+          
+          const blockchainResult = await blockchainService.transferNFT({
+            tokenId: listing.ticketId,
+            fromWallet: listing.walletAddress,
+            toWallet: buyerWallet,
+            listingId: listing.id,
+            price: purchasePrice
+          });
+
+          this.log.info('Blockchain transfer successful', {
+            transferId: transfer.id,
+            signature: blockchainResult.signature,
+            blockHeight: blockchainResult.blockHeight
+          });
+
+          // Step 3: Complete transfer (marks listing sold)
+          await transferService.completeTransfer({
+            transferId: transfer.id,
+            blockchainSignature: blockchainResult.signature
+          });
+
+          this.log.info('Transfer completed successfully', {
+            transferId: transfer.id,
+            listingId,
+            buyerId,
+            signature: blockchainResult.signature
+          });
+
+          // Emit event for other systems
+          this.emit('ticket.sold', {
+            transferId: transfer.id,
+            listingId,
+            buyerId,
+            sellerId: listing.sellerId,
+            ticketId: listing.ticketId,
+            price: purchasePrice,
+            signature: blockchainResult.signature
+          });
+
+          // Calculate fees for response
+          const platformFee = Math.round(purchasePrice * 0.025); // 2.5%
+          const venueFee = Math.round(purchasePrice * 0.05); // 5%
+
+          reply.send({
             success: true,
-            purchase: {
-              id: purchase.id,
-              ticketId: listing.ticket_id,
-              price: purchase.price,
-              venueFee: purchase.venue_fee,
-              platformFee: purchase.platform_fee,
-              total: purchase.price + purchase.venue_fee + purchase.platform_fee
+            transfer: {
+              id: transfer.id,
+              ticketId: listing.ticketId,
+              price: purchasePrice,
+              platformFee,
+              venueFee,
+              total: purchasePrice + platformFee + venueFee,
+              signature: blockchainResult.signature,
+              blockHeight: blockchainResult.blockHeight,
+              status: 'completed'
             }
           });
 
-        } catch (error: any) {
-          await trx.rollback();
+        } catch (transferError: any) {
+          // Handle transfer failure
+          this.log.error('Purchase failed during transfer', {
+            error: transferError.message,
+            listingId,
+            buyerId
+          });
 
-          if (error.code === '23505') {
-            res.status(409).json({ error: 'Purchase already in progress' });
-          } else if (error.code === '40001') {
-            res.status(409).json({ error: 'Concurrent purchase detected, please retry' });
+          // If we have a transfer record, mark it as failed
+          if (transferError.transferId) {
+            await transferService.failTransfer(
+              transferError.transferId,
+              transferError.message || 'Transfer execution failed'
+            );
+          }
+
+          // Return appropriate error
+          if (transferError.message?.includes('Insufficient')) {
+            reply.status(400).send({
+              error: 'Insufficient wallet balance',
+              message: transferError.message
+            });
+          } else if (transferError.message?.includes('Blockchain')) {
+            reply.status(503).send({
+              error: 'Blockchain service unavailable',
+              message: 'Please try again in a moment'
+            });
           } else {
-            logger.error('Buy transaction failed:', error);
-            res.status(500).json({ error: 'Purchase failed' });
+            reply.status(500).send({
+              error: 'Purchase failed',
+              message: transferError.message || 'Unknown error occurred'
+            });
           }
         }
       });
     } catch (lockError: any) {
-      if (lockError.message.includes('Resource is locked')) {
-        res.status(409).json({ 
+      if (lockError.message?.includes('Resource is locked')) {
+        reply.status(409).send({
           error: 'Listing is being purchased by another user',
           message: 'Please try again in a moment'
         });
       } else {
-        logger.error('Distributed lock error:', lockError);
-        res.status(500).json({ error: 'Purchase failed' });
+        this.log.error('Distributed lock error', { error: lockError, listingId });
+        reply.status(500).send({ error: 'Purchase failed due to system error' });
       }
     }
   }
 
-  private validatePurchase(listing: any, policy: any, offeredPrice?: number): boolean {
-    const now = new Date();
-    const price = offeredPrice || listing.price;
-
-    if (policy.maxResalePrice && price > policy.maxResalePrice) {
-      logger.warn(`Price ${price} exceeds cap ${policy.maxResalePrice}`);
-      return false;
-    }
-
-    if (policy.minResalePrice && price < policy.minResalePrice) {
-      logger.warn(`Price ${price} below minimum ${policy.minResalePrice}`);
-      return false;
-    }
-
-    if (policy.saleWindowStart && now < new Date(policy.saleWindowStart)) {
-      logger.warn('Sale window not yet open');
-      return false;
-    }
-
-    if (policy.saleWindowEnd && now > new Date(policy.saleWindowEnd)) {
-      logger.warn('Sale window has closed');
-      return false;
-    }
-
-    if (policy.maxResales && listing.resale_count >= policy.maxResales) {
-      logger.warn(`Ticket has reached max resales: ${policy.maxResales}`);
-      return false;
-    }
-
-    return true;
-  }
-
-  private async getVenuePolicy(trx: any, venueId: string): Promise<any> {
-    const policy = await trx('venue_marketplace_policies')
-      .where({ venue_id: venueId, active: true })
-      .first();
-
-    return policy || {
-      maxResalePrice: null,
-      minResalePrice: null,
-      saleWindowStart: null,
-      saleWindowEnd: null,
-      maxResales: 3,
-      venueFeePercent: 5,
-      platformFeePercent: 2.5
-    };
-  }
-
-  private calculateVenueFee(price: number, policy: any): number {
-    const percent = policy.venueFeePercent || 5;
-    return Math.round(price * percent / 100);
-  }
-
-  private calculatePlatformFee(price: number): number {
-    const percent = 2.5;
-    return Math.round(price * percent / 100);
-  }
-
-  async buyWithRetry(req: Request, res: Response): Promise<void> {
+  async buyWithRetry(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const maxRetries = 3;
     let attempts = 0;
 
     while (attempts < maxRetries) {
       try {
-        await this.buyListing(req, res);
+        await this.buyListing(request, reply);
         return;
       } catch (error: any) {
-        if ((error.code === '40001' || error.message?.includes('Resource is locked')) 
+        if ((error.code === '40001' || error.message?.includes('Resource is locked'))
             && attempts < maxRetries - 1) {
           attempts++;
           const delay = Math.pow(2, attempts) * 100;
           await new Promise(resolve => setTimeout(resolve, delay));
-          logger.info(`Retrying purchase attempt ${attempts} after ${delay}ms`);
+          this.log.info(`Retrying purchase attempt ${attempts} after ${delay}ms`);
         } else {
           throw error;
         }
       }
     }
 
-    res.status(409).json({
+    reply.status(409).send({
       error: 'Unable to complete purchase due to high demand',
       message: 'Please try again'
     });

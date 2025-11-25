@@ -10,6 +10,8 @@ import {
 } from '../types';
 import { REDIS_KEYS, REDIS_TTL } from '../config/redis';
 import { nanoid } from 'nanoid';
+import { AuthServiceClient } from '../clients/AuthServiceClient';
+import { VenueServiceClient } from '../clients/VenueServiceClient';
 
 // Define JWT payload types
 interface JWTPayload {
@@ -224,15 +226,14 @@ async function getUserDetails(server: FastifyInstance, userId: string): Promise<
     return JSON.parse(cached);
   }
 
-  // TODO: Fetch from auth service when implemented
-  // For now, return mock data
-  const user = {
-    id: userId,
-    email: `user${userId}@tickettoken.com`,
-    role: 'customer' as UserRole,
-    venueId: null,
-    metadata: {},
-  };
+  // Fetch from auth service
+  const authClient = new AuthServiceClient(server);
+  const user = await authClient.getUserById(userId);
+
+  if (!user) {
+    // User not found or service unavailable
+    return null;
+  }
 
   // Cache for 5 minutes
   await server.redis.setex(cacheKey, REDIS_TTL.CACHE_MEDIUM, JSON.stringify(user));
@@ -289,13 +290,26 @@ function hasPermission(user: AuthUser, requiredPermission: string, request: Fast
 
 // Check venue access
 async function checkVenueAccess(
-  _server: FastifyInstance,
-  _userId: string,
-  _venueId: string,
-  _permission: string
+  server: FastifyInstance,
+  userId: string,
+  venueId: string,
+  permission: string
 ): Promise<boolean> {
-  // TODO: Implement proper venue access check with venue service
-  return true;
+  // Check cache first for venue access
+  const cacheKey = `${REDIS_KEYS.CACHE_VENUE}access:${userId}:${venueId}:${permission}`;
+  const cached = await server.redis.get(cacheKey);
+  if (cached) {
+    return cached === 'true';
+  }
+
+  // Check with venue service
+  const venueClient = new VenueServiceClient(server);
+  const hasAccess = await venueClient.checkUserVenueAccess(userId, venueId, permission);
+
+  // Cache for 10 minutes
+  await server.redis.setex(cacheKey, 600, hasAccess ? 'true' : 'false');
+
+  return hasAccess;
 }
 
 // Token refresh handler

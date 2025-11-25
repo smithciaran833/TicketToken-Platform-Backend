@@ -93,15 +93,16 @@ class QRGenerator {
 
       const ticket = ticketResult.rows[0];
 
-      // Generate time-based QR data
+      // Phase 2.8: Generate time-based QR data with nonce for replay attack prevention
       const timestamp = Date.now();
-      const data = `${ticketId}:${timestamp}`;
+      const nonce = crypto.randomBytes(8).toString('hex'); // 16-character nonce
+      const data = `${ticketId}:${timestamp}:${nonce}`;
       const hmac = crypto
         .createHmac('sha256', this.hmacSecret)
         .update(data)
         .digest('hex');
 
-      const qrData = `${ticketId}:${timestamp}:${hmac}`;
+      const qrData = `${ticketId}:${timestamp}:${nonce}:${hmac}`;
 
       const qrOptions = {
         errorCorrectionLevel: 'M' as const,

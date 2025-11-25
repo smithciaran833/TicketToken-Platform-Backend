@@ -1,9 +1,10 @@
 export class PIISanitizer {
   static sanitize(data: any): any {
     if (typeof data === 'string') {
-      return data.replace(/\b[\w._%+-]+@[\w.-]+\.[A-Z|a-z]{2,}\b/gi, '[EMAIL]')
-                 .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]')
-                 .replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[CARD]');
+      return data
+        .replace(/\b[\w._%+-]+@[\w.-]+\.[A-Z|a-z]{2,}\b/gi, '[EMAIL]')
+        .replace(/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]')
+        .replace(/\b\d{4}[\s-]?\d{4}[\s-]?\d{4}[\s-]?\d{4}\b/g, '[CARD]');
     }
     if (typeof data === 'object' && data !== null) {
       const sanitized: any = {};
@@ -22,7 +23,7 @@ export class PIISanitizer {
       headers: this.sanitize(req.headers),
       body: this.sanitize(req.body),
       params: this.sanitize(req.params),
-      query: this.sanitize(req.query)
+      query: this.sanitize(req.query),
     };
   }
 }

@@ -1,9 +1,26 @@
 import { Pool } from 'pg';
-import winston from 'winston';
+// import winston from 'winston';
+
+// SECURITY: Require DATABASE_URL environment variable - no fallback to hardcoded credentials
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    'DATABASE_URL environment variable is required for audit logging. ' +
+      'This is a critical security requirement and cannot use a default value.'
+  );
+}
 
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL ||
-    'postgresql://tickettoken:4cVXNcP3zWIEmy8Ey1DfvWHYI@localhost:5432/tickettoken_db'
+  connectionString: process.env.DATABASE_URL,
+  // Connection pool configuration
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 2000,
+});
+
+// Handle pool errors
+pool.on('error', (err) => {
+  console.error('Unexpected error on idle PostgreSQL client', err);
+  process.exit(-1);
 });
 
 interface AuditEntry {
@@ -31,11 +48,18 @@ export class AuditLogger {
           JSON.stringify(entry.metadata || {}),
           entry.ipAddress,
           entry.userAgent,
-          entry.timestamp || new Date()
+          entry.timestamp || new Date(),
         ]
       );
     } catch (error) {
       console.error('Failed to write audit log:', error);
+      // Re-throw to signal audit failure - critical for compliance
+      throw error;
     }
+  }
+
+  // Graceful shutdown
+  static async close() {
+    await pool.end();
   }
 }

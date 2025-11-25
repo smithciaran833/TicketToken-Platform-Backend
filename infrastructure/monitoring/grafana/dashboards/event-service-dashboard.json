@@ -1,0 +1,345 @@
+{
+  "dashboard": {
+    "title": "Event Service - Production Monitoring",
+    "tags": ["event-service", "tickettoken", "production"],
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "up{job=\"event-service\"}",
+            "legendFormat": "Service Up"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 1, "color": "green" }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 }
+      },
+      {
+        "id": 2,
+        "title": "Request Rate (req/s)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{service=\"event-service\"}[5m])",
+            "legendFormat": "{{method}} {{path}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 }
+      },
+      {
+        "id": 3,
+        "title": "Response Time (p95, p99)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{service=\"event-service\"}[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{service=\"event-service\"}[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 }
+      },
+      {
+        "id": 4,
+        "title": "Error Rate (%)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{service=\"event-service\",status=~\"5..\"}[5m]) / rate(http_requests_total{service=\"event-service\"}[5m]) * 100",
+            "legendFormat": "5xx Error Rate"
+          },
+          {
+            "expr": "rate(http_requests_total{service=\"event-service\",status=~\"4..\"}[5m]) / rate(http_requests_total{service=\"event-service\"}[5m]) * 100",
+            "legendFormat": "4xx Error Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 1, "color": "yellow" },
+                { "value": 5, "color": "red" }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 }
+      },
+      {
+        "id": 5,
+        "title": "Database Connection Pool",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "db_pool_total{service=\"event-service\"}",
+            "legendFormat": "Total Connections"
+          },
+          {
+            "expr": "db_pool_idle{service=\"event-service\"}",
+            "legendFormat": "Idle Connections"
+          },
+          {
+            "expr": "db_pool_active{service=\"event-service\"}",
+            "legendFormat": "Active Connections"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 }
+      },
+      {
+        "id": 6,
+        "title": "Redis Connection Status",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "redis_connected{service=\"event-service\"}",
+            "legendFormat": "Redis Connected"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 1, "color": "green" }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 }
+      },
+      {
+        "id": 7,
+        "title": "Rate Limiting - Blocked Requests",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(rate_limit_blocked_total{service=\"event-service\"}[5m])",
+            "legendFormat": "Blocked Requests/s"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 }
+      },
+      {
+        "id": 8,
+        "title": "Event Operations",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(event_created_total{service=\"event-service\"}[5m])",
+            "legendFormat": "Events Created/s"
+          },
+          {
+            "expr": "rate(event_updated_total{service=\"event-service\"}[5m])",
+            "legendFormat": "Events Updated/s"
+          },
+          {
+            "expr": "rate(event_cancelled_total{service=\"event-service\"}[5m])",
+            "legendFormat": "Events Cancelled/s"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 }
+      },
+      {
+        "id": 9,
+        "title": "Reservation Cleanup Job",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "reservation_cleanup_processed_total{service=\"event-service\"}",
+            "legendFormat": "Reservations Processed"
+          },
+          {
+            "expr": "reservation_cleanup_expired_total{service=\"event-service\"}",
+            "legendFormat": "Reservations Expired"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 }
+      },
+      {
+        "id": 10,
+        "title": "Cache Hit Rate (%)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(cache_hits_total{service=\"event-service\"}[5m]) / (rate(cache_hits_total{service=\"event-service\"}[5m]) + rate(cache_misses_total{service=\"event-service\"}[5m])) * 100",
+            "legendFormat": "Cache Hit Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 80, "color": "yellow" },
+                { "value": 95, "color": "green" }
+              ]
+            }
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 }
+      },
+      {
+        "id": 11,
+        "title": "Memory Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes{service=\"event-service\"}",
+            "legendFormat": "RSS Memory"
+          },
+          {
+            "expr": "nodejs_heap_size_used_bytes{service=\"event-service\"}",
+            "legendFormat": "Heap Used"
+          },
+          {
+            "expr": "nodejs_heap_size_total_bytes{service=\"event-service\"}",
+            "legendFormat": "Heap Total"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 }
+      },
+      {
+        "id": 12,
+        "title": "CPU Usage (%)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total{service=\"event-service\"}[5m]) * 100",
+            "legendFormat": "CPU Usage"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "max": 100
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 }
+      },
+      {
+        "id": 13,
+        "title": "Venue Service Integration Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "venue_service_health{service=\"event-service\"}",
+            "legendFormat": "Venue Service"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 1, "color": "green" }
+              ]
+            },
+            "mappings": [
+              { "options": { "0": { "text": "Down" }, "1": { "text": "Up" } } }
+            ]
+          }
+        },
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 }
+      },
+      {
+        "id": 14,
+        "title": "Auth Service Integration Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "auth_service_health{service=\"event-service\"}",
+            "legendFormat": "Auth Service"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 1, "color": "green" }
+              ]
+            },
+            "mappings": [
+              { "options": { "0": { "text": "Down" }, "1": { "text": "Up" } } }
+            ]
+          }
+        },
+        "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 }
+      },
+      {
+        "id": 15,
+        "title": "Database Query Duration (p95)",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(db_query_duration_seconds_bucket{service=\"event-service\"}[5m]))",
+            "legendFormat": "{{operation}}"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s"
+          }
+        },
+        "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 }
+      },
+      {
+        "id": 16,
+        "title": "Active Tenant Count",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "count(count by (tenant_id) (http_requests_total{service=\"event-service\"}))",
+            "legendFormat": "Active Tenants"
+          }
+        ],
+        "gridPos": { "h": 4, "w": 6, "x": 12, "y": 44 }
+      },
+      {
+        "id": 17,
+        "title": "Event Count by Status",
+        "type": "piechart",
+        "targets": [
+          {
+            "expr": "sum by (status) (events_total{service=\"event-service\"})",
+            "legendFormat": "{{status}}"
+          }
+        ],
+        "gridPos": { "h": 8, "w": 6, "x": 18, "y": 44 }
+      }
+    ]
+  }
+}

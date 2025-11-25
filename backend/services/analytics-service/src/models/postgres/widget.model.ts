@@ -1,111 +1,74 @@
-import { BaseModel } from './base.model';
-import { WidgetConfig, WidgetData } from '../../types';
-import { v4 as uuidv4 } from 'uuid';
+import { getDb } from '../../config/database';
 
-export class WidgetModel extends BaseModel {
-  protected static tableName = 'analytics_widgets';
-  
-  static async createWidget(
-    data: Omit<WidgetConfig, 'id'>
-  ): Promise<WidgetConfig> {
-    const widget = {
-      id: uuidv4(),
-      ...data,
-      created_at: new Date()
-    };
-    
-    return await this.create(widget);
+export interface Widget {
+  id: string;
+  tenant_id: string;
+  dashboard_id: string;
+  widget_type: string;
+  title: string;
+  description?: string;
+  configuration: Record<string, any>;
+  data_source: Record<string, any>;
+  position: Record<string, any>;
+  size: Record<string, any>;
+  style: Record<string, any>;
+  refresh_interval: number;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export class WidgetModel {
+  private static tableName = 'analytics_widgets';
+
+  static async create(widget: Omit<Widget, 'id' | 'created_at' | 'updated_at'>): Promise<Widget> {
+    const db = getDb();
+    const [created] = await db(this.tableName).insert(widget).returning('*');
+    return created;
   }
-  
-  static async getWidgetsByDashboard(
-    dashboardId: string
-  ): Promise<WidgetConfig[]> {
-    const db = this.db();
-    
-    return await db(this.tableName)
-      .where('dashboard_id', dashboardId)
-      .orderBy('position_y', 'asc')
-      .orderBy('position_x', 'asc');
+
+  static async findById(id: string, tenantId: string): Promise<Widget | null> {
+    const db = getDb();
+    const widget = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .first();
+    return widget || null;
   }
-  
-  static async updateWidget(
-    id: string,
-    data: Partial<WidgetConfig>
-  ): Promise<WidgetConfig> {
-    return await this.update(id, {
-      ...data,
-      updated_at: new Date()
-    });
+
+  static async findByDashboard(dashboardId: string, tenantId: string): Promise<Widget[]> {
+    const db = getDb();
+    return db(this.tableName)
+      .where({ dashboard_id: dashboardId, tenant_id: tenantId })
+      .orderBy('created_at', 'asc');
   }
-  
-  static async updateWidgetPosition(
-    id: string,
-    position: { x: number; y: number }
-  ): Promise<WidgetConfig> {
-    return await this.update(id, {
-      position,
-      updated_at: new Date()
-    });
+
+  static async findByType(widgetType: string, tenantId: string): Promise<Widget[]> {
+    const db = getDb();
+    return db(this.tableName)
+      .where({ widget_type: widgetType, tenant_id: tenantId })
+      .orderBy('created_at', 'desc');
   }
-  
-  static async updateWidgetSize(
-    id: string,
-    size: { width: number; height: number }
-  ): Promise<WidgetConfig> {
-    return await this.update(id, {
-      size,
-      updated_at: new Date()
-    });
+
+  static async update(id: string, tenantId: string, updates: Partial<Widget>): Promise<Widget | null> {
+    const db = getDb();
+    const [updated] = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .update(updates)
+      .returning('*');
+    return updated || null;
   }
-  
-  static async duplicateWidget(
-    widgetId: string
-  ): Promise<WidgetConfig> {
-    const original = await this.findById(widgetId);
-    
-    if (!original) {
-      throw new Error('Widget not found');
-    }
-    
-    const duplicate = {
-      ...original,
-      id: uuidv4(),
-      title: `${original.title} (Copy)`,
-      position: {
-        x: original.position.x + 1,
-        y: original.position.y + 1
-      },
-      created_at: new Date()
-    };
-    
-    delete duplicate.id;
-    
-    return await this.create(duplicate);
+
+  static async delete(id: string, tenantId: string): Promise<boolean> {
+    const db = getDb();
+    const deleted = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .delete();
+    return deleted > 0;
   }
-  
-  static async getWidgetData(
-    widgetId: string,
-    limit: number = 1
-  ): Promise<WidgetData[]> {
-    const db = this.db();
-    
-    return await db('analytics_widget_data')
-      .where('widget_id', widgetId)
-      .orderBy('timestamp', 'desc')
-      .limit(limit);
-  }
-  
-  static async saveWidgetData(
-    widgetId: string,
-    data: any
-  ): Promise<void> {
-    const db = this.db();
-    
-    await db('analytics_widget_data').insert({
-      id: uuidv4(),
-      widget_id: widgetId,
-      data,
-      timestamp: new Date()
-    });
+
+  static async deleteByDashboard(dashboardId: string, tenantId: string): Promise<number> {
+    const db = getDb();
+    return db(this.tableName)
+      .where({ dashboard_id: dashboardId, tenant_id: tenantId })
+      .delete();
   }
 }

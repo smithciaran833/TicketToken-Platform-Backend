@@ -1,6 +1,9 @@
 import Bull from 'bull';
 import { config } from '../../config';
 import { query } from '../../config/database';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'ReminderEngine' });
 
 export class ReminderEngineService {
   private reminderQueue: Bull.Queue;
@@ -103,11 +106,14 @@ export class ReminderEngineService {
     );
     
     // In production, integrate with email service
-    console.log(`Sending reminder #${reminderNumber} to ${member.email}`);
-    console.log(`Event: ${member.event_name}`);
-    console.log(`Amount due: $${member.amount_due}`);
-    console.log(`Time remaining: ${minutesRemaining} minutes`);
-    console.log(`Message: ${template.subject}`);
+    log.info('Sending group payment reminder', {
+      reminderNumber,
+      email: member.email,
+      eventName: member.event_name,
+      amountDue: member.amount_due,
+      minutesRemaining,
+      subject: template.subject
+    });
     
     // Record reminder sent
     await query(

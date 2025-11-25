@@ -1,25 +1,26 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'InternalAuth' });
+
 const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET || 'internal-service-secret-change-in-production';
 
 // ISSUE #25 FIX: Consistent internal service authentication
-export function internalAuth(req: Request, res: Response, next: NextFunction) {
-  const serviceName = req.headers['x-internal-service'] as string;
-  const timestamp = req.headers['x-internal-timestamp'] as string;
-  const signature = req.headers['x-internal-signature'] as string;
+export async function internalAuth(request: FastifyRequest, reply: FastifyReply) {
+  const serviceName = request.headers['x-internal-service'] as string;
+  const timestamp = request.headers['x-internal-timestamp'] as string;
+  const signature = request.headers['x-internal-signature'] as string;
 
   // Check all required headers
   if (!serviceName || !timestamp || !signature) {
     log.warn('Internal request missing required headers', {
-      path: req.path,
+      path: request.url,
       hasService: !!serviceName,
       hasTimestamp: !!timestamp,
       hasSignature: !!signature
     });
-    return res.status(401).json({ error: 'Missing authentication headers' });
+    return reply.status(401).send({ error: 'Missing authentication headers' });
   }
 
   // Verify timestamp is within 5 minutes
@@ -32,18 +33,18 @@ export function internalAuth(req: Request, res: Response, next: NextFunction) {
       service: serviceName,
       timeDiff: timeDiff / 1000
     });
-    return res.status(401).json({ error: 'Request expired' });
+    return reply.status(401).send({ error: 'Request expired' });
   }
 
   // For development, accept temp-signature
   if (signature === 'temp-signature' && process.env.NODE_ENV !== 'production') {
     log.debug('Accepted temp signature in development', { service: serviceName });
-    (req as any).internalService = serviceName;
-    return next();
+    (request as any).internalService = serviceName;
+    return;
   }
 
   // Verify HMAC signature
-  const payload = `${serviceName}:${timestamp}:${req.method}:${req.path}:${JSON.stringify(req.body)}`;
+  const payload = `${serviceName}:${timestamp}:${request.method}:${request.url}:${JSON.stringify(request.body)}`;
   const expectedSignature = crypto
     .createHmac('sha256', INTERNAL_SECRET)
     .update(payload)
@@ -52,17 +53,16 @@ export function internalAuth(req: Request, res: Response, next: NextFunction) {
   if (signature !== expectedSignature) {
     log.warn('Invalid internal service signature', {
       service: serviceName,
-      path: req.path
+      path: request.url
     });
-    return res.status(401).json({ error: 'Invalid signature' });
+    return reply.status(401).send({ error: 'Invalid signature' });
   }
 
   // Add service info to request
-  (req as any).internalService = serviceName;
+  (request as any).internalService = serviceName;
+  
   log.debug('Internal request authenticated', {
     service: serviceName,
-    path: req.path
+    path: request.url
   });
-
-  next();
 }

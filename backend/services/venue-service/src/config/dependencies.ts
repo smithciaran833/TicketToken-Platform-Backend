@@ -25,6 +25,7 @@ export interface Dependencies {
   verificationService: VerificationService;
   healthCheckService: HealthCheckService;
   logger: typeof logger;
+  queueService: any;
 }
 
 export function registerDependencies(db: Knex, redis: Redis) {
@@ -34,6 +35,7 @@ export function registerDependencies(db: Knex, redis: Redis) {
     db: asValue(db),
     redis: asValue(redis),
     logger: asValue(logger),
+    queueService: asValue(null),
     cacheService: asClass(CacheService).singleton(),
     analyticsService: asClass(AnalyticsService).singleton(),
     eventPublisher: asClass(EventPublisher).singleton(),

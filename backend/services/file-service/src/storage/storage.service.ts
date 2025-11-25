@@ -7,8 +7,9 @@ export class StorageService {
   private provider: StorageProvider;
   
   constructor() {
-    // Choose provider based on environment
-    if (process.env.STORAGE_PROVIDER === 's3' && process.env.NODE_ENV === 'production') {
+    // Choose provider based on STORAGE_PROVIDER environment variable
+    if (process.env.STORAGE_PROVIDER === 's3') {
+      // Use S3 storage
       this.provider = new S3StorageProvider({
         region: process.env.AWS_REGION!,
         accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
@@ -16,10 +17,18 @@ export class StorageService {
         bucketName: process.env.S3_BUCKET_NAME!,
         cdnDomain: process.env.CDN_DOMAIN
       });
-      logger.info('Using S3 storage provider');
+      logger.info('✅ Using S3 storage provider');
+    } else if (process.env.NODE_ENV === 'production') {
+      // Production MUST use S3 - fail fast
+      const errorMsg = 'FATAL: Production environment REQUIRES STORAGE_PROVIDER=s3. ' +
+        'Local storage would result in data loss on container restarts.';
+      logger.error(errorMsg);
+      throw new Error(errorMsg);
     } else {
+      // Development/staging can use local storage
       this.provider = new LocalStorageProvider();
-      logger.info('Using local storage provider');
+      logger.warn('⚠️  Using local storage provider - NOT suitable for production! ' +
+        'Files will be lost on container restart. Set STORAGE_PROVIDER=s3 for persistence.');
     }
   }
   

@@ -12,10 +12,6 @@
     "forceConsistentCasingInFileNames": true,
     "sourceMap": true,
     "baseUrl": ".",
-    "paths": {
-      "@tickettoken/shared/*": ["backend/shared/src/*"],
-      "@tickettoken/shared": ["backend/shared/src/index.js"]
-    },
     "declaration": true,
     "declarationMap": true,
     "removeComments": true,

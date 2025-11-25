@@ -1,19 +1,23 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { taxController } from '../controllers/tax.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 
-const router = Router();
+export default async function taxRoutes(fastify: FastifyInstance) {
+  // All tax routes require authentication
+  const securePreHandler = [authMiddleware];
 
-// All tax routes require authentication
-router.use(authMiddleware);
+  // Get reportable transactions
+  fastify.get('/transactions', {
+    preHandler: securePreHandler
+  }, taxController.getTransactions.bind(taxController));
 
-// Get reportable transactions
-router.get('/transactions', taxController.getTransactions);
+  // Get yearly report
+  fastify.get('/report/:year', {
+    preHandler: securePreHandler
+  }, taxController.getYearlyReport.bind(taxController));
 
-// Get yearly report
-router.get('/report/:year', taxController.getYearlyReport);
-
-// Generate 1099-K
-router.get('/1099k/:year', taxController.generate1099K);
-
-export default router;
+  // Generate 1099-K
+  fastify.get('/1099k/:year', {
+    preHandler: securePreHandler
+  }, taxController.generate1099K.bind(taxController));
+}

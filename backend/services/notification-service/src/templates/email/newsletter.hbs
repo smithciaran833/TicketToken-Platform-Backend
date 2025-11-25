@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{venueName}} Newsletter</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #2c3e50; color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+    <h1 style="margin: 0;">{{venueName}}</h1>
+    <p style="margin: 10px 0 0 0; font-size: 14px; opacity: 0.9;">{{newsletterDate}}</p>
+  </div>
+  
+  <div style="padding: 30px; background-color: #f8f9fa;">
+    <p>Hi {{customerName}},</p>
+    
+    <p>{{introText}}</p>
+    
+    {{#if featuredEvent}}
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; border-radius: 10px; margin: 30px 0;">
+      <h2 style="margin: 0 0 15px 0;">✨ Featured Event</h2>
+      <h3 style="margin: 0 0 10px 0;">{{featuredEvent.name}}</h3>
+      <p style="margin: 10px 0; opacity: 0.9;">{{featuredEvent.description}}</p>
+      <p style="margin: 15px 0 20px 0;">
+        <strong>{{formatDate featuredEvent.date}}</strong> at {{featuredEvent.venue}}
+      </p>
+      <a href="{{featuredEvent.url}}" style="background-color: white; color: #667eea; padding: 12px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">
+        Get Tickets Now
+      </a>
+    </div>
+    {{/if}}
+    
+    {{#if events}}
+    <h2 style="color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px;">Upcoming Events</h2>
+    
+    {{#each events}}
+    <div style="background-color: white; border-radius: 5px; padding: 20px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+      <h3 style="margin: 0 0 10px 0; color: #2c3e50;">{{name}}</h3>
+      <p style="margin: 5px 0; color: #7f8c8d;">
+        📅 {{formatDate date}}<br>
+        📍 {{venue}}<br>
+        {{#if price}}
+        💰 From {{formatCurrency price}}
+        {{/if}}
+      </p>
+      <a href="{{url}}" style="color: #3498db; text-decoration: none; font-weight: bold;">
+        Learn More →
+      </a>
+    </div>
+    {{/each}}
+    {{/if}}
+    
+    {{#if announcement}}
+    <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 20px; margin: 30px 0; border-radius: 5px;">
+      <h3 style="margin: 0 0 10px 0; color: #856404;">📢 Announcement</h3>
+      <p style="margin: 0; color: #856404;">{{announcement}}</p>
+    </div>
+    {{/if}}
+  </div>
+  
+  <div style="background-color: #2c3e50; color: white; padding: 30px; text-align: center; border-radius: 0 0 10px 10px;">
+    <h3 style="margin: 0 0 15px 0;">Stay Connected</h3>
+    <div style="margin: 20px 0;">
+      {{#if socialMedia.facebook}}
+      <a href="{{socialMedia.facebook}}" style="color: white; text-decoration: none; margin: 0 10px;">Facebook</a>
+      {{/if}}
+      {{#if socialMedia.instagram}}
+      <a href="{{socialMedia.instagram}}" style="color: white; text-decoration: none; margin: 0 10px;">Instagram</a>
+      {{/if}}
+      {{#if socialMedia.twitter}}
+      <a href="{{socialMedia.twitter}}" style="color: white; text-decoration: none; margin: 0 10px;">Twitter</a>
+      {{/if}}
+    </div>
+  </div>
+  
+  <div style="text-align: center; margin-top: 30px; color: #95a5a6; font-size: 12px;">
+    <p>
+      <a href="{{unsubscribeUrl}}" style="color: #95a5a6;">Unsubscribe</a> |
+      <a href="{{preferencesUrl}}" style="color: #95a5a6;">Email Preferences</a>
+    </p>
+    <p>{{venueName}} • {{venueAddress}}</p>
+  </div>
+</body>
+</html>

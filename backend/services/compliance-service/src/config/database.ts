@@ -3,7 +3,7 @@ dotenv.config();
 
 export const dbConfig = {
   host: process.env.DB_HOST || 'postgres',
-  port: parseInt(process.env.DB_PORT || '5432'),
+  port: parseInt(process.env.DB_PORT || '6432'),
   database: process.env.DB_NAME || 'tickettoken_db',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'TicketToken2024Secure!',

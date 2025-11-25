@@ -1,4 +1,7 @@
 import { query } from '../../config/database';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'BotDetectorService' });
 
 export class BotDetectorService {
   private botIndicators = {
@@ -334,6 +337,6 @@ export class BotDetectorService {
   }>): Promise<void> {
     // Update bot detection model based on verified data
     // In production, this would update ML model weights
-    console.log(`Training bot detection model with ${verifiedData.length} samples`);
+    log.info('Training bot detection model', { sampleCount: verifiedData.length });
   }
 }

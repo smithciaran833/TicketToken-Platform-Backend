@@ -1,0 +1,30 @@
+# Docker Compose configuration for secure wallet mounting
+# 
+# USAGE:
+# 1. Create a secrets directory: mkdir -p ./secrets
+# 2. Place your wallet file: cp /path/to/wallet.json ./secrets/minting-wallet.json
+# 3. Set proper permissions: chmod 600 ./secrets/minting-wallet.json
+# 4. Run with: docker-compose -f docker-compose.yml -f backend/services/minting-service/docker-compose.wallet-mount.yml up
+
+version: '3.8'
+
+services:
+  minting-service:
+    volumes:
+      # Mount wallet as read-only volume
+      - ./secrets/minting-wallet.json:/app/wallet.json:ro
+    environment:
+      # Point to the mounted wallet
+      - WALLET_PATH=/app/wallet.json
+      
+# Alternative: Using Docker Secrets (for Swarm mode)
+# secrets:
+#   minting_wallet:
+#     file: ./secrets/minting-wallet.json
+#
+# services:
+#   minting-service:
+#     secrets:
+#       - minting_wallet
+#     environment:
+#       - WALLET_PATH=/run/secrets/minting_wallet

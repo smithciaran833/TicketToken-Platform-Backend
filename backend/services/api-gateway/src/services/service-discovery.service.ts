@@ -140,7 +140,7 @@ export class ServiceDiscoveryService {
       } catch (error) {
         logger.error({ error }, 'Health check cycle failed');
       }
-    }, 30000); // Every 30 seconds
+    }, 120000); // Every 2 minutes
   }
 
   private async performHealthCheck(instance: ServiceInstance): Promise<void> {
@@ -189,7 +189,7 @@ export class ServiceDiscoveryService {
   }
 
   private async getAllServices(): Promise<ServiceInstance[]> {
-    const services = ['auth', 'venue', 'ticket', 'payment', 'nft', 'notification'];
+    const services = ['auth', 'venue', 'event'];
     const allInstances: ServiceInstance[] = [];
 
     for (const service of services) {
@@ -202,7 +202,7 @@ export class ServiceDiscoveryService {
 
   async getServiceTopology(): Promise<Record<string, ServiceInstance[]>> {
     const topology: Record<string, ServiceInstance[]> = {};
-    const services = ['auth', 'venue', 'ticket', 'payment', 'nft', 'notification'];
+    const services = ['auth', 'venue', 'event'];
 
     for (const service of services) {
       topology[service] = await this.discover(service);

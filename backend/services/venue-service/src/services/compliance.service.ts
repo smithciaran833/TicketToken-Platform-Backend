@@ -152,12 +152,24 @@ export class ComplianceService {
   private async checkAgeVerification(venueId: string): Promise<ComplianceCategory> {
     const checks: ComplianceCheck[] = [];
     const settings = await this.getAgeVerificationSettings(venueId);
+    
+    // Get venue type to determine severity
+    const venue = await db('venues').where({ id: venueId }).first();
+    const venueType = venue?.venue_type || '';
+    
+    // Determine severity based on venue type
+    const ageRestrictedVenues = ['bar', 'nightclub', 'casino', 'comedy_club'];
+    const severity = ageRestrictedVenues.includes(venueType) ? 'critical' : 'medium';
 
     checks.push({
       name: 'Age Verification System',
-      passed: settings.enabled,
-      details: settings.enabled ? `Minimum age: ${settings.minimumAge}` : 'Age verification not enabled',
-      severity: 'medium', // TODO: Get venue type and set severity accordingly
+      passed: settings.enabled || !ageRestrictedVenues.includes(venueType),
+      details: settings.enabled 
+        ? `Minimum age: ${settings.minimumAge}` 
+        : ageRestrictedVenues.includes(venueType)
+          ? 'Age verification required for this venue type but not enabled'
+          : 'Age verification not required for this venue type',
+      severity,
     });
 
     if (settings.enabled) {
@@ -165,11 +177,13 @@ export class ComplianceService {
         name: 'Verification Method',
         passed: settings.verificationRequired,
         details: settings.verificationRequired ? 'ID verification required' : 'Self-declaration only',
-        severity: 'medium',
+        severity: ageRestrictedVenues.includes(venueType) ? 'high' : 'medium',
       });
     }
 
-    const status = checks.every(c => c.passed) ? 'compliant' : 'review_needed';
+    const status = checks.every(c => c.passed) ? 'compliant' : 
+                   checks.some(c => !c.passed && c.severity === 'critical') ? 'non_compliant' :
+                   'review_needed';
     return { status, checks };
   }
 
@@ -231,7 +245,7 @@ export class ComplianceService {
     });
 
     // Check entertainment license if applicable
-    if (['comedy_club', 'theater'].includes(venue.type)) {
+    if (['comedy_club', 'theater'].includes(venue.venue_type)) {
       checks.push({
         name: 'Entertainment License',
         passed: await this.hasEntertainmentLicense(venueId),
@@ -394,11 +408,85 @@ export class ComplianceService {
   private async checkComplianceImpact(venueId: string, newSettings: any): Promise<void> {
     // Check if settings change requires immediate compliance review
     const criticalChanges = ['gdpr', 'ageRestriction', 'dataRetention'];
-    const hassCriticalChange = Object.keys(newSettings).some(key => criticalChanges.includes(key));
+    const hasCriticalChange = Object.keys(newSettings).some(key => criticalChanges.includes(key));
     
-    if (hassCriticalChange) {
+    if (hasCriticalChange) {
       logger.warn({ venueId, settings: newSettings }, 'Critical compliance settings changed');
-      // TODO: Trigger compliance review notification
+      
+      // Trigger compliance review notification
+      await this.triggerComplianceReviewNotification(venueId, newSettings);
+      
+      // Schedule immediate compliance review
+      const reviewDate = new Date(Date.now() + 24 * 60 * 60 * 1000); // Next day
+      await this.scheduleComplianceReview(venueId, reviewDate);
+    }
+  }
+
+  /**
+   * Trigger notification for compliance review
+   * Sends notification to venue admins and compliance team
+   */
+  private async triggerComplianceReviewNotification(venueId: string, changedSettings: any): Promise<void> {
+    try {
+      const venue = await db('venues').where({ id: venueId }).first();
+      const changedKeys = Object.keys(changedSettings);
+      
+      // Create notification record
+      await db('notifications').insert({
+        venue_id: venueId,
+        type: 'compliance_review_required',
+        priority: 'high',
+        title: 'Compliance Review Required',
+        message: `Critical compliance settings changed: ${changedKeys.join(', ')}. A compliance review has been scheduled.`,
+        metadata: {
+          changedSettings,
+          scheduledReviewDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+        },
+        created_at: new Date(),
+        read: false,
+      });
+
+      // Get venue staff emails for notification
+      const staffEmails = await db('venue_staff')
+        .where({ venue_id: venueId })
+        .whereIn('role', ['owner', 'admin'])
+        .pluck('email');
+
+      // Queue email notifications
+      for (const email of staffEmails) {
+        await db('email_queue').insert({
+          to_email: email,
+          subject: 'Compliance Review Required - Action Needed',
+          template: 'compliance_review_notification',
+          data: {
+            venueName: venue.name,
+            changedSettings: changedKeys,
+            reviewDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+          },
+          priority: 'high',
+          created_at: new Date(),
+        });
+      }
+
+      // Notify compliance team
+      await db('email_queue').insert({
+        to_email: process.env.COMPLIANCE_TEAM_EMAIL || 'compliance@tickettoken.com',
+        subject: `Compliance Review Scheduled - Venue ${venue.name}`,
+        template: 'compliance_team_notification',
+        data: {
+          venueId,
+          venueName: venue.name,
+          changedSettings: changedKeys,
+          settingsDetails: changedSettings,
+          reviewDate: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+        },
+        priority: 'high',
+        created_at: new Date(),
+      });
+
+      logger.info({ venueId, changedSettings: changedKeys }, 'Compliance review notifications sent');
+    } catch (error: any) {
+      logger.error({ error: error.message, venueId }, 'Failed to send compliance review notifications');
     }
   }
 }

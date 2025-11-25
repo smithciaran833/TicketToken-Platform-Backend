@@ -1,77 +1,71 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import crypto from 'crypto';
 import { env } from '../config/env';
 import { logger } from '../config/logger';
 
-export const verifyTwilioSignature = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
+export const verifyTwilioSignature = async (
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> => {
   try {
-    const twilioSignature = req.headers['x-twilio-signature'] as string;
-    
+    const twilioSignature = request.headers['x-twilio-signature'] as string;
+
     if (!twilioSignature || !env.TWILIO_AUTH_TOKEN) {
-      res.status(401).json({ error: 'Unauthorized webhook request' });
-      return;
+      return reply.status(401).send({ error: 'Unauthorized webhook request' });
     }
 
     // Twilio signature verification logic
-    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
-    const params = req.body || {};
-    
+    const url = `${request.protocol}://${request.hostname}${request.url}`;
+    const params = request.body || {};
+
     // Sort parameters alphabetically and concatenate
     const data = Object.keys(params)
       .sort()
-      .reduce((acc, key) => acc + key + params[key], url);
-    
+      .reduce((acc, key) => acc + key + (params as any)[key], url);
+
     const expectedSignature = crypto
       .createHmac('sha1', env.TWILIO_AUTH_TOKEN)
       .update(Buffer.from(data, 'utf-8'))
       .digest('base64');
-    
+
     if (twilioSignature !== expectedSignature) {
       logger.warn('Invalid Twilio webhook signature');
-      res.status(401).json({ error: 'Invalid webhook signature' });
-      return;
+      return reply.status(401).send({ error: 'Invalid webhook signature' });
     }
-    
-    next();
+
+    // No next() - implicit continuation
   } catch (error) {
     logger.error('Webhook verification error:', error);
-    res.status(500).json({ error: 'Webhook verification failed' });
+    return reply.status(500).send({ error: 'Webhook verification failed' });
   }
 };
 
-export const verifySendGridSignature = (
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void => {
+export const verifySendGridSignature = async (
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> => {
   try {
-    const signature = req.headers['x-twilio-email-event-webhook-signature'] as string;
-    const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'] as string;
-    
+    const signature = request.headers['x-twilio-email-event-webhook-signature'] as string;
+    const timestamp = request.headers['x-twilio-email-event-webhook-timestamp'] as string;
+
     if (!signature || !timestamp || !(env as any).SENDGRID_WEBHOOK_SECRET) {
-      res.status(401).json({ error: 'Unauthorized webhook request' });
-      return;
+      return reply.status(401).send({ error: 'Unauthorized webhook request' });
     }
-    
-    const payload = timestamp + req.body;
+
+    const payload = timestamp + request.body;
     const expectedSignature = crypto
       .createHmac('sha256', (env as any).SENDGRID_WEBHOOK_SECRET)
       .update(payload)
       .digest('base64');
-    
+
     if (signature !== expectedSignature) {
       logger.warn('Invalid SendGrid webhook signature');
-      res.status(401).json({ error: 'Invalid webhook signature' });
-      return;
+      return reply.status(401).send({ error: 'Invalid webhook signature' });
     }
-    
-    next();
+
+    // No next() - implicit continuation
   } catch (error) {
     logger.error('Webhook verification error:', error);
-    res.status(500).json({ error: 'Webhook verification failed' });
+    return reply.status(500).send({ error: 'Webhook verification failed' });
   }
 };

@@ -47,11 +47,12 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.get('/internal/venues/:venueId/validate-ticket/:ticketId', async (request, reply) => {
     const { venueId, ticketId } = request.params as { venueId: string; ticketId: string };
     
-    fastify.log.info('Internal ticket validation request', {
+    // Pino logger format: object first, message second
+    fastify.log.info({
       venueId,
       ticketId,
       requestingService: (request as any).internalService
-    });
+    }, 'Internal ticket validation request');
 
     try {
       // Use the imported db directly instead of container.resolve

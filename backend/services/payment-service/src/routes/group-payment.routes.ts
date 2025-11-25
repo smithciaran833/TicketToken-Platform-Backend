@@ -1,14 +1,48 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { GroupPaymentController } from '../controllers/group-payment.controller';
 import { authenticate } from '../middleware/auth';
 
-const router = Router();
-const controller = new GroupPaymentController();
+export default async function groupPaymentRoutes(fastify: FastifyInstance) {
+  const controller = new GroupPaymentController();
 
-router.post('/create', authenticate, (req, res, next) => controller.createGroup(req, res, next));
-router.post('/:groupId/contribute/:memberId', (req, res, next) => controller.contributeToGroup(req, res, next));
-router.get('/:groupId/status', (req, res, next) => controller.getGroupStatus(req, res, next));
-router.post('/:groupId/reminders', authenticate, (req, res, next) => controller.sendReminders(req, res, next));
-router.get('/:groupId/history', (req, res, next) => controller.getContributionHistory(req, res, next));
+  fastify.post(
+    '/create',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.createGroup(request, reply);
+    }
+  );
 
-export default router;
+  fastify.post(
+    '/:groupId/contribute/:memberId',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.contributeToGroup(request, reply);
+    }
+  );
+
+  fastify.get(
+    '/:groupId/status',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getGroupStatus(request, reply);
+    }
+  );
+
+  fastify.post(
+    '/:groupId/reminders',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.sendReminders(request, reply);
+    }
+  );
+
+  fastify.get(
+    '/:groupId/history',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getContributionHistory(request, reply);
+    }
+  );
+}

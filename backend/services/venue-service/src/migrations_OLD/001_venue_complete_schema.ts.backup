@@ -1,0 +1,264 @@
+import { Knex } from 'knex';
+
+export async function up(knex: Knex): Promise<void> {
+  // Enable UUID extension if not already enabled
+  await knex.raw('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
+
+  // ========================================
+  // PART 1: ADD MISSING COLUMNS TO VENUES TABLE
+  // Only add if they don't exist
+  // ========================================
+
+  const hasVenuesTable = await knex.schema.hasTable('venues');
+
+  if (hasVenuesTable) {
+    // Check each column individually and add only if missing
+    const hasType = await knex.schema.hasColumn('venues', 'type');
+    if (!hasType) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.string('type', 50);
+      });
+    }
+
+    const hasCapacity = await knex.schema.hasColumn('venues', 'capacity');
+    if (!hasCapacity) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.integer('capacity');
+      });
+    }
+
+    const hasAddress = await knex.schema.hasColumn('venues', 'address');
+    if (!hasAddress) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.jsonb('address').defaultTo('{}');
+      });
+    }
+
+    const hasZipCode = await knex.schema.hasColumn('venues', 'zip_code');
+    if (!hasZipCode) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.string('zip_code', 20);
+      });
+    }
+
+    const hasState = await knex.schema.hasColumn('venues', 'state');
+    if (!hasState) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.string('state', 100);
+      });
+    }
+
+    const hasCountry = await knex.schema.hasColumn('venues', 'country');
+    if (!hasCountry) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.string('country', 2).defaultTo('US');
+      });
+    }
+
+    const hasSettings = await knex.schema.hasColumn('venues', 'settings');
+    if (!hasSettings) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.jsonb('settings').defaultTo('{}');
+      });
+    }
+
+    const hasOnboarding = await knex.schema.hasColumn('venues', 'onboarding');
+    if (!hasOnboarding) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.jsonb('onboarding').defaultTo('{}');
+      });
+    }
+
+    const hasOnboardingStatus = await knex.schema.hasColumn('venues', 'onboarding_status');
+    if (!hasOnboardingStatus) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.string('onboarding_status', 50).defaultTo('pending');
+      });
+    }
+
+    const hasIsActive = await knex.schema.hasColumn('venues', 'is_active');
+    if (!hasIsActive) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.boolean('is_active').defaultTo(true);
+      });
+    }
+
+    const hasDeletedAt = await knex.schema.hasColumn('venues', 'deleted_at');
+    if (!hasDeletedAt) {
+      await knex.schema.alterTable('venues', (table) => {
+        table.timestamp('deleted_at');
+      });
+    }
+  }
+
+  // ========================================
+  // PART 2-9: CREATE TABLES (Only if they don't exist)
+  // ========================================
+
+  // PART 2: VENUE_STAFF
+  const hasVenueStaff = await knex.schema.hasTable('venue_staff');
+  if (!hasVenueStaff) {
+    await knex.schema.createTable('venue_staff', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.uuid('user_id').notNullable()
+        .references('id').inTable('users').onDelete('CASCADE');
+      table.string('role', 50).notNullable()
+        .checkIn(['owner', 'manager', 'box_office', 'door_staff', 'viewer']);
+      table.jsonb('permissions').defaultTo('[]');
+      table.boolean('is_active').defaultTo(true);
+      table.timestamp('last_login_at');
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+      table.timestamp('deleted_at');
+
+      table.index(['venue_id'], 'idx_venue_staff_venue_id');
+      table.index(['user_id'], 'idx_venue_staff_user_id');
+    });
+  }
+
+  // PART 3: VENUE_SETTINGS
+  const hasVenueSettings = await knex.schema.hasTable('venue_settings');
+  if (!hasVenueSettings) {
+    await knex.schema.createTable('venue_settings', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable().unique()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.specificType('accepted_currencies', 'TEXT[]').defaultTo(knex.raw("ARRAY['USD']::TEXT[]"));
+      table.jsonb('payment_methods').defaultTo('["card"]');
+      table.string('payout_frequency', 50).defaultTo('weekly');
+      table.decimal('minimum_payout_amount', 10, 2).defaultTo(50.00);
+      table.boolean('ticket_resale_allowed').defaultTo(true);
+      table.integer('max_tickets_per_order').defaultTo(10);
+      table.boolean('allow_print_at_home').defaultTo(true);
+      table.boolean('allow_mobile_tickets').defaultTo(true);
+      table.boolean('require_id_verification').defaultTo(false);
+      table.boolean('ticket_transfer_allowed').defaultTo(true);
+      table.decimal('service_fee_percentage', 5, 2).defaultTo(10.00);
+      table.decimal('facility_fee_amount', 10, 2).defaultTo(0.00);
+      table.decimal('processing_fee_percentage', 5, 2).defaultTo(2.90);
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+
+      table.index(['venue_id'], 'idx_venue_settings_venue_id');
+    });
+  }
+
+  // PART 4: VENUE_INTEGRATIONS
+  const hasVenueIntegrations = await knex.schema.hasTable('venue_integrations');
+  if (!hasVenueIntegrations) {
+    await knex.schema.createTable('venue_integrations', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.string('integration_type', 50).notNullable();
+      table.string('integration_name', 255);
+      table.jsonb('config_data').defaultTo('{}');
+      table.text('encrypted_credentials');
+      table.text('api_key_encrypted');
+      table.text('api_secret_encrypted');
+      table.string('status', 50).defaultTo('active');
+      table.boolean('is_active').defaultTo(true);
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+
+      table.unique(['venue_id', 'integration_type'], 'venue_integrations_unique');
+      table.index(['venue_id'], 'idx_venue_integrations_venue_id');
+    });
+  }
+
+  // PART 5: VENUE_LAYOUTS
+  const hasVenueLayouts = await knex.schema.hasTable('venue_layouts');
+  if (!hasVenueLayouts) {
+    await knex.schema.createTable('venue_layouts', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.string('name', 255).notNullable();
+      table.jsonb('sections').notNullable();
+      table.integer('total_capacity').notNullable();
+      table.boolean('is_default').defaultTo(false);
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+
+      table.index(['venue_id'], 'idx_venue_layouts_venue_id');
+    });
+  }
+
+  // PART 6: VENUE_COMPLIANCE
+  const hasVenueCompliance = await knex.schema.hasTable('venue_compliance');
+  if (!hasVenueCompliance) {
+    await knex.schema.createTable('venue_compliance', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.string('category', 100).notNullable();
+      table.string('status', 50).notNullable();
+      table.jsonb('data').defaultTo('{}');
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+
+      table.index(['venue_id'], 'idx_venue_compliance_venue_id');
+    });
+  }
+
+  // PART 7: VENUE_COMPLIANCE_REVIEWS
+  const hasVenueComplianceReviews = await knex.schema.hasTable('venue_compliance_reviews');
+  if (!hasVenueComplianceReviews) {
+    await knex.schema.createTable('venue_compliance_reviews', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.timestamp('scheduled_date').notNullable();
+      table.string('status', 50).defaultTo('scheduled');
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+    });
+  }
+
+  // PART 8: VENUE_COMPLIANCE_REPORTS
+  const hasVenueComplianceReports = await knex.schema.hasTable('venue_compliance_reports');
+  if (!hasVenueComplianceReports) {
+    await knex.schema.createTable('venue_compliance_reports', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.jsonb('report').notNullable();
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+    });
+  }
+
+  // PART 9: VENUE_DOCUMENTS
+  const hasVenueDocuments = await knex.schema.hasTable('venue_documents');
+  if (!hasVenueDocuments) {
+    await knex.schema.createTable('venue_documents', (table) => {
+      table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+      table.uuid('venue_id').notNullable()
+        .references('id').inTable('venues').onDelete('CASCADE');
+      table.string('type', 100).notNullable();
+      table.string('document_type', 100);
+      table.string('status', 50).defaultTo('pending');
+      table.timestamp('submitted_at');
+      table.jsonb('metadata').defaultTo('{}');
+      table.timestamp('created_at').defaultTo(knex.fn.now());
+      table.timestamp('updated_at').defaultTo(knex.fn.now());
+
+      table.index(['venue_id'], 'idx_venue_documents_venue_id');
+    });
+  }
+}
+
+export async function down(knex: Knex): Promise<void> {
+  // Drop tables in reverse order (to handle foreign keys)
+  await knex.schema.dropTableIfExists('venue_documents');
+  await knex.schema.dropTableIfExists('venue_compliance_reports');
+  await knex.schema.dropTableIfExists('venue_compliance_reviews');
+  await knex.schema.dropTableIfExists('venue_compliance');
+  await knex.schema.dropTableIfExists('venue_layouts');
+  await knex.schema.dropTableIfExists('venue_integrations');
+  await knex.schema.dropTableIfExists('venue_settings');
+  await knex.schema.dropTableIfExists('venue_staff');
+
+  // Note: We don't drop columns from venues table as they may be used by other services
+}

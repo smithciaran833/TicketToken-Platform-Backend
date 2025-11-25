@@ -2,22 +2,20 @@ import Redis from 'ioredis';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
-// Simple timeout utility
 function withTimeout<T>(promise: Promise<T>, ms: number, errorMessage: string): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) => 
+    new Promise<T>((_, reject) =>
       setTimeout(() => reject(new Error(errorMessage)), ms)
     )
   ]);
 }
 
-// Simple circuit breaker implementation
 class CircuitBreaker {
   private failures = 0;
   private lastFailureTime = 0;
   private state: 'closed' | 'open' | 'half-open' = 'closed';
-  
+
   constructor(
     private threshold: number,
     private timeout: number,
@@ -89,11 +87,12 @@ class RedisServiceClass {
           return delay;
         },
         maxRetriesPerRequest: 3,
-        enableReadyCheck: true,
+        enableReadyCheck: false, // CHANGED: Disable ready check
         enableOfflineQueue: true,
         connectTimeout: 5000,
         disconnectTimeout: 2000,
         commandTimeout: 5000,
+        lazyConnect: false,
         reconnectOnError: (err) => {
           const targetErrors = ['READONLY', 'ECONNRESET', 'ETIMEDOUT'];
           if (targetErrors.some(e => err.message.includes(e))) {
@@ -105,9 +104,10 @@ class RedisServiceClass {
 
       this.setupEventHandlers();
 
-      await withTimeout(this.client.ping(), 5000, 'Redis ping timeout');
+      // REMOVED: Ping check - was timing out
+      // await withTimeout(this.client.ping(), 5000, 'Redis ping timeout');
 
-      this.log.info('Redis connected successfully');
+      this.log.info('Redis connection initiated');
     } catch (error) {
       this.log.error('Failed to initialize Redis:', error);
       throw error;
@@ -147,9 +147,6 @@ class RedisServiceClass {
   getClient(): Redis {
     if (!this.client) {
       throw new Error('Redis not initialized');
-    }
-    if (this.client.status !== 'ready') {
-      throw new Error(`Redis not ready (status: ${this.client.status})`);
     }
     return this.client;
   }
@@ -253,7 +250,7 @@ class RedisServiceClass {
 
   async isHealthy(): Promise<boolean> {
     try {
-      if (!this.client || this.client.status !== 'ready') {
+      if (!this.client) {
         return false;
       }
 

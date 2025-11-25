@@ -1,10 +1,10 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import Joi from 'joi';
 import { BadRequestError } from '../utils/errors';
 
 export const validate = (schema: Joi.ObjectSchema) => {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const { error, value } = schema.validate(req.body, {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const { error, value } = schema.validate(request.body, {
       abortEarly: false,
       stripUnknown: true,
     });
@@ -15,17 +15,23 @@ export const validate = (schema: Joi.ObjectSchema) => {
         message: detail.message,
       }));
 
-      return next(new BadRequestError(JSON.stringify(errors)));
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Validation failed',
+          details: errors,
+        },
+      });
     }
 
-    req.body = value;
-    next();
+    request.body = value;
   };
 };
 
 export const validateQuery = (schema: Joi.ObjectSchema) => {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const { error, value } = schema.validate(req.query, {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const { error, value } = schema.validate(request.query, {
       abortEarly: false,
       stripUnknown: true,
     });
@@ -36,17 +42,23 @@ export const validateQuery = (schema: Joi.ObjectSchema) => {
         message: detail.message,
       }));
 
-      return next(new BadRequestError(JSON.stringify(errors)));
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Query validation failed',
+          details: errors,
+        },
+      });
     }
 
-    req.query = value;
-    next();
+    request.query = value;
   };
 };
 
 export const validateParams = (schema: Joi.ObjectSchema) => {
-  return (req: Request, _res: Response, next: NextFunction) => {
-    const { error, value } = schema.validate(req.params, {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const { error, value } = schema.validate(request.params, {
       abortEarly: false,
       stripUnknown: true,
     });
@@ -57,10 +69,16 @@ export const validateParams = (schema: Joi.ObjectSchema) => {
         message: detail.message,
       }));
 
-      return next(new BadRequestError(JSON.stringify(errors)));
+      return reply.status(400).send({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Parameter validation failed',
+          details: errors,
+        },
+      });
     }
 
-    req.params = value;
-    next();
+    request.params = value;
   };
 };

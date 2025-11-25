@@ -1,19 +1,18 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { integrationService } from '../services/integration.service';
 import { db } from '../config/database';
 
 export class SyncController {
-  async triggerSync(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async triggerSync(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId, syncType, options } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId, syncType, options } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       const result = await integrationService.syncNow(
@@ -21,27 +20,26 @@ export class SyncController {
         provider as any,
         { syncType, ...options }
       );
-      
-      res.json({
+
+      return reply.send({
         success: true,
         data: result
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async stopSync(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async stopSync(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       // Update sync queue to pause
@@ -55,27 +53,26 @@ export class SyncController {
           status: 'paused',
           updated_at: new Date()
         });
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Sync stopped successfully'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getSyncStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async getSyncStatus(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.query;
-      
+      const { provider } = request.params as any;
+      const { venueId } = request.query as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       const status = await db('integration_configs')
@@ -93,8 +90,8 @@ export class SyncController {
         .select('status')
         .count('* as count')
         .groupBy('status');
-      
-      res.json({
+
+      return reply.send({
         success: true,
         data: {
           integration: status,
@@ -102,21 +99,20 @@ export class SyncController {
         }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getSyncHistory(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async getSyncHistory(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId, limit = 50, offset = 0 } = req.query;
-      
+      const { provider } = request.params as any;
+      const { venueId, limit = 50, offset = 0 } = request.query as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       const history = await db('sync_logs')
@@ -127,27 +123,26 @@ export class SyncController {
         .orderBy('started_at', 'desc')
         .limit(Number(limit))
         .offset(Number(offset));
-      
-      res.json({
+
+      return reply.send({
         success: true,
         data: history
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async retryFailed(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async retryFailed(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId, queueItemId } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId, queueItemId } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       const query = db('sync_queue')
@@ -166,13 +161,13 @@ export class SyncController {
         attempts: 0,
         updated_at: new Date()
       });
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Failed items re-queued for retry'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

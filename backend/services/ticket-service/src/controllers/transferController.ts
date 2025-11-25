@@ -1,18 +1,16 @@
-import { Response, NextFunction } from 'express';
-import { AuthenticatedRequest } from '../types';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { transferService } from '../services/transferService';
+import { auditService } from '@tickettoken/shared';
 
 export class TransferController {
-
   async transferTicket(
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
+    request: FastifyRequest,
+    reply: FastifyReply
   ): Promise<void> {
-    try {
-      const { ticketId, toUserId, reason } = req.body;
-      const fromUserId = req.user!.id;
+    const { ticketId, toUserId, reason } = request.body as any;
+    const fromUserId = (request as any).user!.id;
 
+    try {
       const transfer = await transferService.transferTicket(
         ticketId,
         fromUserId,
@@ -20,56 +18,89 @@ export class TransferController {
         reason
       );
 
-      res.json({
+      // Audit log: Ticket transfer (CRITICAL - ownership change)
+      await auditService.logAction({
+        service: 'ticket-service',
+        action: 'transfer_ticket',
+        actionType: 'UPDATE',
+        userId: fromUserId,
+        resourceType: 'ticket',
+        resourceId: ticketId,
+        previousValue: {
+          ownerId: fromUserId,
+        },
+        newValue: {
+          ownerId: toUserId,
+          reason,
+        },
+        metadata: {
+          toUserId,
+          transferMethod: 'direct_transfer',
+          reason,
+        },
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+        success: true,
+      });
+
+      reply.send({
         success: true,
         data: transfer
       });
     } catch (error) {
-      next(error);
+      // Audit log: Failed transfer attempt
+      await auditService.logAction({
+        service: 'ticket-service',
+        action: 'transfer_ticket',
+        actionType: 'UPDATE',
+        userId: fromUserId,
+        resourceType: 'ticket',
+        resourceId: ticketId,
+        metadata: {
+          toUserId,
+          reason,
+        },
+        ipAddress: request.ip,
+        userAgent: request.headers['user-agent'],
+        success: false,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      throw error;
     }
   }
 
   async getTransferHistory(
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
+    request: FastifyRequest,
+    reply: FastifyReply
   ): Promise<void> {
-    try {
-      const { ticketId } = req.params;
-      
-      const history = await transferService.getTransferHistory(ticketId);
-      
-      res.json({
-        success: true,
-        data: history
-      });
-    } catch (error) {
-      next(error);
-    }
+    const { ticketId } = request.params as any;
+
+    const history = await transferService.getTransferHistory(ticketId);
+
+    reply.send({
+      success: true,
+      data: history
+    });
   }
 
   async validateTransfer(
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
+    request: FastifyRequest,
+    reply: FastifyReply
   ): Promise<void> {
-    try {
-      const { ticketId, toUserId } = req.body;
-      const fromUserId = req.user!.id;
+    const { ticketId, toUserId } = request.body as any;
+    const fromUserId = (request as any).user!.id;
 
-      const validation = await transferService.validateTransferRequest(
-        ticketId,
-        fromUserId,
-        toUserId
-      );
+    const validation = await transferService.validateTransferRequest(
+      ticketId,
+      fromUserId,
+      toUserId
+    );
 
-      res.json({
-        success: validation.valid,
-        data: validation
-      });
-    } catch (error) {
-      next(error);
-    }
+    reply.send({
+      success: validation.valid,
+      data: validation
+    });
   }
 }
 

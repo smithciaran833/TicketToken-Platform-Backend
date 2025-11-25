@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { RateLimiterService } from '../services/rate-limiter.service';
 import { logger } from '../utils/logger';
 
@@ -19,45 +19,41 @@ export function rateLimitMiddleware(options: RateLimitOptions = {}) {
     service = 'internal',
     message = 'Too many requests, please try again later.'
   } = options;
-  
-  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       // Check if rate limited
       const isLimited = await rateLimiter.isRateLimited(service);
-      
+
       if (isLimited) {
         const waitTime = rateLimiter.getWaitTime(service);
-        res.setHeader('X-RateLimit-Limit', '1');
-        res.setHeader('X-RateLimit-Remaining', '0');
-        res.setHeader('X-RateLimit-Reset', new Date(Date.now() + waitTime).toISOString());
-        res.setHeader('Retry-After', Math.ceil(waitTime / 1000).toString());
-        
+        reply.header('X-RateLimit-Limit', '1');
+        reply.header('X-RateLimit-Remaining', '0');
+        reply.header('X-RateLimit-Reset', new Date(Date.now() + waitTime).toISOString());
+        reply.header('Retry-After', Math.ceil(waitTime / 1000).toString());
+
         logger.warn(`Rate limit exceeded for ${service}`, {
-          ip: req.ip,
-          path: req.path
+          ip: request.ip,
+          path: request.url
         });
-        
-        res.status(429).json({
+
+        return reply.code(429).send({
           error: 'Rate limit exceeded',
           message,
           retryAfter: Math.ceil(waitTime / 1000)
         });
-        return;
       }
-      
+
       // Try to acquire rate limit
       await rateLimiter.acquire(service);
-      
+
       // Release on response finish
-      res.on('finish', () => {
+      reply.raw.on('finish', () => {
         rateLimiter.release(service);
       });
-      
-      next();
     } catch (error) {
       logger.error('Rate limit middleware error:', error);
-      // Allow request on error
-      next();
+      // Allow request on error - don't block
     }
   };
 }

@@ -7,7 +7,7 @@ pub mod utils;
 
 use instructions::*;
 
-declare_id!("BTNZP23sGbQsMwX1SBiyfTpDDqD8Sev7j78N45QBoYtv");
+declare_id!("AaQ9Un1tdu4QXidcfMgDxp7ATjTujh8McEgzH9nwQCp9");
 
 #[program]
 pub mod marketplace {

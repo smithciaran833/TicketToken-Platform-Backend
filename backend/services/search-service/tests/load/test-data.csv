@@ -1,0 +1,21 @@
+query,type,venueId
+concert,events,venue-1
+rock show,events,venue-2
+jazz festival,events,venue-3
+comedy night,events,venue-1
+baseball game,events,venue-2
+soccer match,events,venue-3
+theater,venues,venue-1
+music festival,events,venue-2
+sports event,events,venue-3
+live show,events,venue-1
+comedy club,venues,venue-2
+arena,venues,venue-3
+stadium,venues,venue-1
+blues,events,venue-2
+country music,events,venue-3
+hip hop,events,venue-1
+electronic,events,venue-2
+classical,events,venue-3
+opera,events,venue-1
+ballet,events,venue-2

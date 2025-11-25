@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 
 interface RequestMetrics {
   totalRequests: number;
@@ -14,37 +14,34 @@ const metrics: RequestMetrics = {
   averageResponseTime: 0
 };
 
-export function metricsMiddleware(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): void {
+export async function metricsMiddleware(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
   const start = Date.now();
-  
-  res.on('finish', () => {
+
+  reply.raw.on('finish', () => {
     const duration = Date.now() - start;
-    
+
     // Update metrics
     metrics.totalRequests++;
-    
-    const endpoint = `${req.method} ${req.route?.path || req.path}`;
+
+    const endpoint = `${request.method} ${request.routeOptions.url || request.url}`;
     metrics.requestsByEndpoint.set(
       endpoint,
       (metrics.requestsByEndpoint.get(endpoint) || 0) + 1
     );
-    
+
     metrics.requestsByStatus.set(
-      res.statusCode,
-      (metrics.requestsByStatus.get(res.statusCode) || 0) + 1
+      reply.statusCode,
+      (metrics.requestsByStatus.get(reply.statusCode) || 0) + 1
     );
-    
+
     // Update average response time
-    metrics.averageResponseTime = 
-      (metrics.averageResponseTime * (metrics.totalRequests - 1) + duration) / 
+    metrics.averageResponseTime =
+      (metrics.averageResponseTime * (metrics.totalRequests - 1) + duration) /
       metrics.totalRequests;
   });
-  
-  next();
 }
 
 export function getMetrics(): RequestMetrics {

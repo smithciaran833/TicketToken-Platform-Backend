@@ -2,13 +2,23 @@ import { Pool } from 'pg';
 
 export interface IOrder {
   id?: string;
+  tenant_id?: string;
   user_id: string;
   event_id: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'refunded';
-  total_amount: number;
-  currency: string;
-  tickets?: string[];
-  payment_id?: string;
+  order_number?: string;
+  status: 'PENDING' | 'PAID' | 'AWAITING_MINT' | 'COMPLETED' | 'PAYMENT_FAILED' | 'CANCELLED' | 'EXPIRED' | 'MINT_FAILED';
+  subtotal_cents: number;
+  platform_fee_cents?: number;
+  processing_fee_cents?: number;
+  tax_cents?: number;
+  discount_cents?: number;
+  total_cents: number;  // INTEGER cents only
+  ticket_quantity: number;
+  currency?: string;
+  discount_codes?: string[];
+  payment_intent_id?: string;
+  idempotency_key?: string;
+  expires_at?: Date;
   metadata?: any;
   created_at?: Date;
   updated_at?: Date;
@@ -22,23 +32,33 @@ export class OrderModel {
     'user_id',
     'event_id',
     'status',
-    'total_amount',
+    'total_cents',
     'currency',
-    'tickets',
-    'payment_id',
+    'payment_intent_id',
     'metadata'
   ];
 
   async create(data: IOrder): Promise<IOrder> {
     const query = `
-      INSERT INTO orders (user_id, event_id, status, total_amount, currency, tickets, payment_id, metadata)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO orders (
+        user_id, event_id, order_number, status, 
+        total_cents, currency, ticket_quantity, 
+        payment_intent_id, idempotency_key, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `;
     const values = [
-      data.user_id, data.event_id, data.status || 'pending',
-      data.total_amount, data.currency, data.tickets || [],
-      data.payment_id, data.metadata || {}
+      data.user_id,
+      data.event_id,
+      data.order_number || `ORD-${Date.now().toString().slice(-8)}`,
+      data.status || 'PENDING',
+      data.total_cents,
+      data.currency || 'USD',
+      data.ticket_quantity,
+      data.payment_intent_id,
+      data.idempotency_key,
+      data.metadata || {}
     ];
     const result = await this.pool.query(query, values);
     return result.rows[0];
@@ -60,7 +80,7 @@ export class OrderModel {
     // SECURITY FIX: Validate fields against whitelist
     const validFields: string[] = [];
     const validValues: any[] = [];
-    
+
     Object.keys(data).forEach(key => {
       if (this.UPDATABLE_FIELDS.includes(key)) {
         validFields.push(key);

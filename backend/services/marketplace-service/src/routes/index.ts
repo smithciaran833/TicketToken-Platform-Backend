@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import listingsRoutes from './listings.routes';
 import transfersRoutes from './transfers.routes';
 import venueRoutes from './venue.routes';
@@ -6,54 +6,49 @@ import searchRoutes from './search.routes';
 import adminRoutes from './admin.routes';
 import disputesRoutes from './disputes.routes';
 import taxRoutes from './tax.routes';
+import healthRoutes from './health.routes';
 import { authMiddleware } from '../middleware/auth.middleware';
 
-const router = Router();
+export default async function routes(fastify: FastifyInstance) {
+  // Health check routes
+  await fastify.register(healthRoutes);
 
-// Health check (no auth required)
-router.get('/health', (_req, res) => {
-  res.json({
-    status: 'healthy',
-    service: 'marketplace-service',
-    timestamp: new Date().toISOString()
+  // Route groups
+  await fastify.register(listingsRoutes, { prefix: '/listings' });
+  await fastify.register(transfersRoutes, { prefix: '/transfers' });
+  await fastify.register(venueRoutes, { prefix: '/venues' });
+  await fastify.register(searchRoutes, { prefix: '/search' });
+  await fastify.register(adminRoutes, { prefix: '/admin' });
+  await fastify.register(disputesRoutes, { prefix: '/disputes' });
+  await fastify.register(taxRoutes, { prefix: '/tax' });
+
+  // Marketplace statistics (authenticated)
+  fastify.get('/stats', {
+    preHandler: [authMiddleware]
+  }, async (request, reply) => {
+    try {
+      // Get marketplace statistics
+      reply.send({
+        totalListings: 0,
+        totalSales: 0,
+        volume24h: 0,
+        averagePrice: 0
+      });
+    } catch (error: any) {
+      reply.status(500).send({ error: error.message });
+    }
   });
-});
 
-// Route groups
-router.use('/listings', listingsRoutes);
-router.use('/transfers', transfersRoutes);
-router.use('/venues', venueRoutes);
-router.use('/search', searchRoutes);
-router.use('/admin', adminRoutes);
-router.use('/disputes', disputesRoutes);
-router.use('/tax', taxRoutes);
+  // Cache management endpoints
+  fastify.get('/cache/stats', async (request, reply) => {
+    const { cache } = require('../services/cache-integration');
+    const stats = await cache.getStats();
+    reply.send(stats);
+  });
 
-// Marketplace statistics (authenticated)
-router.get('/stats', authMiddleware, async (_req, res) => {
-  try {
-    // Get marketplace statistics
-    res.json({
-      totalListings: 0,
-      totalSales: 0,
-      volume24h: 0,
-      averagePrice: 0
-    });
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Cache management endpoints
-router.get('/cache/stats', async (_req, res) => {
-  const { cache } = require('../services/cache-integration');
-  const stats = await cache.getStats();
-  res.json(stats);
-});
-
-router.delete('/cache/flush', async (_req, res) => {
-  const { cache } = require('../services/cache-integration');
-  await cache.flush();
-  res.json({ success: true, message: 'Cache flushed' });
-});
-
-export default router;
+  fastify.delete('/cache/flush', async (request, reply) => {
+    const { cache } = require('../services/cache-integration');
+    await cache.flush();
+    reply.send({ success: true, message: 'Cache flushed' });
+  });
+}

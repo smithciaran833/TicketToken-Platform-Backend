@@ -7,6 +7,8 @@ import { SearchService } from '../services/search.service';
 import { AutocompleteService } from '../services/autocomplete.service';
 import { SyncService } from '../services/sync.service';
 import { ProfessionalSearchService } from '../services/professional-search.service';
+import { ConsistencyService } from '../services/consistency.service';
+import { ABTestingService } from '../services/ab-testing.service';
 
 export async function initializeContainer() {
   const container = createContainer({
@@ -28,6 +30,8 @@ export async function initializeContainer() {
 
   // Register services
   container.register({
+    consistencyService: asClass(ConsistencyService).singleton(),
+    abTestingService: asClass(ABTestingService).singleton(),
     searchService: asClass(SearchService).singleton(),
     autocompleteService: asClass(AutocompleteService).singleton(),
     syncService: asClass(SyncService).singleton(),

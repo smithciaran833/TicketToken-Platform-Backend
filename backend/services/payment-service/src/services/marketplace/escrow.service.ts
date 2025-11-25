@@ -4,6 +4,9 @@ import { TransactionModel, VenueBalanceModel } from '../../models';
 import { percentOfCents } from '../../utils/money';
 import Stripe from 'stripe';
 import { config } from '../../config';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'EscrowService' });
 
 interface ExtendedEscrowTransaction extends EscrowTransaction {
   stripePaymentIntentId: string;
@@ -233,7 +236,7 @@ export class EscrowService {
   }
 
   private async startReleaseMonitoring(escrowId: string): Promise<void> {
-    console.log(`Started monitoring release conditions for escrow ${escrowId}`);
+    log.info('Started monitoring release conditions', { escrowId });
   }
 
   private async getEscrow(escrowId: string): Promise<ExtendedEscrowTransaction> {

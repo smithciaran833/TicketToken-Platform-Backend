@@ -1,99 +1,153 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { campaignController } from '../controllers/campaign.controller';
 
-const router = Router();
+const getCampaignsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      status: { type: 'string', enum: ['draft', 'active', 'paused', 'completed'] },
+      type: { type: 'string' },
+      page: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const campaignParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['campaignId'],
+    properties: {
+      campaignId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const performanceSchema = {
+  params: {
+    type: 'object',
+    required: ['campaignId'],
+    properties: {
+      campaignId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' }
+    }
+  }
+} as const;
 
-// Get campaigns
-router.get(
-  '/venue/:venueId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('status').optional().isIn(['draft', 'active', 'paused', 'completed']),
-    query('type').optional().isString(),
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
-  ]),
-  campaignController.getCampaigns
-);
+const attributionSchema = {
+  params: {
+    type: 'object',
+    required: ['campaignId'],
+    properties: {
+      campaignId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      model: { type: 'string', enum: ['first_touch', 'last_touch', 'linear', 'time_decay', 'data_driven'] }
+    }
+  }
+} as const;
 
-// Get campaign details
-router.get(
-  '/:campaignId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('campaignId').isUUID()
-  ]),
-  campaignController.getCampaign
-);
+const channelPerformanceSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['startDate', 'endDate'],
+    properties: {
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' }
+    }
+  }
+} as const;
 
-// Get campaign performance
-router.get(
-  '/:campaignId/performance',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('campaignId').isUUID(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601()
-  ]),
-  campaignController.getCampaignPerformance
-);
+const trackTouchpointSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'customerId', 'channel', 'action'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      customerId: { type: 'string', minLength: 1 },
+      channel: { type: 'string', minLength: 1 },
+      action: { type: 'string', minLength: 1 },
+      value: { type: 'number' },
+      campaign: { type: 'string' },
+      metadata: { type: 'object' }
+    }
+  }
+} as const;
 
-// Get campaign attribution
-router.get(
-  '/:campaignId/attribution',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('campaignId').isUUID(),
-    query('model').optional().isIn(['first_touch', 'last_touch', 'linear', 'time_decay', 'data_driven'])
-  ]),
-  campaignController.getCampaignAttribution
-);
+export default async function campaignRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Get channel performance
-router.get(
-  '/venue/:venueId/channels',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('startDate').isISO8601(),
-    query('endDate').isISO8601()
-  ]),
-  campaignController.getChannelPerformance
-);
+  // Get campaigns
+  app.get('/venue/:venueId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: getCampaignsSchema,
+    handler: campaignController.getCampaigns
+  });
 
-// Track touchpoint
-router.post(
-  '/touchpoint',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('customerId').isString().notEmpty(),
-    body('channel').isString().notEmpty(),
-    body('action').isString().notEmpty(),
-    body('value').optional().isNumeric(),
-    body('campaign').optional().isString(),
-    body('metadata').optional().isObject()
-  ]),
-  campaignController.trackTouchpoint
-);
+  // Get campaign details
+  app.get('/:campaignId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: campaignParamsSchema,
+    handler: campaignController.getCampaign
+  });
 
-// Get ROI analysis
-router.get(
-  '/:campaignId/roi',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('campaignId').isUUID()
-  ]),
-  campaignController.getCampaignROI
-);
+  // Get campaign performance
+  app.get('/:campaignId/performance', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: performanceSchema,
+    handler: campaignController.getCampaignPerformance
+  });
 
-export { router as campaignRouter };
+  // Get campaign attribution
+  app.get('/:campaignId/attribution', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: attributionSchema,
+    handler: campaignController.getCampaignAttribution
+  });
+
+  // Get channel performance
+  app.get('/venue/:venueId/channels', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: channelPerformanceSchema,
+    handler: campaignController.getChannelPerformance
+  });
+
+  // Track touchpoint
+  app.post('/touchpoint', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: trackTouchpointSchema,
+    handler: campaignController.trackTouchpoint
+  });
+
+  // Get ROI analysis
+  app.get('/:campaignId/roi', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: campaignParamsSchema,
+    handler: campaignController.getCampaignROI
+  });
+}

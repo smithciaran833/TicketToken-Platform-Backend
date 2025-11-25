@@ -39,29 +39,29 @@ export class FeeTransparencyService {
     try {
       // Get venue fee policy
       const venuePolicy = await this.getVenueFeePolicy(venueId);
-      
+
       // Platform fees (TicketToken's cut)
       const platformFeePercent = isResale ? 2.5 : 3.5; // Lower for resales
       const platformFee = Math.round(basePrice * platformFeePercent / 100);
-      
+
       // Venue fees
-      const venueFeePercent = isResale ? 
-        venuePolicy.resaleFeePercent : 
+      const venueFeePercent = isResale ?
+        venuePolicy.resaleFeePercent :
         venuePolicy.baseFeePercent;
       const venueFee = Math.round(basePrice * venueFeePercent / 100);
-      
+
       // Payment processing (Stripe/Square)
       const paymentProcessingPercent = 2.9; // + $0.30 typically
       const paymentProcessingFee = Math.round(basePrice * paymentProcessingPercent / 100) + 30;
-      
+
       // Tax calculation (simplified - would use real tax API)
       const taxPercent = this.getTaxRate(location);
       const subtotal = basePrice + platformFee + venueFee + paymentProcessingFee;
       const taxAmount = Math.round(subtotal * taxPercent / 100);
-      
+
       // Total
       const totalPrice = subtotal + taxAmount;
-      
+
       return {
         basePrice,
         platformFee,
@@ -75,7 +75,7 @@ export class FeeTransparencyService {
         totalPrice,
         currency: 'USD'
       };
-      
+
     } catch (error) {
       logger.error('Failed to calculate fee breakdown:', error);
       throw error;
@@ -89,7 +89,7 @@ export class FeeTransparencyService {
     const policy = await db('venue_fee_policies')
       .where({ venue_id: venueId, active: true })
       .first();
-    
+
     if (!policy) {
       // Return default policy
       return {
@@ -102,7 +102,7 @@ export class FeeTransparencyService {
         lastUpdated: new Date()
       };
     }
-    
+
     return {
       venueId: policy.venue_id,
       venueName: policy.venue_name,
@@ -122,11 +122,11 @@ export class FeeTransparencyService {
     const fees = await db('order_fees')
       .where({ order_id: orderId })
       .first();
-    
+
     if (!fees) {
       throw new Error('Order fees not found');
     }
-    
+
     return {
       orderId,
       breakdown: {
@@ -146,7 +146,7 @@ export class FeeTransparencyService {
    * Generate fee report for venue
    */
   async generateVenueFeeReport(venueId: string, startDate: Date, endDate: Date): Promise<any> {
-    const report = await db('order_fees')
+    const report: any = await db('order_fees')
       .where({ venue_id: venueId })
       .whereBetween('created_at', [startDate, endDate])
       .select(
@@ -157,7 +157,7 @@ export class FeeTransparencyService {
         db.raw('AVG(venue_fee) as avg_venue_fee')
       )
       .first();
-    
+
     const breakdown = await db('order_fees')
       .where({ venue_id: venueId })
       .whereBetween('created_at', [startDate, endDate])
@@ -168,7 +168,7 @@ export class FeeTransparencyService {
       )
       .groupBy(db.raw('DATE(created_at)'))
       .orderBy('date', 'asc');
-    
+
     return {
       venueId,
       period: {
@@ -202,7 +202,7 @@ export class FeeTransparencyService {
       'FL': 6.0,
       'WA': 6.5
     };
-    
+
     return taxRates[location || 'NY'] || 7.0;
   }
 }

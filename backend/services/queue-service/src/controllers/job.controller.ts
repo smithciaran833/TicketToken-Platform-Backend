@@ -1,5 +1,5 @@
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import Joi from 'joi';
 import { QueueFactory } from '../queues/factories/queue.factory';
 import { logger } from '../utils/logger';
@@ -39,15 +39,15 @@ export const addBatchJobsSchema = Joi.object({
 });
 
 export class JobController {
-  async addJob(req: AuthRequest, res: Response): Promise<void> {
+  async addJob(request: AuthRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { queue, type, data, options } = req.body;
+      const { queue, type, data, options } = request.body as any;
 
       // Add user context to job data
       const jobData = {
         ...data,
-        userId: req.user?.id,
-        venueId: req.user?.venueId,
+        userId: request.user?.id,
+        venueId: request.user?.venueId,
         addedAt: new Date().toISOString()
       };
 
@@ -69,10 +69,10 @@ export class JobController {
       logger.info(`Job added to ${queue} queue`, {
         jobId: job.id,
         type,
-        userId: req.user?.id
+        userId: request.user?.id
       });
 
-      res.status(201).json({
+      return reply.code(201).send({
         jobId: job.id,
         queue,
         type,
@@ -81,31 +81,29 @@ export class JobController {
       });
     } catch (error) {
       logger.error('Failed to add job:', error);
-      res.status(500).json({ error: 'Failed to add job' });
+      return reply.code(500).send({ error: 'Failed to add job' });
     }
   }
 
-  async getJob(req: Request, res: Response): Promise<void> {
+  async getJob(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { id } = req.params;
-      const { queue } = req.query as { queue?: string };
+      const { id } = request.params as { id: string };
+      const { queue } = request.query as { queue?: string };
 
       if (!queue) {
-        res.status(400).json({ error: 'Queue parameter required' });
-        return;
+        return reply.code(400).send({ error: 'Queue parameter required' });
       }
 
       const queueInstance = QueueFactory.getQueue(queue as any);
       const job = await queueInstance.getJob(id);
 
       if (!job) {
-        res.status(404).json({ error: 'Job not found' });
-        return;
+        return reply.code(404).send({ error: 'Job not found' });
       }
 
       const state = await job.getState();
 
-      res.json({
+      return reply.send({
         id: job.id,
         queue: job.queue.name,
         type: job.name,
@@ -119,85 +117,80 @@ export class JobController {
       });
     } catch (error) {
       logger.error('Failed to get job:', error);
-      res.status(500).json({ error: 'Failed to get job' });
+      return reply.code(500).send({ error: 'Failed to get job' });
     }
   }
 
-  async retryJob(req: AuthRequest, res: Response): Promise<void> {
+  async retryJob(request: AuthRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { id } = req.params;
-      const { queue } = req.body;
+      const { id } = request.params as { id: string };
+      const { queue } = request.body as any;
 
       const queueInstance = QueueFactory.getQueue(queue);
       const job = await queueInstance.getJob(id);
 
       if (!job) {
-        res.status(404).json({ error: 'Job not found' });
-        return;
+        return reply.code(404).send({ error: 'Job not found' });
       }
 
       await job.retry();
 
-      logger.info(`Job ${id} retried by user ${req.user?.id}`);
+      logger.info(`Job ${id} retried by user ${request.user?.id}`);
 
-      res.json({
+      return reply.send({
         jobId: job.id,
         status: 'retrying',
         message: 'Job has been queued for retry'
       });
     } catch (error) {
       logger.error('Failed to retry job:', error);
-      res.status(500).json({ error: 'Failed to retry job' });
+      return reply.code(500).send({ error: 'Failed to retry job' });
     }
   }
 
-  async cancelJob(req: AuthRequest, res: Response): Promise<void> {
+  async cancelJob(request: AuthRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { id } = req.params;
-      const { queue } = req.query as { queue?: string };
+      const { id } = request.params as { id: string };
+      const { queue } = request.query as { queue?: string };
 
       if (!queue) {
-        res.status(400).json({ error: 'Queue parameter required' });
-        return;
+        return reply.code(400).send({ error: 'Queue parameter required' });
       }
 
       const queueInstance = QueueFactory.getQueue(queue as any);
       const job = await queueInstance.getJob(id);
 
       if (!job) {
-        res.status(404).json({ error: 'Job not found' });
-        return;
+        return reply.code(404).send({ error: 'Job not found' });
       }
 
       await job.remove();
 
-      logger.info(`Job ${id} cancelled by user ${req.user?.id}`);
+      logger.info(`Job ${id} cancelled by user ${request.user?.id}`);
 
-      res.json({
+      return reply.send({
         jobId: id,
         status: 'cancelled',
         message: 'Job has been cancelled'
       });
     } catch (error) {
       logger.error('Failed to cancel job:', error);
-      res.status(500).json({ error: 'Failed to cancel job' });
+      return reply.code(500).send({ error: 'Failed to cancel job' });
     }
   }
 
-  async addBatchJobs(req: AuthRequest, res: Response): Promise<void> {
+  async addBatchJobs(request: AuthRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { queue, jobs, options = {} } = req.body;
+      const { queue, jobs, options = {} } = request.body as any;
       const { stopOnError = false, validateAll = true } = options;
 
       // Validate batch size
       if (!Array.isArray(jobs) || jobs.length === 0) {
-        res.status(400).json({ error: 'No jobs provided' });
-        return;
+        return reply.code(400).send({ error: 'No jobs provided' });
       }
 
       if (jobs.length > 100) {
-        res.status(400).json({ error: 'Batch size exceeds maximum of 100 jobs' });
-        return;
+        return reply.code(400).send({ error: 'Batch size exceeds maximum of 100 jobs' });
       }
 
       const queueInstance = QueueFactory.getQueue(queue);
@@ -209,7 +202,7 @@ export class JobController {
       if (validateAll) {
         for (let i = 0; i < jobs.length; i++) {
           const jobData = jobs[i];
-          
+
           // Validate individual job structure
           const validation = batchJobSchema.validate(jobData);
           if (validation.error) {
@@ -218,14 +211,13 @@ export class JobController {
               type: jobData.type || 'unknown',
               error: validation.error.message
             });
-            
+
             if (stopOnError) {
-              res.status(400).json({
+              return reply.code(400).send({
                 error: 'Validation failed',
                 failedAt: i,
                 validationErrors: errors
               });
-              return;
             }
           } else {
             // Additional business logic validation
@@ -236,14 +228,13 @@ export class JobController {
                 type: jobData.type,
                 error: businessValidation.error
               });
-              
+
               if (stopOnError) {
-                res.status(400).json({
+                return reply.code(400).send({
                   error: 'Business validation failed',
                   failedAt: i,
                   validationErrors: errors
                 });
-                return;
               }
             } else {
               validatedJobs.push({ index: i, job: jobData });
@@ -252,7 +243,7 @@ export class JobController {
         }
       } else {
         // No pre-validation, add all jobs to validated list
-        jobs.forEach((job, index) => {
+        jobs.forEach((job: any, index: number) => {
           validatedJobs.push({ index, job });
         });
       }
@@ -262,12 +253,12 @@ export class JobController {
         try {
           // Sanitize and enrich job data
           const sanitizedData = this.sanitizeJobData(jobData.data);
-          
+
           const enrichedJobData = {
             ...sanitizedData,
-            userId: req.user?.id,
-            venueId: req.user?.venueId,
-            batchId: req.headers['x-batch-id'] || null,
+            userId: request.user?.id,
+            venueId: request.user?.venueId,
+            batchId: request.headers['x-batch-id'] || null,
             batchIndex: index,
             addedAt: new Date().toISOString()
           };
@@ -316,24 +307,23 @@ export class JobController {
               }
             }
 
-            res.status(500).json({
+            return reply.code(500).send({
               error: 'Batch processing failed',
               failedAt: index,
               processed: results.length,
               errors
             });
-            return;
           }
         }
       }
 
       logger.info(`Batch of ${results.length} jobs added to ${queue} queue`, {
-        userId: req.user?.id,
+        userId: request.user?.id,
         successful: results.length,
         failed: errors.length
       });
 
-      res.status(201).json({
+      return reply.code(201).send({
         queue,
         total: jobs.length,
         successful: results.length,
@@ -343,7 +333,7 @@ export class JobController {
       });
     } catch (error) {
       logger.error('Failed to add batch jobs:', error);
-      res.status(500).json({ error: 'Failed to add batch jobs' });
+      return reply.code(500).send({ error: 'Failed to add batch jobs' });
     }
   }
 
@@ -398,7 +388,7 @@ export class JobController {
     }
 
     const sanitized: any = {};
-    
+
     for (const [key, value] of Object.entries(data)) {
       // Skip potentially dangerous keys
       if (key.startsWith('__') || key.includes('prototype')) {

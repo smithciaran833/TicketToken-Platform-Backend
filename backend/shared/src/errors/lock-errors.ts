@@ -1,6 +1,6 @@
 /**
  * Distributed Lock Error Types
- * 
+ *
  * These errors represent failures in distributed lock acquisition and management.
  * They are thrown by the distributed-lock utility and should be caught by services
  * to provide user-friendly error messages.
@@ -26,6 +26,14 @@ export class LockTimeoutError extends Error {
     Object.setPrototypeOf(this, LockTimeoutError.prototype);
   }
 
+  // Alias properties for backward compatibility
+  get key() {
+    return this.lockKey;
+  }
+  get ttlMs() {
+    return this.timeoutMs;
+  }
+
   toJSON() {
     return {
       error: this.name,
@@ -34,7 +42,7 @@ export class LockTimeoutError extends Error {
       lockKey: this.lockKey,
       timeoutMs: this.timeoutMs,
       attemptedAt: this.attemptedAt.toISOString(),
-      retryable: this.retryable
+      retryable: this.retryable,
     };
   }
 }
@@ -65,7 +73,7 @@ export class LockContentionError extends Error {
       message: this.message,
       lockKey: this.lockKey,
       attemptedAt: this.attemptedAt.toISOString(),
-      retryable: this.retryable
+      retryable: this.retryable,
     };
   }
 }
@@ -95,7 +103,7 @@ export class LockSystemError extends Error {
       message: this.message,
       lockKey: this.lockKey,
       originalError: this.originalError?.message,
-      retryable: this.retryable
+      retryable: this.retryable,
     };
   }
 }
@@ -105,10 +113,13 @@ export class LockSystemError extends Error {
  * These are sanitized messages safe to return to end users.
  */
 export const USER_FACING_MESSAGES = {
-  TIMEOUT_GENERIC: 'This item is currently being processed by another request. Please try again in a moment.',
+  TIMEOUT_GENERIC:
+    'This item is currently being processed by another request. Please try again in a moment.',
   TIMEOUT_HIGH_DEMAND: 'Unable to process your request due to high demand. Please try again.',
-  CONTENTION_GENERIC: 'This resource is currently locked by another operation. Please wait and retry.',
-  SYSTEM_ERROR: 'A system error occurred while processing your request. Please try again or contact support if the issue persists.',
+  CONTENTION_GENERIC:
+    'This resource is currently locked by another operation. Please wait and retry.',
+  SYSTEM_ERROR:
+    'A system error occurred while processing your request. Please try again or contact support if the issue persists.',
   RETRY_SUGGESTION: 'Please retry your request. If the problem continues, contact support.',
 } as const;
 
@@ -117,28 +128,30 @@ export const USER_FACING_MESSAGES = {
  */
 export function getLockErrorMessage(error: Error, context?: string): string {
   if (error instanceof LockTimeoutError) {
-    return context 
+    return context
       ? `${context}: ${USER_FACING_MESSAGES.TIMEOUT_GENERIC}`
       : USER_FACING_MESSAGES.TIMEOUT_GENERIC;
   }
-  
+
   if (error instanceof LockContentionError) {
     return context
       ? `${context}: ${USER_FACING_MESSAGES.CONTENTION_GENERIC}`
       : USER_FACING_MESSAGES.CONTENTION_GENERIC;
   }
-  
+
   if (error instanceof LockSystemError) {
     return USER_FACING_MESSAGES.SYSTEM_ERROR;
   }
-  
+
   return USER_FACING_MESSAGES.RETRY_SUGGESTION;
 }
 
 /**
  * Type guard to check if an error is a lock-related error
  */
-export function isLockError(error: unknown): error is LockTimeoutError | LockContentionError | LockSystemError {
+export function isLockError(
+  error: unknown
+): error is LockTimeoutError | LockContentionError | LockSystemError {
   return (
     error instanceof LockTimeoutError ||
     error instanceof LockContentionError ||

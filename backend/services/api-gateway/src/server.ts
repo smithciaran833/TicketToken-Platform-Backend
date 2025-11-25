@@ -1,3 +1,4 @@
+import 'dotenv/config'; // MUST be first!
 import fastify, { FastifyInstance } from 'fastify';
 import { config } from './config';
 import { logger } from './utils/logger';
@@ -40,16 +41,16 @@ async function start() {
   try {
     // Setup dependency injection and services
     await setupServices(server);
-    
+
     // Setup middleware in correct order
     await setupMiddleware(server);
-    
+
     // Setup Swagger documentation BEFORE routes
     await setupSwagger(server);
-    
+
     // Setup routes
     await setupRoutes(server);
-    
+
     // Start listening
     await server.listen({
       port: config.server.port,

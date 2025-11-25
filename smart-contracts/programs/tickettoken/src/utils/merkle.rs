@@ -9,12 +9,13 @@ pub fn create_ticket_metadata(
     _section: &str,
     _row: &str,
     _seat: &str,
+    platform_treasury: Pubkey,
 ) -> MetadataArgs {
     MetadataArgs {
         name: format!("Ticket #{} - {}", ticket_number, std::str::from_utf8(&event.name).unwrap_or("Event")),
         symbol: "TKT".to_string(),
         uri: format!("{}/tickets/{}", std::str::from_utf8(&event.metadata_uri).unwrap_or(""), ticket_number),
-        seller_fee_basis_points: 500, // 5% royalty on resales
+        seller_fee_basis_points: 1000, // 10% royalty on resales
         primary_sale_happened: true,
         is_mutable: false,
         edition_nonce: None,
@@ -33,7 +34,12 @@ pub fn create_ticket_metadata(
             Creator {
                 address: event.venue,
                 verified: false,
-                share: 100,
+                share: 50,  // 50% to venue
+            },
+            Creator {
+                address: platform_treasury,
+                verified: false,
+                share: 50,  // 50% to platform
             }
         ],
     }

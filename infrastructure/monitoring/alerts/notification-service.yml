@@ -1,0 +1,212 @@
+# Notification Service - Prometheus Alert Rules
+# These rules define when to trigger alerts based on notification service metrics
+
+groups:
+  - name: notification_service_alerts
+    interval: 30s
+    rules:
+      # High Error Rate Alert
+      - alert: NotificationHighErrorRate
+        expr: |
+          (
+            rate(notification_errors_total[5m]) 
+            / 
+            rate(notification_sent_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "High notification error rate detected"
+          description: "Error rate is {{ $value | humanizePercentage }} (>5%) over the last 5 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-high-error-rate"
+      
+      # Critical Error Rate Alert
+      - alert: NotificationCriticalErrorRate
+        expr: |
+          (
+            rate(notification_errors_total[5m]) 
+            / 
+            rate(notification_sent_total[5m])
+          ) > 0.20
+        for: 2m
+        labels:
+          severity: critical
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "CRITICAL: Very high notification error rate"
+          description: "Error rate is {{ $value | humanizePercentage }} (>20%) over the last 2 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-critical-error-rate"
+      
+      # Email Provider Down
+      - alert: EmailProviderDown
+        expr: provider_status{provider_name="sendgrid",provider_type="email"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: notification-service
+          provider: sendgrid
+          team: platform
+        annotations:
+          summary: "Email provider (SendGrid) is down"
+          description: "SendGrid email provider has been down for 1 minute"
+          runbook: "https://docs.tickettoken.com/runbooks/email-provider-down"
+      
+      # SMS Provider Down
+      - alert: SMSProviderDown
+        expr: provider_status{provider_name="twilio",provider_type="sms"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: notification-service
+          provider: twilio
+          team: platform
+        annotations:
+          summary: "SMS provider (Twilio) is down"
+          description: "Twilio SMS provider has been down for 1 minute"
+          runbook: "https://docs.tickettoken.com/runbooks/sms-provider-down"
+      
+      # Slow Send Times
+      - alert: NotificationSlowSendTimes
+        expr: |
+          histogram_quantile(0.95, 
+            rate(notification_send_duration_seconds_bucket[5m])
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "Notification send times are slow"
+          description: "P95 send time is {{ $value }}s (>5s) over the last 10 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-slow-send-times"
+      
+      # Queue Backlog
+      - alert: NotificationQueueBacklog
+        expr: notification_queue_depth{queue_type="notification"} > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "Notification queue has a backlog"
+          description: "Queue depth is {{ $value }} notifications (>1000) for 5 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-queue-backlog"
+      
+      # Critical Queue Backlog
+      - alert: NotificationCriticalQueueBacklog
+        expr: notification_queue_depth{queue_type="notification"} > 5000
+        for: 2m
+        labels:
+          severity: critical
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "CRITICAL: Massive notification queue backlog"
+          description: "Queue depth is {{ $value }} notifications (>5000) for 2 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-critical-queue-backlog"
+      
+      # High Volume Spike
+      - alert: NotificationVolumeSpike
+        expr: |
+          rate(notification_sent_total[1m]) 
+          > 
+          (
+            avg_over_time(rate(notification_sent_total[1m])[1h:1m]) * 10
+          )
+        for: 1m
+        labels:
+          severity: info
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "Notification volume spike detected"
+          description: "Current send rate is >10x normal ({{ $value }}/min)"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-volume-spike"
+      
+      # Low Delivery Rate
+      - alert: NotificationLowDeliveryRate
+        expr: |
+          (
+            rate(notification_delivery_total{status="delivered"}[15m])
+            /
+            rate(notification_sent_total[15m])
+          ) < 0.80
+        for: 15m
+        labels:
+          severity: warning
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "Low notification delivery rate"
+          description: "Delivery rate is {{ $value | humanizePercentage }} (<80%) over the last 15 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-low-delivery-rate"
+      
+      # High Bounce Rate
+      - alert: NotificationHighBounceRate
+        expr: |
+          (
+            rate(notification_delivery_total{status="bounced"}[10m])
+            /
+            rate(notification_sent_total[10m])
+          ) > 0.10
+        for: 10m
+        labels:
+          severity: warning
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "High notification bounce rate"
+          description: "Bounce rate is {{ $value | humanizePercentage }} (>10%) over the last 10 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-high-bounce-rate"
+      
+      # Service Down
+      - alert: NotificationServiceDown
+        expr: up{job="notification-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "Notification service is down"
+          description: "Notification service has been down for 1 minute"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-service-down"
+      
+      # High API Error Rate
+      - alert: NotificationAPIHighErrorRate
+        expr: |
+          (
+            rate(api_requests_total{status_code=~"5.."}[5m])
+            /
+            rate(api_requests_total[5m])
+          ) > 0.05
+        for: 5m
+        labels:
+          severity: warning
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "High API error rate"
+          description: "API 5xx error rate is {{ $value | humanizePercentage }} (>5%) over the last 5 minutes"
+          runbook: "https://docs.tickettoken.com/runbooks/notification-api-high-error-rate"
+      
+      # Webhook Processing Delayed
+      - alert: WebhookProcessingDelayed
+        expr: |
+          rate(webhook_received_total[5m]) < 
+          (rate(notification_sent_total[5m]) * 0.1)
+        for: 30m
+        labels:
+          severity: info
+          service: notification-service
+          team: platform
+        annotations:
+          summary: "Webhook processing may be delayed"
+          description: "Webhook rate is unusually low compared to send rate"
+          runbook: "https://docs.tickettoken.com/runbooks/webhook-processing-delayed"

@@ -1,39 +1,37 @@
 import jwt from 'jsonwebtoken';
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 
-export interface AuthRequest extends Request {
+export interface AuthRequest extends FastifyRequest {
   user?: any;
 }
 
-export function requireAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers['authorization'] || '';
+export async function requireAuth(request: AuthRequest, reply: FastifyReply): Promise<void> {
+  const header = request.headers['authorization'] || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  
+
   if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
+    reply.code(401).send({ error: 'No token provided' });
+    return;
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!);
-    req.user = decoded;
-    next();
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || '');
+    request.user = decoded;
   } catch (error) {
-    return res.status(401).json({ error: 'Invalid token' });
+    reply.code(401).send({ error: 'Invalid token' });
   }
 }
 
-export function optionalAuth(req: AuthRequest, res: Response, next: NextFunction) {
-  const header = req.headers['authorization'] || '';
+export async function optionalAuth(request: AuthRequest, reply: FastifyReply): Promise<void> {
+  const header = request.headers['authorization'] || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  
+
   if (token) {
     try {
-      const decoded = jwt.verify(token, process.env.JWT_SECRET!);
-      req.user = decoded;
+      const decoded = jwt.verify(token, process.env.JWT_SECRET || '');
+      request.user = decoded;
     } catch {
       // Invalid token, but continue without user
     }
   }
-  
-  next();
 }

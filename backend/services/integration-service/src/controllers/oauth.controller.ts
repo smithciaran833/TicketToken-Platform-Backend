@@ -1,25 +1,23 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { oauthService } from '../services/oauth.service';
 import { logger } from '../utils/logger';
 
 export class OAuthController {
-  async handleCallback(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async handleCallback(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { code, state, error } = req.query;
-      
+      const { provider } = request.params as any;
+      const { code, state, error } = request.query as any;
+
       if (error) {
         logger.error('OAuth error', { provider, error });
-        res.redirect(`/integrations/error?message=${error}`);
-        return;
+        return reply.redirect(`/integrations/error?message=${error}`);
       }
 
       if (!code || !state) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Missing code or state parameter'
         });
-        return;
       }
 
       const result = await oauthService.handleCallback(
@@ -28,42 +26,43 @@ export class OAuthController {
         state as string
       );
 
-      // Redirect to success page or return JSON
-      if (req.accepts('html')) {
-        res.redirect(`/integrations/success?provider=${provider}&venueId=${result.venueId}`);
+      // Check if HTML is accepted
+      const acceptHeader = request.headers.accept || '';
+      if (acceptHeader.includes('text/html')) {
+        return reply.redirect(`/integrations/success?provider=${provider}&venueId=${result.venueId}`);
       } else {
-        res.json({
+        return reply.send({
           success: true,
           data: result
         });
       }
     } catch (error: any) {
       logger.error('OAuth callback failed', { error: error.message });
-      
-      if (req.accepts('html')) {
-        res.redirect(`/integrations/error?message=${encodeURIComponent(error.message)}`);
+
+      const acceptHeader = request.headers.accept || '';
+      if (acceptHeader.includes('text/html')) {
+        return reply.redirect(`/integrations/error?message=${encodeURIComponent(error.message)}`);
       } else {
-        next(error);
+        throw error;
       }
     }
   }
 
-  async refreshToken(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async refreshToken(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       const newTokens = await oauthService.refreshToken(venueId, provider);
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Token refreshed successfully',
         data: {
@@ -71,7 +70,7 @@ export class OAuthController {
         }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

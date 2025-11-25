@@ -2,6 +2,7 @@ import { db } from './database';
 import { redis, cache } from './redis';
 import blockchain from './blockchain';
 import constants from './constants';
+import { logger } from '../utils/logger';
 import dotenv from 'dotenv';
 
 // Load environment variables
@@ -19,8 +20,9 @@ const requiredEnvVars = [
 ];
 
 const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+
 if (missingEnvVars.length > 0) {
-  console.error('Missing required environment variables:', missingEnvVars);
+  logger.error('Missing required environment variables:', missingEnvVars);
   if (process.env.NODE_ENV === 'production') {
     process.exit(1);
   }
@@ -29,17 +31,17 @@ if (missingEnvVars.length > 0) {
 // Service configuration
 export const config = {
   env: process.env.NODE_ENV || 'development',
-  port: parseInt(process.env.PORT || '3008'),
+  port: parseInt(process.env.PORT || '3016'),
   serviceName: process.env.SERVICE_NAME || 'marketplace-service',
-  
+
   // Service URLs
   authServiceUrl: process.env.AUTH_SERVICE_URL || 'http://auth-service:3001',
   ticketServiceUrl: process.env.TICKET_SERVICE_URL || process.env.EVENT_SERVICE_URL || 'http://event-service:3003',
   paymentServiceUrl: process.env.PAYMENT_SERVICE_URL || process.env.ANALYTICS_SERVICE_URL || 'http://analytics-service:3007',
-  
+
   // JWT
   jwtSecret: process.env.JWT_SECRET || 'default-secret-key',
-  
+
   // Feature flags
   features: {
     requireWalletForListing: true,

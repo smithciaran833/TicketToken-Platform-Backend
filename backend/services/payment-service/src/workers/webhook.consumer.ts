@@ -1,6 +1,9 @@
 import amqp from 'amqplib';
 import axios from 'axios';
 import { db } from '../config/database';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'WebhookConsumer' });
 
 const QUEUES = {
   PAYMENT_WEBHOOK: 'payment.webhook'
@@ -12,7 +15,7 @@ export async function startWebhookConsumer() {
   
   await channel.assertQueue(QUEUES.PAYMENT_WEBHOOK, { durable: true });
   
-  console.log('Payment webhook consumer started');
+  log.info('Payment webhook consumer started');
   
   channel.consume(QUEUES.PAYMENT_WEBHOOK, async (msg) => {
     if (!msg) return;
@@ -56,7 +59,7 @@ export async function startWebhookConsumer() {
       // Acknowledge message
       channel.ack(msg);
     } catch (error) {
-      console.error('Webhook processing error:', error);
+      log.error('Webhook processing error', { error });
       // Requeue on failure
       channel.nack(msg, false, true);
     }

@@ -3,6 +3,9 @@ import { GroupPayment, GroupMember, GroupPaymentStatus, TicketSelection } from '
 import { query, getClient } from '../../config/database';
 import Bull from 'bull';
 import { config } from '../../config';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'GroupPayment' });
 
 export class GroupPaymentService {
   private reminderQueue: Bull.Queue;
@@ -267,7 +270,7 @@ export class GroupPaymentService {
       const { email, name, amountDue } = job.data;
       
       // In production, integrate with email service
-      console.log(`Sending reminder to ${name} (${email}) for $${amountDue}`);
+      log.info('Sending group payment reminder', { email, name, amountDue });
       
       return { sent: true };
     });
@@ -288,9 +291,12 @@ export class GroupPaymentService {
       const paymentLink = this.generatePaymentLink(group.id, member.id);
       
       // In production, send actual emails
-      console.log(`Sending invitation to ${member.name} (${member.email})`);
-      console.log(`Payment link: ${paymentLink}`);
-      console.log(`Amount due: $${member.amountDue}`);
+      log.info('Sending group payment invitation', {
+        name: member.name,
+        email: member.email,
+        paymentLink,
+        amountDue: member.amountDue
+      });
     }
   }
   
@@ -312,9 +318,11 @@ export class GroupPaymentService {
     const group = await this.getGroupPayment(groupId);
     
     // In production, trigger actual ticket purchase
-    console.log(`Completing purchase for group ${groupId}`);
-    console.log(`Total amount: $${group.totalAmount}`);
-    console.log(`Tickets:`, group.ticketSelections);
+    log.info('Completing group purchase', {
+      groupId,
+      totalAmount: group.totalAmount,
+      ticketSelections: group.ticketSelections
+    });
   }
   
   private async cancelGroup(groupId: string, reason: string): Promise<void> {
@@ -341,7 +349,10 @@ export class GroupPaymentService {
     );
     
     // Process tickets for paid members only
-    console.log(`Processing partial group for ${paidMembers.length} members`);
+    log.info('Processing partial group payment', {
+      groupId,
+      paidMemberCount: paidMembers.length
+    });
     
     // Refund would be handled for unpaid tickets
   }

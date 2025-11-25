@@ -8,6 +8,7 @@ import path from 'path';
 import { logger } from './utils/logger';
 import { errorHandler } from './middleware/error.middleware';
 import { setupRoutes } from './routes';
+import { registerRateLimiting } from './middleware/rate-limit.middleware';
 
 export async function createApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -43,6 +44,9 @@ export async function createApp(): Promise<FastifyInstance> {
   await app.register(jwt, {
     secret: process.env.JWT_SECRET!
   });
+  
+  // Register rate limiting
+  await registerRateLimiting(app);
   
   // Serve static files in development
   if (process.env.NODE_ENV === 'development') {

@@ -1,5 +1,5 @@
 import * as amqp from 'amqplib';
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from "@tickettoken/shared";
 
 let connection: any;
 let channel: amqp.Channel;

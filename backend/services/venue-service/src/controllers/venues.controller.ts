@@ -8,6 +8,7 @@ import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors';
 import { venueOperations } from '../utils/metrics';
 import { settingsRoutes } from './settings.controller';
 import { integrationRoutes } from './integrations.controller';
+import * as jwt from 'jsonwebtoken';
 
 interface CreateVenueBody {
   name: string;
@@ -49,6 +50,7 @@ async function addTenantContext(request: any, reply: any) {
 
 
 // Helper to verify venue ownership
+// FIXED: Only check access, don't fetch venue (service methods will handle that)
 async function verifyVenueOwnership(request: any, reply: any, venueService: any) {
   const { venueId } = request.params;
   const userId = request.user?.id;
@@ -59,13 +61,6 @@ async function verifyVenueOwnership(request: any, reply: any, venueService: any)
   if (!hasAccess) {
     throw new ForbiddenError('Access denied to this venue');
   }
-
-  const venue = await venueService.getVenue(venueId, userId);
-  if (!venue) {
-    throw new NotFoundError('Venue not found');
-  }
-
-  request.venue = venue;
 }
 
 export async function venueRoutes(fastify: FastifyInstance) {
@@ -75,7 +70,7 @@ export async function venueRoutes(fastify: FastifyInstance) {
   // List venues - SECURED (optional auth for filtering)
   fastify.get('/',
     {
-      preHandler: [authenticate, validate(venueQuerySchema)]
+      preHandler: [validate(venueQuerySchema)]
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
@@ -84,8 +79,13 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const token = request.headers.authorization?.replace('Bearer ', '');
         if (token) {
           try {
-            const jwt = require('jsonwebtoken');
-            const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET || 'dev_access_secret_change_in_production_12345678901234567890');
+            // SECURITY: JWT_ACCESS_SECRET must be set in environment
+            // Service startup validation ensures this is present
+            if (!process.env.JWT_ACCESS_SECRET) {
+              logger.error('JWT_ACCESS_SECRET not set - authentication will fail');
+              throw new Error('JWT configuration error');
+            }
+            const decoded = jwt.verify(token, process.env.JWT_ACCESS_SECRET) as any;
             user = decoded;
           } catch (e) {
             // Invalid token, proceed without auth
@@ -167,6 +167,7 @@ export async function venueRoutes(fastify: FastifyInstance) {
   );
 
   // Get venue by ID - SECURED
+  // FIX #2: Catch "Access denied" errors from getVenue and return 403
   fastify.get('/:venueId',
     {
       preHandler: [authenticate, addTenantContext]
@@ -176,13 +177,7 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const { venueId } = request.params;
         const userId = request.user?.id;
 
-        // Check access first
-        const hasAccess = await venueService.checkVenueAccess(venueId, userId);
-        if (!hasAccess) {
-          return reply.status(403).send({ error: 'Access denied to this venue' });
-        }
-
-        // Get the venue
+        // This may throw "Access denied" error
         const venue = await venueService.getVenue(venueId, userId);
         if (!venue) {
           return reply.status(404).send({ error: 'Venue not found' });
@@ -191,6 +186,10 @@ export async function venueRoutes(fastify: FastifyInstance) {
         venueOperations.inc({ operation: 'read', status: 'success' });
         return reply.send(venue);
       } catch (error: any) {
+        // FIX #2: Check if it's an access denied error from getVenue
+        if (error.message === 'Access denied') {
+          return reply.status(403).send({ error: 'Access denied to this venue' });
+        }
         venueOperations.inc({ operation: 'read', status: 'error' });
         logger.error({ error }, 'Failed to get venue');
         return reply.status(500).send({ error: 'Internal server error' });
@@ -207,25 +206,25 @@ export async function venueRoutes(fastify: FastifyInstance) {
       try {
         const { venueId } = request.params;
         const userId = request.user?.id;
-        
+
         // Check access
         const hasAccess = await venueService.checkVenueAccess(venueId, userId);
         if (!hasAccess) {
           return reply.status(403).send({ error: 'Access denied to this venue' });
         }
-        
+
         const venue = await venueService.getVenue(venueId, userId);
         if (!venue) {
           return reply.status(404).send({ error: 'Venue not found' });
         }
-        
+
         // TODO: Calculate available capacity from active events
         // For now, return total capacity as available
         return reply.send({
           venueId: venue.id,
           venueName: venue.name,
-          totalCapacity: venue.capacity,
-          available: venue.capacity,
+          totalCapacity: venue.max_capacity,
+          available: venue.max_capacity,
           reserved: 0,
           utilized: 0
         });
@@ -245,18 +244,18 @@ export async function venueRoutes(fastify: FastifyInstance) {
       try {
         const { venueId } = request.params;
         const userId = request.user?.id;
-        
+
         // Check access
         const hasAccess = await venueService.checkVenueAccess(venueId, userId);
         if (!hasAccess) {
           return reply.status(403).send({ error: 'Access denied to this venue' });
         }
-        
+
         const stats = await venueService.getVenueStats(venueId);
         if (!stats) {
           return reply.status(404).send({ error: 'Venue not found' });
         }
-        
+
         return reply.send(stats);
       } catch (error: any) {
         logger.error({ error, venueId: request.params.venueId }, 'Failed to get venue stats');
@@ -298,6 +297,7 @@ export async function venueRoutes(fastify: FastifyInstance) {
   );
 
   // Delete venue - SECURED
+  // FIXED: Let service handle ownership check, it already does this
   fastify.delete('/:venueId',
     {
       preHandler: [authenticate, addTenantContext]
@@ -308,15 +308,7 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const userId = request.user?.id;
         const tenantId = request.tenantId;
 
-        // Verify ownership - only owner can delete
-        await verifyVenueOwnership(request, reply, venueService);
-
-        // Additional check - must be owner, not just staff
-        const venue = request.venue;
-        if (venue.owner_id !== userId) {
-          throw new ForbiddenError('Only venue owner can delete venue');
-        }
-
+        // Service method will check if user is owner
         await venueService.deleteVenue(venueId, userId, tenantId);
 
         logger.info({ venueId, userId, tenantId }, 'Venue deleted');
@@ -327,6 +319,10 @@ export async function venueRoutes(fastify: FastifyInstance) {
         venueOperations.inc({ operation: 'delete', status: 'error' });
         if (error instanceof NotFoundError || error instanceof ForbiddenError) {
           throw error;
+        }
+        // Check for the generic error from service
+        if (error.message === 'Only venue owners can delete venues') {
+          return reply.status(403).send({ error: error.message });
         }
         logger.error({ error, venueId: request.params.venueId }, 'Failed to delete venue');
         return ErrorResponseBuilder.internal(reply, 'Failed to delete venue');
@@ -361,6 +357,7 @@ export async function venueRoutes(fastify: FastifyInstance) {
   );
 
   // Staff management routes - SECURED
+  // FIX #3: Properly catch and return 403 for permission errors
   fastify.post('/:venueId/staff',
     {
       preHandler: [authenticate, addTenantContext]
@@ -371,22 +368,19 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const requesterId = request.user?.id;
         const body = request.body;
 
-        // Verify venue ownership
+        // FIX #3: Properly handle ownership verification errors
+        // Check by statusCode or name instead of instanceof
         try {
           await verifyVenueOwnership(request, reply, venueService);
-        } catch (error) {
-          if (error instanceof ForbiddenError) {
+        } catch (error: any) {
+          if (error.statusCode === 403 || error.name === 'ForbiddenError') {
             return reply.status(403).send({ error: error.message });
           }
-          if (error instanceof NotFoundError) {
+          if (error.statusCode === 404 || error.name === 'NotFoundError') {
             return reply.status(404).send({ error: error.message });
           }
           throw error;
         }
-
-        // The test sends {email, role} but we need {userId, role}
-        // For the test to work, we need to accept the registered user's ID
-        // The test should be sending userId, not email
 
         if (!body.userId) {
           return reply.status(400).send({
@@ -394,7 +388,6 @@ export async function venueRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Add staff member with the actual userId
         const staffData = {
           userId: body.userId,
           role: body.role,
@@ -405,8 +398,15 @@ export async function venueRoutes(fastify: FastifyInstance) {
 
         return reply.status(201).send(staffMember);
       } catch (error: any) {
+        // FIX #3: Check by statusCode or name instead of instanceof
+        if (error.statusCode === 403 || error.name === 'ForbiddenError') {
+          return reply.status(403).send({ error: error.message });
+        }
+        if (error.statusCode === 404 || error.name === 'NotFoundError') {
+          return reply.status(404).send({ error: error.message });
+        }
         logger.error({ error, venueId: request.params.venueId }, 'Failed to add staff');
-        return ErrorResponseBuilder.internal(reply, 'Failed to add staff member');
+        return reply.status(500).send({ error: 'Failed to add staff member' });
       }
     }
   );

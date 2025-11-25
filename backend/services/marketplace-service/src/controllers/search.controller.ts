@@ -1,8 +1,8 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { listingService } from '../services/listing.service';
 
 export class SearchController {
-  async searchListings(req: Request, res: Response, next: NextFunction) {
+  async searchListings(request: FastifyRequest, reply: FastifyReply) {
     try {
       const {
         eventId,
@@ -13,7 +13,7 @@ export class SearchController {
         sortOrder = 'asc',
         limit = 20,
         offset = 0,
-      } = req.query;
+      } = request.query as any;
 
       const listings = await listingService.searchListings({
         eventId: eventId as string,
@@ -26,7 +26,7 @@ export class SearchController {
         offset: Number(offset),
       });
 
-      res.json({
+      reply.send({
         success: true,
         data: listings,
         pagination: {
@@ -35,11 +35,11 @@ export class SearchController {
         },
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getPriceRange(_req: Request, res: Response, next: NextFunction) {
+  async getPriceRange(_request: FastifyRequest, reply: FastifyReply) {
     try {
       // This would query the database for min/max prices
       const priceRange = {
@@ -49,16 +49,16 @@ export class SearchController {
         median: 125,
       };
 
-      res.json({
+      reply.send({
         success: true,
         data: priceRange,
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getCategories(_req: Request, res: Response, next: NextFunction) {
+  async getCategories(_request: FastifyRequest, reply: FastifyReply) {
     try {
       // This would return event categories
       const categories = [
@@ -68,28 +68,28 @@ export class SearchController {
         { id: 'comedy', name: 'Comedy', count: 45 },
       ];
 
-      res.json({
+      reply.send({
         success: true,
         data: categories,
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getRecommended(_req: Request, res: Response, next: NextFunction) {
+  async getRecommended(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      res.json({ recommendations: [] });
+      reply.send({ recommendations: [] });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getWatchlist(_req: Request, res: Response, next: NextFunction) {
+  async getWatchlist(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      res.json({ watchlist: [] });
+      reply.send({ watchlist: [] });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

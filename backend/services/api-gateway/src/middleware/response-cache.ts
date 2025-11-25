@@ -1,5 +1,5 @@
-import { Request, Response, NextFunction } from 'express';
-import { createCache } from '@tickettoken/shared/cache/dist';
+import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
+import { createCache } from '@tickettoken/shared';
 
 const cache = createCache({
   redis: {
@@ -13,7 +13,7 @@ const cache = createCache({
 interface CacheConfig {
   ttl?: number;
   varyBy?: string[];
-  condition?: (req: Request) => boolean;
+  condition?: (req: FastifyRequest) => boolean;
 }
 
 const routeCacheConfig: Map<string, CacheConfig> = new Map([
@@ -23,76 +23,88 @@ const routeCacheConfig: Map<string, CacheConfig> = new Map([
   ['/api/search', { ttl: 300, varyBy: ['q', 'category'] }], // 5 minutes
 ]);
 
-export function responseCache() {
-  return async (req: Request, res: Response, next: NextFunction) => {
+export function responseCachePlugin(fastify: FastifyInstance) {
+  fastify.addHook('onRequest', async (request, reply) => {
     // Skip non-GET requests
-    if (req.method !== 'GET') {
-      return next();
+    if (request.method !== 'GET') {
+      return;
     }
 
     // Check if route should be cached
-    const config = routeCacheConfig.get(req.path);
+    const path = request.url.split('?')[0];
+    const config = routeCacheConfig.get(path);
     if (!config) {
-      return next();
+      return;
     }
 
     // Check condition
-    if (config.condition && !config.condition(req)) {
-      return next();
+    if (config.condition && !config.condition(request)) {
+      return;
     }
 
     // Generate cache key
-    let cacheKey = `response:${req.path}`;
+    let cacheKey = `response:${path}`;
     if (config.varyBy) {
-      const varies = config.varyBy.map(param => `${param}:${req.query[param] || ''}`).join(':');
+      const query = request.query as any;
+      const varies = config.varyBy.map(param => `${param}:${query[param] || ''}`).join(':');
       cacheKey += `:${varies}`;
     }
 
     // Try to get from cache
     const cached = await cache.service.get(cacheKey);
     if (cached) {
-      res.setHeader('X-Cache', 'HIT');
-      res.setHeader('X-Cache-TTL', config.ttl || '300');
-      return res.json(cached);
+      reply.header('X-Cache', 'HIT');
+      reply.header('X-Cache-TTL', String(config.ttl || '300'));
+      return reply.send(cached);
     }
 
-    // Cache miss - capture response
-    const originalJson = res.json;
-    res.json = function(data: any) {
-      res.setHeader('X-Cache', 'MISS');
-      
-      // Store in cache if successful
-      if (res.statusCode === 200) {
-        cache.service.set(cacheKey, data, { 
-          ttl: config.ttl || 300,
-          level: 'BOTH'
-        }).catch(err => console.error('Cache set error:', err));
-      }
-      
-      return originalJson.call(this, data);
-    };
+    // Cache miss - set header
+    reply.header('X-Cache', 'MISS');
 
-    next();
-  };
+    // Store config for onSend hook
+    (request as any).cacheConfig = { cacheKey, ttl: config.ttl || 300 };
+  });
+
+  fastify.addHook('onSend', async (request, reply, payload) => {
+    const cacheConfig = (request as any).cacheConfig;
+    
+    if (cacheConfig && reply.statusCode === 200 && payload) {
+      try {
+        const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
+        await cache.service.set(cacheConfig.cacheKey, data, {
+          ttl: cacheConfig.ttl,
+          level: 'BOTH'
+        });
+      } catch (err) {
+        console.error('Cache set error:', err);
+      }
+    }
+    
+    return payload;
+  });
+}
+
+export function responseCache() {
+  return responseCachePlugin;
 }
 
 // Cache invalidation endpoint
-export function cacheInvalidationRoutes(app: any) {
-  app.post('/admin/cache/invalidate', async (req: Request, res: Response) => {
-    const { patterns } = req.body;
+export function cacheInvalidationRoutes(app: FastifyInstance) {
+  app.post('/admin/cache/invalidate', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { patterns } = request.body as any;
     
     if (patterns && Array.isArray(patterns)) {
       for (const pattern of patterns) {
         await cache.service.delete(pattern);
       }
-      res.json({ success: true, invalidated: patterns.length });
+      return reply.send({ success: true, invalidated: patterns.length });
     } else {
-      res.status(400).json({ error: 'patterns array required' });
+      return reply.code(400).send({ error: 'patterns array required' });
     }
   });
 
-  app.get('/admin/cache/stats', async (_req: Request, res: Response) => {
+  app.get('/admin/cache/stats', async (_request: FastifyRequest, reply: FastifyReply) => {
     const stats = cache.service.getStats();
-    res.json(stats);
+    return reply.send(stats);
   });
 }

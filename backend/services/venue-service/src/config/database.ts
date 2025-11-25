@@ -4,7 +4,7 @@ export const dbConfig: Knex.Config = {
   client: 'postgresql',
   connection: {
     host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432'),
+    port: parseInt(process.env.DB_PORT || '6432'),
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
     database: process.env.DB_NAME || 'tickettoken_db',
@@ -17,7 +17,7 @@ export const dbConfig: Knex.Config = {
   acquireConnectionTimeout: 60000,
   migrations: {
     directory: './migrations',
-    tableName: 'knex_migrations'
+    tableName: 'knex_migrations_venue'
   },
   seeds: {
     directory: './seeds'

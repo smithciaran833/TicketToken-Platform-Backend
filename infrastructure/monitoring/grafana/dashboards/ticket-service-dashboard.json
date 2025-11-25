@@ -1,0 +1,358 @@
+{
+  "dashboard": {
+    "title": "Ticket Service Dashboard",
+    "tags": ["ticket-service", "ticketing", "microservices"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Service Health",
+        "type": "stat",
+        "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+        "targets": [
+          {
+            "expr": "up{job=\"ticket-service\"}",
+            "legendFormat": "Status"
+          }
+        ],
+        "options": {
+          "graphMode": "none",
+          "colorMode": "value",
+          "justifyMode": "center",
+          "textMode": "auto"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              { "value": 0, "text": "DOWN", "color": "red" },
+              { "value": 1, "text": "UP", "color": "green" }
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 1, "color": "green" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Request Rate (req/s)",
+        "type": "graph",
+        "gridPos": { "x": 6, "y": 0, "w": 9, "h": 4 },
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"ticket-service\"}[5m])",
+            "legendFormat": "{{method}} {{path}}"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Error Rate (%)",
+        "type": "graph",
+        "gridPos": { "x": 15, "y": 0, "w": 9, "h": 4 },
+        "targets": [
+          {
+            "expr": "rate(http_requests_total{job=\"ticket-service\",status=~\"5..\"}[5m]) / rate(http_requests_total{job=\"ticket-service\"}[5m]) * 100",
+            "legendFormat": "5xx Errors"
+          },
+          {
+            "expr": "rate(http_requests_total{job=\"ticket-service\",status=~\"4..\"}[5m]) / rate(http_requests_total{job=\"ticket-service\"}[5m]) * 100",
+            "legendFormat": "4xx Errors"
+          }
+        ],
+        "yaxes": [
+          { "format": "percent", "label": "Error Rate", "show": true }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Response Time (p95)",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 4, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job=\"ticket-service\"}[5m]))",
+            "legendFormat": "p95 - {{method}} {{path}}"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(http_request_duration_seconds_bucket{job=\"ticket-service\"}[5m]))",
+            "legendFormat": "p99 - {{method}} {{path}}"
+          }
+        ],
+        "yaxes": [
+          { "format": "s", "label": "Duration", "show": true }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Response Time (p50)",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 4, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.50, rate(http_request_duration_seconds_bucket{job=\"ticket-service\"}[5m]))",
+            "legendFormat": "p50 - {{method}} {{path}}"
+          }
+        ],
+        "yaxes": [
+          { "format": "s", "label": "Duration", "show": true }
+        ]
+      },
+      {
+        "id": 6,
+        "title": "Ticket Purchases (Total)",
+        "type": "stat",
+        "gridPos": { "x": 0, "y": 9, "w": 4, "h": 3 },
+        "targets": [
+          {
+            "expr": "sum(increase(ticket_purchases_total{job=\"ticket-service\"}[24h]))",
+            "legendFormat": "24h Total"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 7,
+        "title": "Active Reservations",
+        "type": "stat",
+        "gridPos": { "x": 4, "y": 9, "w": 4, "h": 3 },
+        "targets": [
+          {
+            "expr": "active_reservations{job=\"ticket-service\"}",
+            "legendFormat": "Active"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 8,
+        "title": "QR Validations",
+        "type": "stat",
+        "gridPos": { "x": 8, "y": 9, "w": 4, "h": 3 },
+        "targets": [
+          {
+            "expr": "sum(increase(qr_validations_total{job=\"ticket-service\"}[1h]))",
+            "legendFormat": "1h Total"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value"
+        }
+      },
+      {
+        "id": 9,
+        "title": "Failed Purchases",
+        "type": "stat",
+        "gridPos": { "x": 12, "y": 9, "w": 4, "h": 3 },
+        "targets": [
+          {
+            "expr": "sum(increase(ticket_purchase_failures_total{job=\"ticket-service\"}[1h]))",
+            "legendFormat": "1h Failures"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 10, "color": "yellow" },
+                { "value": 50, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "title": "Rate Limit Hits",
+        "type": "stat",
+        "gridPos": { "x": 16, "y": 9, "w": 4, "h": 3 },
+        "targets": [
+          {
+            "expr": "sum(increase(rate_limit_hits_total{job=\"ticket-service\"}[1h]))",
+            "legendFormat": "1h Hits"
+          }
+        ],
+        "options": {
+          "graphMode": "area",
+          "colorMode": "value"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "green" },
+                { "value": 100, "color": "yellow" },
+                { "value": 500, "color": "red" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "title": "Database Connection Pool",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 12, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "db_connection_pool_total{job=\"ticket-service\"}",
+            "legendFormat": "Total"
+          },
+          {
+            "expr": "db_connection_pool_active{job=\"ticket-service\"}",
+            "legendFormat": "Active"
+          },
+          {
+            "expr": "db_connection_pool_idle{job=\"ticket-service\"}",
+            "legendFormat": "Idle"
+          }
+        ]
+      },
+      {
+        "id": 12,
+        "title": "Database Query Duration",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 12, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(db_query_duration_seconds_bucket{job=\"ticket-service\"}[5m]))",
+            "legendFormat": "p95"
+          },
+          {
+            "expr": "histogram_quantile(0.99, rate(db_query_duration_seconds_bucket{job=\"ticket-service\"}[5m]))",
+            "legendFormat": "p99"
+          }
+        ],
+        "yaxes": [
+          { "format": "s", "label": "Duration", "show": true }
+        ]
+      },
+      {
+        "id": 13,
+        "title": "Redis Operations",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 17, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "rate(redis_operations_total{job=\"ticket-service\"}[5m])",
+            "legendFormat": "{{operation}}"
+          }
+        ]
+      },
+      {
+        "id": 14,
+        "title": "Redis Hit Rate (%)",
+        "type": "gauge",
+        "gridPos": { "x": 12, "y": 17, "w": 6, "h": 5 },
+        "targets": [
+          {
+            "expr": "rate(redis_cache_hits_total{job=\"ticket-service\"}[5m]) / (rate(redis_cache_hits_total{job=\"ticket-service\"}[5m]) + rate(redis_cache_misses_total{job=\"ticket-service\"}[5m])) * 100",
+            "legendFormat": "Hit Rate"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "min": 0,
+            "max": 100,
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                { "value": 0, "color": "red" },
+                { "value": 60, "color": "yellow" },
+                { "value": 80, "color": "green" }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 15,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": { "x": 18, "y": 17, "w": 6, "h": 5 },
+        "targets": [
+          {
+            "expr": "process_resident_memory_bytes{job=\"ticket-service\"}",
+            "legendFormat": "RSS"
+          },
+          {
+            "expr": "nodejs_heap_size_used_bytes{job=\"ticket-service\"}",
+            "legendFormat": "Heap Used"
+          }
+        ],
+        "yaxes": [
+          { "format": "bytes", "label": "Memory", "show": true }
+        ]
+      },
+      {
+        "id": 16,
+        "title": "CPU Usage",
+        "type": "graph",
+        "gridPos": { "x": 0, "y": 22, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "rate(process_cpu_seconds_total{job=\"ticket-service\"}[5m]) * 100",
+            "legendFormat": "CPU %"
+          }
+        ],
+        "yaxes": [
+          { "format": "percent", "label": "CPU", "show": true }
+        ]
+      },
+      {
+        "id": 17,
+        "title": "Event Loop Lag",
+        "type": "graph",
+        "gridPos": { "x": 12, "y": 22, "w": 12, "h": 5 },
+        "targets": [
+          {
+            "expr": "nodejs_eventloop_lag_seconds{job=\"ticket-service\"}",
+            "legendFormat": "Lag"
+          }
+        ],
+        "yaxes": [
+          { "format": "s", "label": "Lag", "show": true }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": { "params": [0.1], "type": "gt" },
+              "operator": { "type": "and" },
+              "query": { "params": ["A", "5m", "now"] },
+              "reducer": { "params": [], "type": "avg" },
+              "type": "query"
+            }
+          ],
+          "frequency": "60s",
+          "handler": 1,
+          "name": "Event Loop Lag Alert",
+          "message": "Event loop lag is high",
+          "noDataState": "no_data",
+          "executionErrorState": "alerting"
+        }
+      }
+    ]
+  }
+}

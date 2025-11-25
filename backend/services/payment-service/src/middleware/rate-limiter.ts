@@ -1,21 +1,16 @@
-import { Request, Response, NextFunction } from 'express';
-import { createClient } from 'redis';
-import { config } from '../config';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { RedisService } from '../services/redisService';
 import { AuthRequest } from './auth';
+import { logger } from '../utils/logger';
 
-const redis = createClient({
-  socket: {
-    host: config.redis.host,
-    port: config.redis.port
-  }
-});
+const log = logger.child({ component: 'RateLimiter' });
 
 interface RateLimitConfig {
   windowMs: number;
   max: number;
   message?: string;
-  keyGenerator?: (req: Request) => string;
-  skip?: (req: Request) => boolean;
+  keyGenerator?: (request: FastifyRequest) => string;
+  skip?: (request: FastifyRequest) => boolean;
 }
 
 export function createRateLimiter(options: RateLimitConfig) {
@@ -23,37 +18,33 @@ export function createRateLimiter(options: RateLimitConfig) {
     windowMs = 60000,
     max = 100,
     message = 'Too many requests',
-    keyGenerator = (req: Request) => req.ip,
+    keyGenerator = (request: FastifyRequest) => request.ip,
     skip = () => false
   } = options;
 
-  return async (req: Request, res: Response, next: NextFunction) => {
-    if (skip(req)) {
-      return next();
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    if (skip(request)) {
+      return;
     }
 
     try {
-      const key = `rate-limit:${keyGenerator(req)}`;
+      const redis = RedisService.getClient();
+      const key = `rate-limit:${keyGenerator(request)}`;
       const current = await redis.incr(key);
-      
+
       if (current === 1) {
         await redis.expire(key, Math.ceil(windowMs / 1000));
       }
 
       if (current > max) {
-        return res.status(429).json({ error: message });
+        return reply.code(429).send({ error: message });
       }
-
-      next();
     } catch (error) {
-      console.error('Rate limiter error:', error);
-      next();
+      log.error('Rate limiter error', { error });
+      // Allow request to proceed on rate limiter error
     }
   };
 }
-
-// Connect Redis
-redis.connect().catch(console.error);
 
 // Export for backwards compatibility
 export const rateLimiter = (name: string, max: number, windowSeconds: number) => {

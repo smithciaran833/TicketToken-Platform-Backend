@@ -1,0 +1,203 @@
+.
+├── Makefile
+├── PORT_ASSIGNMENTS.md
+├── README.md
+├── SESSION_SUMMARY.md
+├── _archive
+│   ├── database-old
+│   │   ├── forensics
+│   │   ├── migrations_OLD
+│   │   └── schemas
+│   ├── old-docs
+│   │   ├── COMPLETE_MARKETPLACE_CONTEXT.md
+│   │   ├── COMPLIANCE_IMPLEMENTATION.md
+│   │   ├── audits
+│   │   ├── database-reality
+│   │   ├── database-remediation
+│   │   ├── remaining-services-analysis.md
+│   │   ├── schema-extraction
+│   │   ├── schema-validation
+│   │   ├── services-routes-analysis.md
+│   │   └── services-summary.md
+│   └── root-cleanup
+│       ├── Dockerfile.auth
+│       ├── docker-compose.yml.backup
+│       ├── docker-compose.yml.backup2
+│       ├── test-debug.Dockerfile
+│       ├── test-no-lock.Dockerfile
+│       ├── test-npm-install.Dockerfile
+│       ├── test-npm-omit.Dockerfile
+│       └── test-npm.Dockerfile
+├── analyze_mongodb_strategy.sh
+├── backend
+│   ├── services
+│   │   ├── analytics-service
+│   │   ├── api-gateway
+│   │   ├── auth-service
+│   │   ├── blockchain-indexer
+│   │   ├── blockchain-service
+│   │   ├── compliance-service
+│   │   ├── event-service
+│   │   ├── file-service
+│   │   ├── integration-service
+│   │   ├── marketplace-service
+│   │   ├── minting-service
+│   │   ├── monitoring-service
+│   │   ├── notification-service
+│   │   ├── order-service
+│   │   ├── payment-service
+│   │   ├── queue-service
+│   │   ├── scanning-service
+│   │   ├── search-service
+│   │   ├── ticket-service
+│   │   ├── transfer-service
+│   │   └── venue-service
+│   └── shared
+│       ├── config
+│       ├── database
+│       ├── idl
+│       ├── inter-service-cache.ts
+│       ├── jest.config.base.js
+│       ├── jest.config.js
+│       ├── messaging
+│       ├── middleware
+│       ├── package-lock.json
+│       ├── package.json
+│       ├── providers
+│       ├── search-indexer-helper.d.ts
+│       ├── security
+│       ├── src
+│       ├── templates
+│       ├── testing
+│       ├── tests
+│       ├── tsconfig.json
+│       ├── types
+│       ├── utils
+│       └── validators
+├── database
+│   ├── MIGRATION_INVENTORY.md
+│   ├── backups
+│   │   ├── compliance_settings_backup.sql
+│   │   ├── current_actual_schema.sql
+│   │   ├── deployments
+│   │   └── init_final_2024-09-07.sql
+│   ├── elasticsearch
+│   │   └── mappings
+│   ├── influxdb
+│   │   └── buckets
+│   ├── mongodb
+│   │   ├── collections
+│   │   └── test-data
+│   ├── postgresql
+│   │   ├── BASELINE_CURRENT_20251015.sql
+│   │   ├── FULL_BACKUP_BEFORE_REBUILD.sql
+│   │   ├── SECURITY_CHECKLIST.md
+│   │   ├── apply_security_enhancements.sql
+│   │   ├── certs
+│   │   ├── config
+│   │   ├── functions
+│   │   ├── indexes
+│   │   ├── migrations
+│   │   ├── partitions
+│   │   ├── seeds
+│   │   ├── triggers
+│   │   ├── validate_security.sql
+│   │   ├── validations
+│   │   └── views
+│   ├── redis
+│   │   ├── configurations
+│   │   ├── data-structures
+│   │   ├── lua-scripts
+│   │   └── validation
+│   └── scripts
+│       ├── check-database-status.sql
+│       ├── create-migration.sh
+│       ├── reset-database.sh
+│       └── run-migrations.sh
+├── docker-compose.yml
+├── docker-startup.sh
+├── docker-test.sh
+├── docs
+│   ├── api
+│   │   └── README.md
+│   ├── architecture
+│   │   └── README.md
+│   ├── database
+│   │   └── README.md
+│   ├── deployment
+│   │   └── README.md
+│   └── development
+│       └── README.md
+├── ecosystem.config.js
+├── examples
+│   └── sdk-usage
+│       └── basic-example.ts
+├── fix-all-db-ports.sh
+├── infrastructure
+│   ├── monitoring
+│   │   ├── alerts
+│   │   ├── alerts.yml
+│   │   ├── grafana
+│   │   ├── prometheus
+│   │   ├── prometheus-complete.yml
+│   │   └── prometheus.yml
+│   ├── pgbouncer
+│   │   ├── pgbouncer.ini
+│   │   └── userlist.txt
+│   └── redis
+│       ├── data
+│       ├── logs
+│       └── redis.conf
+├── investigate_mongodb.sh
+├── operations
+│   ├── deployment-info.md
+│   ├── launch-checklist.md
+│   ├── load-tests
+│   │   ├── final-summary.sh
+│   │   └── load-test.sh
+│   ├── scripts
+│   │   ├── deploy.sh
+│   │   ├── health.sh
+│   │   ├── monitor.sh
+│   │   └── smoke.sh
+│   └── secrets-rotation-runbook.md
+├── packages
+│   ├── sdk-javascript
+│   ├── sdk-react
+│   │   └── src
+│   └── sdk-typescript
+│       ├── openapitools.json
+│       ├── package-lock.json
+│       ├── package.json
+│       ├── src
+│       ├── test-sdk.js
+│       └── tsconfig.json
+├── project_structure.txt
+├── run-all-migrations.sh
+├── sample_schemas.sh
+├── smart-contracts
+│   ├── Anchor.toml
+│   ├── Cargo.lock
+│   ├── Cargo.toml
+│   ├── deployed-idl.json
+│   ├── programs
+│   │   ├── SECURITY_AUDIT.md
+│   │   ├── marketplace
+│   │   └── tickettoken
+│   ├── scripts
+│   │   └── create-merkle-tree.js
+│   └── target
+│       ├── deploy
+│       ├── idl
+│       ├── release
+│       ├── sbf-solana-solana
+│       └── types
+├── test-customer-insights.sh
+├── tools
+│   ├── check-deps.js
+│   ├── check-env.js
+│   └── check-ports.js
+├── tsconfig.base.json
+└── validate_fixes.sh
+
+116 directories, 85 files

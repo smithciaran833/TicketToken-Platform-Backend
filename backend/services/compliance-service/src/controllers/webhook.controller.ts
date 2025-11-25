@@ -1,27 +1,35 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
 import { db } from '../services/database.service';
+import { logger } from '../utils/logger';
 import crypto from 'crypto';
 
 export class WebhookController {
   // Plaid webhook for bank verification
-  static async handlePlaidWebhook(req: Request, res: Response) {
+  // NOTE: External webhooks don't include tenant_id in request
+  // Tenant must be inferred from item_id or other identifiers
+  async handlePlaidWebhook(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { webhook_type, webhook_code, item_id } = req.body;
-      console.log(`🏦 Plaid webhook: ${webhook_type} - ${webhook_code}`);
-      
-      // Log webhook
+      const { webhook_type, webhook_code, item_id } = request.body as any;
+      logger.info(`🏦 Plaid webhook: ${webhook_type} - ${webhook_code}, item_id: ${item_id}`);
+
+      // TODO: Look up tenant_id from item_id before logging
+      // const tenantLookup = await db.query('SELECT tenant_id FROM bank_verifications WHERE plaid_item_id = $1', [item_id]);
+      // const tenantId = tenantLookup.rows[0]?.tenant_id;
+
+      // Log webhook (tenant_id should be added once looked up)
       await db.query(
         `INSERT INTO webhook_logs (source, type, payload, created_at)
          VALUES ('plaid', $1, $2, NOW())`,
-        [webhook_type, JSON.stringify(req.body)]
+        [webhook_type, JSON.stringify(request.body)]
       );
-      
+
       // Handle different webhook types
       switch (webhook_type) {
         case 'AUTH':
           if (webhook_code === 'VERIFICATION_EXPIRED') {
             // Mark bank verification as expired
+            // TODO: Add tenant_id check to WHERE clause for security
             await db.query(
               `UPDATE bank_verifications
                SET verified = false
@@ -30,63 +38,72 @@ export class WebhookController {
             );
           }
           break;
-          
+
         case 'ITEM':
           if (webhook_code === 'ERROR') {
-            console.error('Plaid item error:', req.body.error);
+            logger.error('Plaid item error:', (request.body as any).error);
           }
           break;
       }
-      
-      return res.json({ received: true });
+
+      return reply.send({ received: true });
     } catch (error: any) {
-      console.error('Plaid webhook error:', error);
-      return res.status(500).json({ error: error.message });
+      logger.error('Plaid webhook error:', error);
+      return reply.code(500).send({ error: error.message });
     }
   }
 
   // Stripe webhook for payment processing
-  static async handleStripeWebhook(req: Request, res: Response) {
+  // NOTE: External webhooks don't include tenant_id in request
+  // Tenant must be inferred from payment/customer identifiers
+  async handleStripeWebhook(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const sig = req.headers['stripe-signature'] as string;
+      const sig = request.headers['stripe-signature'] as string;
       const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
-      
+
       if (!webhookSecret) {
-        console.log('💳 [MOCK] Stripe webhook received');
-        return res.json({ received: true });
+        logger.info('💳 [MOCK] Stripe webhook received');
+        return reply.send({ received: true });
       }
-      
+
       // Verify webhook signature
-      const payload = req.body;
+      const payload = request.body;
       const payloadString = JSON.stringify(payload);
-      const header = sig;
-      
+
       // In production: Use Stripe SDK to verify
       // const event = stripe.webhooks.constructEvent(payloadString, header, webhookSecret);
-      
-      // Log webhook
+
+      // TODO: Extract customer/account ID and look up tenant_id before logging
+      // const tenantId = await lookupTenantFromStripeEvent(payload);
+
+      // Log webhook (tenant_id should be added once looked up)
       await db.query(
         `INSERT INTO webhook_logs (source, type, payload, created_at)
          VALUES ('stripe', $1, $2, NOW())`,
         ['payment', payloadString]
       );
-      
-      return res.json({ received: true });
+
+      logger.info('Stripe webhook processed successfully');
+
+      return reply.send({ received: true });
     } catch (error: any) {
-      console.error('Stripe webhook error:', error);
-      return res.status(400).json({ error: error.message });
+      logger.error('Stripe webhook error:', error);
+      return reply.code(400).send({ error: error.message });
     }
   }
 
   // SendGrid webhook for email events
-  static async handleSendGridWebhook(req: Request, res: Response) {
+  // NOTE: External webhooks don't include tenant_id in request
+  // Tenant must be inferred from email/notification identifiers
+  async handleSendGridWebhook(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const events = req.body; // Array of events
-      
+      const events = request.body as any[]; // Array of events
+
       for (const event of events) {
-        console.log(`📧 SendGrid event: ${event.event} for ${event.email}`);
-        
-        // Update notification log - fixed SQL
+        logger.info(`📧 SendGrid event: ${event.event} for ${event.email}`);
+
+        // Update notification log
+        // TODO: Add tenant_id to WHERE clause for security once tenant is looked up
         if (event.event === 'delivered' || event.event === 'bounce') {
           await db.query(
             `UPDATE notification_log
@@ -101,11 +118,11 @@ export class WebhookController {
           );
         }
       }
-      
-      return res.json({ received: true });
+
+      return reply.send({ received: true });
     } catch (error: any) {
-      console.error('SendGrid webhook error:', error);
-      return res.status(500).json({ error: error.message });
+      logger.error('SendGrid webhook error:', error);
+      return reply.code(500).send({ error: error.message });
     }
   }
 }

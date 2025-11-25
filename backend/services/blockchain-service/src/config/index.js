@@ -1,30 +1,34 @@
-require('dotenv').config();
-
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
 const config = {
-    database: {
-        host: process.env.DB_HOST || 'postgres',
-        port: parseInt(process.env.DB_PORT) || 5432,
-        database: process.env.DB_NAME || 'tickettoken_db',
-        user: process.env.DB_USER || 'svc_blockchain_service',
-        password: process.env.DB_PASSWORD,
-        max: 20,
-        idleTimeoutMillis: 30000,
-        connectionTimeoutMillis: 2000,
-    },
     solana: {
-        network: process.env.SOLANA_NETWORK || 'devnet',
         rpcUrl: process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com',
+        wsUrl: process.env.SOLANA_WS_URL,
         commitment: process.env.SOLANA_COMMITMENT || 'confirmed',
-        programId: process.env.PROGRAM_ID
+        network: process.env.SOLANA_NETWORK || 'devnet',
+        programId: process.env.SOLANA_PROGRAM_ID
     },
-    fees: {
-        rentExemption: parseFloat(process.env.RENT_EXEMPTION_FEE) || 0.00203928,
-        transactionFee: parseFloat(process.env.TRANSACTION_FEE) || 0.000005,
-        priorityFee: parseFloat(process.env.PRIORITY_FEE) || 0.0001,
+    database: {
+        host: process.env.DB_HOST || 'localhost',
+        port: parseInt(process.env.DB_PORT || '5432'),
+        database: process.env.DB_NAME || 'tickettoken',
+        user: process.env.DB_USER || 'postgres',
+        password: process.env.DB_PASSWORD || 'postgres',
+        max: parseInt(process.env.DB_POOL_MAX || '20'),
+        idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '30000'),
+        connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '2000')
+    },
+    redis: {
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379'),
+        password: process.env.REDIS_PASSWORD,
+        db: parseInt(process.env.REDIS_DB || '0')
+    },
+    service: {
+        name: process.env.SERVICE_NAME || 'blockchain-service',
+        port: parseInt(process.env.PORT || '3015'),
+        env: process.env.NODE_ENV || 'development'
     }
 };
-
-module.exports = config;
-
-// Add WebSocket URL for event listeners
-config.solana.wsUrl = config.solana.rpcUrl.replace('https', 'wss').replace('http', 'ws');
+exports.default = config;
+//# sourceMappingURL=index.js.map

@@ -271,10 +271,7 @@
           {
             "name": "name",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
@@ -308,10 +305,7 @@
           {
             "name": "metadataUri",
             "type": {
-              "array": [
-                "u8",
-                64
-              ]
+              "array": ["u8", 64]
             }
           },
           {
@@ -321,10 +315,7 @@
           {
             "name": "description",
             "type": {
-              "array": [
-                "u8",
-                200
-              ]
+              "array": ["u8", 200]
             }
           },
           {
@@ -398,10 +389,7 @@
           {
             "name": "venueId",
             "type": {
-              "array": [
-                "u8",
-                32
-              ]
+              "array": ["u8", 32]
             }
           },
           {
@@ -411,19 +399,13 @@
           {
             "name": "name",
             "type": {
-              "array": [
-                "u8",
-                64
-              ]
+              "array": ["u8", 64]
             }
           },
           {
             "name": "metadataUri",
             "type": {
-              "array": [
-                "u8",
-                64
-              ]
+              "array": ["u8", 64]
             }
           },
           {
@@ -487,28 +469,19 @@
           {
             "name": "section",
             "type": {
-              "array": [
-                "u8",
-                20
-              ]
+              "array": ["u8", 20]
             }
           },
           {
             "name": "row",
             "type": {
-              "array": [
-                "u8",
-                10
-              ]
+              "array": ["u8", 10]
             }
           },
           {
             "name": "seat",
             "type": {
-              "array": [
-                "u8",
-                10
-              ]
+              "array": ["u8", 10]
             }
           },
           {
@@ -552,9 +525,7 @@
     },
     {
       "name": "TreeConfig",
-      "docs": [
-        "Optimal tree configuration based on research"
-      ],
+      "docs": ["Optimal tree configuration based on research"],
       "type": {
         "kind": "struct",
         "fields": [

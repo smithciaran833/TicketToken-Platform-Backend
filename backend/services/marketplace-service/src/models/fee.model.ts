@@ -1,6 +1,6 @@
 import { db } from '../config/database';
 import { v4 as uuidv4 } from 'uuid';
-import { percentOfCents } from '@tickettoken/shared/utils/money';
+import { percentOfCents } from '@tickettoken/shared';
 
 export interface PlatformFee {
   id: string;

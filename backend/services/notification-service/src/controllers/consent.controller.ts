@@ -1,20 +1,22 @@
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { complianceService } from '../services/compliance.service';
 import { logger } from '../config/logger';
-import { validationResult } from 'express-validator';
+import { NotificationChannel, NotificationType } from '../types/notification.types';
 
 export class ConsentController {
-  async grant(req: Request, res: Response): Promise<void> {
+  async grant(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        res.status(400).json({ errors: errors.array() });
-        return;
-      }
+      const body = request.body as {
+        customerId: string;
+        channel: NotificationChannel;
+        type: NotificationType;
+        source: string;
+        venueId?: string;
+      };
 
-      const { customerId, channel, type, source, venueId } = req.body;
-      const ipAddress = req.ip;
-      const userAgent = req.get('user-agent');
+      const { customerId, channel, type, source, venueId } = body;
+      const ipAddress = request.ip;
+      const userAgent = request.headers['user-agent'];
 
       await complianceService.recordConsent(
         customerId,
@@ -26,28 +28,29 @@ export class ConsentController {
         userAgent
       );
 
-      res.status(201).json({
+      reply.status(201).send({
         success: true,
         message: 'Consent recorded successfully',
       });
     } catch (error: any) {
       logger.error('Failed to record consent', error);
-      res.status(500).json({
+      reply.status(500).send({
         success: false,
         error: error.message,
       });
     }
   }
 
-  async revoke(req: Request, res: Response): Promise<void> {
+  async revoke(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const errors = validationResult(req);
-      if (!errors.isEmpty()) {
-        res.status(400).json({ errors: errors.array() });
-        return;
-      }
+      const body = request.body as {
+        customerId: string;
+        channel: NotificationChannel;
+        type?: NotificationType;
+        venueId?: string;
+      };
 
-      const { customerId, channel, type, venueId } = req.body;
+      const { customerId, channel, type, venueId } = body;
 
       await complianceService.revokeConsent(
         customerId,
@@ -56,33 +59,40 @@ export class ConsentController {
         venueId
       );
 
-      res.status(200).json({
+      reply.status(200).send({
         success: true,
         message: 'Consent revoked successfully',
       });
     } catch (error: any) {
       logger.error('Failed to revoke consent', error);
-      res.status(500).json({
+      reply.status(500).send({
         success: false,
         error: error.message,
       });
     }
   }
 
-  async check(req: Request, res: Response): Promise<void> {
+  async check(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { customerId } = req.params;
-      const { channel, type, venueId } = req.query;
+      const params = request.params as { customerId: string };
+      const query = request.query as {
+        channel?: NotificationChannel;
+        type?: NotificationType;
+        venueId?: string;
+      };
+
+      const { customerId } = params;
+      const { channel, type, venueId } = query;
 
       const consentModel = require('../models/consent.model').consentModel;
       const hasConsent = await consentModel.hasConsent(
         customerId,
-        channel as any,
-        type as any,
+        channel,
+        type,
         venueId as string
       );
 
-      res.status(200).json({
+      reply.status(200).send({
         success: true,
         data: {
           hasConsent,
@@ -94,7 +104,7 @@ export class ConsentController {
       });
     } catch (error: any) {
       logger.error('Failed to check consent', error);
-      res.status(500).json({
+      reply.status(500).send({
         success: false,
         error: error.message,
       });

@@ -1,69 +1,127 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface DashboardParams {
+  dashboardId: string;
+}
+
+interface CreateDashboardBody {
+  venueId: string;
+  name: string;
+  description?: string;
+  type: 'overview' | 'sales' | 'customer' | 'operations' | 'custom';
+  isDefault?: boolean;
+  isPublic?: boolean;
+  config?: Record<string, any>;
+}
+
+interface UpdateDashboardBody {
+  name?: string;
+  description?: string;
+  isPublic?: boolean;
+  config?: Record<string, any>;
+}
+
+interface CloneDashboardBody {
+  name: string;
+  venueId?: string;
+}
+
+interface ShareDashboardBody {
+  userIds: string[];
+  permissions: ('view' | 'edit')[];
+}
+
 class DashboardController extends BaseController {
-  getDashboards = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getDashboards = async (
+    request: FastifyRequest<{ Params: VenueParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { dashboards: [] });
+      return this.success(reply, { dashboards: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getDashboard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getDashboard = async (
+    request: FastifyRequest<{ Params: DashboardParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { dashboard: {} });
+      return this.success(reply, { dashboard: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  createDashboard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  createDashboard = async (
+    request: FastifyRequest<{ Body: CreateDashboardBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { dashboard: {} }, 201);
+      return this.success(reply, { dashboard: {} }, 201);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  updateDashboard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  updateDashboard = async (
+    request: FastifyRequest<{ Params: DashboardParams; Body: UpdateDashboardBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { dashboard: {} });
+      return this.success(reply, { dashboard: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  deleteDashboard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  deleteDashboard = async (
+    request: FastifyRequest<{ Params: DashboardParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Dashboard deleted' });
+      return this.success(reply, { message: 'Dashboard deleted' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  cloneDashboard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  cloneDashboard = async (
+    request: FastifyRequest<{ Params: DashboardParams; Body: CloneDashboardBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { dashboard: {} }, 201);
+      return this.success(reply, { dashboard: {} }, 201);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  shareDashboard = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  shareDashboard = async (
+    request: FastifyRequest<{ Params: DashboardParams; Body: ShareDashboardBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Dashboard shared' });
+      return this.success(reply, { message: 'Dashboard shared' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getDashboardPermissions = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getDashboardPermissions = async (
+    request: FastifyRequest<{ Params: DashboardParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { permissions: [] });
+      return this.success(reply, { permissions: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

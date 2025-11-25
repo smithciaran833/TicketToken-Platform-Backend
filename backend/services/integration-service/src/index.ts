@@ -9,7 +9,8 @@ import { initializeQueues } from './config/queue';
 import { SyncEngineService } from './services/sync-engine.service';
 import { MonitoringService } from './services/monitoring.service';
 
-const PORT = process.env.PORT || 3007;
+const PORT = parseInt(process.env.PORT || '3015', 10);
+const HOST = process.env.HOST || '0.0.0.0';
 
 async function startServer() {
   try {
@@ -36,13 +37,11 @@ async function startServer() {
     logger.info('Health monitoring started');
 
     // Create and start server
-    const app = createServer();
-    
-    app.listen(PORT, () => {
-      logger.info(`${process.env.SERVICE_NAME} is running on port ${PORT}`);
-      logger.info(`Environment: ${process.env.NODE_ENV}`);
-    });
+    const app = await createServer();
+    await app.listen({ port: PORT, host: HOST });
 
+    logger.info(`${process.env.SERVICE_NAME} is running on port ${PORT}`);
+    logger.info(`Environment: ${process.env.NODE_ENV}`);
   } catch (error) {
     logger.error('Failed to start server', error);
     process.exit(1);

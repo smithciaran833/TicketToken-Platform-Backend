@@ -1,75 +1,89 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
 import { documentService } from '../services/document.service';
-import multer from 'multer';
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({
-  storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // 10MB limit
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Invalid file type. Only PDF, JPG, and PNG are allowed.'));
-    }
-  }
-});
+import { logger } from '../utils/logger';
+import { requireTenantId } from '../middleware/tenant.middleware';
 
 export class DocumentController {
-  static uploadMiddleware = upload.single('document');
-
-  static async uploadDocument(req: Request, res: Response) {
+  async uploadDocument(request: FastifyRequest, reply: FastifyReply) {
     try {
-      if (!req.file) {
-        return res.status(400).json({
+      const tenantId = requireTenantId(request);
+      const data = await request.file();
+
+      if (!data) {
+        return reply.code(400).send({
           success: false,
           error: 'No file uploaded'
         });
       }
 
-      const { venueId, documentType } = req.body;
-      
+      // Validate file type
+      const allowedTypes = ['application/pdf', 'image/jpeg', 'image/png'];
+      if (!allowedTypes.includes(data.mimetype)) {
+        return reply.code(400).send({
+          success: false,
+          error: 'Invalid file type. Only PDF, JPG, and PNG are allowed.'
+        });
+      }
+
+      // Check file size (10MB limit)
+      const buffer = await data.toBuffer();
+      if (buffer.length > 10 * 1024 * 1024) {
+        return reply.code(400).send({
+          success: false,
+          error: 'File size exceeds 10MB limit'
+        });
+      }
+
+      const fields = data.fields as any;
+      const venueId = (fields.venueId as any)?.value;
+      const documentType = (fields.documentType as any)?.value;
+
       const documentId = await documentService.storeDocument(
         venueId,
         documentType,
-        req.file.buffer,
-        req.file.originalname
+        buffer,
+        data.filename,
+        tenantId
       );
 
-      return res.json({
+      logger.info(`Document uploaded for tenant ${tenantId}, venue ${venueId}, type: ${documentType}`);
+
+      return reply.send({
         success: true,
         message: 'Document uploaded successfully',
         data: {
           documentId,
           venueId,
           documentType,
-          filename: req.file.originalname
+          filename: data.filename
         }
       });
     } catch (error: any) {
-      return res.status(500).json({
+      logger.error(`Error uploading document: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });
     }
   }
 
-  static async getDocument(req: Request, res: Response) {
+  async getDocument(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { documentId } = req.params;
-      const doc = await documentService.getDocument(documentId);
+      const tenantId = requireTenantId(request);
+      const { documentId } = request.params as any;
       
-      res.set({
-        'Content-Type': doc.contentType,
-        'Content-Disposition': `attachment; filename="${doc.filename}"`
-      });
+      const doc = await documentService.getDocument(documentId, tenantId);
+
+      logger.info(`Document retrieved for tenant ${tenantId}, documentId: ${documentId}`);
+
+      reply.header('Content-Type', doc.contentType);
+      reply.header('Content-Disposition', `attachment; filename="${doc.filename}"`);
       
-      return res.send(doc.buffer);
+      return reply.send(doc.buffer);
     } catch (error: any) {
-      return res.status(404).json({
+      logger.error(`Error retrieving document: ${error.message}`);
+      return reply.code(404).send({
         success: false,
         error: error.message
       });

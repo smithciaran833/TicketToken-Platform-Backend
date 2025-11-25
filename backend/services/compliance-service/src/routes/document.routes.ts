@@ -1,10 +1,10 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { DocumentController } from '../controllers/document.controller';
 
-const router = Router();
+export async function documentRoutes(fastify: FastifyInstance) {
+  const documentController = new DocumentController();
 
-// Document routes authenticated by default from index.ts
-router.post('/documents/upload', DocumentController.uploadDocument);
-router.get('/documents/:documentId', DocumentController.getDocument);
-
-export default router;
+  // Document routes authenticated by default from parent
+  fastify.post('/documents/upload', documentController.uploadDocument);
+  fastify.get('/documents/:documentId', documentController.getDocument);
+}

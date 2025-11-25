@@ -1,38 +1,35 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../utils/logger';
 
-export function errorHandler(
-  err: any,
-  req: Request,
-  res: Response,
-  _next: NextFunction  // Prefix with underscore for unused param
-): void {  // Explicitly return void
+export async function errorHandler(
+  error: FastifyError,
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
   logger.error('Error occurred:', {
-    error: err.message,
-    stack: err.stack,
-    path: req.path,
-    method: req.method
+    error: error.message,
+    stack: error.stack,
+    path: request.url,
+    method: request.method
   });
 
-  if (err.name === 'ValidationError') {
-    res.status(400).json({
+  if (error.name === 'ValidationError') {
+    return reply.code(400).send({
       success: false,
       error: 'Validation failed',
-      details: err.details
+      details: (error as any).details
     });
-    return;
   }
 
-  if (err.name === 'UnauthorizedError') {
-    res.status(401).json({
+  if (error.name === 'UnauthorizedError') {
+    return reply.code(401).send({
       success: false,
       error: 'Unauthorized'
     });
-    return;
   }
 
-  res.status(err.status || 500).json({
+  return reply.code(error.statusCode || 500).send({
     success: false,
-    error: err.message || 'Internal server error'
+    error: error.message || 'Internal server error'
   });
 }

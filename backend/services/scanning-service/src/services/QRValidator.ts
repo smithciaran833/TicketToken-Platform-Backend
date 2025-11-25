@@ -44,14 +44,22 @@ class QRValidator {
 
   constructor() {
     this.qrGenerator = new QRGenerator();
-    this.hmacSecret = process.env.HMAC_SECRET || 'default-secret-change-in-production';
+    
+    // SECURITY FIX: No default secret - fail fast if not configured
+    if (!process.env.HMAC_SECRET) {
+      throw new Error('FATAL: HMAC_SECRET environment variable is required for QR code security');
+    }
+    
+    this.hmacSecret = process.env.HMAC_SECRET;
     this.timeWindowSeconds = 30; // QR code valid for 30 seconds
   }
 
   /**
    * Validate QR token with HMAC and time window
+   * Phase 2.8: Added nonce validation to prevent replay attacks
    */
-  validateQRToken(ticketId: string, timestamp: string, providedHmac: string): TokenValidation {
+  async validateQRToken(ticketId: string, timestamp: string, nonce: string, providedHmac: string): Promise<TokenValidation> {
+    const redis = getRedis();
     const now = Date.now();
     const tokenAge = now - parseInt(timestamp);
 
@@ -60,16 +68,33 @@ class QRValidator {
       return { valid: false, reason: 'QR_EXPIRED' };
     }
 
-    // Verify HMAC
-    const data = `${ticketId}:${timestamp}`;
+    // Phase 2.8: Check if nonce has already been used (replay attack prevention)
+    const nonceKey = `qr-nonce:${nonce}`;
+    const alreadyUsed = await redis.get(nonceKey);
+    
+    if (alreadyUsed) {
+      logger.warn('Replay attack detected - nonce already used', { nonce, ticketId });
+      return { valid: false, reason: 'QR_ALREADY_USED' };
+    }
+
+    // Verify HMAC using timing-safe comparison
+    const data = `${ticketId}:${timestamp}:${nonce}`;
     const expectedHmac = crypto
       .createHmac('sha256', this.hmacSecret)
       .update(data)
       .digest('hex');
 
-    if (providedHmac !== expectedHmac) {
+    // SECURITY FIX: Use constant-time comparison to prevent timing attacks
+    const expectedBuffer = Buffer.from(expectedHmac, 'hex');
+    const providedBuffer = Buffer.from(providedHmac, 'hex');
+    
+    if (expectedBuffer.length !== providedBuffer.length || 
+        !crypto.timingSafeEqual(expectedBuffer, providedBuffer)) {
       return { valid: false, reason: 'INVALID_QR' };
     }
+
+    // Mark nonce as used (expire after QR expiration window + buffer)
+    await redis.setex(nonceKey, 60, '1');
 
     return { valid: true };
   }
@@ -195,12 +220,14 @@ class QRValidator {
 
   /**
    * Main validation method with full policy enforcement
+   * SECURITY: Enforces venue isolation - staff can only scan tickets for their assigned venue
    */
   async validateScan(
     qrData: string | any,
     deviceId: string,
     location: string | null = null,
-    staffUserId: string | null = null
+    staffUserId: string | null = null,
+    authenticatedUser?: { userId: string; tenantId: string; venueId?: string; role: string }
   ): Promise<ScanResult> {
     const pool = getPool();
     const redis = getRedis();
@@ -210,23 +237,24 @@ class QRValidator {
       await client.query('BEGIN');
 
       // Parse QR data
-      let ticketId: string, timestamp: string, hmac: string;
+      let ticketId: string, timestamp: string, nonce: string, hmac: string;
 
       if (typeof qrData === 'string') {
-        // Format: ticketId:timestamp:hmac
+        // Format: ticketId:timestamp:nonce:hmac (Phase 2.8: Added nonce)
         const parts = qrData.split(':');
-        if (parts.length !== 3) {
+        if (parts.length !== 4) {
           throw new Error('Invalid QR format');
         }
-        [ticketId, timestamp, hmac] = parts;
+        [ticketId, timestamp, nonce, hmac] = parts;
       } else {
         ticketId = qrData.ticketId;
         timestamp = qrData.timestamp;
+        nonce = qrData.nonce;
         hmac = qrData.hmac;
       }
 
-      // Validate QR token
-      const tokenValidation = this.validateQRToken(ticketId, timestamp, hmac);
+      // Validate QR token (Phase 2.8: Now includes nonce validation)
+      const tokenValidation = await this.validateQRToken(ticketId, timestamp, nonce, hmac);
       if (!tokenValidation.valid) {
         await client.query('COMMIT');
         return {
@@ -257,6 +285,51 @@ class QRValidator {
 
       const device = deviceResult.rows[0];
 
+      // SECURITY FIX (Phase 1.3): Enforce venue staff isolation
+      // Staff can only scan tickets using devices in their assigned venue
+      if (authenticatedUser && authenticatedUser.venueId) {
+        // Check if device belongs to staff's venue
+        if (device.venue_id !== authenticatedUser.venueId) {
+          logger.warn('Venue isolation violation - staff attempted to use device from different venue', {
+            staffUserId: authenticatedUser.userId,
+            staffVenueId: authenticatedUser.venueId,
+            deviceVenueId: device.venue_id,
+            deviceId: deviceId
+          });
+
+          await this.logScan(client, ticketId, device.id, 'DENY', 'VENUE_MISMATCH');
+          await client.query('COMMIT');
+
+          return {
+            valid: false,
+            result: 'DENY',
+            reason: 'VENUE_MISMATCH',
+            message: 'You can only scan tickets at your assigned venue'
+          };
+        }
+      }
+
+      // SECURITY FIX (Phase 1.3): Enforce tenant isolation
+      // All operations must be scoped to the authenticated user's tenant
+      if (authenticatedUser && device.tenant_id !== authenticatedUser.tenantId) {
+        logger.error('CRITICAL: Tenant isolation violation detected', {
+          staffUserId: authenticatedUser.userId,
+          staffTenantId: authenticatedUser.tenantId,
+          deviceTenantId: device.tenant_id,
+          deviceId: deviceId
+        });
+
+        await this.logScan(client, ticketId, device.id, 'DENY', 'TENANT_MISMATCH');
+        await client.query('COMMIT');
+
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'UNAUTHORIZED',
+          message: 'Authorization error'
+        };
+      }
+
       // Get ticket details
       const ticketResult = await client.query(`
         SELECT
@@ -280,6 +353,143 @@ class QRValidator {
       }
 
       const ticket = ticketResult.rows[0];
+
+      // SECURITY FIX (Phase 1.3): Verify ticket belongs to same tenant
+      if (authenticatedUser && ticket.tenant_id !== authenticatedUser.tenantId) {
+        logger.error('CRITICAL: Cross-tenant ticket scan attempt', {
+          staffUserId: authenticatedUser.userId,
+          staffTenantId: authenticatedUser.tenantId,
+          ticketTenantId: ticket.tenant_id,
+          ticketId: ticketId
+        });
+
+        await this.logScan(client, ticketId, device.id, 'DENY', 'TENANT_MISMATCH');
+        await client.query('COMMIT');
+
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'TICKET_NOT_FOUND',
+          message: 'Ticket not found' // Don't reveal tenant mismatch to attacker
+        };
+      }
+
+      // SECURITY FIX (Phase 1.3): Verify event belongs to device's venue (optional based on policy)
+      if (device.venue_id && ticket.venue_id && device.venue_id !== ticket.venue_id) {
+        logger.warn('Venue mismatch - ticket for different venue', {
+          ticketId: ticketId,
+          ticketVenueId: ticket.venue_id,
+          deviceVenueId: device.venue_id,
+          eventId: ticket.event_id
+        });
+
+        await this.logScan(client, ticketId, device.id, 'DENY', 'WRONG_VENUE');
+        await client.query('COMMIT');
+
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'WRONG_VENUE',
+          message: 'This ticket is for a different venue'
+        };
+      }
+
+      // PHASE 5.1: Check ticket expiration
+      const now = new Date();
+      
+      // Check if event has started
+      if (ticket.event_start_time && now < new Date(ticket.event_start_time)) {
+        await this.logScan(client, ticketId, device.id, 'DENY', 'EVENT_NOT_STARTED');
+        await client.query('COMMIT');
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'EVENT_NOT_STARTED',
+          message: `Event starts at ${new Date(ticket.event_start_time).toLocaleString()}`
+        };
+      }
+
+      // Check if event has ended
+      if (ticket.event_end_time && now > new Date(ticket.event_end_time)) {
+        await this.logScan(client, ticketId, device.id, 'DENY', 'EVENT_ENDED');
+        await client.query('COMMIT');
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'EVENT_ENDED',
+          message: 'Event has ended'
+        };
+      }
+
+      // Check ticket validity period
+      if (ticket.valid_from && now < new Date(ticket.valid_from)) {
+        await this.logScan(client, ticketId, device.id, 'DENY', 'TICKET_NOT_YET_VALID');
+        await client.query('COMMIT');
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'TICKET_NOT_YET_VALID',
+          message: `Ticket valid from ${new Date(ticket.valid_from).toLocaleString()}`
+        };
+      }
+
+      if (ticket.valid_until && now > new Date(ticket.valid_until)) {
+        await this.logScan(client, ticketId, device.id, 'DENY', 'TICKET_EXPIRED');
+        await client.query('COMMIT');
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'TICKET_EXPIRED',
+          message: 'Ticket has expired'
+        };
+      }
+
+      // PHASE 5.2: Check for refunded tickets
+      if (ticket.status === 'REFUNDED') {
+        await this.logScan(client, ticketId, device.id, 'DENY', 'TICKET_REFUNDED');
+        await client.query('COMMIT');
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'TICKET_REFUNDED',
+          message: 'This ticket has been refunded and is no longer valid'
+        };
+      }
+
+      if (ticket.status === 'CANCELLED') {
+        await this.logScan(client, ticketId, device.id, 'DENY', 'TICKET_CANCELLED');
+        await client.query('COMMIT');
+        return {
+          valid: false,
+          result: 'DENY',
+          reason: 'TICKET_CANCELLED',
+          message: 'This ticket has been cancelled'
+        };
+      }
+
+      // PHASE 5.3: Handle transferred tickets
+      if (ticket.status === 'TRANSFERRED') {
+        // Get the new ticket ID from transfer record
+        const transferResult = await client.query(`
+          SELECT new_ticket_id 
+          FROM ticket_transfers 
+          WHERE old_ticket_id = $1 
+          ORDER BY transferred_at DESC 
+          LIMIT 1
+        `, [ticketId]);
+
+        if (transferResult.rows.length > 0) {
+          const newTicketId = transferResult.rows[0].new_ticket_id;
+          await this.logScan(client, ticketId, device.id, 'DENY', 'TICKET_TRANSFERRED');
+          await client.query('COMMIT');
+          return {
+            valid: false,
+            result: 'DENY',
+            reason: 'TICKET_TRANSFERRED',
+            message: `This ticket has been transferred. New ticket ID: ${newTicketId}`
+          };
+        }
+      }
 
       // Check ticket status
       if (ticket.status !== 'SOLD' && ticket.status !== 'MINTED') {

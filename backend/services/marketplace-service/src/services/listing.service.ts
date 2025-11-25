@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { withLock, LockKeys } from '@tickettoken/shared/utils/distributed-lock';
+import { withLock, LockKeys, publishSearchSync } from '@tickettoken/shared';
 import { listingModel } from '../models/listing.model';
 
 class ListingServiceClass {
@@ -50,6 +50,12 @@ class ListingServiceClass {
         markupPercent: `${markupPercent}%`
       });
 
+      // SEARCH SYNC
+      await publishSearchSync('listing.updated', {
+        id: listingId,
+        changes: { price: newPrice }
+      });
+
       return updated;
     });
   }
@@ -68,7 +74,7 @@ class ListingServiceClass {
       }
 
       const existingListing = await listingModel.findByTicketId(ticketId);
-      
+
       if (existingListing && existingListing.status === 'active') {
         throw new Error('Ticket already has an active listing');
       }
@@ -93,6 +99,16 @@ class ListingServiceClass {
         priceCents: ticketValueCents
       });
 
+      // SEARCH SYNC
+      await publishSearchSync('listing.created', {
+        id: listing.id,
+        ticketId: listing.ticketId,
+        eventId: listing.eventId,
+        venueId: listing.venueId,
+        price: listing.price,
+        status: 'active',
+      });
+
       return listing;
     });
   }
@@ -106,7 +122,7 @@ class ListingServiceClass {
 
     return await withLock(lockKey, 5000, async () => {
       const listing = await listingModel.findById(listingId);
-      
+
       if (!listing) {
         throw new Error(`Listing not found: ${listingId}`);
       }
@@ -126,6 +142,11 @@ class ListingServiceClass {
       this.log.info('Listing cancelled with distributed lock', {
         listingId,
         sellerId: userId
+      });
+
+      // SEARCH SYNC
+      await publishSearchSync('listing.deleted', {
+        id: listingId,
       });
 
       return updated;
@@ -202,6 +223,11 @@ class ListingServiceClass {
         sellerId: listing.sellerId,
         buyerId: buyerId || 'unknown',
         priceCents: listing.price
+      });
+
+      // SEARCH SYNC
+      await publishSearchSync('listing.deleted', {
+        id: listingId,
       });
 
       return updated;

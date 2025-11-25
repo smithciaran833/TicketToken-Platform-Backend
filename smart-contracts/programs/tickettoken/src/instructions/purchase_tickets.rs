@@ -127,6 +127,7 @@ pub fn purchase_tickets(ctx: Context<PurchaseTickets>, args: MintTicketArgs) -> 
     let event_key = ctx.accounts.event.key();
     let price_each = event.ticket_price;
     let venue_key = ctx.accounts.venue.key();
+    let platform_treasury_key = ctx.accounts.platform_treasury.key();
 
     // Update event stats
     let event = &mut ctx.accounts.event;
@@ -146,9 +147,12 @@ pub fn purchase_tickets(ctx: Context<PurchaseTickets>, args: MintTicketArgs) -> 
             &args.section,
             &args.row,
             &format!("{}", args.seat_start.checked_add(i as u32).ok_or(TicketTokenError::MathOverflow)?),
+            platform_treasury_key,
         );
-        
+
         msg!("Would mint ticket #{} with metadata: {}", ticket_number, metadata.name);
+        msg!("Creators: Venue ({}): 50%, Platform ({}): 50%", venue_key, platform_treasury_key);
+        msg!("Royalty: 10% (1000 basis points)");
     }
 
     emit!(TicketsPurchased {

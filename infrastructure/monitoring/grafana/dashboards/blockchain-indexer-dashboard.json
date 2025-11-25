@@ -1,0 +1,278 @@
+{
+  "dashboard": {
+    "title": "Blockchain Indexer Monitoring",
+    "tags": ["blockchain-indexer", "solana", "nft"],
+    "timezone": "browser",
+    "schemaVersion": 27,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Indexer Health Status",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "blockchain_indexer_is_healthy",
+            "legendFormat": "Health Status"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "mappings": [
+              {"value": 1, "text": "Healthy", "color": "green"},
+              {"value": 0, "text": "Unhealthy", "color": "red"}
+            ],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": 0, "color": "red"},
+                {"value": 1, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Indexer Lag (Slots)",
+        "type": "graph",
+        "gridPos": {"x": 6, "y": 0, "w": 12, "h": 4},
+        "targets": [
+          {
+            "expr": "blockchain_indexer_lag_slots",
+            "legendFormat": "Lag (slots)"
+          }
+        ],
+        "yaxes": [
+          {"format": "short", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ],
+        "alert": {
+          "name": "High Indexer Lag",
+          "conditions": [
+            {
+              "evaluator": {"type": "gt", "params": [1000]},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]}
+            }
+          ],
+          "executionErrorState": "alerting",
+          "frequency": "1m",
+          "handler": 1,
+          "message": "Indexer is lagging behind by more than 1000 slots",
+          "noDataState": "no_data"
+        }
+      },
+      {
+        "id": 3,
+        "title": "Current Slot",
+        "type": "stat",
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "blockchain_indexer_current_slot",
+            "legendFormat": "Current Slot"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "short",
+            "color": {"mode": "thresholds"}
+          }
+        }
+      },
+      {
+        "id": 4,
+        "title": "Transactions Processed (Rate)",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(blockchain_indexer_transactions_processed_total[5m])",
+            "legendFormat": "{{instruction_type}} - {{status}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Transaction Processing Duration (p95)",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 4, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(blockchain_indexer_transaction_processing_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{instruction_type}} (p95)"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ]
+      },
+      {
+        "id": 6,
+        "title": "RPC Call Duration (p95)",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 10, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(blockchain_indexer_rpc_call_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{method}} (p95)"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ],
+        "alert": {
+          "name": "Slow RPC Calls",
+          "conditions": [
+            {
+              "evaluator": {"type": "gt", "params": [5]},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]}
+            }
+          ],
+          "message": "RPC calls are taking more than 5 seconds (p95)"
+        }
+      },
+      {
+        "id": 7,
+        "title": "Database Write Duration",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 10, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(blockchain_indexer_database_write_duration_seconds_bucket[5m]))",
+            "legendFormat": "{{database}} - {{operation}} (p95)"
+          }
+        ],
+        "yaxes": [
+          {"format": "s", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ]
+      },
+      {
+        "id": 8,
+        "title": "Error Rates",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 16, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(blockchain_indexer_rpc_errors_total[5m])",
+            "legendFormat": "RPC: {{error_type}}"
+          },
+          {
+            "expr": "rate(blockchain_indexer_database_errors_total[5m])",
+            "legendFormat": "DB: {{database}} - {{operation}}"
+          },
+          {
+            "expr": "rate(blockchain_indexer_processing_errors_total[5m])",
+            "legendFormat": "Processing: {{error_type}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ],
+        "alert": {
+          "name": "High Error Rate",
+          "conditions": [
+            {
+              "evaluator": {"type": "gt", "params": [1]},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]}
+            }
+          ],
+          "message": "Error rate is above 1 per second"
+        }
+      },
+      {
+        "id": 9,
+        "title": "MongoDB Operations",
+        "type": "graph",
+        "gridPos": {"x": 12, "y": 16, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(blockchain_indexer_mongodb_writes_total[5m])",
+            "legendFormat": "{{collection}} - {{status}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ]
+      },
+      {
+        "id": 10,
+        "title": "PostgreSQL Operations",
+        "type": "graph",
+        "gridPos": {"x": 0, "y": 22, "w": 12, "h": 6},
+        "targets": [
+          {
+            "expr": "rate(blockchain_indexer_postgresql_queries_total[5m])",
+            "legendFormat": "{{operation}} - {{status}}"
+          }
+        ],
+        "yaxes": [
+          {"format": "ops", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ]
+      },
+      {
+        "id": 11,
+        "title": "Service Uptime",
+        "type": "stat",
+        "gridPos": {"x": 12, "y": 22, "w": 6, "h": 6},
+        "targets": [
+          {
+            "expr": "blockchain_indexer_uptime_seconds",
+            "legendFormat": "Uptime"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "color": {"mode": "thresholds"}
+          }
+        }
+      },
+      {
+        "id": 12,
+        "title": "Memory Usage",
+        "type": "graph",
+        "gridPos": {"x": 18, "y": 22, "w": 6, "h": 6},
+        "targets": [
+          {
+            "expr": "blockchain_indexer_nodejs_heap_size_used_bytes",
+            "legendFormat": "Heap Used"
+          },
+          {
+            "expr": "blockchain_indexer_nodejs_heap_size_total_bytes",
+            "legendFormat": "Heap Total"
+          }
+        ],
+        "yaxes": [
+          {"format": "bytes", "logBase": 1},
+          {"format": "short", "logBase": 1}
+        ]
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {
+      "refresh_intervals": ["10s", "30s", "1m", "5m", "15m", "30m", "1h"]
+    }
+  }
+}

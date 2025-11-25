@@ -1,4 +1,4 @@
-import { db } from '../config/database';
+import { pool, db } from '../config/database';
 import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
 import Stripe from 'stripe';
@@ -17,7 +17,7 @@ export class WebhookProcessor extends EventEmitter {
     this.stripe = new Stripe(config.stripe.secretKey, {
       apiVersion: '2023-10-16'
     });
-    this.eventOrderingService = new EventOrderingService(db);
+    this.eventOrderingService = new EventOrderingService(pool);
   }
 
   async start() {
@@ -43,7 +43,7 @@ export class WebhookProcessor extends EventEmitter {
     try {
       // Get unprocessed webhooks ordered by timestamp
       const webhooks = await db('webhook_inbox')
-        .where('processed', false)
+        .whereNull('processed_at')
         .orderBy('created_at', 'asc')
         .limit(10);
 
@@ -122,8 +122,8 @@ export class WebhookProcessor extends EventEmitter {
       await db('webhook_inbox')
         .where('id', webhook.id)
         .update({
-          retry_count: db.raw('retry_count + 1'),
-          last_error: error.message
+          attempts: db.raw('attempts + 1'),
+          error: error.message
         });
     }
   }
@@ -132,7 +132,6 @@ export class WebhookProcessor extends EventEmitter {
     await trx('webhook_inbox')
       .where('id', webhookId)
       .update({
-        processed: true,
         processed_at: new Date()
       });
   }

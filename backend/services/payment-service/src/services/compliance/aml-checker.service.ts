@@ -1,5 +1,8 @@
 import { query } from '../../config/database';
 import { complianceConfig } from '../../config/compliance';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'AMLCheckerService' });
 
 export class AMLCheckerService {
   async checkTransaction(
@@ -306,7 +309,7 @@ export class AMLCheckerService {
     );
     
     // In production, notify compliance team
-    console.log(`SAR generated: ${sarId} for user ${userId}`);
+    log.info('SAR generated', { sarId, userId });
     
     return {
       sarId,

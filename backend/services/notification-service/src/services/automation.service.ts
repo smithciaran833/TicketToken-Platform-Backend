@@ -1,6 +1,6 @@
 import { db } from '../config/database';
 import { logger } from '../config/logger';
-import { notificationServiceV2 } from './notification.service.v2';
+import { notificationService } from './notification.service';
 import { v4 as uuidv4 } from 'uuid';
 import cron from 'node-cron';
 
@@ -164,7 +164,7 @@ export class AutomationService {
     const recipients = await this.getActionRecipients(action);
     
     for (const recipient of recipients) {
-      await notificationServiceV2.send({
+      await notificationService.send({
         venueId,
         recipientId: recipient.id,
         recipient,

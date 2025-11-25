@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { Resend } from 'resend';
 // import { db } from '../config/database';
 import { redis } from '../config/redis';
 import { env } from '../config/env';
@@ -10,6 +11,13 @@ interface EmailTemplate {
 }
 
 export class EmailService {
+  private resend: Resend;
+
+  constructor() {
+    // Initialize Resend - safe to use placeholder in dev mode since we bypass it
+    this.resend = new Resend(env.RESEND_API_KEY || 'key_placeholder_for_dev');
+  }
+
   async sendVerificationEmail(userId: string, email: string, firstName: string): Promise<void> {
     const token = crypto.randomBytes(32).toString('hex');
     // const expires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
@@ -111,8 +119,7 @@ Each code can only be used once. Keep them secure!`
   }
 
   private async sendEmail(to: string, template: EmailTemplate): Promise<void> {
-    // In production, integrate with SendGrid, AWS SES, etc.
-    // For now, log to console in development
+    // Development mode - log to console for testing
     if (env.NODE_ENV === 'development') {
       console.log('📧 Email would be sent:', {
         to,
@@ -122,14 +129,25 @@ Each code can only be used once. Keep them secure!`
       return;
     }
 
-    // TODO: Implement actual email sending
-    // Example with SendGrid:
-    // await sendgrid.send({
-    //   to,
-    //   from: 'noreply@tickettoken.com',
-    //   subject: template.subject,
-    //   html: template.html,
-    //   text: template.text
-    // });
+    // Production mode - send via Resend
+    try {
+      const { data, error } = await this.resend.emails.send({
+        from: env.EMAIL_FROM,
+        to: [to],
+        subject: template.subject,
+        html: template.html,
+        text: template.text,
+      });
+
+      if (error) {
+        console.error('Resend email error:', error);
+        throw new Error(`Failed to send email: ${error.message}`);
+      }
+
+      console.log('✅ Email sent successfully via Resend:', data?.id);
+    } catch (error) {
+      console.error('Failed to send email:', error);
+      throw new Error('Failed to send email. Please try again later.');
+    }
   }
 }

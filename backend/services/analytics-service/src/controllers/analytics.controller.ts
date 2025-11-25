@@ -1,82 +1,124 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { analyticsEngine } from '../analytics-engine/analytics-engine';
 import { getRedis } from '../config/redis';
 
-interface AuthenticatedRequest extends Request {
-  venue?: { id: string; name: string };
+interface DateRangeQuery {
+  startDate: string;
+  endDate: string;
+}
+
+interface ProjectionQuery {
+  days?: number;
+}
+
+interface SalesMetricsQuery extends DateRangeQuery {
+  granularity?: 'hour' | 'day' | 'week' | 'month';
+}
+
+interface TopEventsQuery extends DateRangeQuery {
+  limit?: number;
+}
+
+interface DashboardQuery {
+  period?: '24h' | '7d' | '30d' | '90d';
+}
+
+interface CustomQueryBody {
+  metrics: string[];
+  timeRange: {
+    start: string;
+    end: string;
+    granularity?: 'hour' | 'day' | 'week' | 'month';
+  };
+  filters?: Record<string, any>;
+  groupBy?: string[];
 }
 
 class AnalyticsController {
-  async getRevenueSummary(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getRevenueSummary(
+    request: FastifyRequest<{ Querystring: DateRangeQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['revenue'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string)
+          start: new Date(startDate),
+          end: new Date(endDate)
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.revenue
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getRevenueByChannel(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getRevenueByChannel(
+    request: FastifyRequest<{ Querystring: DateRangeQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['revenue'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string)
+          start: new Date(startDate),
+          end: new Date(endDate)
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.revenue?.byChannel || []
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getRevenueProjections(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getRevenueProjections(
+    request: FastifyRequest<{ Querystring: ProjectionQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { days = 30 } = req.query;
-      const venueId = req.venue!.id;
+      const { days = 30 } = request.query;
+      const venueId = request.venue!.id;
 
       // Import revenue calculator directly for projections
       const { RevenueCalculator } = await import('../analytics-engine/calculators/revenue-calculator');
       const calculator = new RevenueCalculator();
-      
+
       const projections = await calculator.projectRevenue(venueId, Number(days));
 
-      res.json({
+      return reply.send({
         success: true,
         data: projections
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getCustomerLifetimeValue(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getCustomerLifetimeValue(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) {
     try {
-      const venueId = req.venue!.id;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
@@ -87,18 +129,22 @@ class AnalyticsController {
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.customerMetrics?.clv || {}
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getCustomerSegments(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getCustomerSegments(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) {
     try {
-      const venueId = req.venue!.id;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
@@ -109,18 +155,22 @@ class AnalyticsController {
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.customerMetrics?.segmentation || []
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getChurnRiskAnalysis(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getChurnRiskAnalysis(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) {
     try {
-      const venueId = req.venue!.id;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
@@ -131,125 +181,145 @@ class AnalyticsController {
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.customerMetrics?.churnRisk || {}
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getSalesMetrics(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getSalesMetrics(
+    request: FastifyRequest<{ Querystring: SalesMetricsQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate, granularity = 'day' } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate, granularity = 'day' } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['ticketSales'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string),
-          granularity: granularity as 'hour' | 'day' | 'week' | 'month'
+          start: new Date(startDate),
+          end: new Date(endDate),
+          granularity
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.ticketSales || []
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getSalesTrends(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getSalesTrends(
+    request: FastifyRequest<{ Querystring: DateRangeQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['salesTrends'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string)
+          start: new Date(startDate),
+          end: new Date(endDate)
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.salesTrends || {}
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getEventPerformance(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getEventPerformance(
+    request: FastifyRequest<{ Querystring: DateRangeQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['topEvents'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string)
+          start: new Date(startDate),
+          end: new Date(endDate)
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.topEvents || []
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getTopPerformingEvents(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getTopPerformingEvents(
+    request: FastifyRequest<{ Querystring: TopEventsQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate, limit = 10 } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate, limit = 10 } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['topEvents'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string)
+          start: new Date(startDate),
+          end: new Date(endDate)
         }
       });
 
       const topEvents = (result.topEvents || []).slice(0, Number(limit));
 
-      res.json({
+      return reply.send({
         success: true,
         data: topEvents
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getRealtimeSummary(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getRealtimeSummary(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ) {
     try {
-      const venueId = req.venue!.id;
+      const venueId = request.venue!.id;
       const redis = getRedis();
-      
+
       const today = new Date().toISOString().split('T')[0];
       const purchaseKey = `metrics:purchase:${venueId}:${today}`;
       const trafficKey = `metrics:traffic:${venueId}:${today}`;
-      
+
       const [purchases, traffic] = await Promise.all([
         redis.hgetall(purchaseKey),
         redis.hgetall(trafficKey)
       ]);
 
-      res.json({
+      return reply.send({
         success: true,
         data: {
           timestamp: new Date(),
@@ -260,42 +330,50 @@ class AnalyticsController {
           traffic: {
             pageViews: parseInt(traffic.page_views || '0')
           },
-          conversionRate: traffic.page_views ? 
+          conversionRate: traffic.page_views ?
             ((parseInt(purchases.total_sales || '0') / parseInt(traffic.page_views)) * 100).toFixed(2) : '0.00'
         }
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getConversionFunnel(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getConversionFunnel(
+    request: FastifyRequest<{ Querystring: DateRangeQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { startDate, endDate } = req.query;
-      const venueId = req.venue!.id;
+      const { startDate, endDate } = request.query;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
         metrics: ['conversionRate'],
         timeRange: {
-          start: new Date(startDate as string),
-          end: new Date(endDate as string)
+          start: new Date(startDate),
+          end: new Date(endDate)
         }
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result.conversionRate || []
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async executeCustomQuery(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async executeCustomQuery(
+    request: FastifyRequest<{ Body: CustomQueryBody }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { metrics, timeRange, filters, groupBy } = req.body;
-      const venueId = req.venue!.id;
+      const { metrics, timeRange, filters, groupBy } = request.body;
+      const venueId = request.venue!.id;
 
       const result = await analyticsEngine.query({
         venueId,
@@ -309,24 +387,28 @@ class AnalyticsController {
         groupBy
       });
 
-      res.json({
+      return reply.send({
         success: true,
         data: result
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 
-  async getDashboardData(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  async getDashboardData(
+    request: FastifyRequest<{ Querystring: DashboardQuery }>,
+    reply: FastifyReply
+  ) {
     try {
-      const { period = '7d' } = req.query;
-      const venueId = req.venue!.id;
+      const { period = '7d' } = request.query;
+      const venueId = request.venue!.id;
 
       // Calculate date range based on period
       const endDate = new Date();
       let startDate = new Date();
-      
+
       switch (period) {
         case '24h':
           startDate.setDate(startDate.getDate() - 1);
@@ -354,8 +436,8 @@ class AnalyticsController {
         analyticsEngine.query({
           venueId,
           metrics: ['ticketSales'],
-          timeRange: { 
-            start: startDate, 
+          timeRange: {
+            start: startDate,
             end: endDate,
             granularity: period === '24h' ? 'hour' : 'day'
           }
@@ -380,7 +462,7 @@ class AnalyticsController {
         redis.hgetall(`metrics:traffic:${venueId}:${today}`)
       ]);
 
-      res.json({
+      return reply.send({
         success: true,
         data: {
           period,
@@ -404,7 +486,8 @@ class AnalyticsController {
         }
       });
     } catch (error) {
-      next(error);
+      request.log.error(error);
+      throw error;
     }
   }
 }

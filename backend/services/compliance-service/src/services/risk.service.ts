@@ -1,7 +1,8 @@
 import { db } from './database.service';
+import { logger } from '../utils/logger';
 
 export class RiskService {
-  async calculateRiskScore(venueId: string): Promise<{
+  async calculateRiskScore(venueId: string, tenantId: string): Promise<{
     score: number;
     factors: string[];
     recommendation: string;
@@ -11,8 +12,8 @@ export class RiskService {
     
     // Check verification status (0-30 points)
     const verificationResult = await db.query(
-      'SELECT * FROM venue_verifications WHERE venue_id = $1',
-      [venueId]
+      'SELECT * FROM venue_verifications WHERE venue_id = $1 AND tenant_id = $2',
+      [venueId, tenantId]
     );
     
     if (verificationResult.rows.length === 0) {
@@ -45,8 +46,8 @@ export class RiskService {
     
     // Check OFAC status (0-40 points)
     const ofacResult = await db.query(
-      'SELECT * FROM ofac_checks WHERE venue_id = $1 ORDER BY created_at DESC LIMIT 1',
-      [venueId]
+      'SELECT * FROM ofac_checks WHERE venue_id = $1 AND tenant_id = $2 ORDER BY created_at DESC LIMIT 1',
+      [venueId, tenantId]
     );
     
     if (ofacResult.rows.length > 0 && ofacResult.rows[0].is_match) {
@@ -55,7 +56,7 @@ export class RiskService {
     }
     
     // Check transaction patterns (0-30 points)
-    const velocityCheck = await this.checkVelocity(venueId);
+    const velocityCheck = await this.checkVelocity(venueId, tenantId);
     if (velocityCheck.suspicious) {
       score += velocityCheck.riskPoints;
       factors.push(velocityCheck.reason);
@@ -76,15 +77,15 @@ export class RiskService {
     // Store risk assessment
     await db.query(
       `INSERT INTO risk_assessments 
-       (venue_id, risk_score, factors, recommendation, created_at)
-       VALUES ($1, $2, $3, $4, NOW())`,
-      [venueId, score, JSON.stringify(factors), recommendation]
+       (venue_id, risk_score, factors, recommendation, tenant_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())`,
+      [venueId, score, JSON.stringify(factors), recommendation, tenantId]
     );
     
     return { score, factors, recommendation };
   }
   
-  private async checkVelocity(venueId: string): Promise<{
+  private async checkVelocity(venueId: string, tenantId: string): Promise<{
     suspicious: boolean;
     riskPoints: number;
     reason: string;
@@ -93,9 +94,9 @@ export class RiskService {
     const result = await db.query(
       `SELECT COUNT(*) as count, SUM(amount) as total
        FROM tax_records 
-       WHERE venue_id = $1 
+       WHERE venue_id = $1 AND tenant_id = $2
        AND created_at > NOW() - INTERVAL '24 hours'`,
-      [venueId]
+      [venueId, tenantId]
     );
     
     const count = parseInt(result.rows[0]?.count || '0');
@@ -125,24 +126,24 @@ export class RiskService {
     };
   }
   
-  async flagForReview(venueId: string, reason: string): Promise<void> {
+  async flagForReview(venueId: string, reason: string, tenantId: string): Promise<void> {
     await db.query(
-      `INSERT INTO risk_flags (venue_id, reason, created_at) 
-       VALUES ($1, $2, NOW())`,
-      [venueId, reason]
+      `INSERT INTO risk_flags (venue_id, reason, tenant_id, created_at) 
+       VALUES ($1, $2, $3, NOW())`,
+      [venueId, reason, tenantId]
     );
     
-    console.log(`🚩 Venue ${venueId} flagged for review: ${reason}`);
+    logger.info(`🚩 Venue ${venueId} (tenant ${tenantId}) flagged for review: ${reason}`);
     
     // TODO: Send notification to admin
   }
   
-  async resolveFlag(flagId: number, resolution: string): Promise<void> {
+  async resolveFlag(flagId: number, resolution: string, tenantId: string): Promise<void> {
     await db.query(
       `UPDATE risk_flags 
        SET resolved = true, resolution = $2, resolved_at = NOW()
-       WHERE id = $1`,
-      [flagId, resolution]
+       WHERE id = $1 AND tenant_id = $3`,
+      [flagId, resolution, tenantId]
     );
   }
 }

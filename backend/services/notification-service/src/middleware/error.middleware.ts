@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
 import { logger } from '../config/logger';
 
 export class AppError extends Error {
@@ -13,34 +13,33 @@ export class AppError extends Error {
 }
 
 export const errorHandler = (
-  err: Error | AppError,
-  req: Request,
-  res: Response,
-  _next: NextFunction
+  error: FastifyError | AppError,
+  request: FastifyRequest,
+  reply: FastifyReply
 ): void => {
-  if (err instanceof AppError) {
-    res.status(err.statusCode).json({
+  if (error instanceof AppError) {
+    reply.status(error.statusCode).send({
       success: false,
-      error: err.message,
+      error: error.message,
     });
     return;
   }
 
   logger.error('Unhandled error', {
-    error: err.message,
-    stack: err.stack,
-    path: req.path,
-    method: req.method,
+    error: error.message,
+    stack: error.stack,
+    path: request.url,
+    method: request.method,
   });
 
-  res.status(500).json({
+  reply.status(500).send({
     success: false,
     error: 'Internal server error',
   });
 };
 
-export const notFoundHandler = (_req: Request, res: Response): void => {
-  res.status(404).json({
+export const notFoundHandler = (_request: FastifyRequest, reply: FastifyReply): void => {
+  reply.status(404).send({
     success: false,
     error: 'Resource not found',
   });

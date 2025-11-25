@@ -1,0 +1,1049 @@
+openapi: 3.0.3
+info:
+  title: TicketToken Order Service API
+  description: |
+    Production-ready Order Service for the TicketToken platform.
+    
+    This service manages the complete order lifecycle including:
+    - Order creation with ticket reservation
+    - Payment integration
+    - Order confirmation and cancellation
+    - Refund processing
+    - Order history and analytics
+    
+    ## Authentication
+    All endpoints require JWT Bearer token authentication except health checks.
+    
+    ## Rate Limiting
+    Rate limits vary by endpoint. See individual endpoints for details.
+    
+    ## Idempotency
+    Critical operations support idempotency via `Idempotency-Key` header.
+    
+  version: 1.0.0
+  contact:
+    name: TicketToken Support
+    email: dev@tickettoken.com
+    url: https://docs.tickettoken.com
+  license:
+    name: Proprietary
+    url: https://tickettoken.com/license
+
+servers:
+  - url: https://api.tickettoken.com/orders/v1
+    description: Production
+  - url: https://staging-api.tickettoken.com/orders/v1
+    description: Staging
+  - url: http://localhost:3004/api/v1
+    description: Local Development
+
+tags:
+  - name: Orders
+    description: Order management operations
+  - name: Health
+    description: Service health and status endpoints
+  - name: Internal
+    description: Internal service-to-service endpoints
+
+security:
+  - bearerAuth: []
+
+paths:
+  /orders:
+    post:
+      tags:
+        - Orders
+      summary: Create Order
+      description: |
+        Create a new order with ticket reservations.
+        
+        **Rate Limit:** 10 requests per minute per user
+        
+        **Idempotency:** Supported via Idempotency-Key header
+        
+        **Process:**
+        1. Validates ticket availability
+        2. Calculates fees (platform + processing + tax)
+        3. Creates payment intent
+        4. Reserves tickets (15min standard, 30min VIP)
+        5. Records order in database
+        6. Emits order.created event
+      operationId: createOrder
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateOrderRequest'
+            examples:
+              singleTicket:
+                summary: Single ticket type
+                value:
+                  eventId: 550e8400-e29b-41d4-a716-446655440000
+                  items:
+                    - ticketTypeId: 660e8400-e29b-41d4-a716-446655440000
+                      ticketPricingId: 770e8400-e29b-41d4-a716-446655440000
+                      quantity: 2
+                  currency: USD
+              multipleTickets:
+                summary: Multiple ticket types
+                value:
+                  eventId: 550e8400-e29b-41d4-a716-446655440000
+                  items:
+                    - ticketTypeId: vip-uuid
+                      ticketPricingId: vip-pricing-uuid
+                      quantity: 2
+                    - ticketTypeId: ga-uuid
+                      ticketPricingId: ga-pricing-uuid
+                      quantity: 4
+                  currency: USD
+                  metadata:
+                    source: mobile_app
+                    giftMessage: Happy Birthday!
+      responses:
+        '201':
+          description: Order created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+    get:
+      tags:
+        - Orders
+      summary: List Orders
+      description: |
+        List orders for the authenticated user.
+        
+        **Rate Limit:** 100 requests per minute per user
+        
+        Supports filtering by status and event, with pagination.
+      operationId: listOrders
+      parameters:
+        - name: status
+          in: query
+          description: Filter by order status
+          schema:
+            type: string
+            enum: [PENDING, RESERVED, CONFIRMED, CANCELLED, REFUNDED, EXPIRED]
+        - name: eventId
+          in: query
+          description: Filter by event ID
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          description: Number of results per page
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: offset
+          in: query
+          description: Pagination offset
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        '200':
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /orders/{orderId}:
+    get:
+      tags:
+        - Orders
+      summary: Get Order
+      description: |
+        Get details of a specific order.
+        
+        **Rate Limit:** 100 requests per minute per user
+        
+        **Authorization:** Owner or admin only
+      operationId: getOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orders/{orderId}/reserve:
+    post:
+      tags:
+        - Orders
+      summary: Reserve Order
+      description: |
+        Extend or refresh the ticket reservation for an order.
+        
+        **Rate Limit:** 5 requests per minute per user
+        
+        **Idempotency:** Supported
+      operationId: reserveOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Reservation extended
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order cannot be reserved (wrong status)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /orders/{orderId}/cancel:
+    post:
+      tags:
+        - Orders
+      summary: Cancel Order
+      description: |
+        Cancel an order and initiate refund if applicable.
+        
+        **Rate Limit:** 5 requests per minute per user
+        
+        **Idempotency:** Supported
+        
+        **Cancellation Policy:**
+        - Free cancellation within 24 hours of event
+        - Platform fee (2.5%) and processing fee ($0.30) retained
+      operationId: cancelOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  minLength: 1
+                  maxLength: 500
+                  example: User changed mind
+      responses:
+        '200':
+          description: Order cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancelResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order cannot be cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /orders/{orderId}/refund:
+    post:
+      tags:
+        - Orders
+      summary: Request Refund
+      description: |
+        Request a refund for a confirmed order.
+        
+        **Rate Limit:** 3 requests per minute per user
+        
+        **Idempotency:** Supported
+        
+        **Refund Policy:**
+        - Orders <$500: Auto-approved
+        - Orders ≥$500: Manual review required
+        - 24-hour cancellation cutoff before event
+      operationId: refundOrder
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+      responses:
+        '200':
+          description: Refund initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RefundResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimitExceeded'
+
+  /orders/{orderId}/events:
+    get:
+      tags:
+        - Orders
+      summary: Get Order Events
+      description: |
+        Get audit log events for an order.
+        
+        **Rate Limit:** 100 requests per minute per user
+        
+        **Authorization:** Owner or admin only
+      operationId: getOrderEvents
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      responses:
+        '200':
+          description: Order events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OrderEventsList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /internal/v1/orders/{orderId}/confirm:
+    post:
+      tags:
+        - Internal
+      summary: Confirm Order (Internal)
+      description: |
+        Update order status to CONFIRMED after payment succeeds.
+        
+        **Internal Use Only:** Called by payment-service
+        
+        **Authentication:** Service-Key header required
+      operationId: confirmOrder
+      security:
+        - serviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - paymentIntentId
+              properties:
+                paymentIntentId:
+                  type: string
+                  example: pi_abc123xyz
+      responses:
+        '200':
+          description: Order confirmed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orderId:
+                    type: string
+                    format: uuid
+                  status:
+                    type: string
+                    enum: [CONFIRMED]
+                  confirmedAt:
+                    type: string
+                    format: date-time
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /internal/v1/orders/{orderId}/expire:
+    post:
+      tags:
+        - Internal
+      summary: Expire Order (Internal)
+      description: |
+        Expire an order when reservation times out.
+        
+        **Internal Use Only:** Called by scheduler or background job
+        
+        **Authentication:** Service-Key header required
+      operationId: expireOrder
+      security:
+        - serviceKey: []
+      parameters:
+        - $ref: '#/components/parameters/OrderId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  example: Reservation expired
+      responses:
+        '200':
+          description: Order expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: Order expired successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /internal/v1/orders/expiring:
+    get:
+      tags:
+        - Internal
+      summary: Get Expiring Orders (Internal)
+      description: |
+        Get orders that will expire soon.
+        
+        **Internal Use Only:** Called by background job
+        
+        **Authentication:** Service-Key header required
+      operationId: getExpiringOrders
+      security:
+        - serviceKey: []
+      parameters:
+        - name: minutes
+          in: query
+          description: Look-ahead window in minutes
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 60
+            default: 5
+        - name: limit
+          in: query
+          description: Maximum orders to return
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+      responses:
+        '200':
+          description: List of expiring orders
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  orders:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                          format: uuid
+                        reservationExpiresAt:
+                          type: string
+                          format: date-time
+                        minutesUntilExpiration:
+                          type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /internal/v1/orders/bulk/cancel:
+    post:
+      tags:
+        - Internal
+      summary: Bulk Cancel Orders (Internal)
+      description: |
+        Cancel all orders for an event (e.g., event cancelled).
+        
+        **Internal Use Only:** Called by event-service
+        
+        **Authentication:** Service-Key header required
+      operationId: bulkCancelOrders
+      security:
+        - serviceKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - eventId
+                - reason
+              properties:
+                eventId:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+                  example: Event cancelled by organizer
+      responses:
+        '200':
+          description: All orders cancelled successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkCancelResponse'
+        '207':
+          description: Partial success
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BulkCancelResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: All cancellations failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /health/liveness:
+    get:
+      tags:
+        - Health
+      summary: Liveness Check
+      description: Kubernetes liveness probe
+      operationId: checkLiveness
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: healthy
+
+  /health/readiness:
+    get:
+      tags:
+        - Health
+      summary: Readiness Check
+      description: Kubernetes readiness probe
+      operationId: checkReadiness
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ready
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from authentication service
+    serviceKey:
+      type: apiKey
+      in: header
+      name: Service-Key
+      description: Internal service-to-service authentication key
+
+  parameters:
+    OrderId:
+      name: orderId
+      in: path
+      required: true
+      description: Order UUID
+      schema:
+        type: string
+        format: uuid
+      example: 550e8400-e29b-41d4-a716-446655440000
+
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      description: Idempotency key for preventing duplicate operations (30min TTL)
+      schema:
+        type: string
+        maxLength: 255
+      example: unique-key-12345
+
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required:
+        - eventId
+        - items
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Event UUID
+        items:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items:
+            type: object
+            required:
+              - ticketTypeId
+              - ticketPricingId
+              - quantity
+            properties:
+              ticketTypeId:
+                type: string
+                format: uuid
+              ticketPricingId:
+                type: string
+                format: uuid
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 10
+        currency:
+          type: string
+          enum: [USD, EUR, GBP, CAD, AUD]
+          default: USD
+        metadata:
+          type: object
+          additionalProperties: true
+
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderNumber:
+          type: string
+          example: ORD-20251122-ABC123
+        userId:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [PENDING, RESERVED, CONFIRMED, CANCELLED, REFUNDED, EXPIRED]
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        pricing:
+          $ref: '#/components/schemas/OrderPricing'
+        currency:
+          type: string
+          enum: [USD, EUR, GBP, CAD, AUD]
+        paymentIntentId:
+          type: string
+          nullable: true
+        reservationExpiresAt:
+          type: string
+          format: date-time
+          nullable: true
+        confirmedAt:
+          type: string
+          format: date-time
+          nullable: true
+        cancelledAt:
+          type: string
+          format: date-time
+          nullable: true
+        refundedAt:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticketTypeId:
+          type: string
+          format: uuid
+        ticketPricingId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+        unitPriceCents:
+          type: integer
+          description: Price per ticket in cents
+        subtotalCents:
+          type: integer
+          description: Item subtotal in cents
+
+    OrderPricing:
+      type: object
+      properties:
+        subtotalCents:
+          type: integer
+          description: Sum of all items
+        platformFeeCents:
+          type: integer
+          description: 5% platform fee
+        processingFeeCents:
+          type: integer
+          description: 2.9% + $0.30 processing fee
+        taxCents:
+          type: integer
+          description: 8% sales tax
+        totalCents:
+          type: integer
+          description: Grand total
+
+    OrderList:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: '#/components/schemas/Order'
+        pagination:
+          type: object
+          properties:
+            total:
+              type: integer
+            limit:
+              type: integer
+            offset:
+              type: integer
+            hasMore:
+              type: boolean
+
+    ReservationResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [RESERVED]
+        reservationExpiresAt:
+          type: string
+          format: date-time
+        reservedAt:
+          type: string
+          format: date-time
+
+    CancelResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [CANCELLED]
+        cancelledAt:
+          type: string
+          format: date-time
+        refundStatus:
+          type: string
+          enum: [INITIATED, PENDING, COMPLETED, NOT_APPLICABLE]
+        refundAmount:
+          type: integer
+          description: Refund amount in cents
+
+    RefundRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 1
+          maxLength: 500
+        amount:
+          type: integer
+          description: Optional partial refund amount in cents
+
+    RefundResponse:
+      type: object
+      properties:
+        refundId:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        amount:
+          type: integer
+        status:
+          type: string
+          enum: [PENDING, APPROVED, REJECTED, COMPLETED]
+        reason:
+          type: string
+        estimatedArrival:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    OrderEventsList:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderEvent'
+
+    OrderEvent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        orderId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+          enum:
+            - ORDER_CREATED
+            - ORDER_RESERVED
+            - ORDER_CONFIRMED
+            - ORDER_CANCELLED
+            - ORDER_REFUNDED
+            - RESERVATION_EXPIRED
+        userId:
+          type: string
+          format: uuid
+          nullable: true
+        ipAddress:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+        createdAt:
+          type: string
+          format: date-time
+
+    BulkCancelResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Bulk cancellation completed: 45 succeeded, 2 failed"
+        results:
+          type: object
+          properties:
+            total:
+              type: integer
+            succeeded:
+              type: integer
+            failed:
+              type: integer
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  orderId:
+                    type: string
+                    format: uuid
+                  orderNumber:
+                    type: string
+                  error:
+                    type: string
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              example: VALIDATION_ERROR
+            message:
+              type: string
+              example: Invalid order data
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+            requestId:
+              type: string
+            timestamp:
+              type: string
+              format: date-time
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: BAD_REQUEST
+              message: Invalid request parameters
+              requestId: req_abc123
+              timestamp: "2025-11-22T23:30:00Z"
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: UNAUTHORIZED
+              message: Invalid or missing authentication token
+              requestId: req_abc123
+              timestamp: "2025-11-22T23:30:00Z"
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: FORBIDDEN
+              message: Insufficient permissions
+              requestId: req_abc123
+              timestamp: "2025-11-22T23:30:00Z"
+
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: ORDER_NOT_FOUND
+              message: Order not found
+              requestId: req_abc123
+              timestamp: "2025-11-22T23:30:00Z"
+
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: VALIDATION_ERROR
+              message: Invalid order data
+              details:
+                - field: items[0].quantity
+                  message: Quantity must be between 1 and 10
+              requestId: req_abc123
+              timestamp: "2025-11-22T23:30:00Z"
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Remaining requests in current window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when limit resets
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds until retry is allowed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: RATE_LIMIT_EXCEEDED
+              message: Rate limit exceeded. Try again in 45 seconds.
+              retryAfter: 45
+              requestId: req_abc123
+              timestamp: "2025-11-22T23:30:00Z"

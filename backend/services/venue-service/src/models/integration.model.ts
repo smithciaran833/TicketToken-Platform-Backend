@@ -19,11 +19,11 @@ export class IntegrationModel extends BaseModel {
     super('venue_integrations', db);
   }
 
-  // Override findById to use is_active instead of deleted_at
+  // Override findById to NOT filter by is_active
+  // This allows finding inactive integrations for testing/deleting
   async findById(id: string, columns: string[] = ['*']) {
     return this.db(this.tableName)
       .where({ id })
-      .where({ is_active: true })
       .select(columns)
       .first();
   }
@@ -31,25 +31,24 @@ export class IntegrationModel extends BaseModel {
   // Override update to not use deleted_at
   async update(id: string, data: any) {
     const mappedUpdates: any = {};
-    
+
     if (data.config !== undefined) mappedUpdates.config_data = data.config;
     if (data.config_data !== undefined) mappedUpdates.config_data = data.config_data;
     if (data.status !== undefined) mappedUpdates.is_active = data.status === 'active';
     if (data.is_active !== undefined) mappedUpdates.is_active = data.is_active;
-    
+
     const [updated] = await this.db(this.tableName)
       .where({ id })
-      .where({ is_active: true })
       .update({
         ...mappedUpdates,
         updated_at: new Date()
       })
       .returning('*');
-    
+
     return updated;
   }
 
-  // Override delete to use is_active
+  // Override delete to use is_active (soft delete)
   async delete(id: string) {
     return this.db(this.tableName)
       .where({ id })
@@ -74,6 +73,7 @@ export class IntegrationModel extends BaseModel {
 
   async create(data: any): Promise<IIntegration> {
     const integType = data.type || data.integration_type;
+
     const mappedData = {
       venue_id: data.venue_id,
       integration_type: integType,
@@ -87,7 +87,7 @@ export class IntegrationModel extends BaseModel {
     const [created] = await this.db(this.tableName)
       .insert(mappedData)
       .returning('*');
-    
+
     return created;
   }
 }

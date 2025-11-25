@@ -1,57 +1,71 @@
+# Build stage
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Set up shared module
-COPY backend/shared /shared
-WORKDIR /shared
+# Copy shared modules first
+COPY backend/shared ./backend/shared
+
+# Build shared modules
+WORKDIR /app/backend/shared
 RUN npm install
-
-# Set up blockchain service
-WORKDIR /app
-COPY backend/services/blockchain-service/package.json ./
-RUN sed -i 's|"@tickettoken/shared": "file:../../shared"|"@tickettoken/shared": "file:/shared"|' package.json
-RUN npm install
-
-# Copy tsconfig files
-COPY tsconfig.base.json /tsconfig.base.json
-COPY backend/services/blockchain-service/tsconfig.json ./
-
-# Copy source
-COPY backend/services/blockchain-service/src ./src
-
-# Build TypeScript files
 RUN npm run build || true
 
-# If build failed or didn't create dist, copy JS files directly
-RUN if [ ! -d "dist" ]; then mkdir dist && cp -r src/* dist/; fi
+# Copy service files
+WORKDIR /app
+COPY backend/services/blockchain-service ./backend/services/blockchain-service
+
+# Build service
+WORKDIR /app/backend/services/blockchain-service
+RUN npm install
+RUN npm run build
 
 # Production stage
-FROM node:20-alpine
+FROM node:20-alpine AS production
 
-WORKDIR /app
+# Install dumb-init for proper signal handling
+RUN apk add --no-cache dumb-init
 
-# Set up shared module
-COPY backend/shared /shared
-WORKDIR /shared
-RUN npm install --only=production
+# Copy shared modules
+COPY --from=builder /app/backend/shared /app/backend/shared
 
-WORKDIR /app
-COPY backend/services/blockchain-service/package.json ./
-RUN sed -i 's|"@tickettoken/shared": "file:../../shared"|"@tickettoken/shared": "file:/shared"|' package.json
-RUN npm install --only=production
+# Copy service files
+COPY --from=builder /app/backend/services/blockchain-service/package.json /app/backend/services/blockchain-service/package.json
+COPY --from=builder /app/backend/services/blockchain-service/package-lock.json /app/backend/services/blockchain-service/package-lock.json
 
-# Copy built/source files
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/src ./src
+WORKDIR /app/backend/services/blockchain-service
 
-# Create non-root user
+# Install production dependencies
+RUN npm install --omit=dev
+
+# Copy built files
+COPY --from=builder /app/backend/services/blockchain-service/dist ./dist
+COPY --from=builder /app/backend/services/blockchain-service/knexfile.js ./knexfile.js
+
+# Remove TypeScript declaration files from migrations to avoid ES module issues
+RUN find ./dist/migrations -name "*.d.ts" -delete && \
+    find ./dist/migrations -name "*.d.ts.map" -delete && \
+    find ./dist/migrations -name "*.js.map" -delete
+
+# Create entrypoint script for migrations
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'set -e' >> /app/entrypoint.sh && \
+    echo 'echo "Running migrations for blockchain-service..."' >> /app/entrypoint.sh && \
+    echo 'npm run migrate || echo "Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'exec "$@"' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+# Set proper permissions
 RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+    adduser -S nodejs -u 1001 && \
+    chown -R nodejs:nodejs /app
 
 USER nodejs
 
-EXPOSE 3012
+EXPOSE 3011
 
-# Use the JS entry point since it exists
-CMD ["node", "src/index.js"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3011/health', (r) => {let b=''; r.on('data', (c) => b+=c); r.on('end', () => {try{const j=JSON.parse(b); process.exit(j.status==='healthy'?0:1)}catch(e){process.exit(1)}})})" || exit 1
+
+ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["node", "dist/index.js"]

@@ -1,4 +1,4 @@
-// Tax calculation service for ticket service
+// Tax calculation service - PURE INTEGER MATH
 export class TaxService {
   private stateTaxRates: { [key: string]: number } = {
     'AL': 4.0, 'AK': 0, 'AZ': 5.6, 'AR': 6.5,
@@ -35,34 +35,34 @@ export class TaxService {
     taxRate: number;
     breakdown: any;
   }> {
-    const subtotalDollars = subtotalCents / 100;
-    
-    // Get state tax rate
+    // Get tax rates
     const stateRate = this.stateTaxRates[venueState] || 0;
-    const stateTax = subtotalDollars * (stateRate / 100);
-    
-    // Get local tax rate (if applicable)
     const localRate = this.localTaxRates[venueState] || 0;
-    const localTax = subtotalDollars * (localRate / 100);
-    
-    const totalTax = stateTax + localTax;
+
+    // PURE INTEGER MATH - no float conversions!
+    // Formula: (cents * rate) / 100
+    // This keeps precision until the final division
+    const stateTaxCents = Math.round((subtotalCents * stateRate) / 100);
+    const localTaxCents = Math.round((subtotalCents * localRate) / 100);
+    const totalTaxCents = stateTaxCents + localTaxCents;
+
     const effectiveRate = stateRate + localRate;
 
     return {
-      stateTaxCents: Math.round(stateTax * 100),
-      localTaxCents: Math.round(localTax * 100),
-      totalTaxCents: Math.round(totalTax * 100),
+      stateTaxCents,
+      localTaxCents,
+      totalTaxCents,
       taxRate: effectiveRate,
       breakdown: {
         state: {
           name: `${venueState} Sales Tax`,
           rate: stateRate,
-          amount: stateTax
+          amountCents: stateTaxCents
         },
         local: localRate > 0 ? {
           name: `Local Tax`,
           rate: localRate,
-          amount: localTax
+          amountCents: localTaxCents
         } : null
       }
     };

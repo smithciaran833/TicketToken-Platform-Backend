@@ -1,7 +1,5 @@
-import { createCache } from '@tickettoken/shared/cache/dist';
-
+import { createCache } from '@tickettoken/shared';
 const serviceName = process.env.SERVICE_NAME || 'monitoring-service';
-
 // Initialize cache with service-specific config
 const cacheSystem = createCache({
   redis: {
@@ -20,27 +18,22 @@ const cacheSystem = createCache({
     search: 5 * 60
   }
 });
-
 export const cache = cacheSystem.service;
 export const cacheMiddleware = cacheSystem.middleware;
 export const cacheStrategies = cacheSystem.strategies;
 export const cacheInvalidator = cacheSystem.invalidator;
 export const getCacheStats = () => cache.getStats();
-
 // Service-specific cache functions
 export const serviceCache = {
   async get(key: string, fetcher?: () => Promise<any>, ttl: number = 300): Promise<any> {
     return cache.get(key, fetcher, { ttl, level: 'BOTH' });
   },
-  
   async set(key: string, value: any, ttl: number = 300): Promise<void> {
     await cache.set(key, value, { ttl, level: 'BOTH' });
   },
-  
   async delete(keys: string | string[]): Promise<void> {
     await cache.delete(keys);
   },
-  
   async flush(): Promise<void> {
     await cache.flush();
   }

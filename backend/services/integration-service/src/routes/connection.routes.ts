@@ -1,15 +1,27 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { connectionController } from '../controllers/connection.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
-export const connectionRoutes = Router();
+export async function connectionRoutes(fastify: FastifyInstance) {
+  // All routes require authentication
+  fastify.addHook('onRequest', authenticate);
 
-// All routes require authentication
-connectionRoutes.use(authenticate);
-
-connectionRoutes.get('/', connectionController.listIntegrations);
-connectionRoutes.get('/:provider', connectionController.getIntegration);
-connectionRoutes.post('/connect/:provider', authorize('admin', 'venue_admin'), connectionController.connectIntegration);
-connectionRoutes.post('/:provider/disconnect', authorize('admin', 'venue_admin'), connectionController.disconnectIntegration);
-connectionRoutes.post('/:provider/reconnect', authorize('admin', 'venue_admin'), connectionController.reconnectIntegration);
-connectionRoutes.post('/:provider/api-key', authorize('admin', 'venue_admin'), connectionController.validateApiKey);
+  fastify.get('/', connectionController.listIntegrations);
+  fastify.get('/:provider', connectionController.getIntegration);
+  
+  fastify.post('/connect/:provider', {
+    onRequest: [authenticate, authorize('admin', 'venue_admin')]
+  }, connectionController.connectIntegration);
+  
+  fastify.post('/:provider/disconnect', {
+    onRequest: [authenticate, authorize('admin', 'venue_admin')]
+  }, connectionController.disconnectIntegration);
+  
+  fastify.post('/:provider/reconnect', {
+    onRequest: [authenticate, authorize('admin', 'venue_admin')]
+  }, connectionController.reconnectIntegration);
+  
+  fastify.post('/:provider/api-key', {
+    onRequest: [authenticate, authorize('admin', 'venue_admin')]
+  }, connectionController.validateApiKey);
+}

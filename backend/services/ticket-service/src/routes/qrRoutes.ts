@@ -1,18 +1,19 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { qrController } from '../controllers/qrController';
 
-const router = Router();
+export default async function qrRoutes(fastify: FastifyInstance) {
+  // Generate QR code for ticket
+  fastify.get('/:ticketId/generate',
+    (request, reply) => qrController.generateQR(request, reply)
+  );
 
-// Generate QR code for ticket
-router.get(
-  '/:ticketId/generate',
-  qrController.generateQR.bind(qrController)
-);
+  // Validate QR code (for venue staff)
+  fastify.post('/validate',
+    (request, reply) => qrController.validateQR(request, reply)
+  );
 
-// Validate QR code (for venue staff)
-router.post(
-  '/validate',
-  qrController.validateQR.bind(qrController)
-);
-
-export default router;
+  // Refresh QR code
+  fastify.post('/refresh',
+    (request, reply) => qrController.refreshQR(request, reply)
+  );
+}

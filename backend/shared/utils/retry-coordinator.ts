@@ -26,14 +26,14 @@ export class RetryCoordinator {
   ): number {
     // Exponential backoff: delay = min(baseDelay * 2^attempt, maxDelay)
     const exponentialDelay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
-    
+
     // Add jitter to prevent thundering herd
     const jitter = Math.random() * jitterFactor * exponentialDelay;
     const finalDelay = exponentialDelay + jitter;
 
     // Add additional randomization to spread retries
     const spread = Math.random() * 1000; // 0-1 second additional spread
-    
+
     return Math.floor(finalDelay + spread);
   }
 
@@ -63,14 +63,14 @@ export class RetryCoordinator {
           operation,
           resourceId,
           count,
-          maxRetriesPerWindow
+          maxRetriesPerWindow,
         });
         return false;
       }
 
       // Add this retry attempt
       await this.redis.zadd(key, now, `${now}-${Math.random()}`);
-      
+
       // Set expiry on the key
       await this.redis.expire(key, Math.ceil(windowSizeMs / 1000));
 
@@ -95,7 +95,7 @@ export class RetryCoordinator {
     const lastFailureKey = `circuit:${this.serviceName}:${resourceId}:last_failure`;
 
     try {
-      const state = await this.redis.get(stateKey) as 'CLOSED' | 'OPEN' | 'HALF_OPEN' | null;
+      const state = (await this.redis.get(stateKey)) as 'CLOSED' | 'OPEN' | 'HALF_OPEN' | null;
 
       if (state === 'OPEN') {
         const lastFailure = await this.redis.get(lastFailureKey);
@@ -126,10 +126,7 @@ export class RetryCoordinator {
     }
   }
 
-  async recordFailure(
-    resourceId: string,
-    failureThreshold: number = 5
-  ): Promise<void> {
+  async recordFailure(resourceId: string, failureThreshold: number = 5): Promise<void> {
     const failureKey = `circuit:${this.serviceName}:${resourceId}:failures`;
     const stateKey = `circuit:${this.serviceName}:${resourceId}:state`;
     const lastFailureKey = `circuit:${this.serviceName}:${resourceId}:last_failure`;
@@ -165,7 +162,7 @@ export class RetryCoordinator {
       maxConcurrency = 5,
       batchSize = 10,
       delayBetweenBatches = 1000,
-      maxRetries = 3
+      maxRetries = 3,
     } = options;
 
     const successful: number[] = [];
@@ -174,16 +171,16 @@ export class RetryCoordinator {
     // Process in batches with delays
     for (let i = 0; i < items.length; i += batchSize) {
       const batch = items.slice(i, i + batchSize);
-      
+
       // Add jitter to batch start time
       const batchJitter = Math.random() * 500;
-      await new Promise(resolve => setTimeout(resolve, batchJitter));
+      await new Promise((resolve) => setTimeout(resolve, batchJitter));
 
       // Process batch with limited concurrency
       const promises = batch.map(async (item, index) => {
         // Add individual item jitter
         const itemDelay = this.calculateBackoff(0, 100, 1000, 0.5);
-        await new Promise(resolve => setTimeout(resolve, itemDelay));
+        await new Promise((resolve) => setTimeout(resolve, itemDelay));
 
         for (let attempt = 0; attempt < maxRetries; attempt++) {
           try {
@@ -195,7 +192,7 @@ export class RetryCoordinator {
               failed.push({ item, error });
             } else {
               const retryDelay = this.calculateBackoff(attempt);
-              await new Promise(resolve => setTimeout(resolve, retryDelay));
+              await new Promise((resolve) => setTimeout(resolve, retryDelay));
             }
           }
         }
@@ -206,7 +203,7 @@ export class RetryCoordinator {
 
       // Delay before next batch
       if (i + batchSize < items.length) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+        await new Promise((resolve) => setTimeout(resolve, delayBetweenBatches));
       }
     }
 
@@ -234,7 +231,7 @@ export const DEFAULT_RETRY_CONFIG: RetryConfig = {
   baseDelay: 1000,
   maxDelay: 30000,
   jitterFactor: 0.3,
-  backoffMultiplier: 2
+  backoffMultiplier: 2,
 };
 
 /**
@@ -272,17 +269,17 @@ export async function retryWithCoordination<T>(
         finalConfig.jitterFactor
       );
 
-      await new Promise(resolve => setTimeout(resolve, delay));
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
     try {
       const result = await fn();
-      
+
       // Record success
       if (circuitState === 'HALF_OPEN') {
         await coordinator.recordSuccess(resourceId);
       }
-      
+
       return result;
     } catch (error) {
       lastError = error;
@@ -311,10 +308,10 @@ function isNonRetryableError(error: any): boolean {
     'Unauthorized',
     'Forbidden',
     'Not found',
-    'Validation error'
+    'Validation error',
   ];
 
-  if (error.message && nonRetryableMessages.some(msg => error.message.includes(msg))) {
+  if (error.message && nonRetryableMessages.some((msg) => error.message.includes(msg))) {
     return true;
   }
 

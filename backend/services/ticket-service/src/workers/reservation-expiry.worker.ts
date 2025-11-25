@@ -1,4 +1,7 @@
 import knex from 'knex';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'ReservationExpiryWorker' });
 
 const db = knex({
   client: 'pg',
@@ -11,11 +14,11 @@ export class ReservationExpiryWorker {
 
   start(intervalMs: number = 60000) { // Run every minute
     if (this.intervalId) {
-      console.log('Reservation expiry worker already running');
+      log.info('Reservation expiry worker already running');
       return;
     }
 
-    console.log('Starting reservation expiry worker...');
+    log.info('Starting reservation expiry worker', { intervalMs });
     this.intervalId = setInterval(() => this.processExpiredReservations(), intervalMs);
 
     // Run immediately on start
@@ -26,13 +29,13 @@ export class ReservationExpiryWorker {
     if (this.intervalId) {
       clearInterval(this.intervalId);
       this.intervalId = null;
-      console.log('Reservation expiry worker stopped');
+      log.info('Reservation expiry worker stopped');
     }
   }
 
   private async processExpiredReservations() {
     if (this.isRunning) {
-      console.log('Expiry job already running, skipping...');
+      log.debug('Expiry job already running, skipping');
       return;
     }
 
@@ -46,7 +49,10 @@ export class ReservationExpiryWorker {
       const releasedCount = result.rows[0].count;
 
       if (releasedCount > 0) {
-        console.log(`Released ${releasedCount} expired reservations in ${Date.now() - startTime}ms`);
+        log.info('Released expired reservations', { 
+          count: releasedCount,
+          durationMs: Date.now() - startTime 
+        });
 
         // Get the expired reservations to write to outbox
         const expiredReservations = await db('reservations')
@@ -72,11 +78,11 @@ export class ReservationExpiryWorker {
         }
 
         if (expiredReservations.length > 0) {
-          console.log(`Wrote ${expiredReservations.length} expiry events to outbox`);
+          log.info('Wrote expiry events to outbox', { count: expiredReservations.length });
         }
       }
     } catch (error) {
-      console.error('Error processing expired reservations:', error);
+      log.error('Error processing expired reservations', { error });
     } finally {
       this.isRunning = false;
     }

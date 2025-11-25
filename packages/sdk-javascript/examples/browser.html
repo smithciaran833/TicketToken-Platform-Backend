@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TicketToken JavaScript SDK - Browser Example</title>
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <script src="../dist/index.umd.js"></script>
+</head>
+<body>
+  <h1>TicketToken JavaScript SDK - Browser Example</h1>
+  
+  <div id="app">
+    <h2>Events</h2>
+    <button onclick="loadEvents()">Load Events</button>
+    <div id="events"></div>
+    
+    <h2>My Tickets</h2>
+    <button onclick="loadMyTickets()">Load My Tickets</button>
+    <div id="tickets"></div>
+  </div>
+
+  <script>
+    // Initialize the SDK
+    const client = new TicketToken({
+      apiKey: 'your-api-key-here',
+      environment: 'development'
+    });
+
+    async function loadEvents() {
+      const eventsDiv = document.getElementById('events');
+      eventsDiv.innerHTML = '<p>Loading...</p>';
+      
+      try {
+        const response = await client.events.list({ limit: 10 });
+        eventsDiv.innerHTML = `
+          <pre>${JSON.stringify(response.data, null, 2)}</pre>
+        `;
+      } catch (error) {
+        eventsDiv.innerHTML = `
+          <p style="color: red;">Error: ${error.message}</p>
+        `;
+      }
+    }
+
+    async function loadMyTickets() {
+      const ticketsDiv = document.getElementById('tickets');
+      ticketsDiv.innerHTML = '<p>Loading...</p>';
+      
+      try {
+        const response = await client.tickets.getMyTickets();
+        ticketsDiv.innerHTML = `
+          <pre>${JSON.stringify(response.data, null, 2)}</pre>
+        `;
+      } catch (error) {
+        ticketsDiv.innerHTML = `
+          <p style="color: red;">Error: ${error.message}</p>
+        `;
+      }
+    }
+
+    // Example: Purchase tickets
+    async function purchaseTickets(eventId, quantity) {
+      try {
+        const tickets = await client.tickets.purchase({
+          eventId: eventId,
+          ticketType: 'general-admission',
+          quantity: quantity,
+          paymentMethod: 'card'
+        });
+        console.log('Tickets purchased:', tickets);
+        return tickets;
+      } catch (error) {
+        console.error('Purchase failed:', error);
+        throw error;
+      }
+    }
+
+    // Example: Transfer ticket
+    async function transferTicket(ticketId, recipientAddress) {
+      try {
+        const result = await client.tickets.transfer({
+          ticketId: ticketId,
+          recipientAddress: recipientAddress
+        });
+        console.log('Ticket transferred:', result);
+        return result;
+      } catch (error) {
+        console.error('Transfer failed:', error);
+        throw error;
+      }
+    }
+  </script>
+</body>
+</html>

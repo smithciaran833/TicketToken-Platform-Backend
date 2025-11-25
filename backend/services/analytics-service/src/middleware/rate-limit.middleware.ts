@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { getRedis } from '../config/redis';
 import { UnauthorizedError } from './error-handler';
+import { logger } from '../utils/logger';
 
 export async function rateLimitMiddleware(
   req: Request,
@@ -35,7 +36,7 @@ export async function rateLimitMiddleware(
     next();
   } catch (error) {
     // If Redis is down, allow the request
-    console.error('Rate limit error:', error);
+    logger.error('Rate limit error:', error);
     next();
   }
 }

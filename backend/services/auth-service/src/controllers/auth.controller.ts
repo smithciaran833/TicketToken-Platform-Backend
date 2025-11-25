@@ -145,8 +145,8 @@ export class AuthController {
 
   async setupMFA(request: any, reply: any) {
     const userId = request.user?.id;
-    const secret = await this.mfaService.generateSecret(userId);
-    reply.send({ secret });
+    const result = await this.mfaService.setupTOTP(userId);
+    reply.send(result);
   }
 
   async verifyMFA(request: any, reply: any) {
@@ -158,7 +158,7 @@ export class AuthController {
 
   async disableMFA(request: any, reply: any) {
     const userId = request.user?.id;
-    await this.mfaService.disable(userId);
+    await this.mfaService.disableTOTP(userId);
     reply.send({ success: true });
   }
 }

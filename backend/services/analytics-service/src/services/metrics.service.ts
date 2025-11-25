@@ -1,11 +1,13 @@
-import { MetricModel } from '../models';
+import { MetricModel, Metric as DBMetric } from '../models';
 import { RealtimeModel, CacheModel } from '../models';
-import { 
-  Metric, 
-  MetricType, 
-  RealTimeMetric, 
+import { influxDBService } from './influxdb.service';
+import { config } from '../config';
+import {
+  Metric,
+  MetricType,
+  RealTimeMetric,
   TimeGranularity,
-  DateRange 
+  DateRange
 } from '../types';
 import { logger } from '../utils/logger';
 import { CONSTANTS } from '../config/constants';
@@ -13,12 +15,63 @@ import { CONSTANTS } from '../config/constants';
 export class MetricsService {
   private static instance: MetricsService;
   private log = logger.child({ component: 'MetricsService' });
+  private metricsBackend = config.metrics.backend;
+  private failSilently = config.metrics.failSilently;
 
   static getInstance(): MetricsService {
     if (!this.instance) {
       this.instance = new MetricsService();
     }
     return this.instance;
+  }
+
+  private mapDBMetricToMetric(dbMetric: DBMetric): Metric {
+    return {
+      id: dbMetric.id,
+      venueId: dbMetric.tenant_id,
+      metricType: dbMetric.metric_type as MetricType,
+      value: dbMetric.value,
+      timestamp: dbMetric.timestamp,
+      granularity: { unit: 'minute' as const, value: 1 },
+      dimensions: dbMetric.dimensions,
+      metadata: dbMetric.metadata
+    };
+  }
+
+  private async writeToPostgres(
+    venueId: string,
+    metricType: MetricType,
+    value: number,
+    timestamp: Date,
+    dimensions?: Record<string, string>,
+    metadata?: Record<string, any>
+  ): Promise<DBMetric> {
+    return await MetricModel.createMetric({
+      venueId,
+      metricType,
+      value,
+      timestamp,
+      dimensions,
+      metadata
+    });
+  }
+
+  private async writeToInfluxDB(
+    venueId: string,
+    metricType: MetricType,
+    value: number,
+    timestamp: Date,
+    dimensions?: Record<string, string>,
+    metadata?: Record<string, any>
+  ): Promise<void> {
+    await influxDBService.writeMetric(
+      venueId,
+      metricType,
+      value,
+      dimensions,
+      metadata,
+      timestamp
+    );
   }
 
   async recordMetric(
@@ -28,17 +81,47 @@ export class MetricsService {
     dimensions?: Record<string, string>,
     metadata?: Record<string, any>
   ): Promise<Metric> {
+    const timestamp = new Date();
+    let dbMetric: DBMetric | null = null;
+
     try {
-      // Create metric
-      const metric = await MetricModel.createMetric({
-        venueId,
-        metricType,
-        value,
-        timestamp: new Date(),
-        granularity: { unit: 'minute', value: 1 },
-        dimensions,
-        metadata
-      });
+      // Write based on backend configuration
+      if (this.metricsBackend === 'postgres' || this.metricsBackend === 'dual') {
+        dbMetric = await this.writeToPostgres(
+          venueId,
+          metricType,
+          value,
+          timestamp,
+          dimensions,
+          metadata
+        );
+      }
+
+      if (this.metricsBackend === 'influxdb' || this.metricsBackend === 'dual') {
+        try {
+          await this.writeToInfluxDB(
+            venueId,
+            metricType,
+            value,
+            timestamp,
+            dimensions,
+            metadata
+          );
+          
+          // Flush to ensure write completes
+          await influxDBService.flush();
+        } catch (error) {
+          if (this.metricsBackend === 'dual' && this.failSilently) {
+            this.log.warn('InfluxDB write failed in dual mode, continuing...', {
+              error,
+              venueId,
+              metricType
+            });
+          } else {
+            throw error;
+          }
+        }
+      }
 
       // Update real-time counter
       await RealtimeModel.updateRealTimeMetric(venueId, metricType, value);
@@ -49,12 +132,28 @@ export class MetricsService {
       this.log.debug('Metric recorded', {
         venueId,
         metricType,
-        value
+        value,
+        backend: this.metricsBackend
       });
 
-      return metric;
+      // Return mapped metric (from PostgreSQL if available, otherwise create one)
+      if (dbMetric) {
+        return this.mapDBMetricToMetric(dbMetric);
+      } else {
+        // InfluxDB-only mode, create metric object manually
+        return {
+          id: `${venueId}-${metricType}-${timestamp.getTime()}`,
+          venueId,
+          metricType,
+          value,
+          timestamp,
+          granularity: { unit: 'minute' as const, value: 1 },
+          dimensions,
+          metadata
+        };
+      }
     } catch (error) {
-      this.log.error('Failed to record metric', { error, venueId, metricType });
+      this.log.error('Failed to record metric', error, { venueId, metricType });
       throw error;
     }
   }
@@ -74,14 +173,15 @@ export class MetricsService {
         dateRange.startDate.toISOString(),
         dateRange.endDate.toISOString()
       );
-      
+
       const cached = await CacheModel.get<Metric[]>(cacheKey);
       if (cached) {
         return cached;
       }
 
-      // Get from database
-      const metrics = await MetricModel.getMetrics(
+      // Get from database (always read from PostgreSQL for now)
+      // TODO: Add InfluxDB query support for reads
+      const dbMetrics = await MetricModel.getMetrics(
         venueId,
         metricType,
         dateRange.startDate,
@@ -89,12 +189,15 @@ export class MetricsService {
         granularity
       );
 
+      // Map to service type
+      const metrics = dbMetrics.map(m => this.mapDBMetricToMetric(m));
+
       // Cache results
       await CacheModel.set(cacheKey, metrics, CONSTANTS.CACHE_TTL.METRICS);
 
       return metrics;
     } catch (error) {
-      this.log.error('Failed to get metrics', { error, venueId, metricType });
+      this.log.error('Failed to get metrics', error, { venueId, metricType });
       throw error;
     }
   }
@@ -106,7 +209,7 @@ export class MetricsService {
     try {
       return await RealtimeModel.getRealTimeMetric(venueId, metricType);
     } catch (error) {
-      this.log.error('Failed to get real-time metric', { error, venueId, metricType });
+      this.log.error('Failed to get real-time metric', error, { venueId, metricType });
       throw error;
     }
   }
@@ -129,7 +232,7 @@ export class MetricsService {
 
       return metrics;
     } catch (error) {
-      this.log.error('Failed to get real-time metrics', { error, venueId });
+      this.log.error('Failed to get real-time metrics', error, { venueId });
       throw error;
     }
   }
@@ -142,7 +245,7 @@ export class MetricsService {
     try {
       return await RealtimeModel.incrementCounter(venueId, counterType, by);
     } catch (error) {
-      this.log.error('Failed to increment counter', { error, venueId, counterType });
+      this.log.error('Failed to increment counter', error, { venueId, counterType });
       throw error;
     }
   }
@@ -154,19 +257,22 @@ export class MetricsService {
     aggregation: 'sum' | 'avg' | 'min' | 'max' | 'count'
   ): Promise<number> {
     try {
-      return await MetricModel.aggregateMetrics(
+      // Always read from PostgreSQL for now
+      // TODO: Add InfluxDB query support
+      const result = await MetricModel.aggregateMetrics(
         venueId,
         metricType,
+        aggregation,
         dateRange.startDate,
-        dateRange.endDate,
-        aggregation
+        dateRange.endDate
       );
+
+      return result[aggregation] || 0;
     } catch (error) {
-      this.log.error('Failed to aggregate metric', { 
-        error, 
-        venueId, 
+      this.log.error('Failed to aggregate metric', error, {
+        venueId,
         metricType,
-        aggregation 
+        aggregation
       });
       throw error;
     }
@@ -224,7 +330,7 @@ export class MetricsService {
 
       return results;
     } catch (error) {
-      this.log.error('Failed to get metric trend', { error, venueId, metricType });
+      this.log.error('Failed to get metric trend', error, { venueId, metricType });
       throw error;
     }
   }
@@ -240,24 +346,42 @@ export class MetricsService {
     }>
   ): Promise<void> {
     try {
-      const metricsToInsert = metrics.map(m => ({
+      const metricsWithTimestamp = metrics.map(m => ({
         ...m,
-        timestamp: m.timestamp || new Date(),
-        granularity: { unit: 'minute' as const, value: 1 }
+        timestamp: m.timestamp || new Date()
       }));
 
-      await MetricModel.bulkInsert(metricsToInsert);
+      // Write based on backend configuration
+      if (this.metricsBackend === 'postgres' || this.metricsBackend === 'dual') {
+        await MetricModel.bulkInsert(metricsWithTimestamp);
+      }
+
+      if (this.metricsBackend === 'influxdb' || this.metricsBackend === 'dual') {
+        try {
+          await influxDBService.bulkWriteMetrics(metricsWithTimestamp);
+          await influxDBService.flush();
+        } catch (error) {
+          if (this.metricsBackend === 'dual' && this.failSilently) {
+            this.log.warn('InfluxDB bulk write failed in dual mode, continuing...', { error });
+          } else {
+            throw error;
+          }
+        }
+      }
 
       // Update real-time metrics
       await Promise.all(
-        metrics.map(m => 
+        metrics.map(m =>
           RealtimeModel.updateRealTimeMetric(m.venueId, m.metricType, m.value)
         )
       );
 
-      this.log.debug('Bulk metrics recorded', { count: metrics.length });
+      this.log.debug('Bulk metrics recorded', {
+        count: metrics.length,
+        backend: this.metricsBackend
+      });
     } catch (error) {
-      this.log.error('Failed to bulk record metrics', { error });
+      this.log.error('Failed to bulk record metrics', error);
       throw error;
     }
   }
@@ -286,9 +410,22 @@ export class MetricsService {
         occupancyRate
       };
     } catch (error) {
-      this.log.error('Failed to get capacity metrics', { error, venueId, eventId });
+      this.log.error('Failed to get capacity metrics', error, { venueId, eventId });
       throw error;
     }
+  }
+
+  // Health check method
+  async healthCheck(): Promise<{
+    postgres: boolean;
+    influxdb: boolean;
+    backend: string;
+  }> {
+    return {
+      postgres: this.metricsBackend !== 'influxdb',
+      influxdb: await influxDBService.healthCheck(),
+      backend: this.metricsBackend
+    };
   }
 }
 

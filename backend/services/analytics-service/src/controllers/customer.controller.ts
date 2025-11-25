@@ -1,69 +1,118 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface CustomerParams {
+  venueId: string;
+  customerId: string;
+}
+
+interface SegmentParams {
+  venueId: string;
+  segment: string;
+}
+
+interface JourneyQuery {
+  startDate?: string;
+  endDate?: string;
+}
+
+interface SearchQuery {
+  q: string;
+  segment?: string;
+  page?: number;
+  limit?: number;
+}
+
 class CustomerController extends BaseController {
-  getCustomerSegments = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCustomerSegments = async (
+    request: FastifyRequest<{ Params: VenueParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { segments: [] });
+      return this.success(reply, { segments: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCustomerProfile = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCustomerProfile = async (
+    request: FastifyRequest<{ Params: CustomerParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { profile: {} });
+      return this.success(reply, { profile: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCustomerInsights = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCustomerInsights = async (
+    request: FastifyRequest<{ Params: CustomerParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { insights: [] });
+      return this.success(reply, { insights: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCustomerJourney = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCustomerJourney = async (
+    request: FastifyRequest<{ Params: CustomerParams; Querystring: JourneyQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { journey: [] });
+      return this.success(reply, { journey: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getRFMAnalysis = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getRFMAnalysis = async (
+    request: FastifyRequest<{ Params: CustomerParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { rfm: {} });
+      return this.success(reply, { rfm: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCustomerLifetimeValue = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCustomerLifetimeValue = async (
+    request: FastifyRequest<{ Params: CustomerParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { clv: {} });
+      return this.success(reply, { clv: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  searchCustomers = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  searchCustomers = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: SearchQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { customers: [] });
+      return this.success(reply, { customers: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getSegmentAnalysis = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getSegmentAnalysis = async (
+    request: FastifyRequest<{ Params: SegmentParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { analysis: {} });
+      return this.success(reply, { analysis: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

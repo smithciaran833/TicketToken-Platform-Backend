@@ -1,32 +1,42 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
-import { ofacService } from '../services/ofac.service';
+import { realOFACService as ofacService } from '../services/ofac-real.service';
 import { db } from '../services/database.service';
+import { logger } from '../utils/logger';
+import { requireTenantId } from '../middleware/tenant.middleware';
 
 export class OFACController {
-  static async checkName(req: Request, res: Response) {
+  async checkName(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { name, venueId } = req.body;
-      
-      const result = await ofacService.checkName(name);
-      
-      // Log the check
+      const tenantId = requireTenantId(request);
+      const { name, venueId } = request.body as any;
+      const result = await ofacService.checkAgainstOFAC(name, true);
+
+      const matchedName = result.matches[0]?.name || null;
+
+      // Log the check with tenant_id
       await db.query(
-        `INSERT INTO ofac_checks (venue_id, name_checked, is_match, confidence, matched_name)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [venueId, name, result.isMatch, result.confidence, result.matchedName]
+        `INSERT INTO ofac_checks (venue_id, name_checked, is_match, confidence, matched_name, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [venueId, name, result.isMatch, result.confidence, matchedName, tenantId]
       );
-      
-      res.json({
+
+      logger.info(`OFAC check performed for tenant ${tenantId}, venue ${venueId}: ${name} - ${result.isMatch ? 'MATCH' : 'CLEAR'}`);
+
+      return reply.send({
         success: true,
         data: {
-          ...result,
+          isMatch: result.isMatch,
+          confidence: result.confidence,
+          matches: result.matches,
+          matchedName: matchedName,
           timestamp: new Date().toISOString(),
           action: result.isMatch ? 'REQUIRES_REVIEW' : 'CLEARED'
         }
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error('OFAC check failed:', error);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });

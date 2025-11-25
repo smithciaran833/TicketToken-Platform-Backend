@@ -1,119 +1,182 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { reportsController } from '../controllers/reports.controller';
 
-const router = Router();
+const venueParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const reportParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['reportId'],
+    properties: {
+      reportId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const getReportsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      type: { type: 'string' },
+      page: { type: 'integer', minimum: 1 },
+      limit: { type: 'integer', minimum: 1, maximum: 100 }
+    }
+  }
+} as const;
 
-// Get available report templates
-router.get(
-  '/templates',
-  authorize(['analytics.read']),
-  reportsController.getReportTemplates
-);
+const generateReportSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'templateId', 'name', 'parameters', 'format'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      templateId: { type: 'string', format: 'uuid' },
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+      parameters: { type: 'object' },
+      format: { type: 'string', enum: ['pdf', 'xlsx', 'csv'] },
+      schedule: { type: 'object' }
+    }
+  }
+} as const;
 
-// Get reports for a venue
-router.get(
-  '/venue/:venueId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('type').optional().isString(),
-    query('page').optional().isInt({ min: 1 }),
-    query('limit').optional().isInt({ min: 1, max: 100 })
-  ]),
-  reportsController.getReports
-);
+const scheduleReportSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'templateId', 'name', 'schedule', 'recipients'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      templateId: { type: 'string', format: 'uuid' },
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+      schedule: {
+        type: 'object',
+        required: ['frequency', 'time'],
+        properties: {
+          frequency: { type: 'string', enum: ['daily', 'weekly', 'monthly'] },
+          time: { type: 'string', pattern: '^([01]?[0-9]|2[0-3]):[0-5][0-9]$' }
+        }
+      },
+      recipients: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'object',
+          properties: {
+            email: { type: 'string', format: 'email' }
+          }
+        }
+      }
+    }
+  }
+} as const;
 
-// Get a specific report
-router.get(
-  '/:reportId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('reportId').isUUID()
-  ]),
-  reportsController.getReport
-);
+const updateScheduleSchema = {
+  params: {
+    type: 'object',
+    required: ['reportId'],
+    properties: {
+      reportId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    required: ['schedule'],
+    properties: {
+      schedule: { type: 'object' },
+      recipients: { type: 'array' }
+    }
+  }
+} as const;
 
-// Generate a report
-router.post(
-  '/generate',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('templateId').isUUID(),
-    body('name').isString().notEmpty().isLength({ max: 100 }),
-    body('parameters').isObject(),
-    body('format').isIn(['pdf', 'xlsx', 'csv']),
-    body('schedule').optional().isObject()
-  ]),
-  reportsController.generateReport
-);
+const scheduleActionSchema = {
+  params: {
+    type: 'object',
+    required: ['reportId', 'action'],
+    properties: {
+      reportId: { type: 'string', format: 'uuid' },
+      action: { type: 'string', enum: ['pause', 'resume'] }
+    }
+  }
+} as const;
 
-// Schedule a report
-router.post(
-  '/schedule',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('templateId').isUUID(),
-    body('name').isString().notEmpty().isLength({ max: 100 }),
-    body('schedule').isObject(),
-    body('schedule.frequency').isIn(['daily', 'weekly', 'monthly']),
-    body('schedule.time').matches(/^([01]?[0-9]|2[0-3]):[0-5][0-9]$/),
-    body('recipients').isArray().notEmpty(),
-    body('recipients.*.email').isEmail()
-  ]),
-  reportsController.scheduleReport
-);
+export default async function reportsRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Update report schedule
-router.put(
-  '/:reportId/schedule',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('reportId').isUUID(),
-    body('schedule').isObject(),
-    body('recipients').optional().isArray()
-  ]),
-  reportsController.updateReportSchedule
-);
+  // Get available report templates
+  app.get('/templates', {
+    preHandler: [authorize(['analytics.read'])],
+    handler: reportsController.getReportTemplates
+  });
 
-// Delete a report
-router.delete(
-  '/:reportId',
-  authorize(['analytics.delete']),
-  validateRequest([
-    param('reportId').isUUID()
-  ]),
-  reportsController.deleteReport
-);
+  // Get reports for a venue
+  app.get('/venue/:venueId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: getReportsSchema,
+    handler: reportsController.getReports
+  });
 
-// Get scheduled reports
-router.get(
-  '/venue/:venueId/scheduled',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID()
-  ]),
-  reportsController.getScheduledReports
-);
+  // Get a specific report
+  app.get('/:reportId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: reportParamsSchema,
+    handler: reportsController.getReport
+  });
 
-// Pause/resume scheduled report
-router.post(
-  '/:reportId/schedule/:action',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('reportId').isUUID(),
-    param('action').isIn(['pause', 'resume'])
-  ]),
-  reportsController.toggleScheduledReport
-);
+  // Generate a report
+  app.post('/generate', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: generateReportSchema,
+    handler: reportsController.generateReport
+  });
 
-export { router as reportsRouter };
+  // Schedule a report
+  app.post('/schedule', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: scheduleReportSchema,
+    handler: reportsController.scheduleReport
+  });
+
+  // Update report schedule
+  app.put('/:reportId/schedule', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: updateScheduleSchema,
+    handler: reportsController.updateReportSchedule
+  });
+
+  // Delete a report
+  app.delete('/:reportId', {
+    preHandler: [authorize(['analytics.delete'])],
+    schema: reportParamsSchema,
+    handler: reportsController.deleteReport
+  });
+
+  // Get scheduled reports
+  app.get('/venue/:venueId/scheduled', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: venueParamsSchema,
+    handler: reportsController.getScheduledReports
+  });
+
+  // Pause/resume scheduled report
+  app.post('/:reportId/schedule/:action', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: scheduleActionSchema,
+    handler: reportsController.toggleScheduledReport
+  });
+}

@@ -1,5 +1,5 @@
 // @ts-nocheck
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from "@tickettoken/shared";
 import AWS from 'aws-sdk';
 import { env } from '../config/env';
 import { logger } from '../config/logger';

@@ -1,35 +1,35 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 
 class VenueSettingsController {
-  async getSettings(_req: Request, res: Response, next: NextFunction) {
+  async getSettings(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      res.json({ settings: {} });
+      reply.send({ settings: {} });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async updateSettings(_req: Request, res: Response, next: NextFunction) {
+  async updateSettings(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      res.json({ success: true });
+      reply.send({ success: true });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getVenueListings(_req: Request, res: Response, next: NextFunction) {
+  async getVenueListings(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      res.json({ listings: [] });
+      reply.send({ listings: [] });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getSalesReport(_req: Request, res: Response, next: NextFunction) {
+  async getSalesReport(_request: FastifyRequest, reply: FastifyReply) {
     try {
-      res.json({ report: {} });
+      reply.send({ report: {} });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

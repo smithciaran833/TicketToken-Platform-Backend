@@ -23,7 +23,15 @@ export async function authenticate(
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret') as any;
+    // Validate JWT_SECRET is set in production
+    const jwtSecret = process.env.JWT_SECRET || 
+      (process.env.NODE_ENV === 'production' ? '' : 'dev-secret');
+    
+    if (!jwtSecret) {
+      throw new Error('JWT_SECRET not configured');
+    }
+
+    const decoded = jwt.verify(token, jwtSecret) as any;
     
     request.user = {
       id: decoded.userId || decoded.id,

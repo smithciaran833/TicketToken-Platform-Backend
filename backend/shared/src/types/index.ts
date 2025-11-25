@@ -1,8 +1,8 @@
 import { FastifyRequest } from 'fastify';
 
-export type UserRole = 
+export type UserRole =
   | 'venue-owner'
-  | 'event-organizer' 
+  | 'event-organizer'
   | 'customer'
   | 'admin'
   | 'scanner'

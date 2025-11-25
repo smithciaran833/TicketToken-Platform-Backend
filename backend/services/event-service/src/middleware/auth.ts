@@ -1,64 +1,37 @@
-import { createAxiosInstance } from "@tickettoken/shared/src/http";
-import { FastifyReply } from 'fastify';
-import { Request, Response, NextFunction } from 'express';
-import { AuthenticatedRequest, UnauthorizedError } from '../types';
+import { createAxiosInstance } from "@tickettoken/shared";
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { AuthenticatedRequest } from '../types';
 
-// For Express middleware
-export async function authenticate(
-  req: Request,
-  res: Response,
-  next: NextFunction
-): Promise<void> {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  
-  if (!token) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
-  }
-  
-  try {
-    // Create axios instance for auth service
-    const authService = createAxiosInstance(
-      process.env.AUTH_SERVICE_URL || 'http://auth-service:3001'
-    );
-    
-    // Verify token with auth service - using GET as per auth-service contract
-    const response = await authService.get('/auth/verify', {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    
-    // Attach user to request
-    (req as any).user = response.data.user;
-    next();
-  } catch (error) {
-    res.status(401).json({ error: 'Invalid token' });
-    return;
-  }
-}
-
-// Keep the Fastify version if needed elsewhere
+// Fastify authentication middleware
 export async function authenticateFastify(
-  request: AuthenticatedRequest,
+  request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
   const token = request.headers.authorization?.replace('Bearer ', '');
   
   if (!token) {
-    throw new UnauthorizedError('No token provided');
+    return reply.status(401).send({ error: 'Authentication required' });
   }
-  
+
   try {
     const authService = createAxiosInstance(
-      process.env.AUTH_SERVICE_URL || 'http://auth-service:3001'
+      process.env.AUTH_SERVICE_URL || 'http://localhost:3001'
     );
     
-    // Using GET with token in header
     const response = await authService.get('/auth/verify', {
       headers: { Authorization: `Bearer ${token}` }
     });
-    
-    request.user = response.data.user;
+
+    // Map JWT 'sub' field to 'id' for compatibility
+    const userData = response.data.user;
+    (request as any).user = {
+      ...userData,
+      id: userData.sub || userData.id
+    };
   } catch (error) {
-    throw new UnauthorizedError('Invalid token');
+    return reply.status(401).send({ error: 'Invalid token' });
   }
 }
+
+// Export as default authenticate function
+export const authenticate = authenticateFastify;

@@ -1,20 +1,33 @@
-// Test setup
-process.env.NODE_ENV = 'test';
-process.env.S3_BUCKET = 'test-bucket';
-process.env.S3_REGION = 'us-east-1';
-process.env.FILE_MAX_MB = '25';
-process.env.FILE_ALLOWED_TYPES = 'image/jpeg,image/png,application/pdf,text/csv';
-process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
-process.env.REDIS_URL = 'redis://localhost:6379';
-process.env.JWT_SECRET = 'test-secret';
-process.env.FILE_SERVICE_PORT = '3013';
+import { config } from 'dotenv';
 
-// Silence console during tests
+// Load test environment variables
+config({ path: '.env.test' });
+
+// Set test environment
+process.env.NODE_ENV = 'test';
+process.env.JWT_SECRET = 'test-secret-key';
+process.env.LOG_LEVEL = 'error'; // Reduce noise during tests
+
+// Mock external services by default
+jest.mock('../src/services/virus-scan.service');
+jest.mock('../src/services/cache.service');
+
+// Global test timeout
+jest.setTimeout(10000);
+
+// Suppress console logs during tests (optional)
 global.console = {
   ...console,
   log: jest.fn(),
   debug: jest.fn(),
   info: jest.fn(),
   warn: jest.fn(),
-  error: jest.fn(),
+  // Keep error for debugging
+  error: console.error,
 };
+
+// Clean up after all tests
+afterAll(async () => {
+  // Close database connections, Redis, etc.
+  await new Promise(resolve => setTimeout(resolve, 500));
+});

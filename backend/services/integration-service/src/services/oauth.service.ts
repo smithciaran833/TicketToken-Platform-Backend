@@ -2,9 +2,19 @@ import { db } from '../config/database';
 import { logger } from '../utils/logger';
 import { tokenVault } from './token-vault.service';
 import crypto from 'crypto';
+import Redis from 'ioredis';
 
 export class OAuthService {
-  private stateStore: Map<string, any> = new Map();
+  private redis: Redis;
+
+  constructor() {
+    this.redis = new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD,
+      db: parseInt(process.env.REDIS_DB || '0'),
+    });
+  }
 
   async initiateOAuth(
     venueId: string,
@@ -15,14 +25,17 @@ export class OAuthService {
       // Generate state token
       const state = this.generateStateToken();
       
-      // Store state for verification
-      this.stateStore.set(state, {
-        venueId,
-        integrationType,
-        userId,
-        createdAt: new Date(),
-        expiresAt: new Date(Date.now() + 10 * 60 * 1000) // 10 minutes
-      });
+      // Store state in Redis with 10 minute TTL
+      await this.redis.setex(
+        `oauth:state:${state}`,
+        600, // 10 minutes
+        JSON.stringify({
+          venueId,
+          integrationType,
+          userId,
+          createdAt: new Date().toISOString(),
+        })
+      );
 
       // Get OAuth URL based on provider
       const authUrl = this.getOAuthUrl(integrationType, state);
@@ -59,17 +72,13 @@ export class OAuthService {
     state: string
   ): Promise<any> {
     try {
-      // Verify state
-      const stateData = this.stateStore.get(state);
-      if (!stateData) {
-        throw new Error('Invalid state token');
+      // Verify state from Redis
+      const stateJson = await this.redis.get(`oauth:state:${state}`);
+      if (!stateJson) {
+        throw new Error('Invalid or expired state token');
       }
 
-      // Check expiration
-      if (new Date() > stateData.expiresAt) {
-        this.stateStore.delete(state);
-        throw new Error('State token expired');
-      }
+      const stateData = JSON.parse(stateJson);
 
       // Exchange code for token
       const tokens = await this.exchangeCodeForToken(provider, code);
@@ -105,8 +114,8 @@ export class OAuthService {
           updated_at: new Date()
         });
 
-      // Clean up state
-      this.stateStore.delete(state);
+      // Clean up state from Redis
+      await this.redis.del(`oauth:state:${state}`);
 
       // Log success
       await db('sync_logs').insert({
@@ -347,19 +356,7 @@ export class OAuthService {
     return new Date(Date.now() + expiresIn * 1000);
   }
 
-  cleanupExpiredStates(): void {
-    const now = new Date();
-    for (const [state, data] of this.stateStore.entries()) {
-      if (data.expiresAt < now) {
-        this.stateStore.delete(state);
-      }
-    }
-  }
+  // No longer needed - Redis handles TTL automatically
 }
 
 export const oauthService = new OAuthService();
-
-// Clean up expired states every minute
-setInterval(() => {
-  oauthService.cleanupExpiredStates();
-}, 60000);

@@ -1,77 +1,156 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface AlertParams {
+  alertId: string;
+}
+
+interface InstanceParams {
+  instanceId: string;
+}
+
+interface GetAlertsQuery {
+  enabled?: boolean;
+  severity?: 'info' | 'warning' | 'error' | 'critical';
+  page?: number;
+  limit?: number;
+}
+
+interface CreateAlertBody {
+  venueId: string;
+  name: string;
+  description?: string;
+  type: string;
+  severity: 'info' | 'warning' | 'error' | 'critical';
+  conditions: any[];
+  actions: any[];
+  enabled?: boolean;
+  schedule?: Record<string, any>;
+}
+
+interface UpdateAlertBody {
+  name?: string;
+  description?: string;
+  severity?: 'info' | 'warning' | 'error' | 'critical';
+  conditions?: any[];
+  actions?: any[];
+  schedule?: Record<string, any>;
+}
+
+interface ToggleAlertBody {
+  enabled: boolean;
+}
+
+interface GetInstancesQuery {
+  status?: 'active' | 'acknowledged' | 'resolved';
+  limit?: number;
+}
+
+interface AcknowledgeAlertBody {
+  notes?: string;
+}
+
 class AlertsController extends BaseController {
-  getAlerts = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getAlerts = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: GetAlertsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { alerts: [] });
+      return this.success(reply, { alerts: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getAlert = async (
+    request: FastifyRequest<{ Params: AlertParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { alert: {} });
+      return this.success(reply, { alert: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  createAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  createAlert = async (
+    request: FastifyRequest<{ Body: CreateAlertBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { alert: {} }, 201);
+      return this.success(reply, { alert: {} }, 201);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  updateAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  updateAlert = async (
+    request: FastifyRequest<{ Params: AlertParams; Body: UpdateAlertBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { alert: {} });
+      return this.success(reply, { alert: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  deleteAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  deleteAlert = async (
+    request: FastifyRequest<{ Params: AlertParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Alert deleted' });
+      return this.success(reply, { message: 'Alert deleted' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  toggleAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  toggleAlert = async (
+    request: FastifyRequest<{ Params: AlertParams; Body: ToggleAlertBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { alert: {} });
+      return this.success(reply, { alert: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getAlertInstances = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getAlertInstances = async (
+    request: FastifyRequest<{ Params: AlertParams; Querystring: GetInstancesQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { instances: [] });
+      return this.success(reply, { instances: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  acknowledgeAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  acknowledgeAlert = async (
+    request: FastifyRequest<{ Params: InstanceParams; Body: AcknowledgeAlertBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { instance: {} });
+      return this.success(reply, { instance: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  testAlert = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  testAlert = async (
+    request: FastifyRequest<{ Params: AlertParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Test alert sent' });
+      return this.success(reply, { message: 'Test alert sent' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

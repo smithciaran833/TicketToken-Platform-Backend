@@ -4,6 +4,7 @@ import { QUEUES } from "@tickettoken/shared/src/mq/queues";
 import { StaffModel } from '../models/staff.model';
 import { SettingsModel } from '../models/settings.model';
 import { VenueAuditLogger } from '../utils/venue-audit-logger';
+import { ForbiddenError } from '../utils/errors';
 import { Redis } from 'ioredis';
 import { Knex } from 'knex';
 
@@ -42,7 +43,7 @@ export class VenueService {
     };
   }
 
-  async createVenue(venueData: Partial<IVenue>, ownerId: string, requestInfo?: any): Promise<IVenue> {
+  async createVenue(venueData: Partial<IVenue>, ownerId: string, tenantId: string, requestInfo?: any): Promise<IVenue> {
     try {
       // Start transaction
       const venue = await this.db.transaction(async (trx) => {
@@ -52,6 +53,7 @@ export class VenueService {
         // Create venue using transaction
         // Add owner ID to venue data
         venueData.created_by = ownerId;
+        venueData.tenant_id = tenantId;
 
         const newVenue = await venueModel.createWithDefaults(venueData);
 
@@ -63,9 +65,22 @@ export class VenueService {
           permissions: ['*'],
         });
 
-        // Initialize default settings using transaction
-        await trx('venues').where({ id: newVenue.id }).update({
-          settings: this.getDefaultSettings(),
+        // Initialize default settings in venue_settings table
+        await trx('venue_settings').insert({
+          venue_id: newVenue.id,
+          max_tickets_per_order: 10,
+          ticket_resale_allowed: true,
+          allow_print_at_home: true,
+          allow_mobile_tickets: true,
+          require_id_verification: false,
+          ticket_transfer_allowed: true,
+          service_fee_percentage: 10,
+          facility_fee_amount: 5,
+          processing_fee_percentage: 2.9,
+          payment_methods: ['card'],
+          accepted_currencies: ['USD'],
+          payout_frequency: 'weekly',
+          minimum_payout_amount: 100,
         });
 
         return newVenue;
@@ -76,9 +91,21 @@ export class VenueService {
 
       this.logger.info({ venueId: venue.id, ownerId }, 'Venue created successfully');
 
-      // Publish venue created event
+      // Publish venue created event with error handling
       if (venue.id) {
-        await this.eventPublisher.publishVenueCreated(venue.id, venue, ownerId);
+        try {
+          await this.eventPublisher.publishVenueCreated(venue.id, venue, ownerId);
+          this.logger.debug('Venue created event published successfully', { venueId: venue.id });
+        } catch (publishError) {
+          // Log error but don't fail the entire operation
+          this.logger.error('Failed to publish venue created event', {
+            error: publishError,
+            venueId: venue.id,
+            ownerId,
+            errorMessage: publishError instanceof Error ? publishError.message : 'Unknown error'
+          });
+          // TODO: Consider queuing to dead letter queue for retry
+        }
       }
 
       return venue;
@@ -146,9 +173,21 @@ export class VenueService {
 
     this.logger.info({ venueId, userId, updates }, 'Venue updated');
 
-    // Publish venue updated event
+    // Publish venue updated event with error handling
     if (updated.id) {
-      await this.eventPublisher.publishVenueUpdated(updated.id, updates, userId);
+      try {
+        await this.eventPublisher.publishVenueUpdated(updated.id, updates, userId);
+        this.logger.debug('Venue updated event published successfully', { venueId: updated.id });
+      } catch (publishError) {
+        // Log error but don't fail the entire operation
+        this.logger.error('Failed to publish venue updated event', {
+          error: publishError,
+          venueId: updated.id,
+          userId,
+          errorMessage: publishError instanceof Error ? publishError.message : 'Unknown error'
+        });
+        // TODO: Consider queuing to dead letter queue for retry
+      }
     }
     return updated;
   }
@@ -175,8 +214,20 @@ export class VenueService {
 
     this.logger.info({ venueId, userId }, 'Venue deleted');
 
-    // Publish venue deleted event
-    await this.eventPublisher.publishVenueDeleted(venueId, userId);
+    // Publish venue deleted event with error handling
+    try {
+      await this.eventPublisher.publishVenueDeleted(venueId, userId);
+      this.logger.debug('Venue deleted event published successfully', { venueId });
+    } catch (publishError) {
+      // Log error but don't fail the entire operation
+      this.logger.error('Failed to publish venue deleted event', {
+        error: publishError,
+        venueId,
+        userId,
+        errorMessage: publishError instanceof Error ? publishError.message : 'Unknown error'
+      });
+      // TODO: Consider queuing to dead letter queue for retry
+    }
   }
 
   async searchVenues(searchTerm: string, filters: any = {}): Promise<IVenue[]> {
@@ -203,27 +254,46 @@ export class VenueService {
   async checkVenueAccess(venueId: string, userId: string): Promise<boolean> {
     try {
       const { venueModel, staffModel } = this.getModels();
-      console.log("DEBUG: Checking access for", { venueId, userId });
+      this.logger.debug('Checking venue access', { venueId, userId });
 
       const staffMember = await staffModel.findByVenueAndUser(venueId, userId);
-      console.log("DEBUG: Staff member result:", staffMember);
+      this.logger.debug('Staff member lookup result', { 
+        venueId, 
+        userId, 
+        hasStaffMember: !!staffMember,
+        isActive: staffMember?.is_active 
+      });
 
       if (!staffMember || !staffMember.is_active) {
-        console.log("DEBUG: No active staff member found");
+        this.logger.debug('Access denied: no active staff member found', { venueId, userId });
         return false;
       }
 
       const venue = await venueModel.findById(venueId);
-      console.log("DEBUG: Venue result:", venue?.id, venue?.is_active);
+      this.logger.debug('Venue lookup result', { 
+        venueId, 
+        venueExists: !!venue,
+        venueStatus: venue?.status 
+      });
 
-      if (!venue || !venue.is_active) {
-        console.log("DEBUG: Venue not found or inactive");
+      if (!venue || venue.status !== 'ACTIVE') {
+        this.logger.debug('Access denied: venue not found or inactive', { 
+          venueId, 
+          venueExists: !!venue,
+          status: venue?.status 
+        });
         return false;
       }
 
+      this.logger.debug('Access granted', { venueId, userId });
       return true;
     } catch (error) {
-      console.error("DEBUG: Error in checkVenueAccess:", error);
+      this.logger.error('Error checking venue access', { 
+        error, 
+        venueId, 
+        userId,
+        errorMessage: error instanceof Error ? error.message : 'Unknown error'
+      });
       throw error;
     }
   }
@@ -273,7 +343,6 @@ export class VenueService {
     try {
       const staffVenues = await this.db('venue_staff')
         .where({ user_id: userId, is_active: true })
-        .whereNull('deleted_at')
         .select('venue_id');
 
       const venueIds = staffVenues.map(s => s.venue_id);
@@ -285,10 +354,10 @@ export class VenueService {
       let venueQuery = this.db('venues')
         .whereIn('id', venueIds)
         .whereNull('deleted_at')
-        .where('is_active', true);
+        .where('status', 'ACTIVE');
 
       if (query.type) {
-        venueQuery = venueQuery.where('type', query.type);
+        venueQuery = venueQuery.where('venue_type', query.type);
       }
       if (query.search) {
         venueQuery = venueQuery.where(function() {
@@ -302,9 +371,23 @@ export class VenueService {
       venueQuery = venueQuery.limit(limit).offset(offset);
 
       const venues = await venueQuery;
-      return venues;
+
+      // Transform venues to include computed fields like is_active
+      return venues.map((v: any) => ({
+        ...v,
+        is_active: v.status === 'ACTIVE',
+        type: v.venue_type,
+        capacity: v.max_capacity,
+        address: {
+          street: v.address_line1 || '',
+          city: v.city || '',
+          state: v.state_province || '',
+          zipCode: v.postal_code || '',
+          country: v.country_code || 'US',
+        }
+      }));
     } catch (error) {
-      this.logger.error({ error, userId, query }, 'Error listing user venues');
+      this.logger.error({ error, userId, query }, 'Failed to list user venues');
       throw error;
     }
   }
@@ -328,7 +411,7 @@ export class VenueService {
     // Verify requester has permission to add staff
     const requesterStaff = await staffModel.findByVenueAndUser(venueId, requesterId);
     if (!requesterStaff || (requesterStaff.role !== 'owner' && requesterStaff.role !== 'manager')) {
-      throw new Error('Only owners and managers can add staff');
+      throw new ForbiddenError('Only owners and managers can add staff');
     }
 
     // Add the new staff member
@@ -372,7 +455,80 @@ export class VenueService {
   }
 
   private async canDeleteVenue(venueId: string): Promise<{ allowed: boolean; reason?: string }> {
-    return { allowed: true };
+    try {
+      // Check for active or future events
+      const activeEvents = await this.db('events')
+        .where('venue_id', venueId)
+        .where('event_date', '>=', new Date())
+        .whereNull('deleted_at')
+        .count('* as count')
+        .first();
+
+      if (activeEvents && parseInt(activeEvents.count as string) > 0) {
+        this.logger.warn('Cannot delete venue: has upcoming events', { 
+          venueId, 
+          eventCount: activeEvents.count 
+        });
+        return {
+          allowed: false,
+          reason: 'Venue has upcoming events. Please cancel or reschedule all events before deleting the venue.'
+        };
+      }
+
+      // Check for pending or confirmed orders for events at this venue
+      const activeOrders = await this.db('orders')
+        .join('events', 'orders.event_id', 'events.id')
+        .where('events.venue_id', venueId)
+        .whereIn('orders.status', ['pending', 'confirmed', 'paid'])
+        .whereNull('orders.deleted_at')
+        .count('* as count')
+        .first();
+
+      if (activeOrders && parseInt(activeOrders.count as string) > 0) {
+        this.logger.warn('Cannot delete venue: has active orders', { 
+          venueId, 
+          orderCount: activeOrders.count 
+        });
+        return {
+          allowed: false,
+          reason: 'Venue has active ticket orders. Please process or cancel all pending orders before deletion.'
+        };
+      }
+
+      // Check for events in the past 90 days (for audit/compliance reasons)
+      const recentPastDate = new Date();
+      recentPastDate.setDate(recentPastDate.getDate() - 90);
+      
+      const recentEvents = await this.db('events')
+        .where('venue_id', venueId)
+        .where('event_date', '>=', recentPastDate)
+        .where('event_date', '<', new Date())
+        .whereNull('deleted_at')
+        .count('* as count')
+        .first();
+
+      if (recentEvents && parseInt(recentEvents.count as string) > 0) {
+        this.logger.warn('Cannot delete venue: has recent past events', { 
+          venueId, 
+          eventCount: recentEvents.count 
+        });
+        return {
+          allowed: false,
+          reason: 'Venue has events from the past 90 days. Please wait for the retention period to expire or contact support.'
+        };
+      }
+
+      // All checks passed
+      this.logger.info('Venue deletion validation passed', { venueId });
+      return { allowed: true };
+    } catch (error) {
+      this.logger.error('Error validating venue deletion', { error, venueId });
+      // Fail safe: deny deletion if we can't verify it's safe
+      return {
+        allowed: false,
+        reason: 'Unable to verify venue can be safely deleted. Please try again or contact support.'
+      };
+    }
   }
 
   private async clearVenueCache(venueId: string): Promise<void> {
@@ -388,32 +544,12 @@ export class VenueService {
     }
   }
 
-  private calculateOnboardingStatus(onboarding: Record<string, boolean>): string {
+  private calculateOnboardingStatus(onboarding: Record<string, boolean>): 'pending' | 'in_progress' | 'completed' {
     const steps = ['basic_info', 'layout', 'integrations', 'staff'];
     const completed = steps.filter(step => onboarding[step]).length;
 
     if (completed === 0) return 'pending';
     if (completed === steps.length) return 'completed';
     return 'in_progress';
-  }
-
-  private getDefaultSettings(): Record<string, any> {
-    return {
-      general: {
-        timezone: 'America/New_York',
-        currency: 'USD',
-        language: 'en',
-      },
-      ticketing: {
-        allowRefunds: true,
-        refundWindow: 24,
-        maxTicketsPerOrder: 10,
-        requirePhoneNumber: false,
-      },
-      notifications: {
-        emailEnabled: true,
-        smsEnabled: false,
-      }
-    };
   }
 }

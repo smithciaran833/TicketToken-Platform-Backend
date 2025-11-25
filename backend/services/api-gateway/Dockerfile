@@ -2,19 +2,19 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy shared module first
+# Copy root tsconfig and shared module
+COPY tsconfig.base.json ./tsconfig.base.json
 COPY backend/shared ./backend/shared
-
-# Copy api-gateway service
 COPY backend/services/api-gateway ./backend/services/api-gateway
 
-# Go to api-gateway directory
-WORKDIR /app/backend/services/api-gateway
-
-# Install dependencies (this will now resolve the local shared module)
+# Build shared module first
+WORKDIR /app/backend/shared
 RUN npm install
+RUN npm run build
 
-# Build TypeScript
+# Build api-gateway
+WORKDIR /app/backend/services/api-gateway
+RUN npm install
 RUN npm run build
 
 # Production stage
@@ -22,8 +22,9 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# Copy the entire built application including node_modules
-COPY --from=builder /app/backend/services/api-gateway ./
+# Copy built shared module and api-gateway
+COPY --from=builder /app/backend/shared /app/backend/shared
+COPY --from=builder /app/backend/services/api-gateway /app
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -33,4 +34,4 @@ USER nodejs
 
 EXPOSE 3000
 
-CMD ["node", "dist/server.js"]
+CMD ["node", "dist/services/api-gateway/src/server.js"]

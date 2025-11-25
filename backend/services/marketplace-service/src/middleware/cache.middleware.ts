@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../utils/logger';
 import { cache } from '../services/cache-integration';
 
@@ -8,37 +8,35 @@ export interface CacheOptions {
 }
 
 export const cacheMiddleware = (options: CacheOptions = {}) => {
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const ttl = options.ttl || 300; // Default 5 minutes
-      const cacheKey = options.key || `cache:${req.method}:${req.originalUrl}`;
-      
+      const cacheKey = options.key || `cache:${request.method}:${request.url}`;
+
       // Skip cache for non-GET requests
-      if (req.method !== 'GET') {
-        return next();
+      if (request.method !== 'GET') {
+        return;
       }
-      
+
       // Check cache
       const cached = await cache.get(cacheKey);
       if (cached) {
         logger.debug(`Cache hit: ${cacheKey}`);
-        return res.json(JSON.parse(cached as string));
+        return reply.send(JSON.parse(cached as string));
       }
-      
-      // Store original json method
-      const originalJson = res.json.bind(res);
-      
-      // Override json method to cache response
-      res.json = function(data: any) {
+
+      // Store original send method
+      const originalSend = reply.send.bind(reply);
+
+      // Override send method to cache response
+      reply.send = function(data: any) {
         cache.set(cacheKey, JSON.stringify(data), { ttl })
           .catch((err: Error) => logger.error('Cache set error:', err));
-        return originalJson(data);
+        return originalSend(data);
       };
-      
-      next();
     } catch (error) {
       logger.error('Cache middleware error:', error);
-      next();
+      // Continue without cache on error
     }
   };
 };

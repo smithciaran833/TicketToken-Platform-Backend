@@ -5,8 +5,8 @@ export function createAxiosInstance(baseURL: string, timeout = 10000) {
     baseURL,
     timeout,
     headers: {
-      'Content-Type': 'application/json'
-    }
+      'Content-Type': 'application/json',
+    },
   });
 
   // Request interceptor

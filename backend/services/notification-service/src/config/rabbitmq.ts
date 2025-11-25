@@ -1,4 +1,4 @@
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
+import { QUEUES } from "@tickettoken/shared";
 const amqp = require('amqplib');
 import { env } from './env';
 import { logger } from './logger';

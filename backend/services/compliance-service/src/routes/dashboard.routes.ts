@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { DashboardController } from '../controllers/dashboard.controller';
 
-const router = Router();
+export async function dashboardRoutes(fastify: FastifyInstance) {
+  const dashboardController = new DashboardController();
 
-// Dashboard routes
-router.get('/dashboard', DashboardController.getComplianceOverview);
-
-export default router;
+  // Dashboard routes
+  fastify.get('/dashboard', dashboardController.getComplianceOverview);
+}

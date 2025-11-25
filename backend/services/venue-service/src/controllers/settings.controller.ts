@@ -5,12 +5,12 @@ import { validate } from '../middleware/validation.middleware';
 import { updateSettingsSchema } from '../schemas/settings.schema';
 import { NotFoundError, ForbiddenError } from '../utils/errors';
 import { venueOperations } from '../utils/metrics';
+import { auditService } from '@tickettoken/shared';
 
 interface VenueParams {
   venueId: string;
 }
 
-// Helper middleware for tenant context
 async function addTenantContext(request: any, reply: any) {
   const user = request.user;
   const tenantId = user?.tenant_id || '00000000-0000-0000-0000-000000000001';
@@ -20,7 +20,6 @@ async function addTenantContext(request: any, reply: any) {
 export async function settingsRoutes(fastify: FastifyInstance) {
   const { db, venueService, logger } = (fastify as any).container.cradle;
 
-  // Get venue settings - SECURED
   fastify.get('/',
     {
       preHandler: [authenticate, addTenantContext]
@@ -30,7 +29,6 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         const { venueId } = request.params;
         const userId = request.user?.id;
 
-        // Use venueService for access check
         const hasAccess = await venueService.checkVenueAccess(venueId, userId);
         if (!hasAccess) {
           throw new ForbiddenError('No access to this venue');
@@ -41,7 +39,6 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           .first();
 
         if (!settings) {
-          // Return defaults if no settings exist
           return reply.send({
             general: {
               timezone: 'UTC',
@@ -56,7 +53,6 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           });
         }
 
-        // Map database columns to expected format
         return reply.send({
           general: {
             timezone: 'UTC',
@@ -94,7 +90,6 @@ export async function settingsRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // Update venue settings - SECURED
   fastify.put('/',
     {
       preHandler: [authenticate, addTenantContext]
@@ -103,9 +98,9 @@ export async function settingsRoutes(fastify: FastifyInstance) {
       try {
         const { venueId } = request.params;
         const userId = request.user?.id;
+        const userRole = request.user?.role;
         const body = request.body as any;
 
-        // Check access and role
         const hasAccess = await venueService.checkVenueAccess(venueId, userId);
         if (!hasAccess) {
           throw new ForbiddenError('No access to this venue');
@@ -116,15 +111,18 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('Insufficient permissions to update settings');
         }
 
-        // Map request to database columns
+        const currentSettings = await db('venue_settings')
+          .where({ venue_id: venueId })
+          .first();
+
         const updates: any = {};
-        
+
         if (body.general) {
           if (body.general.currency) {
             updates.accepted_currencies = [body.general.currency];
           }
         }
-        
+
         if (body.ticketing) {
           if (body.ticketing.maxTicketsPerOrder !== undefined) {
             updates.max_tickets_per_order = body.ticketing.maxTicketsPerOrder;
@@ -136,10 +134,33 @@ export async function settingsRoutes(fastify: FastifyInstance) {
 
         if (Object.keys(updates).length > 0) {
           updates.updated_at = new Date();
-          
+
           await db('venue_settings')
             .where({ venue_id: venueId })
             .update(updates);
+
+          await auditService.logAction({
+            service: 'venue-service',
+            action: 'update_venue_settings',
+            actionType: 'CONFIG',
+            userId,
+            userRole,
+            resourceType: 'venue_settings',
+            resourceId: venueId,
+            previousValue: {
+              maxTicketsPerOrder: currentSettings?.max_tickets_per_order,
+              ticketResaleAllowed: currentSettings?.ticket_resale_allowed,
+              acceptedCurrencies: currentSettings?.accepted_currencies,
+            },
+            newValue: updates,
+            metadata: {
+              settingsChanged: Object.keys(updates),
+              role: accessDetails?.role,
+            },
+            ipAddress: request.ip,
+            userAgent: request.headers['user-agent'],
+            success: true,
+          });
         }
 
         logger.info({ venueId, userId }, 'Settings updated');
@@ -148,6 +169,21 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         return reply.send({ success: true, message: 'Settings updated' });
       } catch (error: any) {
         venueOperations.inc({ operation: 'settings_update', status: 'error' });
+
+        await auditService.logAction({
+          service: 'venue-service',
+          action: 'update_venue_settings',
+          actionType: 'CONFIG',
+          userId: request.user?.id || 'unknown',
+          resourceType: 'venue_settings',
+          resourceId: request.params.venueId,
+          metadata: { attemptedChanges: request.body },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+          success: false,
+          errorMessage: error instanceof Error ? error.message : 'Unknown error',
+        });
+
         if (error instanceof ForbiddenError) {
           throw error;
         }

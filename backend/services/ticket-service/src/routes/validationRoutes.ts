@@ -1,14 +1,10 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { qrController } from '../controllers/qrController';
 import { validate, ticketSchemas } from '../utils/validation';
 
-const router = Router();
-
-// Public endpoint for QR validation (used by scanner devices)
-router.post(
-  '/qr',
-  validate(ticketSchemas.validateQR),
-  qrController.validateQR.bind(qrController)
-);
-
-export default router;
+export default async function validationRoutes(fastify: FastifyInstance) {
+  // Public endpoint for QR validation (used by scanner devices)
+  fastify.post('/qr', {
+    preHandler: [validate(ticketSchemas.validateQR)]
+  }, (request, reply) => qrController.validateQR(request, reply));
+}

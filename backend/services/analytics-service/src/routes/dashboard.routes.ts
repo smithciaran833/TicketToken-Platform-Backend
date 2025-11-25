@@ -1,110 +1,162 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { dashboardController } from '../controllers/dashboard.controller';
 
-const router = Router();
+const venueParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const dashboardParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['dashboardId'],
+    properties: {
+      dashboardId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const createDashboardSchema = {
+  body: {
+    type: 'object',
+    required: ['venueId', 'name', 'type'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+      description: { type: 'string', maxLength: 500 },
+      type: { type: 'string', enum: ['overview', 'sales', 'customer', 'operations', 'custom'] },
+      isDefault: { type: 'boolean' },
+      isPublic: { type: 'boolean' },
+      config: { type: 'object' }
+    }
+  }
+} as const;
 
-// Get all dashboards for a venue
-router.get(
-  '/venue/:venueId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID()
-  ]),
-  dashboardController.getDashboards
-);
+const updateDashboardSchema = {
+  params: {
+    type: 'object',
+    required: ['dashboardId'],
+    properties: {
+      dashboardId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+      description: { type: 'string', maxLength: 500 },
+      isPublic: { type: 'boolean' },
+      config: { type: 'object' }
+    }
+  }
+} as const;
 
-// Get a specific dashboard
-router.get(
-  '/:dashboardId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('dashboardId').isUUID()
-  ]),
-  dashboardController.getDashboard
-);
+const cloneDashboardSchema = {
+  params: {
+    type: 'object',
+    required: ['dashboardId'],
+    properties: {
+      dashboardId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    required: ['name'],
+    properties: {
+      name: { type: 'string', minLength: 1, maxLength: 100 },
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Create a dashboard
-router.post(
-  '/',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('venueId').isUUID(),
-    body('name').isString().notEmpty().isLength({ max: 100 }),
-    body('description').optional().isString().isLength({ max: 500 }),
-    body('type').isIn(['overview', 'sales', 'customer', 'operations', 'custom']),
-    body('isDefault').optional().isBoolean(),
-    body('isPublic').optional().isBoolean(),
-    body('config').optional().isObject()
-  ]),
-  dashboardController.createDashboard
-);
+const shareDashboardSchema = {
+  params: {
+    type: 'object',
+    required: ['dashboardId'],
+    properties: {
+      dashboardId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    required: ['userIds', 'permissions'],
+    properties: {
+      userIds: {
+        type: 'array',
+        minItems: 1,
+        items: { type: 'string', format: 'uuid' }
+      },
+      permissions: {
+        type: 'array',
+        items: { type: 'string', enum: ['view', 'edit'] }
+      }
+    }
+  }
+} as const;
 
-// Update a dashboard
-router.put(
-  '/:dashboardId',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('dashboardId').isUUID(),
-    body('name').optional().isString().notEmpty().isLength({ max: 100 }),
-    body('description').optional().isString().isLength({ max: 500 }),
-    body('isPublic').optional().isBoolean(),
-    body('config').optional().isObject()
-  ]),
-  dashboardController.updateDashboard
-);
+export default async function dashboardRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Delete a dashboard
-router.delete(
-  '/:dashboardId',
-  authorize(['analytics.delete']),
-  validateRequest([
-    param('dashboardId').isUUID()
-  ]),
-  dashboardController.deleteDashboard
-);
+  // Get all dashboards for a venue
+  app.get('/venue/:venueId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: venueParamsSchema,
+    handler: dashboardController.getDashboards
+  });
 
-// Clone a dashboard
-router.post(
-  '/:dashboardId/clone',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('dashboardId').isUUID(),
-    body('name').isString().notEmpty().isLength({ max: 100 }),
-    body('venueId').optional().isUUID()
-  ]),
-  dashboardController.cloneDashboard
-);
+  // Get a specific dashboard
+  app.get('/:dashboardId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dashboardParamsSchema,
+    handler: dashboardController.getDashboard
+  });
 
-// Share a dashboard
-router.post(
-  '/:dashboardId/share',
-  authorize(['analytics.share']),
-  validateRequest([
-    param('dashboardId').isUUID(),
-    body('userIds').isArray().notEmpty(),
-    body('userIds.*').isUUID(),
-    body('permissions').isArray(),
-    body('permissions.*').isIn(['view', 'edit'])
-  ]),
-  dashboardController.shareDashboard
-);
+  // Create a dashboard
+  app.post('/', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: createDashboardSchema,
+    handler: dashboardController.createDashboard
+  });
 
-// Get dashboard permissions
-router.get(
-  '/:dashboardId/permissions',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('dashboardId').isUUID()
-  ]),
-  dashboardController.getDashboardPermissions
-);
+  // Update a dashboard
+  app.put('/:dashboardId', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: updateDashboardSchema,
+    handler: dashboardController.updateDashboard
+  });
 
-export { router as dashboardRouter };
+  // Delete a dashboard
+  app.delete('/:dashboardId', {
+    preHandler: [authorize(['analytics.delete'])],
+    schema: dashboardParamsSchema,
+    handler: dashboardController.deleteDashboard
+  });
+
+  // Clone a dashboard
+  app.post('/:dashboardId/clone', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: cloneDashboardSchema,
+    handler: dashboardController.cloneDashboard
+  });
+
+  // Share a dashboard
+  app.post('/:dashboardId/share', {
+    preHandler: [authorize(['analytics.share'])],
+    schema: shareDashboardSchema,
+    handler: dashboardController.shareDashboard
+  });
+
+  // Get dashboard permissions
+  app.get('/:dashboardId/permissions', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dashboardParamsSchema,
+    handler: dashboardController.getDashboardPermissions
+  });
+}

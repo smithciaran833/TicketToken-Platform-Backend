@@ -8,7 +8,7 @@ const logger = createLogger('redis-middleware');
 export async function setupRedisMiddleware(server: FastifyInstance) {
   try {
     const redisConfig: any = {
-      host: config.redis.host || 'redis',
+      host: config.redis.host || 'localhost',
       port: config.redis.port || 6379,
       connectTimeout: 5000,
       maxRetriesPerRequest: 1,
@@ -24,8 +24,9 @@ export async function setupRedisMiddleware(server: FastifyInstance) {
     const redis = new Redis(redisConfig);
     await redis.connect();
     await redis.ping();
-    
+
     logger.info('Redis connection established successfully');
+
     server.decorate('redis', redis);
 
     server.addHook('onClose', async () => {
@@ -34,6 +35,6 @@ export async function setupRedisMiddleware(server: FastifyInstance) {
     });
   } catch (error) {
     logger.error({ error }, 'Redis connection failed');
-    throw error; // Don't fall back to mock - fix the connection
+    throw error;
   }
 }

@@ -1,9 +1,7 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import morgan from 'morgan';
-import { rateLimiter } from './middleware/rate-limit.middleware';
-import { errorHandler } from './middleware/error.middleware';
+import Fastify, { FastifyInstance } from 'fastify';
+import helmet from '@fastify/helmet';
+import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
 import { logger } from './utils/logger';
 
 // Import routes
@@ -15,45 +13,56 @@ import { webhookRoutes } from './routes/webhook.routes';
 import { healthRoutes } from './routes/health.routes';
 import { adminRoutes } from './routes/admin.routes';
 
-export function createServer() {
-  const app = express();
-
-  // Security middleware
-  app.use(helmet());
-  app.use(cors());
-  
-  // Body parsing
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  
-  // Logging
-  app.use(morgan('combined', {
-    stream: { write: (message) => logger.info(message.trim()) }
-  }));
-
-  // Rate limiting
-  app.use('/api', rateLimiter);
-
-  // Health check (no auth required) - using underscore for unused param
-  app.get('/health', (_req, res) => {
-    res.json({ 
-      status: 'healthy', 
-      service: process.env.SERVICE_NAME,
-      timestamp: new Date().toISOString()
-    });
+export async function createServer(): Promise<FastifyInstance> {
+  const app = Fastify({
+    logger: false,
+    trustProxy: true,
+    bodyLimit: 10485760 // 10MB
   });
 
-  // API routes
-  app.use('/api/v1/integrations', connectionRoutes);
-  app.use('/api/v1/integrations/oauth', oauthRoutes);
-  app.use('/api/v1/integrations/sync', syncRoutes);
-  app.use('/api/v1/integrations/mappings', mappingRoutes);
-  app.use('/api/v1/integrations/webhooks', webhookRoutes);
-  app.use('/api/v1/integrations/health', healthRoutes);
-  app.use('/api/v1/integrations/admin', adminRoutes);
+  // Register plugins
+  await app.register(helmet);
+  await app.register(cors);
 
-  // Error handling
-  app.use(errorHandler);
+  // Rate limiting for /api routes
+  await app.register(rateLimit, {
+    max: 100,
+    timeWindow: '1 minute'
+  });
+
+  // Health check (no auth required)
+  app.get('/health', async (request, reply) => {
+    return {
+      status: 'healthy',
+      service: process.env.SERVICE_NAME,
+      timestamp: new Date().toISOString()
+    };
+  });
+
+  // Register API routes
+  await app.register(connectionRoutes, { prefix: '/api/v1/integrations' });
+  await app.register(oauthRoutes, { prefix: '/api/v1/integrations/oauth' });
+  await app.register(syncRoutes, { prefix: '/api/v1/integrations/sync' });
+  await app.register(mappingRoutes, { prefix: '/api/v1/integrations/mappings' });
+  await app.register(webhookRoutes, { prefix: '/api/v1/integrations/webhooks' });
+  await app.register(healthRoutes, { prefix: '/api/v1/integrations/health' });
+  await app.register(adminRoutes, { prefix: '/api/v1/integrations/admin' });
+
+  // Error handler
+  app.setErrorHandler((error, request, reply) => {
+    logger.error('Request error:', {
+      error: error.message,
+      stack: error.stack,
+      url: request.url,
+      statusCode: error.statusCode
+    });
+
+    reply.status(error.statusCode || 500).send({
+      error: error.name || 'Internal Server Error',
+      message: error.message,
+      statusCode: error.statusCode || 500
+    });
+  });
 
   return app;
 }

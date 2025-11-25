@@ -1,5 +1,5 @@
 import { Client } from '@elastic/elasticsearch';
-import { Pool } from 'pg';
+import { Knex } from 'knex';
 import pino from 'pino';
 import crypto from 'crypto';
 
@@ -20,13 +20,13 @@ interface IndexOperation {
 
 export class ConsistencyService {
   private elasticsearch: Client;
-  private pool: Pool;
+  private db: Knex;
   private logger: pino.Logger;
   private indexingInProgress: Map<string, Promise<void>> = new Map();
 
-  constructor({ elasticsearch, pool, logger }: any) {
+  constructor({ elasticsearch, db, logger }: any) {
     this.elasticsearch = elasticsearch;
-    this.pool = pool;
+    this.db = db;
     this.logger = logger.child({ component: 'ConsistencyService' });
 
     // Start background processor
@@ -67,30 +67,27 @@ export class ConsistencyService {
   }
 
   private async doIndex(operation: IndexOperation): Promise<void> {
-    const client = await this.pool.connect();
+    const trx = await this.db.transaction();
 
     try {
-      await client.query('BEGIN');
-
       // Generate idempotency key
       const idempotencyKey = this.generateIdempotencyKey(operation);
 
       // Check if already processed
-      const existing = await client.query(
-        'SELECT id FROM index_queue WHERE idempotency_key = $1',
-        [idempotencyKey]
-      );
+      const existing = await trx('index_queue')
+        .where('idempotency_key', idempotencyKey)
+        .first();
 
-      if (existing.rows.length > 0) {
+      if (existing) {
         this.logger.debug('Operation already queued', { operation });
-        await client.query('COMMIT');
+        await trx.commit();
         return;
       }
 
       // Get next version number
-      const versionResult = await client.query(`
+      const versionResult = await trx.raw(`
         INSERT INTO index_versions (entity_type, entity_id, version)
-        VALUES ($1, $2, 1)
+        VALUES (?, ?, 1)
         ON CONFLICT (entity_type, entity_id)
         DO UPDATE SET
           version = index_versions.version + 1,
@@ -102,39 +99,31 @@ export class ConsistencyService {
       const version = versionResult.rows[0].version;
 
       // Queue the operation
-      await client.query(`
-        INSERT INTO index_queue (
-          entity_type,
-          entity_id,
-          operation,
-          payload,
-          priority,
-          version,
-          idempotency_key
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      `, [
-        operation.entityType,
-        operation.entityId,
-        operation.operation,
-        JSON.stringify(operation.payload),
-        operation.priority || 5,
+      await trx('index_queue').insert({
+        entity_type: operation.entityType,
+        entity_id: operation.entityId,
+        operation: operation.operation,
+        payload: JSON.stringify(operation.payload),
+        priority: operation.priority || 5,
         version,
-        idempotencyKey
-      ]);
+        idempotency_key: idempotencyKey
+      });
 
-      await client.query('COMMIT');
+      await trx.commit();
 
       // Process immediately if high priority
       if (operation.priority && operation.priority >= 9) {
         await this.processIndexOperation(operation, version);
       }
 
-    } catch (error) {
-      await client.query('ROLLBACK');
-      this.logger.error('Failed to queue index operation', { error, operation });
+    } catch (error: any) {
+      await trx.rollback();
+      this.logger.error({
+        error: error.message,
+        stack: error.stack,
+        operation
+      }, 'Failed to queue index operation');
       throw error;
-    } finally {
-      client.release();
     }
   }
 
@@ -147,7 +136,7 @@ export class ConsistencyService {
           await this.elasticsearch.delete({
             index,
             id: operation.entityId,
-            refresh: 'wait_for' // Wait for operation to be searchable
+            refresh: 'wait_for'
           });
           break;
 
@@ -161,20 +150,20 @@ export class ConsistencyService {
               _version: version,
               _indexed_at: new Date()
             },
-            refresh: 'wait_for' // Wait for operation to be searchable
+            refresh: 'wait_for'
           });
           break;
       }
 
       // Update index status
-      await this.pool.query(`
-        UPDATE index_versions
-        SET index_status = 'INDEXED',
-            indexed_at = NOW(),
-            retry_count = 0,
-            last_error = NULL
-        WHERE entity_type = $1 AND entity_id = $2
-      `, [operation.entityType, operation.entityId]);
+      await this.db('index_versions')
+        .where({ entity_type: operation.entityType, entity_id: operation.entityId })
+        .update({
+          index_status: 'INDEXED',
+          indexed_at: this.db.fn.now(),
+          retry_count: 0,
+          last_error: null
+        });
 
       this.logger.info('Entity indexed successfully', {
         entityType: operation.entityType,
@@ -183,16 +172,20 @@ export class ConsistencyService {
       });
 
     } catch (error: any) {
-      this.logger.error('Failed to index entity', { error, operation });
+      this.logger.error({
+        error: error.message,
+        stack: error.stack,
+        operation
+      }, 'Failed to index entity');
 
       // Update retry count
-      await this.pool.query(`
-        UPDATE index_versions
-        SET retry_count = retry_count + 1,
-            last_error = $3,
-            updated_at = NOW()
-        WHERE entity_type = $1 AND entity_id = $2
-      `, [operation.entityType, operation.entityId, error.message]);
+      await this.db('index_versions')
+        .where({ entity_type: operation.entityType, entity_id: operation.entityId })
+        .update({
+          retry_count: this.db.raw('retry_count + 1'),
+          last_error: error.message,
+          updated_at: this.db.fn.now()
+        });
 
       throw error;
     }
@@ -210,12 +203,11 @@ export class ConsistencyService {
     const expiresAt = new Date(Date.now() + 60000); // 1 minute
 
     // Get current version
-    const result = await this.pool.query(`
-      SELECT version FROM index_versions
-      WHERE entity_type = $1 AND entity_id = $2
-    `, [entityType, entityId]);
+    const result = await this.db('index_versions')
+      .where({ entity_type: entityType, entity_id: entityId })
+      .first();
 
-    const version = result.rows[0]?.version || 1;
+    const version = result?.version || 1;
 
     const versions = new Map<string, Map<string, number>>();
     const entityVersions = new Map<string, number>();
@@ -223,17 +215,14 @@ export class ConsistencyService {
     versions.set(`${entityType}s`, entityVersions);
 
     // Store token in database
-    await this.pool.query(`
-      INSERT INTO read_consistency_tokens (token, client_id, required_versions, expires_at)
-      VALUES ($1, $2, $3, $4)
-    `, [
+    await this.db('read_consistency_tokens').insert({
       token,
-      clientId || 'anonymous',
-      JSON.stringify(Object.fromEntries(
+      client_id: clientId || 'anonymous',
+      required_versions: JSON.stringify(Object.fromEntries(
         Array.from(versions.entries()).map(([k, v]) => [k, Object.fromEntries(v)])
       )),
-      expiresAt
-    ]);
+      expires_at: expiresAt
+    });
 
     return { token, versions, expiresAt };
   }
@@ -244,63 +233,83 @@ export class ConsistencyService {
   async waitForConsistency(token: string, maxWaitMs: number = 5000): Promise<boolean> {
     const startTime = Date.now();
 
-    // Get token requirements
-    const result = await this.pool.query(`
-      SELECT required_versions, expires_at
-      FROM read_consistency_tokens
-      WHERE token = $1
-    `, [token]);
+    try {
+      // Get token requirements
+      const result = await this.db('read_consistency_tokens')
+        .where('token', token)
+        .first();
 
-    if (result.rows.length === 0) {
-      this.logger.debug('Consistency token not found', { token });
-      return true; // Allow read without consistency check
-    }
-
-    const { required_versions, expires_at } = result.rows[0];
-
-    if (new Date(expires_at) < new Date()) {
-      this.logger.debug('Consistency token expired', { token });
-      return true; // Token expired, allow read
-    }
-
-    // Check if all required versions are indexed
-    while (Date.now() - startTime < maxWaitMs) {
-      const allIndexed = await this.checkVersionsIndexed(required_versions);
-
-      if (allIndexed) {
-        return true;
+      if (!result) {
+        this.logger.debug('Consistency token not found', { token });
+        return true; // Allow read without consistency check
       }
 
-      // Wait a bit before checking again
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
+      const { required_versions, expires_at } = result;
 
-    this.logger.warn('Consistency wait timeout', { token, required_versions });
-    return false; // Timeout waiting for consistency
+      if (new Date(expires_at) < new Date()) {
+        this.logger.debug('Consistency token expired', { token });
+        return true; // Token expired, allow read
+      }
+
+      // Check if all required versions are indexed
+      while (Date.now() - startTime < maxWaitMs) {
+        const allIndexed = await this.checkVersionsIndexed(required_versions);
+
+        if (allIndexed) {
+          return true;
+        }
+
+        // Wait a bit before checking again
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+
+      this.logger.warn('Consistency wait timeout', { token, required_versions });
+      return false; // Timeout waiting for consistency
+    } catch (error: any) {
+      this.logger.error({
+        error: error.message,
+        stack: error.stack,
+        token
+      }, 'Error in waitForConsistency');
+      return true; // On error, allow read anyway
+    }
   }
 
   private async checkVersionsIndexed(requiredVersions: any): Promise<boolean> {
-    for (const [entityType, entities] of Object.entries(requiredVersions)) {
-      for (const [entityId, requiredVersion] of Object.entries(entities as any)) {
-        const result = await this.pool.query(`
-          SELECT version, index_status
-          FROM index_versions
-          WHERE entity_type = $1 AND entity_id = $2
-        `, [entityType.slice(0, -1), entityId]); // Remove 's' from entityType
+    try {
+      const versions = typeof requiredVersions === 'string' 
+        ? JSON.parse(requiredVersions) 
+        : requiredVersions;
 
-        if (result.rows.length === 0) {
-          return false; // Entity not found
-        }
+      for (const [entityType, entities] of Object.entries(versions)) {
+        for (const [entityId, requiredVersion] of Object.entries(entities as any)) {
+          const result = await this.db('index_versions')
+            .where({ 
+              entity_type: entityType.slice(0, -1), // Remove 's' from entityType
+              entity_id: entityId 
+            })
+            .first();
 
-        const { version, index_status } = result.rows[0];
+          if (!result) {
+            return false; // Entity not found
+          }
 
-        if (version < (requiredVersion as number) || index_status !== 'INDEXED') {
-          return false; // Not yet at required version or not indexed
+          const { version, index_status } = result;
+
+          if (version < (requiredVersion as number) || index_status !== 'INDEXED') {
+            return false; // Not yet at required version or not indexed
+          }
         }
       }
-    }
 
-    return true;
+      return true;
+    } catch (error: any) {
+      this.logger.error({
+        error: error.message,
+        stack: error.stack
+      }, 'Error in checkVersionsIndexed');
+      return false;
+    }
   }
 
   private generateIdempotencyKey(operation: IndexOperation): string {
@@ -315,50 +324,58 @@ export class ConsistencyService {
     setInterval(async () => {
       try {
         await this.processQueuedOperations();
-      } catch (error) {
-        this.logger.error('Background processor error', error);
+      } catch (error: any) {
+        this.logger.error({
+          error: error.message,
+          stack: error.stack,
+          code: error.code,
+          detail: error.detail
+        }, 'Background processor error');
       }
-    }, 1000); // Process every second
+    }, 5000); // Process every 5 seconds (reduced frequency)
   }
 
   private async processQueuedOperations(): Promise<void> {
-    const client = await this.pool.connect();
-
     try {
       // Get unprocessed operations
-      const operations = await client.query(`
-        SELECT * FROM index_queue
-        WHERE processed_at IS NULL
-        ORDER BY priority DESC, created_at ASC
-        LIMIT 10
-      `);
+      const operations = await this.db('index_queue')
+        .whereNull('processed_at')
+        .orderBy('priority', 'desc')
+        .orderBy('created_at', 'asc')
+        .limit(10);
 
-      for (const row of operations.rows) {
+      for (const row of operations) {
         try {
           await this.processIndexOperation(
             {
               entityType: row.entity_type,
               entityId: row.entity_id,
               operation: row.operation,
-              payload: row.payload
+              payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload
             },
             row.version
           );
 
           // Mark as processed
-          await client.query(`
-            UPDATE index_queue
-            SET processed_at = NOW()
-            WHERE id = $1
-          `, [row.id]);
+          await this.db('index_queue')
+            .where('id', row.id)
+            .update({ processed_at: this.db.fn.now() });
 
-        } catch (error) {
-          this.logger.error('Failed to process queued operation', { error, operation: row });
+        } catch (error: any) {
+          this.logger.error({
+            error: error.message,
+            stack: error.stack,
+            operation: row
+          }, 'Failed to process queued operation');
         }
       }
 
-    } finally {
-      client.release();
+    } catch (error: any) {
+      this.logger.error({
+        error: error.message,
+        stack: error.stack,
+        code: error.code
+      }, 'Error in processQueuedOperations');
     }
   }
 
@@ -366,10 +383,17 @@ export class ConsistencyService {
    * Force refresh of specific indices
    */
   async forceRefresh(indices?: string[]): Promise<void> {
-    if (indices && indices.length > 0) {
-      await this.elasticsearch.indices.refresh({ index: indices });
-    } else {
-      await this.elasticsearch.indices.refresh({ index: ['events', 'venues'] });
+    try {
+      if (indices && indices.length > 0) {
+        await this.elasticsearch.indices.refresh({ index: indices });
+      } else {
+        await this.elasticsearch.indices.refresh({ index: ['events', 'venues'] });
+      }
+    } catch (error: any) {
+      this.logger.error({
+        error: error.message,
+        stack: error.stack
+      }, 'Error in forceRefresh');
     }
   }
 }

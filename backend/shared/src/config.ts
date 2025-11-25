@@ -18,7 +18,7 @@ export const getDatabaseConfig = () => {
     port: parseInt(process.env.DB_PORT || '5432'),
     database: process.env.DB_NAME || 'tickettoken_db',
     user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres'
+    password: process.env.DB_PASSWORD || 'postgres',
   };
 };
 
@@ -30,7 +30,7 @@ export const getRedisConfig = () => {
   return {
     host: process.env.REDIS_HOST || 'redis',
     port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD
+    password: process.env.REDIS_PASSWORD,
   };
 };
 
@@ -41,5 +41,7 @@ export const getRabbitMQConfig = () => {
 
 // MongoDB config
 export const getMongoDBConfig = () => {
-  return process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb://mongodb:27017/tickettoken';
+  return (
+    process.env.MONGODB_URI || process.env.MONGODB_URL || 'mongodb://mongodb:27017/tickettoken'
+  );
 };

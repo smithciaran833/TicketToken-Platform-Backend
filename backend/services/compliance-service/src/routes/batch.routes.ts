@@ -1,13 +1,13 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { BatchController } from '../controllers/batch.controller';
 
-const router = Router();
+export async function batchRoutes(fastify: FastifyInstance) {
+  const batchController = new BatchController();
 
-// Batch processing routes
-router.get('/batch/jobs', BatchController.getBatchJobs);
-router.post('/batch/kyc', BatchController.runDailyChecks); // Using existing method
-router.post('/batch/risk-assessment', BatchController.runDailyChecks); // Using existing method
-router.get('/batch/job/:jobId', BatchController.getBatchJobs); // Using existing method
-router.post('/batch/ofac-update', BatchController.updateOFACList);
-
-export default router;
+  // Batch processing routes
+  fastify.get('/batch/jobs', batchController.getBatchJobs);
+  fastify.post('/batch/kyc', batchController.runDailyChecks);
+  fastify.post('/batch/risk-assessment', batchController.runDailyChecks);
+  fastify.get('/batch/job/:jobId', batchController.getBatchJobs);
+  fastify.post('/batch/ofac-update', batchController.updateOFACList);
+}

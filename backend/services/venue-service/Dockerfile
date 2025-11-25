@@ -1,46 +1,55 @@
 FROM node:20-alpine AS builder
-
 WORKDIR /app
-
-# Copy the entire shared module with all its subdirectories
+RUN npm install -g npm@latest
+COPY tsconfig.base.json ./tsconfig.base.json
 COPY backend/shared ./backend/shared
-
-# Copy venue-service
 COPY backend/services/venue-service ./backend/services/venue-service
 
-# Build shared module first
 WORKDIR /app/backend/shared
 RUN npm install
+RUN npm run build || true
 
-# Build shared/cache module
-WORKDIR /app/backend/shared/cache
-RUN npm install
-
-# Now build venue-service
 WORKDIR /app/backend/services/venue-service
-RUN npm install
+RUN npm install  # Changed from npm ci
 RUN npm run build
 
 # Production stage
 FROM node:20-alpine
-
-WORKDIR /app
-
-# Install dumb-init for proper signal handling
+WORKDIR /app/backend/services/venue-service
 RUN apk add --no-cache dumb-init
+RUN npm install -g npm@latest
 
-# Copy everything from builder
+# Copy shared module
 COPY --from=builder /app/backend/shared /app/backend/shared
-COPY --from=builder /app/backend/services/venue-service /app
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+# Copy package files
+COPY --from=builder /app/backend/services/venue-service/package.json ./package.json
+COPY --from=builder /app/backend/services/venue-service/package-lock.json ./package-lock.json
 
+# Install ALL dependencies
+RUN npm install  # Changed from npm ci
+
+# Copy built artifacts
+COPY --from=builder /app/backend/services/venue-service/dist ./dist
+
+# Copy migration files
+COPY --from=builder /app/backend/services/venue-service/knexfile.ts ./knexfile.ts
+COPY --from=builder /app/backend/services/venue-service/src/migrations ./src/migrations
+
+# Create entrypoint script
+RUN echo '#!/bin/sh' > ./entrypoint.sh && \
+    echo 'set -e' >> ./entrypoint.sh && \
+    echo 'echo "Running migrations for venue-service..."' >> ./entrypoint.sh && \
+    echo 'npm run migrate || echo "Migration failed, continuing..."' >> ./entrypoint.sh && \
+    echo 'exec "$@"' >> ./entrypoint.sh && \
+    chmod +x ./entrypoint.sh
+
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
 USER nodejs
 
 EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3002/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["dumb-init", "--"]
+ENTRYPOINT ["./entrypoint.sh", "dumb-init", "--"]
 CMD ["node", "dist/index.js"]

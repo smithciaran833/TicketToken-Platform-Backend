@@ -1,54 +1,97 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface ExportParams {
+  exportId: string;
+}
+
+interface GetExportsQuery {
+  status?: 'pending' | 'processing' | 'completed' | 'failed';
+  type?: string;
+  page?: number;
+  limit?: number;
+}
+
+interface CreateExportBody {
+  venueId: string;
+  type: 'analytics_report' | 'customer_list' | 'financial_report' | 'custom';
+  format: 'csv' | 'xlsx' | 'pdf' | 'json';
+  filters?: Record<string, any>;
+  dateRange?: {
+    startDate?: string;
+    endDate?: string;
+  };
+}
+
 class ExportController extends BaseController {
-  getExports = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getExports = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: GetExportsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { exports: [] });
+      return this.success(reply, { exports: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getExportStatus = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getExportStatus = async (
+    request: FastifyRequest<{ Params: ExportParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { export: {} });
+      return this.success(reply, { export: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  createExport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  createExport = async (
+    request: FastifyRequest<{ Body: CreateExportBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { exportId: 'export-123' }, 202);
+      return this.success(reply, { exportId: 'export-123' }, 202);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  downloadExport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  downloadExport = async (
+    request: FastifyRequest<{ Params: ExportParams }>,
+    reply: FastifyReply
+  ): Promise<void> => {
     try {
       // In production, would stream file
-      res.status(200).send('File content');
+      reply.code(200).send('File content');
     } catch (error) {
-      this.handleError(error, res, next);
+      this.handleError(error, reply);
     }
   };
 
-  cancelExport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  cancelExport = async (
+    request: FastifyRequest<{ Params: ExportParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Export cancelled' });
+      return this.success(reply, { message: 'Export cancelled' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  retryExport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  retryExport = async (
+    request: FastifyRequest<{ Params: ExportParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { exportId: 'export-123' }, 202);
+      return this.success(reply, { exportId: 'export-123' }, 202);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

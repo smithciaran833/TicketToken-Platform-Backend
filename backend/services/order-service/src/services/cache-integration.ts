@@ -1,4 +1,4 @@
-import { createCache } from '@tickettoken/shared/cache/dist';
+import { createCache } from '@tickettoken/shared';
 
 const serviceName = process.env.SERVICE_NAME || 'order-service';
 
@@ -32,15 +32,15 @@ export const serviceCache = {
   async get(key: string, fetcher?: () => Promise<any>, ttl: number = 300): Promise<any> {
     return cache.get(key, fetcher, { ttl, level: 'BOTH' });
   },
-  
+
   async set(key: string, value: any, ttl: number = 300): Promise<void> {
     await cache.set(key, value, { ttl, level: 'BOTH' });
   },
-  
+
   async delete(keys: string | string[]): Promise<void> {
     await cache.delete(keys);
   },
-  
+
   async flush(): Promise<void> {
     await cache.flush();
   }

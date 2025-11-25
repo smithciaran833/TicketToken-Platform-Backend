@@ -4,6 +4,16 @@ import Redis from 'ioredis';
 import { AwilixContainer } from 'awilix';
 import { VenueServiceClient } from '../services/venue-service.client';
 
+// Re-export model interfaces
+export {
+  IEvent,
+  IEventCategory,
+  IEventSchedule,
+  IEventCapacity,
+  IEventPricing,
+  IEventMetadata
+} from '../models';
+
 // Base types
 export interface AppConfig {
   port: number;
@@ -19,6 +29,7 @@ export interface AppConfig {
   redis: {
     host: string;
     port: number;
+    password?: string;
   };
   services: {
     venueServiceUrl: string;
@@ -31,9 +42,9 @@ export interface Dependencies {
   db: Knex;
   redis: Redis;
   venueServiceClient: VenueServiceClient;
-  eventService: any; // Will be defined later
-  pricingService: any; // Will be defined later
-  capacityService: any; // Will be defined later
+  eventService: any;
+  pricingService: any;
+  capacityService: any;
 }
 
 export interface AuthenticatedRequest extends FastifyRequest {
@@ -51,17 +62,17 @@ export type AuthenticatedHandler = (
   reply: FastifyReply
 ) => Promise<any>;
 
-// Domain types
+// Legacy Event type for backward compatibility (maps to new IEvent)
 export interface Event {
   id: string;
   venue_id: string;
   name: string;
   description?: string;
-  event_date: Date;
-  doors_open?: Date;
+  event_date: Date;  // Legacy field - maps to first schedule
+  doors_open?: Date; // Legacy field - maps to first schedule
   event_type: 'comedy' | 'concert' | 'theater' | 'sports' | 'conference' | 'other';
   status: 'draft' | 'published' | 'soldout' | 'cancelled';
-  capacity: number;
+  capacity: number;  // Legacy field - maps to total capacity
   created_at: Date;
   updated_at: Date;
   deleted_at?: Date;
@@ -88,7 +99,7 @@ export interface TicketType {
 
 export interface PricingRule {
   id: string;
-  ticket_type_id: string;
+  tier_id: string;
   rule_type: 'time_based' | 'demand_based' | 'group';
   conditions: Record<string, any>;
   adjustment: {

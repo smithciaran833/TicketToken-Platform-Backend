@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
 import { AsyncLocalStorage } from 'async_hooks';
 
@@ -18,16 +18,11 @@ const PROPAGATED_HEADERS = [
   'x-originating-service',
   'x-api-version',
   'authorization',
-  'user-agent'
+  'user-agent',
 ];
 
 // Additional headers for debugging
-const DEBUG_HEADERS = [
-  'x-debug-mode',
-  'x-force-error',
-  'x-slow-query',
-  'x-bypass-cache'
-];
+const DEBUG_HEADERS = ['x-debug-mode', 'x-force-error', 'x-slow-query', 'x-bypass-cache'];
 
 export interface RequestContext {
   requestId: string;
@@ -59,16 +54,16 @@ export function getRequestContext(): RequestContext | undefined {
 /**
  * Extract headers from incoming request
  */
-function extractHeaders(req: Request): Map<string, string> {
+function extractHeaders(request: FastifyRequest): Map<string, string> {
   const headers = new Map<string, string>();
-  
+
   for (const header of [...PROPAGATED_HEADERS, ...DEBUG_HEADERS]) {
-    const value = req.headers[header];
+    const value = request.headers[header];
     if (value && typeof value === 'string') {
       headers.set(header, value);
     }
   }
-  
+
   return headers;
 }
 
@@ -83,20 +78,20 @@ function generateSpanId(): string {
  * Context propagation middleware
  */
 export function contextPropagation(serviceName: string) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     // Extract or generate IDs
-    const requestId = (req.headers['x-request-id'] as string) || uuidv4();
-    const traceId = (req.headers['x-trace-id'] as string) || requestId;
-    const parentSpanId = req.headers['x-parent-span-id'] as string;
+    const requestId = (request.headers['x-request-id'] as string) || uuidv4();
+    const traceId = (request.headers['x-trace-id'] as string) || requestId;
+    const parentSpanId = request.headers['x-parent-span-id'] as string;
     const spanId = generateSpanId();
-    const correlationId = (req.headers['x-correlation-id'] as string) || traceId;
-    
+    const correlationId = (request.headers['x-correlation-id'] as string) || traceId;
+
     // Extract user context
-    const tenantId = (req as any).user?.tenantId || req.headers['x-tenant-id'] as string;
-    const userId = (req as any).user?.id || req.headers['x-user-id'] as string;
-    const sessionId = req.headers['x-session-id'] as string;
-    const clientId = req.headers['x-client-id'] as string;
-    
+    const tenantId = (request as any).user?.tenantId || (request.headers['x-tenant-id'] as string);
+    const userId = (request as any).user?.id || (request.headers['x-user-id'] as string);
+    const sessionId = request.headers['x-session-id'] as string;
+    const clientId = request.headers['x-client-id'] as string;
+
     // Build context
     const context: RequestContext = {
       requestId,
@@ -109,21 +104,21 @@ export function contextPropagation(serviceName: string) {
       sessionId,
       clientId,
       service: serviceName,
-      headers: extractHeaders(req),
+      headers: extractHeaders(request),
       startTime: Date.now(),
-      path: req.path,
-      method: req.method
+      path: request.url,
+      method: request.method,
     };
-    
+
     // Store context in AsyncLocalStorage
     requestContext.run(context, () => {
       // Set response headers
-      res.setHeader('x-request-id', requestId);
-      res.setHeader('x-trace-id', traceId);
-      res.setHeader('x-span-id', spanId);
-      
+      reply.header('x-request-id', requestId);
+      reply.header('x-trace-id', traceId);
+      reply.header('x-span-id', spanId);
+
       // Log request with context
-      const logger = (req as any).logger;
+      const logger = request.log;
       if (logger) {
         logger.child({
           requestId,
@@ -133,15 +128,12 @@ export function contextPropagation(serviceName: string) {
           correlationId,
           tenantId,
           userId,
-          service: serviceName
+          service: serviceName,
         });
       }
-      
+
       // Add context to request object for backward compatibility
-      (req as any).context = context;
-      
-      // Continue with request
-      next();
+      (request as any).context = context;
     });
   };
 }
@@ -149,81 +141,78 @@ export function contextPropagation(serviceName: string) {
 /**
  * Create headers for outgoing requests
  */
-export function getOutgoingHeaders(additionalHeaders?: Record<string, string>): Record<string, string> {
+export function getOutgoingHeaders(
+  additionalHeaders?: Record<string, string>
+): Record<string, string> {
   const context = getRequestContext();
-  
+
   if (!context) {
     return additionalHeaders || {};
   }
-  
+
   const headers: Record<string, string> = {
     'x-request-id': context.requestId,
     'x-trace-id': context.traceId,
     'x-parent-span-id': context.spanId, // Current span becomes parent for next service
     'x-correlation-id': context.correlationId,
-    ...additionalHeaders
+    ...additionalHeaders,
   };
-  
+
   // Add optional headers if present
   if (context.tenantId) headers['x-tenant-id'] = context.tenantId;
   if (context.userId) headers['x-user-id'] = context.userId;
   if (context.sessionId) headers['x-session-id'] = context.sessionId;
   if (context.clientId) headers['x-client-id'] = context.clientId;
-  
+
   // Add any debug headers
   for (const [key, value] of context.headers.entries()) {
     if (DEBUG_HEADERS.includes(key)) {
       headers[key] = value;
     }
   }
-  
+
   // Add originating service
   headers['x-originating-service'] = context.service;
-  
+
   return headers;
 }
 
 /**
- * Express middleware to log request completion
+ * Fastify hook to log request completion
  */
 export function requestLogging(logger: any) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const context = getRequestContext();
-    
+
     if (!context) {
-      return next();
+      return;
     }
-    
+
     // Log request start
     logger.info({
       type: 'request_start',
       ...context,
-      headers: undefined // Don't log all headers
+      headers: undefined, // Don't log all headers
     });
-    
+
     // Track response
-    const originalSend = res.send;
-    res.send = function(data: any) {
+    reply.raw.on('finish', () => {
       const duration = Date.now() - context.startTime;
-      
+
       logger.info({
         type: 'request_complete',
         requestId: context.requestId,
         traceId: context.traceId,
         spanId: context.spanId,
         duration,
-        statusCode: res.statusCode,
+        statusCode: reply.statusCode,
         path: context.path,
-        method: context.method
+        method: context.method,
       });
-      
+
       // Set duration header
-      res.setHeader('x-response-time', `${duration}ms`);
-      
-      return originalSend.call(this, data);
-    };
-    
-    next();
+      reply.header('x-response-time', `${duration}ms`);
+    });
   };
 }
 
@@ -232,16 +221,16 @@ export function requestLogging(logger: any) {
  */
 export function createChildSpan(name: string): { spanId: string; parentSpanId: string } {
   const context = getRequestContext();
-  
+
   if (!context) {
     return {
       spanId: generateSpanId(),
-      parentSpanId: ''
+      parentSpanId: '',
     };
   }
-  
+
   return {
     spanId: generateSpanId(),
-    parentSpanId: context.spanId
+    parentSpanId: context.spanId,
   };
 }

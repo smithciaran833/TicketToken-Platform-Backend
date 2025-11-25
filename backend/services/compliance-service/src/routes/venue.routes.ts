@@ -1,24 +1,17 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { VenueController } from '../controllers/venue.controller';
-import { authenticate, requireComplianceOfficer } from '../middleware/auth.middleware';
+import { requireComplianceOfficer } from '../middleware/auth.middleware';
 
-const router = Router();
+export async function venueRoutes(fastify: FastifyInstance) {
+  const venueController = new VenueController();
 
-// All venue compliance routes are already authenticated by index.ts
-// But we add additional role checks where needed
+  fastify.post('/venue/start-verification', {
+    onRequest: requireComplianceOfficer
+  }, venueController.startVerification);
 
-router.post('/venue/start-verification', 
-  requireComplianceOfficer,
-  VenueController.startVerification
-);
+  fastify.get('/venue/:venueId/status', venueController.getVerificationStatus);
 
-router.get('/venue/:venueId/status', 
-  VenueController.getVerificationStatus
-);
-
-router.get('/venue/verifications', 
-  requireComplianceOfficer,
-  VenueController.getAllVerifications
-);
-
-export default router;
+  fastify.get('/venue/verifications', {
+    onRequest: requireComplianceOfficer
+  }, venueController.getAllVerifications);
+}

@@ -1,69 +1,124 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
+import { logger } from '../utils/logger';
 
-// Import RS256 auth from shared package
-export { authenticate, AuthRequest } from '@tickettoken/shared';
+const log = logger.child({ component: 'Auth' });
 
-// Re-export as authMiddleware for backward compatibility
-import { authenticate } from '@tickettoken/shared';
-export const authMiddleware = authenticate;
+const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
+  path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
+
+let publicKey: string;
+try {
+  publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+  log.info('JWT public key loaded for verification');
+} catch (error) {
+  log.error('Failed to load JWT public key', { error, path: publicKeyPath });
+  throw new Error('JWT public key not found at ' + publicKeyPath);
+}
+
+export interface AuthRequest extends FastifyRequest {
+  user?: any;
+  userId?: string;
+  tenantId?: string;
+}
+
+export async function authenticate(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  try {
+    const authHeader = request.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return reply.status(401).send({ error: 'No token provided' });
+    }
+
+    const token = authHeader.substring(7);
+
+    const decoded = jwt.verify(token, publicKey, {
+      algorithms: ['RS256'],
+      issuer: process.env.JWT_ISSUER || 'tickettoken-auth',
+      audience: process.env.JWT_ISSUER || 'tickettoken-auth'
+    }) as any;
+
+    // Attach user info to request
+    (request as any).user = decoded;
+    (request as any).userId = decoded.userId || decoded.id || decoded.sub;
+    (request as any).tenantId = decoded.tenantId || decoded.tenant_id;
+
+    // Continue to next handler
+  } catch (error: any) {
+    if (error.name === 'TokenExpiredError') {
+      return reply.status(401).send({ error: 'Token expired' });
+    }
+    if (error.name === 'JsonWebTokenError') {
+      return reply.status(401).send({ error: 'Invalid token' });
+    }
+    log.error('Authentication error', { error });
+    return reply.status(500).send({ error: 'Authentication error' });
+  }
+}
 
 // Keep service-specific authorization logic
 export const requireRole = (roles: string[]) => {
-  return (req: any, res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return res.status(401).json({
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
+    
+    if (!user) {
+      return reply.status(401).send({
         error: 'Authentication required',
         code: 'NO_AUTH'
       });
     }
 
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
+    if (!roles.includes(user.role)) {
+      return reply.status(403).send({
         error: 'Insufficient permissions',
         code: 'FORBIDDEN',
         requiredRoles: roles,
-        userRole: req.user.role
+        userRole: user.role
       });
     }
-
-    return next();
   };
 };
 
 export const requireVenueAccess = async (
-  req: any,
-  res: Response,
-  next: NextFunction
+  request: FastifyRequest,
+  reply: FastifyReply
 ) => {
-  const venueId = req.params.venueId || req.body.venueId;
-
+  const venueId = (request.params as any).venueId || (request.body as any)?.venueId;
+  
   if (!venueId) {
-    return res.status(400).json({
+    return reply.status(400).send({
       error: 'Venue ID required',
       code: 'VENUE_ID_MISSING'
     });
   }
 
-  if (!req.user) {
-    return res.status(401).json({
+  const user = (request as any).user;
+  
+  if (!user) {
+    return reply.status(401).send({
       error: 'Authentication required',
       code: 'NO_AUTH'
     });
   }
 
   // Admins have access to all venues
-  if (req.user.isAdmin || req.user.role === 'admin') {
-    return next();
+  if (user.isAdmin || user.role === 'admin') {
+    return;
   }
 
   // Check if user has access to this venue
-  if (!req.user.venues?.includes(venueId)) {
-    return res.status(403).json({
+  if (!user.venues?.includes(venueId)) {
+    return reply.status(403).send({
       error: 'Access denied to this venue',
       code: 'VENUE_ACCESS_DENIED',
       venueId
     });
   }
-
-  next();
 };
+
+// Export AuthRequest type for use in other files

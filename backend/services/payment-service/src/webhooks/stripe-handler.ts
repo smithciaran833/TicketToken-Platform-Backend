@@ -2,6 +2,9 @@ import Stripe from 'stripe';
 import { Pool } from 'pg';
 import { StateTransitionService } from '../services/state-machine/transitions';
 import { PaymentState } from '../services/state-machine/payment-state-machine';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'StripeWebhookHandler' });
 
 export class StripeWebhookHandler {
   private stripe: Stripe;
@@ -34,7 +37,7 @@ export class StripeWebhookHandler {
     );
 
     if (existingWebhook.rows.length > 0) {
-      console.log(`Webhook ${event.id} already processed, skipping`);
+      log.info('Webhook already processed, skipping', { webhookId: event.id });
       return;
     }
 
@@ -65,7 +68,7 @@ export class StripeWebhookHandler {
 
     const stateEvent = eventMap[event.type];
     if (!stateEvent) {
-      console.log(`Unhandled event type: ${event.type}`);
+      log.info('Unhandled event type', { eventType: event.type });
       return;
     }
 
@@ -78,7 +81,7 @@ export class StripeWebhookHandler {
     );
 
     if (payment.rows.length === 0) {
-      console.error(`Payment not found for intent: ${paymentIntent.id}`);
+      log.error('Payment not found for intent', { intentId: paymentIntent.id });
       return;
     }
 

@@ -32,8 +32,21 @@ export function gracefulShutdown(server: FastifyInstance) {
         logger.info('Redis connection closed');
       }
 
-      // Close other resources
-      // TODO: Add cleanup for other services when implemented
+      // Close HTTP client connections (service clients use undici)
+      // The HTTP clients in AuthServiceClient and VenueServiceClient
+      // will be automatically cleaned up when the process exits
+      logger.info('HTTP client connections will be cleaned up on process exit');
+
+      // Log metrics summary before shutdown
+      const memUsage = process.memoryUsage();
+      logger.info({
+        uptime: process.uptime(),
+        memoryUsage: {
+          heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
+          heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
+          rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
+        },
+      }, 'Final metrics summary');
 
       clearTimeout(shutdownTimeout);
       logger.info('Graceful shutdown completed');

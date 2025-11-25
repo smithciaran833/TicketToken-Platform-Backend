@@ -237,7 +237,7 @@ export class AuthService {
       
       // Could also clear any active sessions if you have a sessions table
       await pool.query(
-        'UPDATE user_sessions SET ended_at = NOW() WHERE user_id = $1 AND ended_at IS NULL',
+        'SET search_path TO public; UPDATE user_sessions SET ended_at = NOW() WHERE user_id = $1 AND ended_at IS NULL',
         [userId]
       );
       

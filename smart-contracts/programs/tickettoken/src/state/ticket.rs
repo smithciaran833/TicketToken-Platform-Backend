@@ -16,7 +16,7 @@ pub struct TicketMetadata {
 
 impl TicketMetadata {
     pub fn hash(&self) -> [u8; 32] {
-        let serialized = self.try_to_vec().map_err(|_| ProgramError::BorshIoError("Serialization failed".to_string()))?;
+        let serialized = self.try_to_vec().unwrap_or_default();
         keccak::hash(&serialized).to_bytes()
     }
 }

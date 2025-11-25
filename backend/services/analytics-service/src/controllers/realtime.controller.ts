@@ -1,54 +1,98 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface DashboardParams {
+  venueId: string;
+  dashboardId: string;
+}
+
+interface CounterParams {
+  venueId: string;
+  counterType: string;
+}
+
+interface MetricsQuery {
+  metrics?: string;
+}
+
+interface SubscribeQuery {
+  metrics: string;
+}
+
+interface UpdateCounterBody {
+  counterType: string;
+  increment?: number;
+}
+
 class RealtimeController extends BaseController {
-  getRealTimeMetrics = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getRealTimeMetrics = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: MetricsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { metrics: {} });
+      return this.success(reply, { metrics: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  subscribeToMetrics = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  subscribeToMetrics = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: SubscribeQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
       // In production, would upgrade to WebSocket
-      this.success(res, { message: 'Subscription created' });
+      return this.success(reply, { message: 'Subscription created' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getActiveSessions = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getActiveSessions = async (
+    request: FastifyRequest<{ Params: VenueParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { sessions: 0 });
+      return this.success(reply, { sessions: 0 });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getLiveDashboardStats = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getLiveDashboardStats = async (
+    request: FastifyRequest<{ Params: DashboardParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { stats: {} });
+      return this.success(reply, { stats: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  updateCounter = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  updateCounter = async (
+    request: FastifyRequest<{ Params: VenueParams; Body: UpdateCounterBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { value: 0 });
+      return this.success(reply, { value: 0 });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCounter = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCounter = async (
+    request: FastifyRequest<{ Params: CounterParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { value: 0 });
+      return this.success(reply, { value: 0 });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

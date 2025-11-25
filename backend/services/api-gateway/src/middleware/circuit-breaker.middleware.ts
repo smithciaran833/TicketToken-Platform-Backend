@@ -4,23 +4,121 @@ import { createRequestLogger } from '../utils/logger';
 import { REDIS_KEYS } from '../config/redis';
 
 const CIRCUIT_BREAKER_CONFIGS = {
+  // Existing services
   'venue-service': {
-    timeout: 10000,
+    timeout: 10000, // Standard operations
     errorThresholdPercentage: 50,
     resetTimeout: 60000,
     volumeThreshold: 20,
   },
   'auth-service': {
-    timeout: 10000,
+    timeout: 5000, // Fast operations (auth checks)
     errorThresholdPercentage: 50,
     resetTimeout: 60000,
     volumeThreshold: 20,
   },
   'event-service': {
-    timeout: 10000,
+    timeout: 10000, // Standard operations
     errorThresholdPercentage: 50,
     resetTimeout: 60000,
     volumeThreshold: 20,
+  },
+  // Missing services - Phase 2 additions
+  'ticket-service': {
+    timeout: 10000, // Standard operations
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 20,
+  },
+  'payment-service': {
+    timeout: 30000, // Payment processing can be slow
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 15,
+  },
+  'marketplace-service': {
+    timeout: 15000, // Marketplace operations (escrow, etc.)
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 20,
+  },
+  'analytics-service': {
+    timeout: 10000, // Analytics queries
+    errorThresholdPercentage: 60, // More tolerant for analytics
+    resetTimeout: 60000,
+    volumeThreshold: 10,
+  },
+  'notification-service': {
+    timeout: 5000, // Fast notification sends
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 20,
+  },
+  'integration-service': {
+    timeout: 15000, // External integrations can be slow
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 15,
+  },
+  'compliance-service': {
+    timeout: 10000, // Compliance checks
+    errorThresholdPercentage: 40, // Lower threshold for compliance
+    resetTimeout: 60000,
+    volumeThreshold: 10,
+  },
+  'queue-service': {
+    timeout: 5000, // Fast queue operations
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 20,
+  },
+  'search-service': {
+    timeout: 10000, // Search operations
+    errorThresholdPercentage: 60, // More tolerant for search
+    resetTimeout: 60000,
+    volumeThreshold: 15,
+  },
+  'file-service': {
+    timeout: 30000, // File uploads can be slow
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 10,
+  },
+  'monitoring-service': {
+    timeout: 5000, // Fast monitoring data
+    errorThresholdPercentage: 70, // Very tolerant for monitoring
+    resetTimeout: 60000,
+    volumeThreshold: 10,
+  },
+  'blockchain-service': {
+    timeout: 60000, // Blockchain operations are slow
+    errorThresholdPercentage: 50,
+    resetTimeout: 120000, // Longer reset for blockchain
+    volumeThreshold: 10,
+  },
+  'order-service': {
+    timeout: 10000, // Standard operations
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 20,
+  },
+  'scanning-service': {
+    timeout: 5000, // Fast QR scanning
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 20,
+  },
+  'minting-service': {
+    timeout: 90000, // NFT minting is very slow
+    errorThresholdPercentage: 50,
+    resetTimeout: 120000, // Longer reset for minting
+    volumeThreshold: 10,
+  },
+  'transfer-service': {
+    timeout: 30000, // Transfer operations with blockchain
+    errorThresholdPercentage: 50,
+    resetTimeout: 60000,
+    volumeThreshold: 15,
   },
 };
 

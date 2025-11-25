@@ -1,12 +1,10 @@
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'MockEmailService' });
+
 export class MockEmailService {
   async sendEmail(to: string, subject: string, body: string) {
-    console.log(`
-📧 Mock Email Sent:
-To: ${to}
-Subject: ${subject}
-Body: ${body}
-Timestamp: ${new Date().toISOString()}
-    `);
+    log.info('Mock email sent', { to, subject, body });
     
     return {
       id: `email_${Date.now()}`,

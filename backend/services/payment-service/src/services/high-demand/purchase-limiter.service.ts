@@ -1,21 +1,10 @@
 import { query } from '../../config/database';
-import { createClient } from 'redis';
-import { config } from '../../config';
+import { RedisService } from '../redisService';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'PurchaseLimiterService' });
 
 export class PurchaseLimiterService {
-  private redis: any; // TODO: Add proper Redis client type
-
-  constructor() {
-    this.redis = createClient({
-      socket: {
-        host: config.redis.host,
-        port: config.redis.port
-      }
-    });
-    
-    this.redis.connect().catch(console.error);
-  }
-
   async checkPurchaseLimit(
     userId: string,
     eventId: string,
@@ -230,22 +219,29 @@ export class PurchaseLimiterService {
     userId: string,
     eventId: string
   ): Promise<{ allowed: boolean; reason?: string }> {
-    const cooldownMinutes = parseInt(process.env.PURCHASE_COOLDOWN_MINUTES || '10');
-    const cooldownKey = `cooldown:${userId}:${eventId}`;
+    try {
+      const redis = RedisService.getClient();
+      const cooldownMinutes = parseInt(process.env.PURCHASE_COOLDOWN_MINUTES || '10');
+      const cooldownKey = `cooldown:${userId}:${eventId}`;
 
-    const exists = await this.redis.exists(cooldownKey);
+      const exists = await redis.exists(cooldownKey);
 
-    if (exists) {
-      const ttl = await this.redis.ttl(cooldownKey);
-      const minutesRemaining = Math.ceil(ttl / 60);
+      if (exists) {
+        const ttl = await redis.ttl(cooldownKey);
+        const minutesRemaining = Math.ceil(ttl / 60);
 
-      return {
-        allowed: false,
-        reason: `Please wait ${minutesRemaining} minutes before purchasing more tickets`
-      };
+        return {
+          allowed: false,
+          reason: `Please wait ${minutesRemaining} minutes before purchasing more tickets`
+        };
+      }
+
+      return { allowed: true };
+    } catch (error) {
+      log.error('Error checking cooldown period', { error });
+      // Allow on error (degraded mode)
+      return { allowed: true };
     }
-
-    return { allowed: true };
   }
 
   async recordPurchase(
@@ -254,13 +250,18 @@ export class PurchaseLimiterService {
     quantity: number,
     paymentMethod: any
   ): Promise<void> {
-    // Set cooldown
-    const cooldownMinutes = parseInt(process.env.PURCHASE_COOLDOWN_MINUTES || '10');
-    const cooldownKey = `cooldown:${userId}:${eventId}`;
+    try {
+      const redis = RedisService.getClient();
+      // Set cooldown
+      const cooldownMinutes = parseInt(process.env.PURCHASE_COOLDOWN_MINUTES || '10');
+      const cooldownKey = `cooldown:${userId}:${eventId}`;
 
-    await this.redis.setEx(cooldownKey, cooldownMinutes * 60, '1');
+      await redis.setex(cooldownKey, cooldownMinutes * 60, '1');
 
-    // Update purchase counts (handled by transaction creation)
+      // Update purchase counts (handled by transaction creation)
+    } catch (error) {
+      log.error('Error recording purchase', { error });
+    }
   }
 
   async enforceDynamicLimits(

@@ -1,23 +1,37 @@
 // Ticket-related types
 export interface Ticket {
   id: string;
+  tenant_id: string;
   eventId: string;
   ticketTypeId: string;
-  userId?: string;
-  owner_user_id?: string;
+  orderId?: string;
+  userId?: string;  // SINGLE owner column - consolidated
   status: TicketStatus;
-  price: number;
+  priceCents: number;  // INTEGER cents, not DECIMAL price
   seatNumber?: string;
   section?: string;
   row?: string;
-  qrCode: string;
-  qrCodeSecret: string;
+  qrCode?: string;
+  qrCodeSecret?: string;
+  qrCodeGeneratedAt?: Date;
   nftTokenId?: string;
+  nftMintAddress?: string;
   nftTransactionHash?: string;
   nftMintedAt?: Date;
+  blockchainStatus?: string;
+  paymentId?: string;
+  paymentIntentId?: string;
   purchasedAt?: Date;
   validatedAt?: Date;
+  usedAt?: Date;
+  validatorId?: string;
+  entrance?: string;
+  deviceId?: string;
+  isTransferable: boolean;
+  transferLockedUntil?: Date;
+  transferCount: number;
   transferHistory: TransferRecord[];
+  barcode?: string;
   metadata: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
@@ -35,15 +49,21 @@ export enum TicketStatus {
 
 export interface TicketType {
   id: string;
+  tenant_id: string;
   eventId: string;
   name: string;
   description?: string;
-  price: number;
+  priceCents: number;  // INTEGER cents only
   quantity: number;
   availableQuantity: number;
+  reservedQuantity: number;
+  soldQuantity: number;
   maxPerPurchase: number;
+  minPerPurchase: number;
   saleStartDate: Date;
   saleEndDate: Date;
+  isActive: boolean;
+  displayOrder: number;
   metadata: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
@@ -59,6 +79,7 @@ export interface TransferRecord {
 
 export interface TicketReservation {
   id: string;
+  tenant_id: string;
   userId: string;
   eventId: string;
   tickets: Array<{
@@ -66,9 +87,18 @@ export interface TicketReservation {
     quantity: number;
     seatNumbers?: string[];
   }>;
+  totalQuantity: number;
+  ticketTypeId?: string;  // For backward compatibility
   expiresAt: Date;
-  status: 'active' | 'completed' | 'expired';
+  status: 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'COMPLETED' | 'CANCELLED';
+  releasedAt?: Date;
+  releaseReason?: string;
+  orderId?: string;
+  paymentStatus?: string;
+  typeName?: string;
+  metadata?: Record<string, any>;
   createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface QRValidation {
@@ -94,6 +124,53 @@ export interface PurchaseRequest {
   metadata?: Record<string, any>;
 }
 
+export interface Order {
+  id: string;
+  tenant_id: string;
+  userId: string;
+  eventId: string;
+  orderNumber: string;
+  status: OrderStatus;
+  subtotalCents: number;
+  platformFeeCents: number;
+  processingFeeCents: number;
+  taxCents: number;
+  discountCents: number;
+  totalCents: number;  // Final amount - INTEGER cents
+  originalTotalCents?: number;
+  ticketQuantity: number;
+  discountCodes?: string[];
+  paymentIntentId?: string;
+  paymentMethod?: string;
+  currency: string;
+  idempotencyKey?: string;
+  expiresAt?: Date;
+  metadata?: Record<string, any>;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export enum OrderStatus {
+  PENDING = 'PENDING',
+  PAID = 'PAID',
+  AWAITING_MINT = 'AWAITING_MINT',
+  COMPLETED = 'COMPLETED',
+  PAYMENT_FAILED = 'PAYMENT_FAILED',
+  CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED',
+  MINT_FAILED = 'MINT_FAILED'
+}
+
+export interface OrderItem {
+  id: string;
+  orderId: string;
+  ticketTypeId: string;  // Consistent naming (not tier_id)
+  quantity: number;
+  unitPriceCents: number;
+  totalPriceCents: number;
+  createdAt: Date;
+}
+
 export interface NFTMintRequest {
   ticketId: string;
   owner: string;
@@ -116,14 +193,3 @@ export interface ServiceResponse<T> {
   code?: string;
 }
 
-// Express extensions
-import { Request } from 'express';
-
-export interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    email: string;
-    role: string;
-    venueId?: string;
-  };
-}

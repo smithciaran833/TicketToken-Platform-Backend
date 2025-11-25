@@ -1,31 +1,29 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { getPool } from '../config/database';
 
-const router = Router();
+export default async function healthRoutes(fastify: FastifyInstance) {
+  // Basic health check
+  fastify.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {
+    return reply.send({ status: 'ok', service: 'scanning-service' });
+  });
 
-// Basic health check
-router.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'scanning-service' });
-});
-
-// Database health check
-router.get('/health/db', async (req, res) => {
-  try {
-    // Import the appropriate database connection for this service
-    const { pool } = require('../config/database');
-    await pool.query('SELECT 1');
-    res.json({ 
-      status: 'ok', 
-      database: 'connected',
-      service: 'scanning-service' 
-    });
-  } catch (error) {
-    res.status(503).json({ 
-      status: 'error', 
-      database: 'disconnected',
-      error: (error as any).message,
-      service: 'scanning-service'
-    });
-  }
-});
-
-export default router;
+  // Database health check
+  fastify.get('/health/db', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const pool = getPool();
+      await pool.query('SELECT 1');
+      return reply.send({
+        status: 'ok',
+        database: 'connected',
+        service: 'scanning-service'
+      });
+    } catch (error) {
+      return reply.status(503).send({
+        status: 'error',
+        database: 'disconnected',
+        error: (error as Error).message,
+        service: 'scanning-service'
+      });
+    }
+  });
+}

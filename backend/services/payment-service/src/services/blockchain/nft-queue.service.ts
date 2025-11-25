@@ -3,6 +3,9 @@ import { config } from '../../config';
 import { NFTMintRequest, MintBatch } from '../../types';
 import { Connection, PublicKey, Transaction } from '@solana/web3.js';
 import { blockchainConfig } from '../../config/blockchain';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'NFTQueueService' });
 
 export class NFTQueueService {
   private mintQueue: Bull.Queue;
@@ -73,7 +76,7 @@ export class NFTQueueService {
     // Individual minting processor
     this.mintQueue.process('mint-tickets', async (job) => {
       const request = job.data as NFTMintRequest;
-      console.log(`Processing NFT mint for payment ${request.paymentId}`);
+      log.info('Processing NFT mint', { paymentId: request.paymentId });
       
       try {
         // Check if we should batch this instead
@@ -88,7 +91,7 @@ export class NFTQueueService {
         const result = await this.mintNFTs(request);
         return result;
       } catch (error) {
-        console.error('Minting failed:', error);
+        log.error('Minting failed', { error });
         throw error;
       }
     });
@@ -96,13 +99,13 @@ export class NFTQueueService {
     // Batch minting processor
     this.batchQueue.process('batch-mint', async (job) => {
       const batch = job.data as MintBatch;
-      console.log(`Processing batch mint for ${batch.ticketIds.length} tickets`);
+      log.info('Processing batch mint', { ticketCount: batch.ticketIds.length });
       
       try {
         const result = await this.batchMintNFTs(batch);
         return result;
       } catch (error) {
-        console.error('Batch minting failed:', error);
+        log.error('Batch minting failed', { error });
         throw error;
       }
     });
@@ -112,7 +115,7 @@ export class NFTQueueService {
     // In production, this would call your Solana program
     // For now, simulate the minting process
     
-    console.log(`Minting ${request.ticketIds.length} NFTs on ${request.blockchain}`);
+    log.info('Minting NFTs', { ticketCount: request.ticketIds.length, blockchain: request.blockchain });
     
     // Simulate blockchain interaction
     await new Promise(resolve => setTimeout(resolve, 2000));
@@ -126,7 +129,7 @@ export class NFTQueueService {
   }
   
   private async batchMintNFTs(batch: MintBatch): Promise<any> {
-    console.log(`Batch minting ${batch.ticketIds.length} NFTs`);
+    log.info('Batch minting NFTs', { ticketCount: batch.ticketIds.length });
     
     // Simulate batch transaction
     await new Promise(resolve => setTimeout(resolve, 3000));
@@ -213,4 +216,3 @@ export class NFTQueueService {
     };
   }
 }
-

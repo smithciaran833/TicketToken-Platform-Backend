@@ -1,40 +1,39 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
 import { AppError } from '../utils/errors';
 import { logger } from '../utils/logger';
 
 export const errorHandler = (
-  err: Error,
-  _req: Request,
-  res: Response,
-  _next: NextFunction
+  error: FastifyError,
+  _request: FastifyRequest,
+  reply: FastifyReply
 ): void => {
-  logger.error('Error handler:', err);
+  logger.error('Error handler:', error);
 
-  if (err instanceof AppError) {
-    res.status(err.statusCode).json({
+  if (error instanceof AppError) {
+    reply.status(error.statusCode).send({
       success: false,
       error: {
-        code: err.code,
-        message: err.message,
+        code: error.code,
+        message: error.message,
       },
     });
     return;
   }
 
   // Handle Joi validation errors
-  if (err.name === 'ValidationError') {
-    res.status(400).json({
+  if (error.name === 'ValidationError') {
+    reply.status(400).send({
       success: false,
       error: {
         code: 'VALIDATION_ERROR',
-        message: err.message,
+        message: error.message,
       },
     });
     return;
   }
 
   // Default error
-  res.status(500).json({
+  reply.status(500).send({
     success: false,
     error: {
       code: 'INTERNAL_SERVER_ERROR',

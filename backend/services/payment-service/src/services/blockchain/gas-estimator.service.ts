@@ -2,6 +2,9 @@ import { Connection } from '@solana/web3.js';
 import { ethers } from 'ethers';
 import { GasEstimate } from '../../types';
 import { blockchainConfig } from '../../config/blockchain';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'GasEstimatorService' });
 
 export class GasEstimatorService {
   private solanaConnection: Connection;
@@ -64,7 +67,7 @@ export class GasEstimatorService {
         timestamp: new Date()
       };
     } catch (error) {
-      console.error('Solana fee estimation error:', error);
+      log.error('Solana fee estimation error', { error });
       // Fallback estimate
       return {
         blockchain: 'solana',
@@ -101,7 +104,7 @@ export class GasEstimatorService {
         timestamp: new Date()
       };
     } catch (error) {
-      console.error('Polygon fee estimation error:', error);
+      log.error('Polygon fee estimation error', { error });
       // Fallback estimate
       return {
         blockchain: 'polygon',

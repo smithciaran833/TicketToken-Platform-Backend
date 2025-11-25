@@ -59,16 +59,49 @@ export async function integrationRoutes(fastify: FastifyInstance) {
 
         const integrations = await integrationService.listVenueIntegrations(venueId);
 
-        // Mask sensitive credentials
-        const sanitized = integrations.map((i: any) => ({
-          ...i,
-          encrypted_credentials: undefined,
-          config: {
-            ...i.config,
-            apiKey: i.config?.apiKey ? '***' : undefined,
-            secretKey: i.config?.secretKey ? '***' : undefined
+        // Mask sensitive credentials in config
+        const sanitized = integrations.map((integration: any) => {
+          const masked = { ...integration };
+
+          // Parse config_data if it's a string
+          let configData = masked.config_data;
+          if (typeof configData === 'string') {
+            try {
+              configData = JSON.parse(configData);
+            } catch (e) {
+              configData = {};
+            }
           }
-        }));
+
+          // Start with config_data fields
+          const config = { ...(configData || {}) };
+          
+          // Mask sensitive fields that are already in config_data
+          if (config.apiKey) config.apiKey = '***';
+          if (config.secretKey) config.secretKey = '***';
+          if (config.api_key) config.api_key = '***';
+          if (config.secret_key) config.secret_key = '***';
+
+          // FIXED: Add masked versions of encrypted credential fields
+          // This is the key fix - add apiKey/secretKey to config if they exist in separate columns
+          if (masked.api_key_encrypted) {
+            config.apiKey = '***';
+          }
+          if (masked.api_secret_encrypted) {
+            config.secretKey = '***';
+          }
+
+          // Remove encrypted credentials from response
+          delete masked.encrypted_credentials;
+          delete masked.api_key_encrypted;
+          delete masked.api_secret_encrypted;
+
+          // Return as 'config' field for API consistency
+          masked.config = config;
+          delete masked.config_data;
+
+          return masked;
+        });
 
         venueOperations.inc({ operation: 'list_integrations', status: 'success' });
         return reply.send(sanitized);
@@ -125,10 +158,14 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         venueOperations.inc({ operation: 'create_integration', status: 'success' });
 
         return reply.status(201).send(integration);
-      } catch (error) {
+      } catch (error: any) {
         venueOperations.inc({ operation: 'create_integration', status: 'error' });
         if (error instanceof ForbiddenError || error instanceof ConflictError) {
           throw error;
+        }
+        // Handle duplicate integration constraint violation (Postgres error code 23505)
+        if (error.code === '23505' && error.constraint === 'idx_venue_integrations_unique') {
+          throw new ConflictError('Integration type already exists for this venue');
         }
         logger.error({ error, venueId }, 'Failed to create integration');
         throw error;
@@ -337,4 +374,3 @@ export async function integrationRoutes(fastify: FastifyInstance) {
     }
   );
 }
-

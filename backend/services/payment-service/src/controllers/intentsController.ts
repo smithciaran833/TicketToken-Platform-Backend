@@ -1,16 +1,19 @@
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import Stripe from 'stripe';
 import { config } from '../config';
 import { percentOfCents } from '../utils/money';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'IntentsController' });
 
 const stripe = new Stripe(config.stripe.secretKey, {
   apiVersion: '2023-10-16'
 });
 
 export class IntentsController {
-  async createIntent(req: Request, res: Response) {  // Changed from 'create' to 'createIntent'
+  async createIntent(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { amount, currency = 'usd' } = req.body;
+      const { amount, currency = 'usd' } = request.body as { amount: number; currency?: string };
       
       // Calculate fees
       const platformFeeCents = percentOfCents(amount, 250); // 2.5%
@@ -23,13 +26,13 @@ export class IntentsController {
         }
       });
 
-      res.json({ 
+      return reply.send({ 
         clientSecret: intent.client_secret,
         intentId: intent.id 
       });
     } catch (error) {
-      console.error('Payment intent creation error:', error);
-      res.status(500).json({ error: 'Failed to create payment intent' });
+      log.error('Payment intent creation error', { error });
+      return reply.code(500).send({ error: 'Failed to create payment intent' });
     }
   }
 }

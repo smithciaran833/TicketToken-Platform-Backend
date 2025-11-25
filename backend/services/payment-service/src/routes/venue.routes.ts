@@ -1,12 +1,37 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { VenueController } from '../controllers/venue.controller';
 import { authenticate } from '../middleware/auth';
 
-const router = Router();
-const controller = new VenueController();
+export default async function venueRoutes(fastify: FastifyInstance) {
+  const controller = new VenueController();
 
-router.get('/:venueId/balance', authenticate, (req, res, next) => controller.getBalance(req, res, next));
-router.post('/:venueId/payout', authenticate, (req, res, next) => controller.requestPayout(req, res, next));
-router.get('/:venueId/payouts', authenticate, (req, res, next) => controller.getPayoutHistory(req, res, next));
+  fastify.get(
+    '/:venueId/balance',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getBalance(request, reply);
+    }
+  );
 
-export default router;
+  fastify.post(
+    '/:venueId/payout',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.requestPayout(request, reply);
+    }
+  );
+
+  fastify.get(
+    '/:venueId/payouts',
+    {
+      preHandler: [authenticate]
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.getPayoutHistory(request, reply);
+    }
+  );
+}

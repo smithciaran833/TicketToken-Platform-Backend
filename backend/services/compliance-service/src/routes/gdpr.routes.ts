@@ -1,11 +1,11 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { GDPRController } from '../controllers/gdpr.controller';
 
-const router = Router();
+export async function gdprRoutes(fastify: FastifyInstance) {
+  const gdprController = new GDPRController();
 
-// GDPR routes
-router.post('/gdpr/request-data', GDPRController.requestDeletion); // Using deletion as closest match
-router.post('/gdpr/delete-data', GDPRController.requestDeletion);
-router.get('/gdpr/status/:requestId', GDPRController.getDeletionStatus);
-
-export default router;
+  // GDPR routes
+  fastify.post('/gdpr/request-data', gdprController.requestDeletion);
+  fastify.post('/gdpr/delete-data', gdprController.requestDeletion);
+  fastify.get('/gdpr/status/:requestId', gdprController.getDeletionStatus);
+}

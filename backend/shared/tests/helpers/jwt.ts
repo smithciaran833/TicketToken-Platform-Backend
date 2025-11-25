@@ -8,7 +8,7 @@ export function createTestToken(payload: any = {}) {
       id: payload.id || 'user-123',
       email: payload.email || 'test@example.com',
       tenant_id: payload.tenant_id || 'tenant-123',
-      ...payload
+      ...payload,
     },
     secret,
     { expiresIn: '1h' }

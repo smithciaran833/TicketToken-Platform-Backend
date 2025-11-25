@@ -1,6 +1,8 @@
-console.log("[VALIDATION] Module loaded");
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { logger } from '../utils/logger';
 import Joi from 'joi';
+
+const log = logger.child({ component: 'ValidationMiddleware' });
 
 const schemas = {
   processPayment: Joi.object({
@@ -33,29 +35,29 @@ const schemas = {
       browserFeatures: Joi.object().optional()
     }).optional()
   }),
-  
+
   calculateFees: Joi.object({
     venueId: Joi.string().uuid().required(),
     amount: Joi.number().positive().required(),
     ticketCount: Joi.number().integer().min(1).required()
   }),
-  
+
   refundTransaction: Joi.object({
     amount: Joi.number().positive().optional(),
     reason: Joi.string().max(500).required()
   }),
-  
+
   createListing: Joi.object({
     ticketId: Joi.string().uuid().required(),
     price: Joi.number().positive().required(),
     venueId: Joi.string().uuid().required()
   }),
-  
+
   purchaseResale: Joi.object({
     listingId: Joi.string().required(),
     paymentMethodId: Joi.string().required()
   }),
-  
+
   createGroup: Joi.object({
     eventId: Joi.string().uuid().required(),
     ticketSelections: Joi.array().items(
@@ -76,60 +78,67 @@ const schemas = {
 };
 
 export const validateRequest = (schemaName: keyof typeof schemas) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    console.log(`[VALIDATION] Validating schema: ${schemaName}`, req.body);
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    log.info('Validating request schema', { schema: schemaName });
     const schema = schemas[schemaName];
-    
+
     if (!schema) {
-      return next(new Error(`Validation schema '${schemaName}' not found`));
+      log.error('Validation schema not found', { schema: schemaName });
+      return reply.status(500).send({
+        error: `Validation schema '${schemaName}' not found`
+      });
     }
-    
-    const { error, value } = schema.validate(req.body, {
+
+    const { error, value } = schema.validate(request.body, {
       abortEarly: false,
       stripUnknown: true
     });
-    
+
     if (error) {
       const errors = error.details.map(detail => ({
         field: detail.path.join('.'),
         message: detail.message
       }));
-      
-      return res.status(400).json({
+
+      log.warn('Validation failed', { schema: schemaName, errors });
+
+      return reply.status(400).send({
         error: 'Validation failed',
         code: 'VALIDATION_ERROR',
         errors
       });
     }
-    
+
     // Replace request body with validated and sanitized data
-    req.body = value;
-    next();
+    request.body = value;
+    // Continue to next handler
   };
 };
 
 export const validateQueryParams = (schema: Joi.Schema) => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    console.log(`[VALIDATION] Validating query params:`, req.query);
-    const { error, value } = schema.validate(req.query, {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    log.info('Validating query parameters');
+    const { error, value } = schema.validate(request.query, {
       abortEarly: false,
       stripUnknown: true
     });
-    
+
     if (error) {
       const errors = error.details.map(detail => ({
         field: detail.path.join('.'),
         message: detail.message
       }));
-      
-      return res.status(400).json({
+
+      log.warn('Query validation failed', { errors });
+
+      return reply.status(400).send({
         error: 'Invalid query parameters',
         code: 'QUERY_VALIDATION_ERROR',
         errors
       });
     }
-    
-    req.query = value;
-    return next();
+
+    request.query = value as any;
+    // Continue to next handler
   };
 };

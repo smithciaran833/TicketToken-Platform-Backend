@@ -1,24 +1,24 @@
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../config/database';
 import { cache } from '../services/cache-integration';
 import { logger } from '../utils/logger';
 
 export class HealthController {
-  async health(req: Request, res: Response) {
-    res.json({
+  async health(request: FastifyRequest, reply: FastifyReply) {
+    reply.send({
       status: 'healthy',
       service: 'marketplace-service',
       timestamp: new Date().toISOString()
     });
   }
-  
-  async detailed(req: Request, res: Response) {
+
+  async detailed(request: FastifyRequest, reply: FastifyReply) {
     const checks = {
       database: false,
       redis: false,
       dependencies: false
     };
-    
+
     // Check database
     try {
       await db.raw('SELECT 1');
@@ -26,7 +26,7 @@ export class HealthController {
     } catch (error) {
       logger.error('Database health check failed:', error);
     }
-    
+
     // Check Redis
     try {
       await cache.set('health_check', 'ok', { ttl: 10 });
@@ -35,30 +35,30 @@ export class HealthController {
     } catch (error) {
       logger.error('Redis health check failed:', error);
     }
-    
+
     // Check dependencies (simplified)
     checks.dependencies = true;
-    
+
     const isHealthy = Object.values(checks).every(v => v === true);
-    
-    res.status(isHealthy ? 200 : 503).json({
+
+    reply.status(isHealthy ? 200 : 503).send({
       status: isHealthy ? 'healthy' : 'unhealthy',
       checks,
       timestamp: new Date().toISOString()
     });
   }
-  
-  async readiness(req: Request, res: Response) {
+
+  async readiness(request: FastifyRequest, reply: FastifyReply) {
     try {
       await db.raw('SELECT 1');
-      res.json({ ready: true });
+      reply.send({ ready: true });
     } catch (error) {
-      res.status(503).json({ ready: false, error: 'Database not ready' });
+      reply.status(503).send({ ready: false, error: 'Database not ready' });
     }
   }
-  
-  async liveness(req: Request, res: Response) {
-    res.json({ alive: true });
+
+  async liveness(request: FastifyRequest, reply: FastifyReply) {
+    reply.send({ alive: true });
   }
 }
 

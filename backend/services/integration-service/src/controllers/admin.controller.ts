@@ -1,14 +1,12 @@
-// serviceCache is not used - removed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { monitoringService } from '../services/monitoring.service';
 import { recoveryService } from '../services/recovery.service';
 import { db } from '../config/database';
-// logger is not used - removed
 
 export class AdminController {
-  async getAllVenueIntegrations(req: Request, res: Response, next: NextFunction) {
+  async getAllVenueIntegrations(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { status, healthStatus } = req.query;
+      const { status, healthStatus } = request.query as any;
 
       let query = db('integration_configs');
 
@@ -22,31 +20,31 @@ export class AdminController {
 
       const integrations = await query;
 
-      res.json({
+      return reply.send({
         success: true,
         data: integrations
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getHealthSummary(_req: Request, res: Response, next: NextFunction) {
+  async getHealthSummary(_request: FastifyRequest, reply: FastifyReply) {
     try {
       const summary = await monitoringService.getHealthSummary();
 
-      res.json({
+      return reply.send({
         success: true,
         data: summary
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getCostAnalysis(req: Request, res: Response, next: NextFunction) {
+  async getCostAnalysis(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { startDate, endDate } = req.query;
+      const { startDate, endDate } = request.query as any;
 
       let query = db('integration_costs')
         .select(
@@ -68,7 +66,7 @@ export class AdminController {
 
       const costs = await query;
 
-      res.json({
+      return reply.send({
         success: true,
         data: {
           costs,
@@ -76,16 +74,16 @@ export class AdminController {
         }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async forceSync(req: Request, res: Response, next: NextFunction) {
+  async forceSync(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { venueId, integrationType } = req.body;
+      const { venueId, integrationType } = request.body as any;
 
       if (!venueId || !integrationType) {
-        return res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID and integration type are required'
         });
@@ -98,19 +96,18 @@ export class AdminController {
         { force: true }
       );
 
-      res.json({
+      return reply.send({
         success: true,
         data: result
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
-    return; // Added missing return
   }
 
-  async clearQueue(req: Request, res: Response, next: NextFunction) {
+  async clearQueue(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { venueId, integrationType, status } = req.body;
+      const { venueId, integrationType, status } = request.body as any;
 
       let query = db('sync_queue');
 
@@ -128,54 +125,54 @@ export class AdminController {
 
       const deleted = await query.delete();
 
-      res.json({
+      return reply.send({
         success: true,
         message: `${deleted} queue items cleared`
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async processDeadLetter(_req: Request, res: Response, next: NextFunction) {
+  async processDeadLetter(_request: FastifyRequest, reply: FastifyReply) {
     try {
       await recoveryService.processDeadLetterQueue();
 
-      res.json({
+      return reply.send({
         success: true,
         message: 'Dead letter queue processing initiated'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async recoverStale(_req: Request, res: Response, next: NextFunction) {
+  async recoverStale(_request: FastifyRequest, reply: FastifyReply) {
     try {
       await recoveryService.recoverStaleOperations();
 
-      res.json({
+      return reply.send({
         success: true,
         message: 'Stale operations recovery initiated'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getQueueMetrics(_req: Request, res: Response, next: NextFunction) {
+  async getQueueMetrics(_request: FastifyRequest, reply: FastifyReply) {
     try {
       const metrics = await db('sync_queue')
         .select('priority', 'status')
         .count('* as count')
         .groupBy('priority', 'status');
 
-      res.json({
+      return reply.send({
         success: true,
         data: metrics
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

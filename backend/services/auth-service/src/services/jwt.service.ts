@@ -31,9 +31,9 @@ interface RefreshTokenData {
 }
 
 // Load RSA keys on module initialization
-const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH || 
+const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH ||
   path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-private.pem');
-const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || 
+const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
   path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
 
 let privateKey: string;
@@ -146,6 +146,9 @@ export class JWTService {
     } catch (error) {
       if (error instanceof jwt.TokenExpiredError) {
         throw new TokenError('Access token expired');
+      }
+      if (error instanceof TokenError) {
+        throw error;
       }
       throw new TokenError('Invalid access token');
     }

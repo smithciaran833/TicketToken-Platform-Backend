@@ -1,7 +1,7 @@
 import { feeModel } from '../models/fee.model';
 import { transferModel } from '../models/transfer.model';
 import { venueSettingsModel } from '../models/venue-settings.model';
-import { percentOfCents } from '@tickettoken/shared/utils/money';
+import { percentOfCents } from '@tickettoken/shared';
 import { logger } from '../utils/logger';
 import { constants } from '../config';
 import { NotFoundError } from '../utils/errors';

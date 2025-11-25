@@ -1,15 +1,16 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { WebhookController } from '../controllers/webhook.controller';
-import express from 'express';
 
-const router = Router();
-const controller = new WebhookController();
+export default async function webhookRoutes(fastify: FastifyInstance) {
+  const controller = new WebhookController();
 
-// Stripe webhooks need raw body
-router.post(
-  '/stripe',
-  express.raw({ type: 'application/json' }),
-  (req, res, next) => controller.handleStripeWebhook(req, res, next)
-);
-
-export default router;
+  // Stripe webhooks need raw body
+  fastify.post(
+    '/stripe',
+    {
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      return controller.handleStripeWebhook(request, reply);
+    }
+  );
+}

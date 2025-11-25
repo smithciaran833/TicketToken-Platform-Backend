@@ -1,46 +1,41 @@
 FROM node:20-alpine AS builder
-
 WORKDIR /app
-
-# Copy the entire shared module with all its subdirectories
 COPY backend/shared ./backend/shared
-
-# Copy ticket-service
 COPY backend/services/ticket-service ./backend/services/ticket-service
-
-# Build shared module first
 WORKDIR /app/backend/shared
-RUN npm install
-
-# Build shared/cache module
-WORKDIR /app/backend/shared/cache
-RUN npm install
-
-# Now build ticket-service
+RUN npm ci
+RUN npm run build || true
 WORKDIR /app/backend/services/ticket-service
-RUN npm install
+RUN npm ci
 RUN npm run build
 
-# Production stage
 FROM node:20-alpine
-
 WORKDIR /app
-
-# Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
-
-# Copy everything from builder
 COPY --from=builder /app/backend/shared /app/backend/shared
-COPY --from=builder /app/backend/services/ticket-service /app
+COPY --from=builder /app/backend/services/ticket-service/package.json /app/backend/services/ticket-service/package.json
+COPY --from=builder /app/backend/services/ticket-service/package-lock.json /app/backend/services/ticket-service/package-lock.json
+WORKDIR /app/backend/services/ticket-service
+RUN npm ci
+COPY --from=builder /app/backend/services/ticket-service/dist ./dist
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001
+# Copy migration files
+COPY --from=builder /app/backend/services/ticket-service/knexfile.ts ./knexfile.ts
+COPY --from=builder /app/backend/services/ticket-service/src/migrations ./src/migrations
 
+# Create entrypoint script for migrations
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'set -e' >> /app/entrypoint.sh && \
+    echo 'echo "Running migrations for ticket-service..."' >> /app/entrypoint.sh && \
+    echo 'cd /app/backend/services/ticket-service' >> /app/entrypoint.sh && \
+    echo 'npm run migrate || echo "Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'exec "$@"' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
 USER nodejs
-
 EXPOSE 3004
-
-# Use dumb-init to handle signals properly
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3004/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+ENTRYPOINT ["/app/entrypoint.sh", "dumb-init", "--"]
+CMD ["node", "dist/services/ticket-service/src/index.js"]

@@ -1,4 +1,4 @@
-import { createCache } from '@tickettoken/shared/cache';
+import { createCache } from '@tickettoken/shared';
 
 // Initialize cache with auth-service specific config
 const cacheSystem = createCache({

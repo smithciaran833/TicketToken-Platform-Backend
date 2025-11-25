@@ -1,79 +1,60 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { PIISanitizer } from '../utils/pii-sanitizer';
 
 /**
- * Express middleware for request/response logging with PII sanitization
+ * Fastify hook for request/response logging with PII sanitization
  */
-export function loggingMiddleware(logger: any) {
-  return (req: Request, res: Response, next: NextFunction) => {
+export async function loggingMiddleware(logger: any) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const startTime = Date.now();
-    
+
     // Log incoming request (sanitized)
     logger.info('Incoming request', {
-      request: PIISanitizer.sanitizeRequest(req),
-      timestamp: new Date().toISOString()
+      request: PIISanitizer.sanitizeRequest(request),
+      timestamp: new Date().toISOString(),
     });
 
-    // Capture the original res.json and res.send
-    const originalJson = res.json;
-    const originalSend = res.send;
-
-    // Override res.json
-    res.json = function(body: any) {
-      res.locals.body = body;
-      return originalJson.call(this, body);
-    };
-
-    // Override res.send
-    res.send = function(body: any) {
-      res.locals.body = body;
-      return originalSend.call(this, body);
-    };
-
-    // Log response when finished
-    res.on('finish', () => {
+    // Track response
+    reply.raw.on('finish', () => {
       const duration = Date.now() - startTime;
-      
+
       logger.info('Response sent', {
         request: {
-          method: req.method,
-          url: req.url,
-          id: (req as any).id
+          method: request.method,
+          url: request.url,
+          id: (request as any).id,
         },
         response: {
-          statusCode: res.statusCode,
+          statusCode: reply.statusCode,
           // Only log response body for errors or debug mode
-          ...(res.statusCode >= 400 || process.env.LOG_LEVEL === 'debug' 
-            ? { body: PIISanitizer.sanitize(res.locals.body) }
-            : {}
-          )
+          ...(reply.statusCode >= 400 || process.env.LOG_LEVEL === 'debug'
+            ? { body: PIISanitizer.sanitize((reply as any).payload) }
+            : {}),
         },
-        duration: `${duration}ms`
+        duration: `${duration}ms`,
       });
     });
-
-    next();
   };
 }
 
 /**
- * Error logging middleware with PII sanitization
+ * Error logging hook with PII sanitization
  */
-export function errorLoggingMiddleware(logger: any) {
-  return (err: Error, req: Request, res: Response, next: NextFunction) => {
+export async function errorLoggingMiddleware(logger: any) {
+  return async (request: FastifyRequest, reply: FastifyReply, error: Error): Promise<void> => {
     logger.error('Request error', {
       error: PIISanitizer.sanitize({
-        name: err.name,
-        message: err.message,
-        stack: err.stack
+        name: error.name,
+        message: error.message,
+        stack: error.stack,
       }),
       request: {
-        method: req.method,
-        url: req.url,
-        id: (req as any).id
-      }
+        method: request.method,
+        url: request.url,
+        id: (request as any).id,
+      },
     });
 
-    next(err);
+    throw error; // Re-throw to let Fastify handle it
   };
 }

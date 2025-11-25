@@ -1,0 +1,2035 @@
+export type Tickettoken = {
+  "version": "0.1.0",
+  "name": "tickettoken",
+  "instructions": [
+    {
+      "name": "initializePlatform",
+      "accounts": [
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feeBps",
+          "type": "u16"
+        },
+        {
+          "name": "treasury",
+          "type": "publicKey"
+        }
+      ]
+    },
+    {
+      "name": "createVenue",
+      "accounts": [
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "venueId",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "metadataUri",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "verifyVenue",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "createEvent",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "event",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "reentrancyGuard",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": "CreateEventParams"
+          }
+        }
+      ]
+    },
+    {
+      "name": "purchaseTickets",
+      "accounts": [
+        {
+          "name": "buyer",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "event",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "venueTreasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "platformTreasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "reentrancyGuard",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": "MintTicketArgs"
+          }
+        }
+      ]
+    },
+    {
+      "name": "listTicketOnMarketplace",
+      "accounts": [
+        {
+          "name": "ticketOwner",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "marketplaceProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "marketplaceConfig",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "listing",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "listingReentrancyGuard",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "ticketAssetId",
+          "type": "publicKey"
+        },
+        {
+          "name": "price",
+          "type": "u64"
+        },
+        {
+          "name": "expiresAt",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "verifyTicket",
+      "accounts": [
+        {
+          "name": "validator",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "event",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "venue",
+            "type": "publicKey"
+          },
+          {
+            "name": "eventId",
+            "type": "u64"
+          },
+          {
+            "name": "name",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "ticketPrice",
+            "type": "u64"
+          },
+          {
+            "name": "totalTickets",
+            "type": "u32"
+          },
+          {
+            "name": "ticketsSold",
+            "type": "u32"
+          },
+          {
+            "name": "ticketsReserved",
+            "type": "u32"
+          },
+          {
+            "name": "startTime",
+            "type": "i64"
+          },
+          {
+            "name": "endTime",
+            "type": "i64"
+          },
+          {
+            "name": "refundWindow",
+            "type": "i64"
+          },
+          {
+            "name": "metadataUri",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "oracleFeed",
+            "type": "publicKey"
+          },
+          {
+            "name": "description",
+            "type": {
+              "array": [
+                "u8",
+                200
+              ]
+            }
+          },
+          {
+            "name": "transferable",
+            "type": "bool"
+          },
+          {
+            "name": "resaleable",
+            "type": "bool"
+          },
+          {
+            "name": "merkleTree",
+            "type": "publicKey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "platform",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "publicKey"
+          },
+          {
+            "name": "treasury",
+            "type": "publicKey"
+          },
+          {
+            "name": "feeBps",
+            "type": "u16"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "totalVenues",
+            "type": "u64"
+          },
+          {
+            "name": "totalEvents",
+            "type": "u64"
+          },
+          {
+            "name": "totalTicketsSold",
+            "type": "u64"
+          },
+          {
+            "name": "totalFeesCollected",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "venue",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "venueId",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "publicKey"
+          },
+          {
+            "name": "name",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "metadataUri",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "verified",
+            "type": "bool"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "eventCount",
+            "type": "u64"
+          },
+          {
+            "name": "totalSales",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reentrancyGuard",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "isLocked",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "TicketMetadata",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "eventId",
+            "type": "publicKey"
+          },
+          {
+            "name": "venueId",
+            "type": "publicKey"
+          },
+          {
+            "name": "ticketNumber",
+            "type": "u32"
+          },
+          {
+            "name": "section",
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          },
+          {
+            "name": "row",
+            "type": {
+              "array": [
+                "u8",
+                10
+              ]
+            }
+          },
+          {
+            "name": "seat",
+            "type": {
+              "array": [
+                "u8",
+                10
+              ]
+            }
+          },
+          {
+            "name": "purchasePrice",
+            "type": "u64"
+          },
+          {
+            "name": "purchasedAt",
+            "type": "i64"
+          },
+          {
+            "name": "purchaser",
+            "type": "publicKey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MintTicketArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "quantity",
+            "type": "u8"
+          },
+          {
+            "name": "section",
+            "type": "string"
+          },
+          {
+            "name": "row",
+            "type": "string"
+          },
+          {
+            "name": "seatStart",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TreeConfig",
+      "docs": [
+        "Optimal tree configuration based on research"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "maxDepth",
+            "type": "u8"
+          },
+          {
+            "name": "maxBufferSize",
+            "type": "u16"
+          },
+          {
+            "name": "canopyDepth",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateEventParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "eventId",
+            "type": "u64"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "ticketPrice",
+            "type": "u64"
+          },
+          {
+            "name": "totalTickets",
+            "type": "u32"
+          },
+          {
+            "name": "startTime",
+            "type": "i64"
+          },
+          {
+            "name": "endTime",
+            "type": "i64"
+          },
+          {
+            "name": "refundWindow",
+            "type": "i64"
+          },
+          {
+            "name": "metadataUri",
+            "type": "string"
+          },
+          {
+            "name": "oracleFeed",
+            "type": "publicKey"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "transferable",
+            "type": "bool"
+          },
+          {
+            "name": "resaleable",
+            "type": "bool"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "EventCreated",
+      "fields": [
+        {
+          "name": "venue",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "eventId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "capacity",
+          "type": "u32",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "VenueCreated",
+      "fields": [
+        {
+          "name": "venueId",
+          "type": "string",
+          "index": false
+        },
+        {
+          "name": "owner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "index": false
+        },
+        {
+          "name": "venuePubkey",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "PlatformInitialized",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "feeBps",
+          "type": "u16",
+          "index": false
+        },
+        {
+          "name": "treasury",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "TicketListedOnMarketplace",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "assetId",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "price",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "expiresAt",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "TicketsPurchased",
+      "fields": [
+        {
+          "name": "buyer",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "venue",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "quantity",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "priceEach",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "totalPaid",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "platformFee",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "startTicketNumber",
+          "type": "u32",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "TicketVerified",
+      "fields": [
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "validator",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "VenueVerified",
+      "fields": [
+        {
+          "name": "venue",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "verifier",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidTreeDepth",
+      "msg": "Invalid tree depth"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidBufferSize",
+      "msg": "Invalid buffer size"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidCanopyDepth",
+      "msg": "Invalid canopy depth"
+    },
+    {
+      "code": 6003,
+      "name": "ClockError",
+      "msg": "Clock error"
+    },
+    {
+      "code": 6004,
+      "name": "FeeTooHigh",
+      "msg": "Fee too high"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidTreasury",
+      "msg": "Invalid treasury address"
+    },
+    {
+      "code": 6006,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6007,
+      "name": "VenueIdTooLong",
+      "msg": "Venue ID too long"
+    },
+    {
+      "code": 6008,
+      "name": "VenueNameTooLong",
+      "msg": "Venue name too long"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidVenueId",
+      "msg": "Invalid venue ID"
+    },
+    {
+      "code": 6010,
+      "name": "VenueNotVerified",
+      "msg": "Venue not verified"
+    },
+    {
+      "code": 6011,
+      "name": "VenueInactive",
+      "msg": "Venue inactive"
+    },
+    {
+      "code": 6012,
+      "name": "AlreadyVerified",
+      "msg": "Already verified"
+    },
+    {
+      "code": 6013,
+      "name": "UnauthorizedVenue",
+      "msg": "Unauthorized venue"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidEventVenue",
+      "msg": "Invalid event venue"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidCapacity",
+      "msg": "Invalid capacity"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidEventName",
+      "msg": "Invalid event name"
+    },
+    {
+      "code": 6017,
+      "name": "DescriptionTooLong",
+      "msg": "Description too long"
+    },
+    {
+      "code": 6018,
+      "name": "EventAlreadyStarted",
+      "msg": "Event already started"
+    },
+    {
+      "code": 6019,
+      "name": "StartTimeTooSoon",
+      "msg": "Start time too soon"
+    },
+    {
+      "code": 6020,
+      "name": "EndBeforeStart",
+      "msg": "End before start"
+    },
+    {
+      "code": 6021,
+      "name": "EventTooLong",
+      "msg": "Event too long"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidQuantity",
+      "msg": "Invalid quantity"
+    },
+    {
+      "code": 6023,
+      "name": "InsufficientTickets",
+      "msg": "Insufficient tickets"
+    },
+    {
+      "code": 6024,
+      "name": "UriTooLong",
+      "msg": "URI too long"
+    },
+    {
+      "code": 6025,
+      "name": "PriceTooLow",
+      "msg": "Price too low"
+    },
+    {
+      "code": 6026,
+      "name": "PriceTooHigh",
+      "msg": "Price too high"
+    },
+    {
+      "code": 6027,
+      "name": "PriceExceedsMax",
+      "msg": "Price exceeds maximum"
+    },
+    {
+      "code": 6028,
+      "name": "ResaleNotAllowed",
+      "msg": "Resale not allowed"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidExpiry",
+      "msg": "Invalid expiry"
+    },
+    {
+      "code": 6030,
+      "name": "MathOverflow",
+      "msg": "Math overflow"
+    },
+    {
+      "code": 6031,
+      "name": "InvalidCharacters",
+      "msg": "Invalid characters"
+    },
+    {
+      "code": 6032,
+      "name": "RefundWindowTooLong",
+      "msg": "Refund window too long"
+    },
+    {
+      "code": 6033,
+      "name": "ReentrancyLocked",
+      "msg": "Reentrancy locked"
+    }
+  ]
+};
+
+export const IDL: Tickettoken = {
+  "version": "0.1.0",
+  "name": "tickettoken",
+  "instructions": [
+    {
+      "name": "initializePlatform",
+      "accounts": [
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "feeBps",
+          "type": "u16"
+        },
+        {
+          "name": "treasury",
+          "type": "publicKey"
+        }
+      ]
+    },
+    {
+      "name": "createVenue",
+      "accounts": [
+        {
+          "name": "owner",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "venueId",
+          "type": "string"
+        },
+        {
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "name": "metadataUri",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "verifyVenue",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "createEvent",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "event",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "reentrancyGuard",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": "CreateEventParams"
+          }
+        }
+      ]
+    },
+    {
+      "name": "purchaseTickets",
+      "accounts": [
+        {
+          "name": "buyer",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "platform",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "venue",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "event",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "venueTreasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "platformTreasury",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "reentrancyGuard",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "args",
+          "type": {
+            "defined": "MintTicketArgs"
+          }
+        }
+      ]
+    },
+    {
+      "name": "listTicketOnMarketplace",
+      "accounts": [
+        {
+          "name": "ticketOwner",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "marketplaceProgram",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "marketplaceConfig",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "listing",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "listingReentrancyGuard",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "ticketAssetId",
+          "type": "publicKey"
+        },
+        {
+          "name": "price",
+          "type": "u64"
+        },
+        {
+          "name": "expiresAt",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "verifyTicket",
+      "accounts": [
+        {
+          "name": "validator",
+          "isMut": true,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": []
+    }
+  ],
+  "accounts": [
+    {
+      "name": "event",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "venue",
+            "type": "publicKey"
+          },
+          {
+            "name": "eventId",
+            "type": "u64"
+          },
+          {
+            "name": "name",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "ticketPrice",
+            "type": "u64"
+          },
+          {
+            "name": "totalTickets",
+            "type": "u32"
+          },
+          {
+            "name": "ticketsSold",
+            "type": "u32"
+          },
+          {
+            "name": "ticketsReserved",
+            "type": "u32"
+          },
+          {
+            "name": "startTime",
+            "type": "i64"
+          },
+          {
+            "name": "endTime",
+            "type": "i64"
+          },
+          {
+            "name": "refundWindow",
+            "type": "i64"
+          },
+          {
+            "name": "metadataUri",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "oracleFeed",
+            "type": "publicKey"
+          },
+          {
+            "name": "description",
+            "type": {
+              "array": [
+                "u8",
+                200
+              ]
+            }
+          },
+          {
+            "name": "transferable",
+            "type": "bool"
+          },
+          {
+            "name": "resaleable",
+            "type": "bool"
+          },
+          {
+            "name": "merkleTree",
+            "type": "publicKey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "platform",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "publicKey"
+          },
+          {
+            "name": "treasury",
+            "type": "publicKey"
+          },
+          {
+            "name": "feeBps",
+            "type": "u16"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "totalVenues",
+            "type": "u64"
+          },
+          {
+            "name": "totalEvents",
+            "type": "u64"
+          },
+          {
+            "name": "totalTicketsSold",
+            "type": "u64"
+          },
+          {
+            "name": "totalFeesCollected",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "venue",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "venueId",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "owner",
+            "type": "publicKey"
+          },
+          {
+            "name": "name",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "metadataUri",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
+            "name": "verified",
+            "type": "bool"
+          },
+          {
+            "name": "active",
+            "type": "bool"
+          },
+          {
+            "name": "eventCount",
+            "type": "u64"
+          },
+          {
+            "name": "totalSales",
+            "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "reentrancyGuard",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "isLocked",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    }
+  ],
+  "types": [
+    {
+      "name": "TicketMetadata",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "eventId",
+            "type": "publicKey"
+          },
+          {
+            "name": "venueId",
+            "type": "publicKey"
+          },
+          {
+            "name": "ticketNumber",
+            "type": "u32"
+          },
+          {
+            "name": "section",
+            "type": {
+              "array": [
+                "u8",
+                20
+              ]
+            }
+          },
+          {
+            "name": "row",
+            "type": {
+              "array": [
+                "u8",
+                10
+              ]
+            }
+          },
+          {
+            "name": "seat",
+            "type": {
+              "array": [
+                "u8",
+                10
+              ]
+            }
+          },
+          {
+            "name": "purchasePrice",
+            "type": "u64"
+          },
+          {
+            "name": "purchasedAt",
+            "type": "i64"
+          },
+          {
+            "name": "purchaser",
+            "type": "publicKey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MintTicketArgs",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "quantity",
+            "type": "u8"
+          },
+          {
+            "name": "section",
+            "type": "string"
+          },
+          {
+            "name": "row",
+            "type": "string"
+          },
+          {
+            "name": "seatStart",
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
+      "name": "TreeConfig",
+      "docs": [
+        "Optimal tree configuration based on research"
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "maxDepth",
+            "type": "u8"
+          },
+          {
+            "name": "maxBufferSize",
+            "type": "u16"
+          },
+          {
+            "name": "canopyDepth",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "CreateEventParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "eventId",
+            "type": "u64"
+          },
+          {
+            "name": "name",
+            "type": "string"
+          },
+          {
+            "name": "ticketPrice",
+            "type": "u64"
+          },
+          {
+            "name": "totalTickets",
+            "type": "u32"
+          },
+          {
+            "name": "startTime",
+            "type": "i64"
+          },
+          {
+            "name": "endTime",
+            "type": "i64"
+          },
+          {
+            "name": "refundWindow",
+            "type": "i64"
+          },
+          {
+            "name": "metadataUri",
+            "type": "string"
+          },
+          {
+            "name": "oracleFeed",
+            "type": "publicKey"
+          },
+          {
+            "name": "description",
+            "type": "string"
+          },
+          {
+            "name": "transferable",
+            "type": "bool"
+          },
+          {
+            "name": "resaleable",
+            "type": "bool"
+          }
+        ]
+      }
+    }
+  ],
+  "events": [
+    {
+      "name": "EventCreated",
+      "fields": [
+        {
+          "name": "venue",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "eventId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "capacity",
+          "type": "u32",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "VenueCreated",
+      "fields": [
+        {
+          "name": "venueId",
+          "type": "string",
+          "index": false
+        },
+        {
+          "name": "owner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "index": false
+        },
+        {
+          "name": "venuePubkey",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "PlatformInitialized",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "feeBps",
+          "type": "u16",
+          "index": false
+        },
+        {
+          "name": "treasury",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "TicketListedOnMarketplace",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "assetId",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "price",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "expiresAt",
+          "type": "i64",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "TicketsPurchased",
+      "fields": [
+        {
+          "name": "buyer",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "venue",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "quantity",
+          "type": "u8",
+          "index": false
+        },
+        {
+          "name": "priceEach",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "totalPaid",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "platformFee",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "startTicketNumber",
+          "type": "u32",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "TicketVerified",
+      "fields": [
+        {
+          "name": "event",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "validator",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    },
+    {
+      "name": "VenueVerified",
+      "fields": [
+        {
+          "name": "venue",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "verifier",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "timestamp",
+          "type": "i64",
+          "index": false
+        }
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidTreeDepth",
+      "msg": "Invalid tree depth"
+    },
+    {
+      "code": 6001,
+      "name": "InvalidBufferSize",
+      "msg": "Invalid buffer size"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidCanopyDepth",
+      "msg": "Invalid canopy depth"
+    },
+    {
+      "code": 6003,
+      "name": "ClockError",
+      "msg": "Clock error"
+    },
+    {
+      "code": 6004,
+      "name": "FeeTooHigh",
+      "msg": "Fee too high"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidTreasury",
+      "msg": "Invalid treasury address"
+    },
+    {
+      "code": 6006,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6007,
+      "name": "VenueIdTooLong",
+      "msg": "Venue ID too long"
+    },
+    {
+      "code": 6008,
+      "name": "VenueNameTooLong",
+      "msg": "Venue name too long"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidVenueId",
+      "msg": "Invalid venue ID"
+    },
+    {
+      "code": 6010,
+      "name": "VenueNotVerified",
+      "msg": "Venue not verified"
+    },
+    {
+      "code": 6011,
+      "name": "VenueInactive",
+      "msg": "Venue inactive"
+    },
+    {
+      "code": 6012,
+      "name": "AlreadyVerified",
+      "msg": "Already verified"
+    },
+    {
+      "code": 6013,
+      "name": "UnauthorizedVenue",
+      "msg": "Unauthorized venue"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidEventVenue",
+      "msg": "Invalid event venue"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidCapacity",
+      "msg": "Invalid capacity"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidEventName",
+      "msg": "Invalid event name"
+    },
+    {
+      "code": 6017,
+      "name": "DescriptionTooLong",
+      "msg": "Description too long"
+    },
+    {
+      "code": 6018,
+      "name": "EventAlreadyStarted",
+      "msg": "Event already started"
+    },
+    {
+      "code": 6019,
+      "name": "StartTimeTooSoon",
+      "msg": "Start time too soon"
+    },
+    {
+      "code": 6020,
+      "name": "EndBeforeStart",
+      "msg": "End before start"
+    },
+    {
+      "code": 6021,
+      "name": "EventTooLong",
+      "msg": "Event too long"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidQuantity",
+      "msg": "Invalid quantity"
+    },
+    {
+      "code": 6023,
+      "name": "InsufficientTickets",
+      "msg": "Insufficient tickets"
+    },
+    {
+      "code": 6024,
+      "name": "UriTooLong",
+      "msg": "URI too long"
+    },
+    {
+      "code": 6025,
+      "name": "PriceTooLow",
+      "msg": "Price too low"
+    },
+    {
+      "code": 6026,
+      "name": "PriceTooHigh",
+      "msg": "Price too high"
+    },
+    {
+      "code": 6027,
+      "name": "PriceExceedsMax",
+      "msg": "Price exceeds maximum"
+    },
+    {
+      "code": 6028,
+      "name": "ResaleNotAllowed",
+      "msg": "Resale not allowed"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidExpiry",
+      "msg": "Invalid expiry"
+    },
+    {
+      "code": 6030,
+      "name": "MathOverflow",
+      "msg": "Math overflow"
+    },
+    {
+      "code": 6031,
+      "name": "InvalidCharacters",
+      "msg": "Invalid characters"
+    },
+    {
+      "code": 6032,
+      "name": "RefundWindowTooLong",
+      "msg": "Refund window too long"
+    },
+    {
+      "code": 6033,
+      "name": "ReentrancyLocked",
+      "msg": "Reentrancy locked"
+    }
+  ]
+};

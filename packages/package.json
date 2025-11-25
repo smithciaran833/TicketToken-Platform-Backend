@@ -1,0 +1,52 @@
+{
+  "name": "@tickettoken/sdks",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TicketToken SDK Monorepo",
+  "workspaces": [
+    "sdk-typescript",
+    "sdk-javascript",
+    "sdk-react",
+    "sdk-test-utils",
+    "shared"
+  ],
+  "scripts": {
+    "build": "lerna run build",
+    "build:ts": "lerna run build --scope=@tickettoken/sdk",
+    "build:js": "lerna run build --scope=@tickettoken/sdk-javascript",
+    "build:react": "lerna run build --scope=@tickettoken/sdk-react",
+    "test": "lerna run test",
+    "test:coverage": "lerna run test:coverage",
+    "lint": "eslint . --ext .ts,.tsx,.js,.jsx",
+    "lint:fix": "eslint . --ext .ts,.tsx,.js,.jsx --fix",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "typecheck": "lerna run typecheck",
+    "clean": "lerna run clean && rm -rf node_modules",
+    "prepare": "husky install",
+    "version": "lerna version",
+    "publish": "lerna publish from-package",
+    "docs:dev": "cd docs && npm run dev",
+    "docs:build": "cd docs && npm run build"
+  },
+  "devDependencies": {
+    "@commitlint/cli": "^18.4.3",
+    "@commitlint/config-conventional": "^18.4.3",
+    "@typescript-eslint/eslint-plugin": "^6.13.2",
+    "@typescript-eslint/parser": "^6.13.2",
+    "eslint": "^8.55.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-import": "^2.29.0",
+    "eslint-plugin-react": "^7.33.2",
+    "eslint-plugin-react-hooks": "^4.6.0",
+    "husky": "^8.0.3",
+    "lerna": "^8.0.0",
+    "lint-staged": "^15.2.0",
+    "prettier": "^3.1.0",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  }
+}

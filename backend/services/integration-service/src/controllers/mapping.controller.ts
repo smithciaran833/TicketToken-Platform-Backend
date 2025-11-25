@@ -1,34 +1,33 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { mappingService } from '../services/mapping.service';
 import { db } from '../config/database';
 
 export class MappingController {
-  async getAvailableFields(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async getAvailableFields(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      
+      const { provider } = request.params as any;
+
       const fields = await mappingService.getAvailableFields(provider);
-      
-      res.json({
+
+      return reply.send({
         success: true,
         data: fields
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getCurrentMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async getCurrentMappings(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.query;
-      
+      const { provider } = request.params as any;
+      const { venueId } = request.query as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       const config = await db('integration_configs')
@@ -37,8 +36,8 @@ export class MappingController {
           integration_type: provider
         })
         .first();
-      
-      res.json({
+
+      return reply.send({
         success: true,
         data: {
           mappings: config?.field_mappings || {},
@@ -47,45 +46,42 @@ export class MappingController {
         }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async updateMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async updateMappings(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId, mappings } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId, mappings } = request.body as any;
+
       if (!venueId || !mappings) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID and mappings are required'
         });
-        return;
       }
 
       await mappingService.createCustomMapping(venueId, provider, mappings);
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Mappings updated successfully'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async testMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async testMappings(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      // Provider not needed for testing mappings
-      const { mappings, sampleData } = req.body;
-      
+      const { mappings, sampleData } = request.body as any;
+
       if (!mappings || !sampleData) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Mappings and sample data are required'
         });
-        return;
       }
 
       // Apply mappings to sample data
@@ -94,8 +90,8 @@ export class MappingController {
         acc[target as string] = value;
         return acc;
       }, {});
-      
-      res.json({
+
+      return reply.send({
         success: true,
         data: {
           original: sampleData,
@@ -103,80 +99,77 @@ export class MappingController {
         }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async applyTemplate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async applyTemplate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId, templateId } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId, templateId } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       await mappingService.applyTemplate(venueId, provider, templateId);
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Template applied successfully'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async resetMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async resetMappings(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       // Reset to default template
       await mappingService.applyTemplate(venueId, provider);
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Mappings reset to default template'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async healMappings(req: Request, res: Response, next: NextFunction): Promise<void> {
+  async healMappings(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.body;
-      
+      const { provider } = request.params as any;
+      const { venueId } = request.body as any;
+
       if (!venueId) {
-        res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
-        return;
       }
 
       await mappingService.healMapping(venueId, provider);
-      
-      res.json({
+
+      return reply.send({
         success: true,
         message: 'Mappings healed successfully'
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

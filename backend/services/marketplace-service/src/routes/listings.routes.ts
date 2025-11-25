@@ -1,11 +1,9 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { listingController } from '../controllers/listing.controller';
 import { authMiddleware, verifyListingOwnership } from '../middleware/auth.middleware';
 import { walletMiddleware } from '../middleware/wallet.middleware';
 import { validate } from '../middleware/validation.middleware';
 import Joi from 'joi';
-
-const router = Router();
 
 // Validation schemas
 const createListingSchema = Joi.object({
@@ -21,38 +19,27 @@ const updatePriceSchema = Joi.object({
   price: Joi.number().positive().required(),
 });
 
-// Public routes (still need some level of rate limiting in production)
-router.get('/:id', listingController.getListing.bind(listingController));
+export default async function listingsRoutes(fastify: FastifyInstance) {
+  // Public routes
+  fastify.get('/:id', listingController.getListing.bind(listingController));
 
-// All other routes require authentication
-router.use(authMiddleware);
+  // Get user's own listings - requires auth
+  fastify.get('/my-listings', {
+    preHandler: [authMiddleware]
+  }, listingController.getMyListings.bind(listingController));
 
-// Get user's own listings
-router.get('/my-listings', listingController.getMyListings.bind(listingController));
+  // Create listing - requires auth + wallet
+  fastify.post('/', {
+    preHandler: [authMiddleware, walletMiddleware, validate(createListingSchema)]
+  }, listingController.createListing.bind(listingController));
 
-// Routes requiring wallet connection
-router.use(walletMiddleware);
+  // Update listing price - requires auth + wallet + ownership
+  fastify.put('/:id/price', {
+    preHandler: [authMiddleware, walletMiddleware, verifyListingOwnership, validate(updatePriceSchema)]
+  }, listingController.updateListingPrice.bind(listingController));
 
-// Create listing - SECURED
-router.post(
-  '/',
-  validate(createListingSchema),
-  listingController.createListing.bind(listingController)
-);
-
-// Update listing price - SECURED with ownership check
-router.put(
-  '/:id/price',
-  verifyListingOwnership,
-  validate(updatePriceSchema),
-  listingController.updateListingPrice.bind(listingController)
-);
-
-// Cancel listing - SECURED with ownership check
-router.delete(
-  '/:id',
-  verifyListingOwnership,
-  listingController.cancelListing.bind(listingController)
-);
-
-export default router;
+  // Cancel listing - requires auth + wallet + ownership
+  fastify.delete('/:id', {
+    preHandler: [authMiddleware, walletMiddleware, verifyListingOwnership]
+  }, listingController.cancelListing.bind(listingController));
+}

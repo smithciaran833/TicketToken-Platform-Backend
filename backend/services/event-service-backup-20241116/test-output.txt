@@ -1,0 +1,677 @@
+FAIL tests/endpoints/event-endpoints-comprehensive.test.ts
+  Event Service - Comprehensive Tests
+    GET /health
+      ✓ should return healthy status (10 ms)
+    GET /metrics
+      ✕ should return Prometheus metrics (3 ms)
+    POST /api/v1/events
+      ✕ should create event in database with all fields (124 ms)
+      ✓ should reject event creation without authentication (3 ms)
+      ✓ should reject event with missing required fields (4 ms)
+      ✕ should reject event with invalid venue_id (15 ms)
+      ✕ should reject event with invalid status (29 ms)
+    GET /api/v1/events
+      ✓ should list all events with pagination (12 ms)
+      ✓ should filter events by status (11 ms)
+      ✓ should require authentication (2 ms)
+    GET /api/v1/events/:id
+      ✕ should get event by ID with all fields (7 ms)
+      ✓ should return 404 for non-existent event (9 ms)
+      ✕ should enforce tenant isolation (8 ms)
+    GET /api/v1/venues/:venueId/events
+      ✕ should get all events for a venue (8 ms)
+    PUT /api/v1/events/:id
+      ✕ should update event and verify in database (7 ms)
+      ✕ should reject update without permission (7 ms)
+    POST /api/v1/events/:id/publish
+      ✕ should publish event and update status (7 ms)
+    GET /api/v1/events/:eventId/schedules
+      ✕ should get all schedules for event (10 ms)
+    POST /api/v1/events/:eventId/schedules
+      ✕ should create additional schedule (9 ms)
+    GET /api/v1/events/:eventId/schedules/upcoming
+      ✕ should get only upcoming schedules (5 ms)
+    GET /api/v1/events/:eventId/schedules/next
+      ✕ should get next schedule (6 ms)
+    PUT /api/v1/events/:eventId/schedules/:scheduleId
+      ✕ should update schedule (6 ms)
+    GET /api/v1/events/:eventId/capacity
+      ✕ should get all capacity sections (7 ms)
+    POST /api/v1/events/:eventId/capacity
+      ✕ should create capacity section and verify cumulative capacity (7 ms)
+      ✕ should reject capacity exceeding venue maximum (7 ms)
+    GET /api/v1/events/:eventId/capacity/total
+      ✕ should get total capacity across all sections (6 ms)
+    POST /api/v1/capacity/:id/check
+      ✕ should check availability without reserving (6 ms)
+      ✕ should return false for unavailable quantity (6 ms)
+    POST /api/v1/capacity/:id/reserve
+      ✕ should reserve capacity and verify in database (4 ms)
+      ✕ should reject reservation for insufficient capacity (7 ms)
+      ✕ should lock price when pricing_id provided (7 ms)
+    PUT /api/v1/capacity/:id
+      ✕ should update capacity section (6 ms)
+    GET /api/v1/events/:eventId/pricing
+      ✕ should get all pricing for event (7 ms)
+    POST /api/v1/events/:eventId/pricing
+      ✕ should create pricing tier (6 ms)
+    GET /api/v1/events/:eventId/pricing/active
+      ✕ should get only active pricing (7 ms)
+    POST /api/v1/pricing/:id/calculate
+      ✕ should calculate total price with all fees (6 ms)
+    PUT /api/v1/pricing/:id
+      ✕ should update pricing (6 ms)
+      ✕ should not affect existing locked prices (4 ms)
+    GET /api/v1/events/:id/ticket-types
+      ✕ should return pricing as ticket types (legacy) (6 ms)
+    POST /api/v1/events/:id/ticket-types
+      ✕ should create pricing via legacy endpoint (6 ms)
+    GET /api/v1/customers/:customerId/profile
+      ✓ should get customer profile (mock) (35 ms)
+    GET /api/v1/reports/sales
+      ✓ should get sales report (21 ms)
+    GET /api/v1/reports/venue-comparison
+      ✓ should get venue comparison report (8 ms)
+    GET /api/v1/venues/:venueId/dashboard
+      ✓ should get venue dashboard (8 ms)
+    GET /api/v1/venues/:venueId/analytics
+      ✓ should get venue analytics (7 ms)
+    DELETE /api/v1/events/:id
+      ✕ should reject deletion by unauthorized user (6 ms)
+      ✕ should soft delete event (owner only) (6 ms)
+      ✓ should not return deleted event in listings (7 ms)
+
+  ● Event Service - Comprehensive Tests › GET /metrics › should return Prometheus metrics
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected substring: "# TYPE"
+    Received string:    "
+    "
+
+      123 |       expect(response.status).toBe(200);
+      124 |       expect(response.headers['content-type']).toContain('text/plain');
+    > 125 |       expect(response.data).toContain('# TYPE');
+          |                             ^
+      126 |     });
+      127 |   });
+      128 |
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:125:29)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events › should create event in database with all fields
+
+    AxiosError: Request failed with status code 500
+
+      133 |   describe('POST /api/v1/events', () => {
+      134 |     test('should create event in database with all fields', async () => {
+    > 135 |       const response = await axios.post(
+          |                        ^
+      136 |         `${BASE_URL}/api/v1/events`,
+      137 |         {
+      138 |           name: `Test Event ${timestamp}`,
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:135:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events › should reject event with invalid venue_id
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [400, 403, 404]
+
+      256 |         fail('Should have thrown error');
+      257 |       } catch (error: any) {
+    > 258 |         expect([400, 403, 404]).toContain(error.response.status);
+          |                                 ^
+      259 |       }
+      260 |     });
+      261 |
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:258:33)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events › should reject event with invalid status
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [400, 422]
+
+      275 |         fail('Should have thrown validation error');
+      276 |       } catch (error: any) {
+    > 277 |         expect([400, 422]).toContain(error.response.status);
+          |                            ^
+      278 |       }
+      279 |     });
+      280 |   });
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:277:28)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:id › should get event by ID with all fields
+
+    AxiosError: Request failed with status code 500
+
+      324 |   describe('GET /api/v1/events/:id', () => {
+      325 |     test('should get event by ID with all fields', async () => {
+    > 326 |       const response = await axios.get(
+          |                        ^
+      327 |         `${BASE_URL}/api/v1/events/${eventId}`,
+      328 |         {
+      329 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:326:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:id › should enforce tenant isolation
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [403, 404]
+
+      372 |       } catch (error: any) {
+      373 |         // 403 or 404 are both acceptable
+    > 374 |         expect([403, 404]).toContain(error.response.status);
+          |                            ^
+      375 |       }
+      376 |     });
+      377 |   });
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:374:28)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/venues/:venueId/events › should get all events for a venue
+
+    expect(received).toBeDefined()
+
+    Received: undefined
+
+      391 |       // Should include our created event
+      392 |       const ourEvent = response.data.events.find((e: any) => e.id === eventId);
+    > 393 |       expect(ourEvent).toBeDefined();
+          |                        ^
+      394 |     });
+      395 |   });
+      396 |
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:393:24)
+
+  ● Event Service - Comprehensive Tests › PUT /api/v1/events/:id › should update event and verify in database
+
+    AxiosError: Request failed with status code 500
+
+      397 |   describe('PUT /api/v1/events/:id', () => {
+      398 |     test('should update event and verify in database', async () => {
+    > 399 |       const response = await axios.put(
+          |                        ^
+      400 |         `${BASE_URL}/api/v1/events/${eventId}`,
+      401 |         {
+      402 |           name: `Updated Event ${timestamp}`,
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:399:24)
+
+  ● Event Service - Comprehensive Tests › PUT /api/v1/events/:id › should reject update without permission
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [403, 404]
+
+      435 |         fail('Should have thrown 403 error');
+      436 |       } catch (error: any) {
+    > 437 |         expect([403, 404]).toContain(error.response.status);
+          |                            ^
+      438 |       }
+      439 |     });
+      440 |   });
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:437:28)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events/:id/publish › should publish event and update status
+
+    AxiosError: Request failed with status code 500
+
+      442 |   describe('POST /api/v1/events/:id/publish', () => {
+      443 |     test('should publish event and update status', async () => {
+    > 444 |       const response = await axios.post(
+          |                        ^
+      445 |         `${BASE_URL}/api/v1/events/${eventId}/publish`,
+      446 |         {},
+      447 |         {
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:444:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/schedules › should get all schedules for event
+
+    AxiosError: Request failed with status code 500
+
+      469 |   describe('GET /api/v1/events/:eventId/schedules', () => {
+      470 |     test('should get all schedules for event', async () => {
+    > 471 |       const response = await axios.get(
+          |                        ^
+      472 |         `${BASE_URL}/api/v1/events/${eventId}/schedules`,
+      473 |         {
+      474 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:471:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events/:eventId/schedules › should create additional schedule
+
+    AxiosError: Request failed with status code 500
+
+      485 |   describe('POST /api/v1/events/:eventId/schedules', () => {
+      486 |     test('should create additional schedule', async () => {
+    > 487 |       const response = await axios.post(
+          |                        ^
+      488 |         `${BASE_URL}/api/v1/events/${eventId}/schedules`,
+      489 |         {
+      490 |           starts_at: '2025-12-08T19:00:00Z',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:487:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/schedules/upcoming › should get only upcoming schedules
+
+    AxiosError: Request failed with status code 500
+
+      516 |   describe('GET /api/v1/events/:eventId/schedules/upcoming', () => {
+      517 |     test('should get only upcoming schedules', async () => {
+    > 518 |       const response = await axios.get(
+          |                        ^
+      519 |         `${BASE_URL}/api/v1/events/${eventId}/schedules/upcoming`,
+      520 |         {
+      521 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:518:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/schedules/next › should get next schedule
+
+    AxiosError: Request failed with status code 500
+
+      536 |   describe('GET /api/v1/events/:eventId/schedules/next', () => {
+      537 |     test('should get next schedule', async () => {
+    > 538 |       const response = await axios.get(
+          |                        ^
+      539 |         `${BASE_URL}/api/v1/events/${eventId}/schedules/next`,
+      540 |         {
+      541 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:538:24)
+
+  ● Event Service - Comprehensive Tests › PUT /api/v1/events/:eventId/schedules/:scheduleId › should update schedule
+
+    AxiosError: Request failed with status code 500
+
+      551 |   describe('PUT /api/v1/events/:eventId/schedules/:scheduleId', () => {
+      552 |     test('should update schedule', async () => {
+    > 553 |       const response = await axios.put(
+          |                        ^
+      554 |         `${BASE_URL}/api/v1/events/${eventId}/schedules/${scheduleId}`,
+      555 |         {
+      556 |           status: 'CONFIRMED',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:553:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/capacity › should get all capacity sections
+
+    AxiosError: Request failed with status code 500
+
+      573 |   describe('GET /api/v1/events/:eventId/capacity', () => {
+      574 |     test('should get all capacity sections', async () => {
+    > 575 |       const response = await axios.get(
+          |                        ^
+      576 |         `${BASE_URL}/api/v1/events/${eventId}/capacity`,
+      577 |         {
+      578 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:575:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events/:eventId/capacity › should create capacity section and verify cumulative capacity
+
+    AxiosError: Request failed with status code 500
+
+      588 |   describe('POST /api/v1/events/:eventId/capacity', () => {
+      589 |     test('should create capacity section and verify cumulative capacity', async () => {
+    > 590 |       const response = await axios.post(
+          |                        ^
+      591 |         `${BASE_URL}/api/v1/events/${eventId}/capacity`,
+      592 |         {
+      593 |           section_name: 'VIP Section',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:590:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events/:eventId/capacity › should reject capacity exceeding venue maximum
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [400, 422]
+
+      633 |         fail('Should have thrown error');
+      634 |       } catch (error: any) {
+    > 635 |         expect([400, 422]).toContain(error.response.status);
+          |                            ^
+      636 |         expect(error.response.data.error).toContain('capacity');
+      637 |       }
+      638 |     });
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:635:28)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/capacity/total › should get total capacity across all sections
+
+    AxiosError: Request failed with status code 500
+
+      641 |   describe('GET /api/v1/events/:eventId/capacity/total', () => {
+      642 |     test('should get total capacity across all sections', async () => {
+    > 643 |       const response = await axios.get(
+          |                        ^
+      644 |         `${BASE_URL}/api/v1/events/${eventId}/capacity/total`,
+      645 |         {
+      646 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:643:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/capacity/:id/check › should check availability without reserving
+
+    AxiosError: Request failed with status code 500
+
+      658 |   describe('POST /api/v1/capacity/:id/check', () => {
+      659 |     test('should check availability without reserving', async () => {
+    > 660 |       const response = await axios.post(
+          |                        ^
+      661 |         `${BASE_URL}/api/v1/capacity/${capacityId}/check`,
+      662 |         {
+      663 |           quantity: 10
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:660:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/capacity/:id/check › should return false for unavailable quantity
+
+    AxiosError: Request failed with status code 500
+
+      674 |
+      675 |     test('should return false for unavailable quantity', async () => {
+    > 676 |       const response = await axios.post(
+          |                        ^
+      677 |         `${BASE_URL}/api/v1/capacity/${capacityId}/check`,
+      678 |         {
+      679 |           quantity: 99999
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:676:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/capacity/:id/reserve › should reserve capacity and verify in database
+
+    TypeError: Cannot read properties of undefined (reading 'available_capacity')
+
+      696 |         [capacityId]
+      697 |       );
+    > 698 |       const beforeAvailable = beforeResult.rows[0].available_capacity;
+          |                                                    ^
+      699 |       const beforeReserved = beforeResult.rows[0].reserved_capacity;
+      700 |
+      701 |       const response = await axios.post(
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:698:52)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/capacity/:id/reserve › should reject reservation for insufficient capacity
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [400, 422]
+
+      741 |         fail('Should have thrown error');
+      742 |       } catch (error: any) {
+    > 743 |         expect([400, 422]).toContain(error.response.status);
+          |                            ^
+      744 |       }
+      745 |     });
+      746 |
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:743:28)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/capacity/:id/reserve › should lock price when pricing_id provided
+
+    AxiosError: Request failed with status code 500
+
+      747 |     test('should lock price when pricing_id provided', async () => {
+      748 |       // First create pricing
+    > 749 |       const pricingResponse = await axios.post(
+          |                               ^
+      750 |         `${BASE_URL}/api/v1/events/${eventId}/pricing`,
+      751 |         {
+      752 |           name: 'Standard Pricing',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:749:31)
+
+  ● Event Service - Comprehensive Tests › PUT /api/v1/capacity/:id › should update capacity section
+
+    AxiosError: Request failed with status code 500
+
+      794 |   describe('PUT /api/v1/capacity/:id', () => {
+      795 |     test('should update capacity section', async () => {
+    > 796 |       const response = await axios.put(
+          |                        ^
+      797 |         `${BASE_URL}/api/v1/capacity/${capacityId}`,
+      798 |         {
+      799 |           section_name: 'Updated General Admission',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:796:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/pricing › should get all pricing for event
+
+    AxiosError: Request failed with status code 500
+
+      817 |   describe('GET /api/v1/events/:eventId/pricing', () => {
+      818 |     test('should get all pricing for event', async () => {
+    > 819 |       const response = await axios.get(
+          |                        ^
+      820 |         `${BASE_URL}/api/v1/events/${eventId}/pricing`,
+      821 |         {
+      822 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:819:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events/:eventId/pricing › should create pricing tier
+
+    AxiosError: Request failed with status code 500
+
+      831 |   describe('POST /api/v1/events/:eventId/pricing', () => {
+      832 |     test('should create pricing tier', async () => {
+    > 833 |       const response = await axios.post(
+          |                        ^
+      834 |         `${BASE_URL}/api/v1/events/${eventId}/pricing`,
+      835 |         {
+      836 |           name: 'Early Bird',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:833:24)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:eventId/pricing/active › should get only active pricing
+
+    AxiosError: Request failed with status code 500
+
+      865 |   describe('GET /api/v1/events/:eventId/pricing/active', () => {
+      866 |     test('should get only active pricing', async () => {
+    > 867 |       const response = await axios.get(
+          |                        ^
+      868 |         `${BASE_URL}/api/v1/events/${eventId}/pricing/active`,
+      869 |         {
+      870 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:867:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/pricing/:id/calculate › should calculate total price with all fees
+
+    AxiosError: Request failed with status code 500
+
+      883 |   describe('POST /api/v1/pricing/:id/calculate', () => {
+      884 |     test('should calculate total price with all fees', async () => {
+    > 885 |       const response = await axios.post(
+          |                        ^
+      886 |         `${BASE_URL}/api/v1/pricing/${pricingId}/calculate`,
+      887 |         {
+      888 |           quantity: 2
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:885:24)
+
+  ● Event Service - Comprehensive Tests › PUT /api/v1/pricing/:id › should update pricing
+
+    AxiosError: Request failed with status code 500
+
+      906 |   describe('PUT /api/v1/pricing/:id', () => {
+      907 |     test('should update pricing', async () => {
+    > 908 |       const response = await axios.put(
+          |                        ^
+      909 |         `${BASE_URL}/api/v1/pricing/${pricingId}`,
+      910 |         {
+      911 |           base_price: 55.00,
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:908:24)
+
+  ● Event Service - Comprehensive Tests › PUT /api/v1/pricing/:id › should not affect existing locked prices
+
+    TypeError: Cannot read properties of undefined (reading 'locked_price_data')
+
+      929 |
+      930 |       // Locked price should still be 50.00, not 55.00
+    > 931 |       if (dbResult.rows[0].locked_price_data) {
+          |                            ^
+      932 |         expect(dbResult.rows[0].locked_price_data.locked_price).toBe(50.00);
+      933 |       }
+      934 |     });
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:931:28)
+
+  ● Event Service - Comprehensive Tests › GET /api/v1/events/:id/ticket-types › should return pricing as ticket types (legacy)
+
+    AxiosError: Request failed with status code 500
+
+      941 |   describe('GET /api/v1/events/:id/ticket-types', () => {
+      942 |     test('should return pricing as ticket types (legacy)', async () => {
+    > 943 |       const response = await axios.get(
+          |                        ^
+      944 |         `${BASE_URL}/api/v1/events/${eventId}/ticket-types`,
+      945 |         {
+      946 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:943:24)
+
+  ● Event Service - Comprehensive Tests › POST /api/v1/events/:id/ticket-types › should create pricing via legacy endpoint
+
+    AxiosError: Request failed with status code 500
+
+      955 |   describe('POST /api/v1/events/:id/ticket-types', () => {
+      956 |     test('should create pricing via legacy endpoint', async () => {
+    > 957 |       const response = await axios.post(
+          |                        ^
+      958 |         `${BASE_URL}/api/v1/events/${eventId}/ticket-types`,
+      959 |         {
+      960 |           name: 'Legacy Ticket Type',
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:957:24)
+
+  ● Event Service - Comprehensive Tests › DELETE /api/v1/events/:id › should reject deletion by unauthorized user
+
+    expect(received).toContain(expected) // indexOf
+
+    Expected value: 500
+    Received array: [403, 404]
+
+      1064 |         fail('Should have thrown 403 error');
+      1065 |       } catch (error: any) {
+    > 1066 |         expect([403, 404]).toContain(error.response.status);
+           |                            ^
+      1067 |       }
+      1068 |     });
+      1069 |
+
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:1066:28)
+
+  ● Event Service - Comprehensive Tests › DELETE /api/v1/events/:id › should soft delete event (owner only)
+
+    AxiosError: Request failed with status code 500
+
+      1069 |
+      1070 |     test('should soft delete event (owner only)', async () => {
+    > 1071 |       const response = await axios.delete(
+           |                        ^
+      1072 |         `${BASE_URL}/api/v1/events/${eventId}`,
+      1073 |         {
+      1074 |           headers: { Authorization: `Bearer ${accessToken}` }
+
+      at settle (../../../../../node_modules/axios/lib/core/settle.js:19:12)
+      at IncomingMessage.handleStreamEnd (../../../../../node_modules/axios/lib/adapters/http.js:617:11)
+      at Axios.request (../../../../../node_modules/axios/lib/core/Axios.js:45:41)
+      at Object.<anonymous> (tests/endpoints/event-endpoints-comprehensive.test.ts:1071:24)
+
+Test Suites: 1 failed, 1 total
+Tests:       35 failed, 13 passed, 48 total
+Snapshots:   0 total
+Time:        3.382 s
+Ran all test suites matching tests/endpoints/event-endpoints-comprehensive.test.ts.

@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import { BaseSMSProvider, SendSMSInput } from './base-sms.provider';
 import { NotificationResult } from '../base.provider';
+import { logger } from '../../config/logger';
 
 export class MockSMSProvider extends BaseSMSProvider {
   private sentMessages: NotificationResult[] = [];
@@ -90,7 +91,7 @@ export class MockSMSProvider extends BaseSMSProvider {
 
   async verify(): Promise<boolean> {
     await this.ensureLogDirectory();
-    console.log('MockSMSProvider: Verified (always ready)');
+    logger.info('MockSMSProvider: Verified (always ready)');
     return true;
   }
 

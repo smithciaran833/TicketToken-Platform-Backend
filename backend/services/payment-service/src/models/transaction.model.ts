@@ -4,7 +4,7 @@ import { Transaction, TransactionStatus } from '../types/payment.types';
 export class TransactionModel {
   static async create(data: Partial<Transaction> & { idempotencyKey?: string; tenantId?: string }): Promise<Transaction> {
     const text = `
-      INSERT INTO transactions (
+      INSERT INTO payment_transactions (
         venue_id, user_id, event_id, amount, currency, status,
         platform_fee, venue_payout, gas_fee_paid, tax_amount, total_amount,
         stripe_payment_intent_id, metadata, idempotency_key, tenant_id
@@ -44,7 +44,7 @@ export class TransactionModel {
 
   static async findById(id: string): Promise<Transaction | null> {
     const text = `
-      SELECT * FROM transactions WHERE id = $1
+      SELECT * FROM payment_transactions WHERE id = $1
     `;
 
     const result = await query(text, [id]);
@@ -58,7 +58,7 @@ export class TransactionModel {
 
   static async findByPaymentIntentId(paymentIntentId: string): Promise<Transaction | null> {
     const text = `
-      SELECT * FROM transactions WHERE stripe_payment_intent_id = $1
+      SELECT * FROM payment_transactions WHERE stripe_payment_intent_id = $1
     `;
 
     const result = await query(text, [paymentIntentId]);
@@ -72,7 +72,7 @@ export class TransactionModel {
 
   static async updateStatus(id: string, status: TransactionStatus): Promise<Transaction> {
     const text = `
-      UPDATE transactions
+      UPDATE payment_transactions
       SET status = $2, updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
@@ -135,7 +135,7 @@ export class TransactionModel {
     // SECURITY: This query is parameterized - the values are in the values array
     // The ${updates.join(', ')} only contains column names and parameter placeholders
     const text = `
-      UPDATE transactions
+      UPDATE payment_transactions
       SET ${updates.join(', ')}
       WHERE id = $${paramIndex}
       RETURNING *
@@ -156,7 +156,7 @@ export class TransactionModel {
     offset: number = 0
   ): Promise<Transaction[]> {
     const text = `
-      SELECT * FROM transactions
+      SELECT * FROM payment_transactions
       WHERE user_id = $1
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3
@@ -172,7 +172,7 @@ export class TransactionModel {
     offset: number = 0
   ): Promise<Transaction[]> {
     const text = `
-      SELECT * FROM transactions
+      SELECT * FROM payment_transactions
       WHERE venue_id = $1
       ORDER BY created_at DESC
       LIMIT $2 OFFSET $3

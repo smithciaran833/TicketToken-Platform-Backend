@@ -1,29 +1,32 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
 import { db } from '../services/database.service';
+import { logger } from '../utils/logger';
+import { requireTenantId } from '../middleware/tenant.middleware';
 
 export class VenueController {
-  static async startVerification(req: Request, res: Response) {
+  async startVerification(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { venueId, ein, businessName } = req.body;
+      const tenantId = requireTenantId(request);
+      const { venueId, ein, businessName } = request.body as any;
       const verificationId = 'ver_' + Date.now();
-      
-      // Save to database
+
       const result = await db.query(
-        `INSERT INTO venue_verifications (venue_id, ein, business_name, status, verification_id)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO venue_verifications (venue_id, ein, business_name, status, verification_id, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
          RETURNING *`,
-        [venueId, ein, businessName, 'pending', verificationId]
+        [venueId, ein, businessName, 'pending', verificationId, tenantId]
       );
-      
-      // Log to audit table
+
       await db.query(
-        `INSERT INTO compliance_audit_log (action, entity_type, entity_id, metadata)
-         VALUES ($1, $2, $3, $4)`,
-        ['verification_started', 'venue', venueId, JSON.stringify({ ein, businessName })]
+        `INSERT INTO compliance_audit_log (action, entity_type, entity_id, metadata, tenant_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        ['verification_started', 'venue', venueId, JSON.stringify({ ein, businessName }), tenantId]
       );
-      
-      return res.json({
+
+      logger.info(`Verification started for tenant ${tenantId}, venue ${venueId}`);
+
+      return reply.send({
         success: true,
         message: 'Verification started and saved to database',
         data: {
@@ -35,8 +38,8 @@ export class VenueController {
         }
       });
     } catch (error: any) {
-      console.error('Error starting verification:', error);
-      return res.status(500).json({
+      logger.error(`Error starting verification: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: 'Failed to start verification',
         details: error.message
@@ -44,26 +47,28 @@ export class VenueController {
     }
   }
 
-  static async getVerificationStatus(req: Request, res: Response) {
+  async getVerificationStatus(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { venueId } = req.params;
-      
-      // Get from database
+      const tenantId = requireTenantId(request);
+      const { venueId } = request.params as any;
+
       const result = await db.query(
-        'SELECT * FROM venue_verifications WHERE venue_id = $1 ORDER BY created_at DESC LIMIT 1',
-        [venueId]
+        `SELECT * FROM venue_verifications 
+         WHERE venue_id = $1 AND tenant_id = $2 
+         ORDER BY created_at DESC LIMIT 1`,
+        [venueId, tenantId]
       );
-      
+
       if (result.rows.length === 0) {
-        return res.status(404).json({
+        return reply.code(404).send({
           success: false,
           error: 'No verification found for this venue'
         });
       }
-      
+
       const verification = result.rows[0];
-      
-      return res.json({
+
+      return reply.send({
         success: true,
         data: {
           venueId: verification.venue_id,
@@ -76,8 +81,8 @@ export class VenueController {
         }
       });
     } catch (error: any) {
-      console.error('Error getting verification status:', error);
-      return res.status(500).json({
+      logger.error(`Error getting verification status: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: 'Failed to get verification status',
         details: error.message
@@ -85,20 +90,25 @@ export class VenueController {
     }
   }
 
-  static async getAllVerifications(req: Request, res: Response) {
+  async getAllVerifications(request: FastifyRequest, reply: FastifyReply) {
     try {
+      const tenantId = requireTenantId(request);
+
       const result = await db.query(
-        'SELECT * FROM venue_verifications ORDER BY created_at DESC LIMIT 10'
+        `SELECT * FROM venue_verifications 
+         WHERE tenant_id = $1 
+         ORDER BY created_at DESC LIMIT 10`,
+        [tenantId]
       );
-      
-      return res.json({
+
+      return reply.send({
         success: true,
         count: result.rows.length,
         data: result.rows
       });
     } catch (error: any) {
-      console.error('Error getting verifications:', error);
-      return res.status(500).json({
+      logger.error(`Error getting verifications: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: 'Failed to get verifications',
         details: error.message

@@ -1,62 +1,78 @@
-import { Response, NextFunction } from 'express';
-import { AuthenticatedRequest } from '../types';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { qrService } from '../services/qrService';
 import { ticketService } from '../services/ticketService';
 import { ForbiddenError } from '../utils/errors';
 
 export class QRController {
-
   async generateQR(
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
+    request: FastifyRequest,
+    reply: FastifyReply
   ): Promise<void> {
-    try {
-      const { ticketId } = req.params;
-      
-      // Verify ticket ownership
-      const ticket = await ticketService.getTicket(ticketId);
-      if (ticket.owner_user_id !== req.user!.id && req.user!.role !== 'admin') {
-        throw new ForbiddenError('You do not own this ticket');
-      }
+    const { ticketId } = request.params as any;
+    const user = (request as any).user;
 
-      const { qrCode, qrImage } = await qrService.generateRotatingQR(ticketId);
-      
-      res.json({
-        success: true,
-        data: {
-          qrCode,
-          qrImage,
-          expiresIn: 30 // seconds
-        }
-      });
-    } catch (error) {
-      next(error);
+    // Verify ticket ownership - use user_id only
+    const ticket = await ticketService.getTicket(ticketId);
+
+    if (ticket.userId !== user!.id && user!.role !== 'admin') {
+      throw new ForbiddenError('You do not own this ticket');
     }
+
+    const { qrCode, qrImage } = await qrService.generateRotatingQR(ticketId);
+
+    reply.send({
+      success: true,
+      data: {
+        qrCode,
+        qrImage,
+        expiresIn: 30 // seconds
+      }
+    });
   }
 
   async validateQR(
-    req: AuthenticatedRequest,
-    res: Response,
-    next: NextFunction
+    request: FastifyRequest,
+    reply: FastifyReply
   ): Promise<void> {
-    try {
-      const { qrCode, eventId, entrance, deviceId } = req.body;
-      
-      const validation = await qrService.validateQR(qrCode, {
-        eventId,
-        entrance,
-        deviceId,
-        validatorId: req.user?.id
-      });
+    const { qrCode, eventId, entrance, deviceId } = request.body as any;
+    const user = (request as any).user;
 
-      res.json({
-        success: validation.isValid,
-        data: validation
-      });
-    } catch (error) {
-      next(error);
+    const validation = await qrService.validateQR(qrCode, {
+      eventId,
+      entrance,
+      deviceId,
+      validatorId: user?.id
+    });
+
+    reply.send({
+      success: validation.isValid,
+      data: validation
+    });
+  }
+
+  async refreshQR(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> {
+    const { ticketId } = request.body as any;
+    const user = (request as any).user;
+
+    const ticket = await ticketService.getTicket(ticketId);
+
+    if (ticket.userId !== user!.id && user!.role !== 'admin') {
+      throw new ForbiddenError('You do not own this ticket');
     }
+
+    const { qrCode, qrImage } = await qrService.generateRotatingQR(ticketId);
+
+    reply.send({
+      success: true,
+      data: {
+        qrCode,
+        qrImage,
+        expiresIn: 30
+      }
+    });
   }
 }
 

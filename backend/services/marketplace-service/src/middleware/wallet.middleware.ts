@@ -1,4 +1,4 @@
-import { Response, NextFunction } from 'express';
+import { FastifyReply } from 'fastify';
 import { AuthRequest } from './auth.middleware';
 import { BadRequestError } from '../utils/errors';
 import { validationService } from '../services/validation.service';
@@ -10,26 +10,24 @@ export interface WalletRequest extends AuthRequest {
   };
 }
 
-export const walletMiddleware = (req: WalletRequest, _res: Response, next: NextFunction) => {
-  const walletAddress = req.headers['x-wallet-address'] as string;
-  const walletSignature = req.headers['x-wallet-signature'] as string;
+export const walletMiddleware = async (request: WalletRequest, reply: FastifyReply) => {
+  const walletAddress = request.headers['x-wallet-address'] as string;
+  const walletSignature = request.headers['x-wallet-signature'] as string;
 
   if (!walletAddress) {
-    return next(new BadRequestError('Wallet address required'));
+    return reply.status(400).send({ error: 'Wallet address required' });
   }
 
   if (!validationService.validateWalletAddress(walletAddress)) {
-    return next(new BadRequestError('Invalid wallet address'));
+    return reply.status(400).send({ error: 'Invalid wallet address' });
   }
 
   // In production, verify the signature
   // For now, just attach wallet info
-  req.wallet = {
+  request.wallet = {
     address: walletAddress,
     signature: walletSignature,
   };
-
-  next();
 };
 
 export const requireWallet = walletMiddleware;

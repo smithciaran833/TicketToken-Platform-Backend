@@ -1,0 +1,424 @@
+services:
+  # ============================================
+  # INFRASTRUCTURE
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: tickettoken-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: tickettoken_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickettoken-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: tickettoken-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - tickettoken-network
+
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: tickettoken-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickettoken-network
+
+  # ============================================
+  # MONITORING & ANALYTICS INFRASTRUCTURE
+  # ============================================
+  mongodb:
+    image: mongo:7-jammy
+    container_name: tickettoken-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+      MONGO_INITDB_DATABASE: tickettoken
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickettoken-network
+
+  elasticsearch:
+    image: elasticsearch:8.11.0
+    container_name: tickettoken-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickettoken-network
+
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: tickettoken-influxdb
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpassword
+      DOCKER_INFLUXDB_INIT_ORG: tickettoken
+      DOCKER_INFLUXDB_INIT_BUCKET: metrics
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: my-super-secret-auth-token
+    ports:
+      - "8087:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - tickettoken-network
+
+  # ============================================
+  # APPLICATION SERVICES
+  # ============================================
+  auth-service:
+    build:
+      context: .
+      dockerfile: backend/services/auth-service/Dockerfile
+    container_name: tickettoken-auth
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: development
+      PORT: 3001
+      LOG_LEVEL: debug
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tickettoken_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_POOL_MAX: 5
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      JWT_ACCESS_SECRET: super_secret_access_token_key_min_32_characters_long_12345
+      JWT_REFRESH_SECRET: super_secret_refresh_token_key_min_32_characters_long_67890
+      JWT_ISSUER: tickettoken
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      BCRYPT_ROUNDS: 10
+      LOCKOUT_MAX_ATTEMPTS: 5
+      LOCKOUT_DURATION_MINUTES: 15
+      MFA_ISSUER: TicketToken
+      MFA_WINDOW: 1
+      API_GATEWAY_URL: http://localhost:3000
+      VENUE_SERVICE_URL: http://venue-service:3002
+      NOTIFICATION_SERVICE_URL: http://localhost:3006
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+  venue-service:
+    build:
+      context: .
+      dockerfile: backend/services/venue-service/Dockerfile
+    container_name: tickettoken-venue
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      NODE_ENV: development
+      PORT: 3002
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tickettoken_db
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tickettoken_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_POOL_MAX: 5
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:3001
+      LOG_LEVEL: debug
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+  event-service:
+    build:
+      context: .
+      dockerfile: backend/services/event-service/Dockerfile
+    container_name: tickettoken-event
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      NODE_ENV: development
+      PORT: 3003
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tickettoken_db
+      DB_POOL_MAX: 5
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:3001
+      VENUE_SERVICE_URL: http://venue-service:3002
+      LOG_LEVEL: debug
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+  ticket-service:
+    build:
+      context: .
+      dockerfile: backend/services/ticket-service/Dockerfile
+    container_name: tickettoken-ticket
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    environment:
+      NODE_ENV: development
+      PORT: 3004
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tickettoken_db
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tickettoken_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_POOL_MAX: 5
+      REDIS_URL: redis://redis:6379
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      AMQP_URL: amqp://admin:admin@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:3001
+      EVENT_SERVICE_URL: http://event-service:3003
+      PAYMENT_SERVICE_URL: http://payment-service:3006
+      JWT_ACCESS_SECRET: super_secret_access_token_key_min_32_characters_long_12345
+      JWT_REFRESH_SECRET: super_secret_refresh_token_key_min_32_characters_long_67890
+      JWT_ISSUER: tickettoken
+      JWT_ACCESS_EXPIRES_IN: 15m
+      JWT_REFRESH_EXPIRES_IN: 7d
+      LOG_LEVEL: debug
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+  order-service:
+    build:
+      context: .
+      dockerfile: backend/services/order-service/Dockerfile
+    container_name: tickettoken-order
+    restart: unless-stopped
+    ports:
+      - "3005:3005"
+    environment:
+      NODE_ENV: development
+      PORT: 3005
+      SERVICE_NAME: order-service
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tickettoken_db
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tickettoken_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_POOL_MAX: 5
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:3001
+      PAYMENT_SERVICE_URL: http://payment-service:3006
+      LOG_LEVEL: debug
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+  payment-service:
+    build:
+      context: .
+      dockerfile: backend/services/payment-service/Dockerfile
+    container_name: tickettoken-payment
+    restart: unless-stopped
+    ports:
+      - "3006:3006"
+    environment:
+      NODE_ENV: development
+      PORT: 3006
+      SERVICE_NAME: payment-service
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tickettoken_db
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tickettoken_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_POOL_MAX: 5
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      AUTH_SERVICE_URL: http://auth-service:3001
+      ORDER_SERVICE_URL: http://order-service:3005
+      STRIPE_SECRET_KEY: sk_test_51RxcsfJkJx8oljhBMmJw24AvFmPu1uGXq0Ef5DWGt67IDRacHWFAnF0iy1qogYD9Mri1djgkoOCeQXtz26E08p0H00mIr9zHty
+      STRIPE_PUBLISHABLE_KEY: pk_test_51RxcsfJkJx8oljhB2jDXHJDnJ1OBADBvvC3IpOJ7XeOfmm60QDKSSmVxa4GrKrWAkTP7azSLIodjN87nY6DfvIS600pXcBVWBo
+      STRIPE_WEBHOOK_SECRET: whsec_test_placeholder
+      LOG_LEVEL: debug
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+  blockchain-service:
+    build:
+      context: .
+      dockerfile: backend/services/blockchain-service/Dockerfile
+    container_name: tickettoken-blockchain
+    restart: unless-stopped
+    ports:
+      - "3011:3011"
+    environment:
+      NODE_ENV: development
+      PORT: 3011
+      SERVICE_NAME: blockchain-service
+      HOST: 0.0.0.0
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/tickettoken_db
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: tickettoken_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_POOL_MAX: 5
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_URL: redis://redis:6379
+      RABBITMQ_URL: amqp://admin:admin@rabbitmq:5672
+      MINTING_SERVICE_URL: http://minting-service:3007
+      INTERNAL_SERVICE_SECRET: internal-service-secret-key-minimum-32-chars
+      SOLANA_RPC_URL: https://api.devnet.solana.com
+      SOLANA_NETWORK: devnet
+      LOG_LEVEL: debug
+    volumes:
+      - ~/tickettoken-secrets:/home/nodejs/tickettoken-secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - tickettoken-network
+
+volumes:
+  postgres_data:
+    name: tickettoken-postgres-data
+  redis_data:
+    name: tickettoken-redis-data
+  rabbitmq_data:
+    name: tickettoken-rabbitmq-data
+  mongodb_data:
+    name: tickettoken-mongodb-data
+  elasticsearch_data:
+    name: tickettoken-elasticsearch-data
+  influxdb_data:
+    name: tickettoken-influxdb-data
+
+networks:
+  tickettoken-network:
+    name: tickettoken-network
+    driver: bridge

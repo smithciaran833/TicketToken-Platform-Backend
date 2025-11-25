@@ -1,12 +1,15 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { AdminController } from '../controllers/admin.controller';
 import { requireAdmin } from '../middleware/auth.middleware';
 
-const router = Router();
+export async function adminRoutes(fastify: FastifyInstance) {
+  const adminController = new AdminController();
 
-// Admin routes
-router.get('/admin/pending', requireAdmin, AdminController.getPendingReviews);
-router.post('/admin/approve/:id', AdminController.approveVerification);
-router.post('/admin/reject/:id', AdminController.rejectVerification);
+  // Admin routes
+  fastify.get('/admin/pending', {
+    onRequest: requireAdmin
+  }, adminController.getPendingReviews);
 
-export default router;
+  fastify.post('/admin/approve/:id', adminController.approveVerification);
+  fastify.post('/admin/reject/:id', adminController.rejectVerification);
+}

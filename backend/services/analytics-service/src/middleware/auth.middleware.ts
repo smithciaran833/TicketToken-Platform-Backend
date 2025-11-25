@@ -1,35 +1,47 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
-import { ApiError } from '../utils/api-error';
+import { config } from '../config';
 
-export interface AuthenticatedRequest extends Request {
-  user?: {
-    id: string;
-    venueId?: string;
-    role: string;
-    permissions?: string[];
-  };
-  venue?: {
-    id: string;
-    name: string;
-  };
+export interface AuthUser {
+  id: string;
+  venueId?: string;
+  role: string;
+  permissions?: string[];
 }
 
-export const authenticate = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-): Promise<void> => {
+export interface AuthVenue {
+  id: string;
+  name: string;
+}
+
+// Extend Fastify request type
+declare module 'fastify' {
+  interface FastifyRequest {
+    user?: AuthUser;
+    venue?: AuthVenue;
+  }
+}
+
+export async function authenticate(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
   try {
-    const token = req.headers.authorization?.replace('Bearer ', '');
+    const token = request.headers.authorization?.replace('Bearer ', '');
     
     if (!token) {
-      throw new ApiError(401, 'Authentication required');
+      return reply.code(401).send({
+        success: false,
+        error: {
+          message: 'Authentication required',
+          statusCode: 401,
+        }
+      });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret') as any;
+    const decoded = jwt.verify(token, config.jwt.secret) as any;
     
-    req.user = {
+    request.user = {
       id: decoded.userId || decoded.id,
       venueId: decoded.venueId,
       role: decoded.role || 'user',
@@ -38,53 +50,76 @@ export const authenticate = async (
 
     // Also set venue info if available
     if (decoded.venueId) {
-      req.venue = {
+      request.venue = {
         id: decoded.venueId,
         name: decoded.venueName || 'Venue'
       };
     }
-
-    next();
   } catch (error: any) {
     if (error.name === 'TokenExpiredError') {
-      next(new ApiError(401, 'Token expired'));
+      return reply.code(401).send({
+        success: false,
+        error: {
+          message: 'Token expired',
+          statusCode: 401,
+        }
+      });
     } else if (error.name === 'JsonWebTokenError') {
-      next(new ApiError(401, 'Invalid token'));
+      return reply.code(401).send({
+        success: false,
+        error: {
+          message: 'Invalid token',
+          statusCode: 401,
+        }
+      });
     } else {
-      next(error);
+      return reply.code(500).send({
+        success: false,
+        error: {
+          message: 'Authentication error',
+          statusCode: 500,
+        }
+      });
     }
   }
-};
+}
 
-export const authorize = (permissions: string[] | string) => {
-  return (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
-    if (!req.user) {
-      next(new ApiError(401, 'Authentication required'));
-      return;
+export function authorize(permissions: string[] | string) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (!request.user) {
+      return reply.code(401).send({
+        success: false,
+        error: {
+          message: 'Authentication required',
+          statusCode: 401,
+        }
+      });
     }
 
     const requiredPerms = Array.isArray(permissions) ? permissions : [permissions];
-    const userPerms = req.user.permissions || [];
-    
+    const userPerms = request.user.permissions || [];
+
     // Check if user has admin role (bypass permissions)
-    if (req.user.role === 'admin') {
-      next();
+    if (request.user.role === 'admin') {
       return;
     }
-    
+
     // Check if user has required permissions
-    const hasPermission = requiredPerms.some(perm => 
+    const hasPermission = requiredPerms.some(perm =>
       userPerms.includes(perm) || userPerms.includes('*')
     );
 
     if (!hasPermission) {
-      next(new ApiError(403, 'Insufficient permissions'));
-      return;
+      return reply.code(403).send({
+        success: false,
+        error: {
+          message: 'Insufficient permissions',
+          statusCode: 403,
+        }
+      });
     }
-
-    next();
   };
-};
+}
 
 // Legacy function name support
 export const authenticateVenue = authenticate;

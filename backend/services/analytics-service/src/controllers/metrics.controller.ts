@@ -1,8 +1,51 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 import { MetricsService, AggregationService } from '../services';
 import { MetricType, DateRange } from '../types';
+
+interface RecordMetricBody {
+  metricType: string;
+  value: number;
+  venueId: string;
+  dimensions?: Record<string, any>;
+  metadata?: Record<string, any>;
+}
+
+interface BulkRecordMetricsBody {
+  metrics: RecordMetricBody[];
+}
+
+interface GetMetricsParams {
+  venueId: string;
+}
+
+interface GetMetricsQuery {
+  startDate: string;
+  endDate: string;
+  metricType: string;
+  granularity?: string;
+}
+
+interface GetMetricTrendsQuery {
+  metricType: string;
+  periods: number;
+  periodUnit: 'hour' | 'day' | 'week' | 'month';
+}
+
+interface CompareMetricsQuery {
+  metricType: string;
+  currentStartDate: string;
+  currentEndDate: string;
+  previousStartDate: string;
+  previousEndDate: string;
+}
+
+interface AggregateMetricQuery {
+  metricType: string;
+  startDate: string;
+  endDate: string;
+  aggregation: 'sum' | 'avg' | 'min' | 'max' | 'count';
+}
 
 class MetricsController extends BaseController {
   private metricsService: MetricsService;
@@ -14,115 +57,152 @@ class MetricsController extends BaseController {
     this.aggregationService = AggregationService.getInstance();
   }
 
-  recordMetric = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  recordMetric = async (
+    request: FastifyRequest<{ Body: RecordMetricBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { venueId } = req.params;
-      const { metricType, value, dimensions, metadata } = req.body;
-      
+      const { venueId, metricType, value, dimensions, metadata } = request.body;
+
       const metric = await this.metricsService.recordMetric(
         venueId,
-        metricType,
+        metricType as MetricType,
         value,
         dimensions,
         metadata
       );
-      
-      this.success(res, { metric });
+
+      return this.success(reply, { metric });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  bulkRecordMetrics = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  bulkRecordMetrics = async (
+    request: FastifyRequest<{ Body: BulkRecordMetricsBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { metrics } = req.body;
-      
-      // bulkRecordMetrics expects an array, not venueId separately
-      await this.metricsService.bulkRecordMetrics(metrics);
-      
-      this.success(res, { 
+      const { metrics } = request.body;
+
+      // Convert string metricType to MetricType enum
+      const formattedMetrics = metrics.map(m => ({
+        venueId: m.venueId,
+        metricType: m.metricType as MetricType,
+        value: m.value,
+        dimensions: m.dimensions,
+        metadata: m.metadata
+      }));
+
+      await this.metricsService.bulkRecordMetrics(formattedMetrics);
+
+      return this.success(reply, {
         message: 'Metrics recorded',
         recorded: metrics.length
       });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getMetrics = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getMetrics = async (
+    request: FastifyRequest<{ Params: GetMetricsParams; Querystring: GetMetricsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { venueId } = req.params;
-      const { startDate, endDate, metricType, granularity } = req.query;
-      
+      const { venueId } = request.params;
+      const { startDate, endDate, metricType, granularity } = request.query;
+
       // Parse granularity if provided
       const timeGranularity = granularity ? {
         unit: (granularity as string).split('-')[0] as 'minute' | 'hour' | 'day' | 'week' | 'month',
         value: parseInt((granularity as string).split('-')[1] || '1')
       } : undefined;
-      
+
       const metrics = await this.metricsService.getMetrics(
         venueId,
         metricType as MetricType,
         {
-          startDate: new Date(startDate as string),
-          endDate: new Date(endDate as string)
+          startDate: new Date(startDate),
+          endDate: new Date(endDate)
         },
         timeGranularity
       );
-      
-      this.success(res, { metrics });
+
+      return this.success(reply, { metrics });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getRealTimeMetrics = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getRealTimeMetrics = async (
+    request: FastifyRequest<{ Params: GetMetricsParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { venueId } = req.params;
-      
+      const { venueId } = request.params;
+
       const metrics = await this.metricsService.getRealTimeMetrics(venueId);
-      
-      this.success(res, { metrics });
+
+      return this.success(reply, { metrics });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getMetricTrends = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getMetricTrends = async (
+    request: FastifyRequest<{ Params: GetMetricsParams; Querystring: GetMetricTrendsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { venueId } = req.params;
-      const { metricType, startDate, endDate, granularity } = req.query;
-      
-      // Use aggregateMetrics to get trend data
+      const { venueId } = request.params;
+      const { metricType, periods, periodUnit } = request.query;
+
+      // Calculate date range from periods
+      const endDate = new Date();
+      const startDate = new Date();
+
+      if (periodUnit === 'hour') {
+        startDate.setHours(endDate.getHours() - periods);
+      } else if (periodUnit === 'day') {
+        startDate.setDate(endDate.getDate() - periods);
+      } else if (periodUnit === 'week') {
+        startDate.setDate(endDate.getDate() - (periods * 7));
+      } else if (periodUnit === 'month') {
+        startDate.setMonth(endDate.getMonth() - periods);
+      }
+
       const trends = await this.aggregationService.aggregateMetrics(
         venueId,
         metricType as MetricType,
-        {
-          startDate: new Date(startDate as string),
-          endDate: new Date(endDate as string)
-        },
-        {
-          unit: (granularity as string || 'day').split('-')[0] as any,
-          value: parseInt((granularity as string || 'day-1').split('-')[1] || '1')
-        }
+        { startDate, endDate },
+        { unit: periodUnit, value: 1 }
       );
-      
-      this.success(res, { trends });
+
+      return this.success(reply, { trends });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  compareMetrics = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  compareMetrics = async (
+    request: FastifyRequest<{ Params: GetMetricsParams; Querystring: CompareMetricsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { venueId } = req.params;
-      const { metricType, currentPeriod, previousPeriod } = req.query;
-      
-      // Use getComparativeMetrics instead
-      // Parse period strings to DateRange
-      const currentRange = this.parsePeriodString(currentPeriod as string);
-      const previousRange = this.parsePeriodString(previousPeriod as string);
-      
+      const { venueId } = request.params;
+      const { metricType, currentStartDate, currentEndDate, previousStartDate, previousEndDate } = request.query;
+
+      const currentRange: DateRange = {
+        startDate: new Date(currentStartDate),
+        endDate: new Date(currentEndDate)
+      };
+
+      const previousRange: DateRange = {
+        startDate: new Date(previousStartDate),
+        endDate: new Date(previousEndDate)
+      };
+
       const comparison = await this.aggregationService.getComparativeMetrics(
         venueId,
         metricType as MetricType,
@@ -130,53 +210,38 @@ class MetricsController extends BaseController {
         previousRange,
         { unit: 'day', value: 1 }
       );
-      
-      this.success(res, { comparison });
+
+      return this.success(reply, { comparison });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getAggregatedMetric = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getAggregatedMetric = async (
+    request: FastifyRequest<{ Params: GetMetricsParams; Querystring: AggregateMetricQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      const { venueId } = req.params;
-      const { metricType, startDate, endDate } = req.query;
-      
-      // Use aggregateMetrics and sum the values
+      const { venueId } = request.params;
+      const { metricType, startDate, endDate } = request.query;
+
       const metrics = await this.aggregationService.aggregateMetrics(
         venueId,
         metricType as MetricType,
         {
-          startDate: new Date(startDate as string),
-          endDate: new Date(endDate as string)
+          startDate: new Date(startDate),
+          endDate: new Date(endDate)
         },
         { unit: 'day', value: 1 }
       );
-      
-      
+
       const totalValue = metrics.summary?.total || 0;
-      
-      this.success(res, { value: totalValue });
+
+      return this.success(reply, { value: totalValue });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
-
-  private parsePeriodString(period: string): DateRange {
-    const now = new Date();
-    const [value, unit] = period.split('_');
-    const amount = parseInt(value) || 1;
-    
-    const startDate = new Date(now);
-    if (unit === 'days') startDate.setDate(now.getDate() - amount);
-    else if (unit === 'weeks') startDate.setDate(now.getDate() - (amount * 7));
-    else if (unit === 'months') startDate.setMonth(now.getMonth() - amount);
-    
-    return {
-      startDate,
-      endDate: now
-    };
-  }
 }
 
 export const metricsController = new MetricsController();

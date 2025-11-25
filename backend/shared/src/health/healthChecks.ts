@@ -16,7 +16,7 @@ export const createDatabaseHealthCheck = (pool: Pool): HealthCheck => ({
     } catch {
       return false;
     }
-  }
+  },
 });
 
 export const createRedisHealthCheck = (redis: Redis): HealthCheck => ({
@@ -28,7 +28,7 @@ export const createRedisHealthCheck = (redis: Redis): HealthCheck => ({
     } catch {
       return false;
     }
-  }
+  },
 });
 
 export const createRabbitMQHealthCheck = (url: string): HealthCheck => ({
@@ -41,19 +41,19 @@ export const createRabbitMQHealthCheck = (url: string): HealthCheck => ({
     } catch {
       return false;
     }
-  }
+  },
 });
 
 export const runHealthChecks = async (checks: HealthCheck[]) => {
   const results = await Promise.all(
     checks.map(async (check) => ({
       name: check.name,
-      healthy: await check.check()
+      healthy: await check.check(),
     }))
   );
-  
+
   return {
-    healthy: results.every(r => r.healthy),
-    checks: results
+    healthy: results.every((r) => r.healthy),
+    checks: results,
   };
 };

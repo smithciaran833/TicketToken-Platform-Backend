@@ -1,4 +1,5 @@
 import { db } from './database.service';
+import { logger } from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -17,7 +18,8 @@ export class DocumentService {
     venueId: string, 
     documentType: string, 
     buffer: Buffer,
-    originalName: string
+    originalName: string,
+    tenantId: string
   ): Promise<string> {
     try {
       // Generate unique filename
@@ -33,9 +35,9 @@ export class DocumentService {
       // Store reference in database
       await db.query(
         `INSERT INTO compliance_documents 
-         (document_id, venue_id, document_type, filename, original_name, storage_path, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
-        [documentId, venueId, documentType, filename, originalName, filepath]
+         (document_id, venue_id, document_type, filename, original_name, storage_path, tenant_id, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+        [documentId, venueId, documentType, filename, originalName, filepath, tenantId]
       );
       
       // Update venue verification status
@@ -43,28 +45,28 @@ export class DocumentService {
         await db.query(
           `UPDATE venue_verifications 
            SET w9_uploaded = true, updated_at = NOW()
-           WHERE venue_id = $1`,
-          [venueId]
+           WHERE venue_id = $1 AND tenant_id = $2`,
+          [venueId, tenantId]
         );
       }
       
-      console.log(`📄 Document stored: ${documentType} for venue ${venueId}`);
+      logger.info(`📄 Document stored: ${documentType} for venue ${venueId}, tenant ${tenantId}`);
       return documentId;
       
     } catch (error) {
-      console.error('Error storing document:', error);
+      logger.error('Error storing document:', error);
       throw error;
     }
   }
   
-  async getDocument(documentId: string): Promise<{
+  async getDocument(documentId: string, tenantId: string): Promise<{
     buffer: Buffer;
     filename: string;
     contentType: string;
   }> {
     const result = await db.query(
-      'SELECT * FROM compliance_documents WHERE document_id = $1',
-      [documentId]
+      'SELECT * FROM compliance_documents WHERE document_id = $1 AND tenant_id = $2',
+      [documentId, tenantId]
     );
     
     if (result.rows.length === 0) {
@@ -97,7 +99,7 @@ export class DocumentService {
   async validateW9(venueId: string, ein: string): Promise<boolean> {
     // Mock W-9 validation
     // In production: OCR to extract EIN and validate
-    console.log(`✅ W-9 validated for venue ${venueId}`);
+    logger.info(`✅ W-9 validated for venue ${venueId}`);
     return true;
   }
 }

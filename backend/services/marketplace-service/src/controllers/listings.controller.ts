@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
 
@@ -6,9 +6,9 @@ export class ListingsController {
   /**
    * Create listing with policy validation
    */
-  async createListing(req: Request, res: Response): Promise<void> {
-    const sellerId = (req as any).user.id;
-    const { ticketId, price, expiresAt } = req.body;
+  async createListing(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const sellerId = (request as any).user.id;
+    const { ticketId, price, expiresAt } = request.body as any;
 
     const trx = await db.transaction();
 
@@ -20,7 +20,7 @@ export class ListingsController {
 
       if (!ticket) {
         await trx.rollback();
-        res.status(403).json({ error: 'You do not own this ticket' });
+        reply.status(403).send({ error: 'You do not own this ticket' });
         return;
       }
 
@@ -31,7 +31,7 @@ export class ListingsController {
 
       if (existingListing) {
         await trx.rollback();
-        res.status(409).json({ error: 'Ticket is already listed' });
+        reply.status(409).send({ error: 'Ticket is already listed' });
         return;
       }
 
@@ -43,7 +43,7 @@ export class ListingsController {
       // 4. Validate listing against policy
       if (!this.validateListing(price, policy)) {
         await trx.rollback();
-        res.status(400).json({ 
+        reply.status(400).send({
           error: 'Listing violates venue policy',
           policy: {
             maxPrice: policy?.maxResalePrice,
@@ -85,7 +85,7 @@ export class ListingsController {
 
       await trx.commit();
 
-      res.json({
+      reply.send({
         success: true,
         listing: {
           id: listing.id,
@@ -98,7 +98,7 @@ export class ListingsController {
     } catch (error) {
       await trx.rollback();
       logger.error('Failed to create listing:', error);
-      res.status(500).json({ error: 'Failed to create listing' });
+      reply.status(500).send({ error: 'Failed to create listing' });
     }
   }
 
@@ -127,21 +127,21 @@ export class ListingsController {
   /**
    * Cancel listing atomically
    */
-  async cancelListing(req: Request, res: Response): Promise<void> {
-    const { listingId } = req.params;
-    const sellerId = (req as any).user.id;
+  async cancelListing(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const { listingId } = request.params as { listingId: string };
+    const sellerId = (request as any).user.id;
 
     const trx = await db.transaction();
 
     try {
       // Lock and update in one query
       const updated = await trx('marketplace_listings')
-        .where({ 
-          id: listingId, 
+        .where({
+          id: listingId,
           seller_id: sellerId,
           status: 'active'
         })
-        .update({ 
+        .update({
           status: 'cancelled',
           cancelled_at: new Date()
         })
@@ -149,7 +149,7 @@ export class ListingsController {
 
       if (!updated.length) {
         await trx.rollback();
-        res.status(404).json({ error: 'Listing not found or already sold' });
+        reply.status(404).send({ error: 'Listing not found or already sold' });
         return;
       }
 
@@ -166,12 +166,12 @@ export class ListingsController {
 
       await trx.commit();
 
-      res.json({ success: true, message: 'Listing cancelled' });
+      reply.send({ success: true, message: 'Listing cancelled' });
 
     } catch (error) {
       await trx.rollback();
       logger.error('Failed to cancel listing:', error);
-      res.status(500).json({ error: 'Failed to cancel listing' });
+      reply.status(500).send({ error: 'Failed to cancel listing' });
     }
   }
 }

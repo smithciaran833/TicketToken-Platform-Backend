@@ -1,10 +1,10 @@
 import knex, { Knex } from 'knex';
 import { logger } from '../utils/logger';
 
-// Debug: Log the connection details (remove password from logs in production!)
-console.log('DB Connection attempt:', {
+// Database connection configuration
+logger.info('DB Connection attempt:', {
   host: process.env.DB_HOST || 'postgres',
-  port: process.env.DB_PORT || '5432',
+  port: process.env.DB_PORT || '6432',
   database: process.env.DB_NAME || 'tickettoken_db',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD ? '[HIDDEN]' : 'NO PASSWORD SET',
@@ -15,7 +15,7 @@ const config: Knex.Config = {
   client: 'postgresql',
   connection: {
     host: process.env.DB_HOST || 'postgres',
-    port: parseInt(process.env.DB_PORT || '5432'),
+    port: parseInt(process.env.DB_PORT || '6432'),
     database: process.env.DB_NAME || 'tickettoken_db',
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || '',

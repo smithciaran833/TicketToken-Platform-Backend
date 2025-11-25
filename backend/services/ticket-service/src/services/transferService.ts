@@ -177,8 +177,12 @@ export class TransferService {
         }
       }
 
-      // Clear cache
-      await RedisService.del(`ticket:${ticketId}`);
+      // Clear cache (non-blocking)
+      try {
+        await RedisService.del(`ticket:${ticketId}`);
+      } catch (error) {
+        this.log.warn('Failed to delete ticket cache, continuing transfer:', error);
+      }
 
       // Publish transfer event
       await queueService.publish(config.rabbitmq.queues.ticketEvents, {
@@ -286,7 +290,7 @@ export class TransferService {
       // Verify recipient can receive tickets
       const recipientQuery = `
         SELECT 
-          account_status,
+          status as account_status,
           can_receive_transfers,
           email_verified
         FROM users 
@@ -300,7 +304,7 @@ export class TransferService {
       
       const recipient = recipientResult.rows[0];
       
-      if (recipient.account_status !== 'active') {
+      if (recipient.account_status !== 'ACTIVE') {
         return { valid: false, reason: 'Recipient account is not active' };
       }
       

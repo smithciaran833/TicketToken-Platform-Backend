@@ -1,40 +1,37 @@
-import express, { Application } from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import compression from 'compression';
+import { FastifyInstance } from 'fastify';
+import fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import compress from '@fastify/compress';
 import { errorMiddleware } from './middleware/error.middleware';
 import { loggingMiddleware } from './middleware/logging.middleware';
 import { metricsMiddleware } from './middleware/metrics.middleware';
 import routes from './routes';
 
-export function createApp(): Application {
-  const app = express();
+export async function createApp(): Promise<FastifyInstance> {
+  const app = fastify({ logger: false });
 
   // Security middleware
-  app.use(helmet());
-  app.use(cors());
-  
-  // Parsing middleware
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-  
+  await app.register(helmet);
+  await app.register(cors);
+
   // Compression
-  app.use(compression());
-  
+  await app.register(compress);
+
   // Custom middleware
-  app.use(loggingMiddleware);
-  app.use(metricsMiddleware);
-  
+  app.addHook('onRequest', loggingMiddleware);
+  app.addHook('onRequest', metricsMiddleware);
+
   // API Routes
-  app.use('/api/v1/queue', routes);
-  
+  await app.register(routes, { prefix: '/api/v1/queue' });
+
   // Root health check
-  app.get('/health', (req, res) => {
-    res.json({ status: 'healthy', service: 'queue-service' });
+  app.get('/health', async (request, reply) => {
+    return reply.send({ status: 'healthy', service: 'queue-service' });
   });
-  
-  // Error handling (must be last)
-  app.use(errorMiddleware);
-  
+
+  // Error handling
+  app.setErrorHandler(errorMiddleware);
+
   return app;
 }

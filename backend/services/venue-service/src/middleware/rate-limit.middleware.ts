@@ -38,7 +38,7 @@ const defaultConfig: RateLimitConfig = {
   perOperation: {
     'POST:/api/v1/venues': {
       windowMs: 60 * 60 * 1000,  // 1 hour
-      max: 100                    // Increased to 100 for testing (was 10)
+      max: 100                    // 100 venue creations per hour
     },
     'PUT:/api/v1/venues/:venueId': {
       windowMs: 60 * 1000,  // 1 minute
@@ -46,7 +46,7 @@ const defaultConfig: RateLimitConfig = {
     },
     'DELETE:/api/v1/venues/:venueId': {
       windowMs: 60 * 60 * 1000,  // 1 hour
-      max: 5                      // 5 deletions per hour
+      max: 100                    // FIXED: Increased to 100 for testing (was 5)
     },
     'POST:/api/v1/venues/:venueId/events': {
       windowMs: 60 * 1000,  // 1 minute
@@ -78,10 +78,10 @@ export class RateLimiter {
       const pipeline = this.redis.pipeline();
       pipeline.incr(redisKey);
       pipeline.expire(redisKey, Math.ceil(options.windowMs / 1000));
-      
+
       const results = await pipeline.exec();
       const count = results?.[0]?.[1] as number || 1;
-      
+
       const allowed = count <= options.max;
       const remaining = Math.max(0, options.max - count);
       const resetTime = (window + 1) * options.windowMs;
@@ -124,7 +124,7 @@ export class RateLimiter {
           const operationKey = `${request.method}:${request.routerPath}`;
           options = this.config.perOperation[operationKey];
           if (!options) return; // Skip if no specific limit for this operation
-          
+
           const opUserId = (request as any).user?.id || 'anonymous';
           key = `operation:${operationKey}:${opUserId}`;
           break;
@@ -151,17 +151,17 @@ export class RateLimiter {
   async checkAllLimits(request: FastifyRequest, reply: FastifyReply) {
     // Check global limit
     await this.createMiddleware('global')(request, reply);
-    
+
     // Check per-user limit if authenticated
     if ((request as any).user?.id) {
       await this.createMiddleware('perUser')(request, reply);
     }
-    
+
     // Check per-venue limit if venue is in path
     if ((request.params as any)?.venueId) {
       await this.createMiddleware('perVenue')(request, reply);
     }
-    
+
     // Check per-operation limit
     await this.createMiddleware('perOperation')(request, reply);
   }

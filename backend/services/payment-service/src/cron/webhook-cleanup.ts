@@ -1,4 +1,7 @@
 import { Pool } from 'pg';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'WebhookCleanup' });
 
 export class WebhookCleanup {
   private db: Pool;
@@ -8,7 +11,7 @@ export class WebhookCleanup {
   }
 
   async run(): Promise<void> {
-    console.log('Starting webhook cleanup...');
+    log.info('Starting webhook cleanup');
     
     // Delete processed webhooks older than 30 days
     const result = await this.db.query(
@@ -17,7 +20,7 @@ export class WebhookCleanup {
        AND created_at < NOW() - INTERVAL '30 days'`
     );
 
-    console.log(`Deleted ${result.rowCount} old webhooks`);
+    log.info('Deleted old webhooks', { count: result.rowCount });
 
     // Archive failed webhooks older than 7 days
     const failedWebhooks = await this.db.query(
@@ -29,7 +32,7 @@ export class WebhookCleanup {
 
     if (failedWebhooks.rows.length > 0) {
       // You could move these to an archive table or external storage
-      console.log(`Found ${failedWebhooks.rows.length} failed webhooks to archive`);
+      log.info('Found failed webhooks to archive', { count: failedWebhooks.rows.length });
     }
   }
 }

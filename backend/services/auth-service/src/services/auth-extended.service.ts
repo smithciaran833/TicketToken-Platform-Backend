@@ -1,4 +1,4 @@
-import argon2 from 'argon2';
+import bcrypt from 'bcrypt';
 // import crypto from 'crypto';
 import { db } from '../config/database';
 import { redis } from '../config/redis';
@@ -18,7 +18,7 @@ export class AuthExtendedService {
     await passwordResetRateLimiter.consume(ipAddress);
 
     // Find user
-    const user = await db('users')
+    const user = await db('users').withSchema('public')
       .where({ email: email.toLowerCase() })
       .whereNull('deleted_at')
       .first();
@@ -58,10 +58,10 @@ export class AuthExtendedService {
     this.validatePasswordStrength(newPassword);
 
     // Hash new password
-    const hashedPassword = await argon2.hash(newPassword);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     // Update password
-    await db('users')
+    await db('users').withSchema('public')
       .where({ id: userId })
       .update({
         password_hash: hashedPassword,
@@ -104,7 +104,7 @@ export class AuthExtendedService {
     const { userId, email } = JSON.parse(tokenData);
 
     // Update user as verified
-    const updated = await db('users')
+    const updated = await db('users').withSchema('public')
       .where({ id: userId, email })
       .whereNull('deleted_at')
       .update({
@@ -142,7 +142,7 @@ export class AuthExtendedService {
     }
 
     // Get user
-    const user = await db('users')
+    const user = await db('users').withSchema('public')
       .where({ id: userId })
       .whereNull('deleted_at')
       .first();
@@ -169,9 +169,9 @@ export class AuthExtendedService {
     newPassword: string
   ): Promise<void> {
     // Get user
-    const user = await db('users')
-      .where({ id: userId })
-      .whereNull('deleted_at')
+    const user = await db('users').withSchema('public')
+      .where("users.id", userId)
+      .whereNull("users.deleted_at")
       .first();
 
     if (!user) {
@@ -179,7 +179,7 @@ export class AuthExtendedService {
     }
 
     // Verify current password
-    const validPassword = await argon2.verify(user.password_hash, currentPassword);
+    const validPassword = await bcrypt.compare(currentPassword, user.password_hash);
     if (!validPassword) {
       throw new AuthenticationError('Current password is incorrect');
     }
@@ -188,15 +188,15 @@ export class AuthExtendedService {
     this.validatePasswordStrength(newPassword);
 
     // Ensure new password is different
-    const samePassword = await argon2.verify(user.password_hash, newPassword);
+    const samePassword = await bcrypt.compare(newPassword, user.password_hash);
     if (samePassword) {
       throw new ValidationError('New password must be different from current password' as any);
     }
 
     // Hash and update password
-    const hashedPassword = await argon2.hash(newPassword);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
     
-    await db('users')
+    await db('users').withSchema('public')
       .where({ id: userId })
       .update({
         password_hash: hashedPassword,

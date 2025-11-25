@@ -23,7 +23,17 @@ export async function authenticate(
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret') as any;
+    // SECURITY: JWT_SECRET must be set in production
+    const jwtSecret = process.env.JWT_SECRET;
+    if (!jwtSecret) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('JWT_SECRET environment variable is required in production');
+      }
+      // Only allow fallback in development
+      console.warn('WARNING: Using default JWT secret in development mode');
+    }
+    
+    const decoded = jwt.verify(token, jwtSecret || 'dev-secret-key-change-in-production') as any;
     
     request.user = {
       id: decoded.userId || decoded.id,

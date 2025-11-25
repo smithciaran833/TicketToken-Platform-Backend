@@ -1,17 +1,14 @@
-// serviceCache is not used - removed
-import { Request, Response, NextFunction } from 'express';
-// monitoringService is not used - removed
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../config/database';
-// logger is not used - removed
 
 export class HealthController {
-  async getIntegrationHealth(req: Request, res: Response, next: NextFunction) {
+  async getIntegrationHealth(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.query;
+      const { provider } = request.params as any;
+      const { venueId } = request.query as any;
 
       if (!venueId) {
-        return res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
@@ -24,23 +21,22 @@ export class HealthController {
         })
         .first();
 
-      res.json({
+      return reply.send({
         success: true,
         data: health || { status: 'unknown' }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
-    return; // Added missing return
   }
 
-  async getMetrics(req: Request, res: Response, next: NextFunction) {
+  async getMetrics(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { provider } = req.params;
-      const { venueId, period = '24h' } = req.query;
+      const { provider } = request.params as any;
+      const { venueId, period = '24h' } = request.query as any;
 
       if (!venueId) {
-        return res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
@@ -71,23 +67,22 @@ export class HealthController {
         )
         .first();
 
-      res.json({
+      return reply.send({
         success: true,
         data: metrics
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
-    return; // Added missing return
   }
 
-  async testConnection(req: Request, res: Response, next: NextFunction) {
+  async testConnection(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { provider } = req.params;
-      const { venueId } = req.body;
+      const { provider } = request.params as any;
+      const { venueId } = request.body as any;
 
       if (!venueId) {
-        return res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Venue ID is required'
         });
@@ -103,7 +98,7 @@ export class HealthController {
 
       const ProviderClass = providers[provider];
       if (!ProviderClass) {
-        return res.status(400).json({
+        return reply.code(400).send({
           success: false,
           error: 'Invalid provider'
         });
@@ -114,7 +109,7 @@ export class HealthController {
                         await tokenVault.getApiKey(venueId, provider);
 
       if (!credentials) {
-        return res.status(404).json({
+        return reply.code(404).send({
           success: false,
           error: 'No credentials found'
         });
@@ -124,7 +119,7 @@ export class HealthController {
       await providerInstance.initialize(credentials);
       const isConnected = await providerInstance.testConnection();
 
-      res.json({
+      return reply.send({
         success: true,
         data: {
           connected: isConnected,
@@ -132,9 +127,8 @@ export class HealthController {
         }
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
-    return; // Added missing return
   }
 }
 

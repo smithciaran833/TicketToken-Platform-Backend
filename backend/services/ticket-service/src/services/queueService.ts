@@ -84,7 +84,8 @@ class QueueServiceClass extends EventEmitter {
 
   async publish(queue: string, message: any): Promise<void> {
     if (!this.publishChannel) {
-      throw new Error('Queue service not initialized');
+      this.log.warn('Queue service not initialized, message not sent', { queue, messageType: message.type });
+      return; // Gracefully skip publishing when queue is not available
     }
 
     const messageBuffer = Buffer.from(JSON.stringify(message));

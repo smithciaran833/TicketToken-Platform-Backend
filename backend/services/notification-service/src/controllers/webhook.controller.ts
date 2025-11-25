@@ -1,72 +1,94 @@
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../config/database';
 import { logger } from '../config/logger';
+import { metricsService } from '../services/metrics.service';
 import * as crypto from 'crypto';
 
 export class WebhookController {
   // Webhook secrets for external providers
   private readonly SENDGRID_WEBHOOK_KEY = process.env.SENDGRID_WEBHOOK_VERIFICATION_KEY || '';
   private readonly TWILIO_AUTH_TOKEN = process.env.TWILIO_AUTH_TOKEN || '';
-  
-  async handleSendGridWebhook(req: Request, res: Response): Promise<void> {
+
+  async handleSendGridWebhook(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
       // Verify SendGrid webhook signature
-      if (!this.verifySendGridSignature(req)) {
+      if (!this.verifySendGridSignature(request)) {
         logger.warn('Invalid SendGrid webhook signature', {
-          ip: req.ip,
-          userAgent: req.headers['user-agent']
+          ip: request.ip,
+          userAgent: request.headers['user-agent']
         });
-        res.status(401).send('Unauthorized');
+        reply.status(401).send('Unauthorized');
         return;
       }
 
-      const events = req.body;
+      const events = request.body as any[];
       for (const event of events) {
+        // Track webhook metrics
+        metricsService.trackWebhookReceived('sendgrid', event.event || 'unknown');
+        
         if (event.sg_message_id) {
           await this.updateNotificationStatus(
             event.sg_message_id,
             this.mapSendGridStatus(event.event),
             event
           );
+          
+          // Track delivery metrics
+          const status = this.mapSendGridStatus(event.event);
+          if (status === 'delivered' || status === 'failed' || status === 'bounced') {
+            metricsService.trackNotificationDelivery('email', status, 'sendgrid');
+          }
         }
       }
-      res.status(200).send('OK');
+      reply.status(200).send('OK');
     } catch (error) {
       logger.error('SendGrid webhook error', error);
-      res.status(500).send('Error processing webhook');
+      reply.status(500).send('Error processing webhook');
     }
   }
-  
-  async handleTwilioWebhook(req: Request, res: Response): Promise<void> {
+
+  async handleTwilioWebhook(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
       // Verify Twilio webhook signature
-      if (!this.verifyTwilioSignature(req)) {
+      if (!this.verifyTwilioSignature(request)) {
         logger.warn('Invalid Twilio webhook signature', {
-          ip: req.ip,
-          userAgent: req.headers['user-agent']
+          ip: request.ip,
+          userAgent: request.headers['user-agent']
         });
-        res.status(401).send('Unauthorized');
+        reply.status(401).send('Unauthorized');
         return;
       }
 
-      const { MessageSid, MessageStatus, ErrorCode } = req.body;
+      const body = request.body as { MessageSid: string; MessageStatus: string; ErrorCode?: string };
+      const { MessageSid, MessageStatus, ErrorCode } = body;
+      
+      // Track webhook metrics
+      metricsService.trackWebhookReceived('twilio', MessageStatus || 'unknown');
+      
       await this.updateNotificationStatus(
         MessageSid,
         this.mapTwilioStatus(MessageStatus),
         { errorCode: ErrorCode }
       );
-      res.status(200).send('OK');
+      
+      // Track delivery metrics
+      const status = this.mapTwilioStatus(MessageStatus);
+      if (status === 'delivered' || status === 'failed' || status === 'bounced') {
+        metricsService.trackNotificationDelivery('sms', status, 'twilio');
+      }
+      
+      reply.status(200).send('OK');
     } catch (error) {
       logger.error('Twilio webhook error', error);
-      res.status(500).send('Error processing webhook');
+      reply.status(500).send('Error processing webhook');
     }
   }
 
-  private verifySendGridSignature(req: Request): boolean {
+  private verifySendGridSignature(request: FastifyRequest): boolean {
     // SendGrid Event Webhook uses the Event Webhook Signing Key
-    const signature = req.headers['x-twilio-email-event-webhook-signature'] as string;
-    const timestamp = req.headers['x-twilio-email-event-webhook-timestamp'] as string;
-    
+    const signature = request.headers['x-twilio-email-event-webhook-signature'] as string;
+    const timestamp = request.headers['x-twilio-email-event-webhook-timestamp'] as string;
+
     if (!signature || !timestamp || !this.SENDGRID_WEBHOOK_KEY) {
       logger.warn('Missing SendGrid webhook verification components', {
         hasSignature: !!signature,
@@ -89,7 +111,7 @@ export class WebhookController {
     }
 
     // Compute signature using SendGrid's method
-    const payload = timestamp + JSON.stringify(req.body) + this.SENDGRID_WEBHOOK_KEY;
+    const payload = timestamp + JSON.stringify(request.body) + this.SENDGRID_WEBHOOK_KEY;
     const expectedSignature = crypto
       .createHmac('sha256', this.SENDGRID_WEBHOOK_KEY)
       .update(payload)
@@ -107,9 +129,9 @@ export class WebhookController {
     }
   }
 
-  private verifyTwilioSignature(req: Request): boolean {
-    const twilioSignature = req.headers['x-twilio-signature'] as string;
-    
+  private verifyTwilioSignature(request: FastifyRequest): boolean {
+    const twilioSignature = request.headers['x-twilio-signature'] as string;
+
     if (!twilioSignature || !this.TWILIO_AUTH_TOKEN) {
       logger.warn('Missing Twilio webhook verification components', {
         hasSignature: !!twilioSignature,
@@ -119,19 +141,20 @@ export class WebhookController {
     }
 
     // Build the full URL (Twilio requires the exact URL)
-    const protocol = req.headers['x-forwarded-proto'] || req.protocol;
-    const fullUrl = `${protocol}://${req.get('host')}${req.originalUrl}`;
-    
+    const protocol = request.headers['x-forwarded-proto'] as string || request.protocol;
+    const fullUrl = `${protocol}://${request.hostname}${request.url}`;
+
     // Sort the POST parameters alphabetically and concatenate
-    const params = Object.keys(req.body)
+    const body = request.body as Record<string, any>;
+    const params = Object.keys(body)
       .sort()
       .reduce((acc, key) => {
-        return acc + key + req.body[key];
+        return acc + key + body[key];
       }, '');
 
     // Create the signature string
     const signatureString = fullUrl + params;
-    
+
     // Compute expected signature
     const expectedSignature = crypto
       .createHmac('sha1', this.TWILIO_AUTH_TOKEN)
@@ -151,44 +174,48 @@ export class WebhookController {
   }
 
   // Generic webhook handler for other providers with HMAC verification
-  async handleGenericWebhook(req: Request, res: Response): Promise<void> {
+  async handleGenericWebhook(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     try {
-      const provider = req.params.provider;
-      const signature = req.headers['x-webhook-signature'] as string;
-      const timestamp = req.headers['x-webhook-timestamp'] as string;
-      
+      const params = request.params as { provider: string };
+      const provider = params.provider;
+      const signature = request.headers['x-webhook-signature'] as string;
+      const timestamp = request.headers['x-webhook-timestamp'] as string;
+
       // Get provider-specific secret
       const webhookSecret = process.env[`${provider.toUpperCase()}_WEBHOOK_SECRET`];
-      
+
       if (!webhookSecret) {
         logger.error(`No webhook secret configured for provider: ${provider}`);
-        res.status(500).send('Provider not configured');
+        reply.status(500).send('Provider not configured');
         return;
       }
 
       // Verify signature
-      if (!this.verifyGenericSignature(req, webhookSecret)) {
+      if (!this.verifyGenericSignature(request, webhookSecret)) {
         logger.warn(`Invalid webhook signature for provider: ${provider}`, {
-          ip: req.ip,
-          userAgent: req.headers['user-agent']
+          ip: request.ip,
+          userAgent: request.headers['user-agent']
         });
-        res.status(401).send('Unauthorized');
+        reply.status(401).send('Unauthorized');
         return;
       }
 
+      // Track webhook metrics
+      metricsService.trackWebhookReceived(provider, 'generic');
+      
       // Process webhook based on provider
-      await this.processGenericWebhook(provider, req.body);
-      res.status(200).send('OK');
+      await this.processGenericWebhook(provider, request.body);
+      reply.status(200).send('OK');
     } catch (error) {
       logger.error('Generic webhook error', error);
-      res.status(500).send('Error processing webhook');
+      reply.status(500).send('Error processing webhook');
     }
   }
 
-  private verifyGenericSignature(req: Request, secret: string): boolean {
-    const signature = req.headers['x-webhook-signature'] as string;
-    const timestamp = req.headers['x-webhook-timestamp'] as string;
-    
+  private verifyGenericSignature(request: FastifyRequest, secret: string): boolean {
+    const signature = request.headers['x-webhook-signature'] as string;
+    const timestamp = request.headers['x-webhook-timestamp'] as string;
+
     if (!signature || !timestamp) {
       return false;
     }
@@ -206,7 +233,7 @@ export class WebhookController {
     }
 
     // Compute expected signature
-    const payload = `${timestamp}.${JSON.stringify(req.body)}`;
+    const payload = `${timestamp}.${JSON.stringify(request.body)}`;
     const expectedSignature = crypto
       .createHmac('sha256', secret)
       .update(payload)
@@ -225,11 +252,11 @@ export class WebhookController {
 
   private async processGenericWebhook(provider: string, data: any): Promise<void> {
     // Process based on provider type
-    logger.info(`Processing webhook for provider: ${provider}`, { 
+    logger.info(`Processing webhook for provider: ${provider}`, {
       provider,
       dataKeys: Object.keys(data)
     });
-    
+
     // Store webhook data for processing
     await db('webhook_events').insert({
       provider,
@@ -238,7 +265,7 @@ export class WebhookController {
       processed: false
     });
   }
-  
+
   private async updateNotificationStatus(
     providerMessageId: string,
     status: string,
@@ -253,7 +280,7 @@ export class WebhookController {
         ...(additionalData?.errorCode && { failure_reason: additionalData.errorCode }),
       });
   }
-  
+
   private mapSendGridStatus(event: string): string {
     switch (event) {
       case 'delivered': return 'delivered';
@@ -263,7 +290,7 @@ export class WebhookController {
       default: return 'sent';
     }
   }
-  
+
   private mapTwilioStatus(status: string): string {
     switch (status) {
       case 'delivered': return 'delivered';

@@ -5,10 +5,14 @@ import { AuthenticatedRequest } from '../types';
 export class SessionController {
   async listSessions(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    
+    const tenantId = request.user.tenant_id;
+
     try {
       const sessions = await db('user_sessions')
         .where({ user_id: userId })
+        .whereIn('user_id', function() {
+          this.select('id').from('users').where({ tenant_id: tenantId });
+        })
         .whereNull('revoked_at')
         .where('expires_at', '>', new Date())
         .orderBy('created_at', 'desc')
@@ -20,13 +24,14 @@ export class SessionController {
           'expires_at',
           db.raw('CASE WHEN session_token = ? THEN true ELSE false END as is_current', [request.headers.authorization?.replace('Bearer ', '')])
         );
-      
+
       return reply.send({
         success: true,
         data: sessions
       });
     } catch (error) {
-      request.log.error({ error, userId }, 'Failed to list sessions');
+      // Optional: add logging if needed
+      // console.error('Failed to list sessions', { error, userId });
       return reply.status(500).send({
         success: false,
         error: 'Failed to retrieve sessions',
@@ -37,15 +42,19 @@ export class SessionController {
 
   async revokeSession(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
+    const tenantId = request.user.tenant_id;
     const { sessionId } = request.params as { sessionId: string };
-    
+
     try {
-      // Verify session belongs to user
+      // Verify session belongs to user AND tenant
       const session = await db('user_sessions')
         .where({ id: sessionId, user_id: userId })
+        .whereIn('user_id', function() {
+          this.select('id').from('users').where({ tenant_id: tenantId });
+        })
         .whereNull('revoked_at')
         .first();
-      
+
       if (!session) {
         return reply.status(404).send({
           success: false,
@@ -53,12 +62,12 @@ export class SessionController {
           code: 'SESSION_NOT_FOUND'
         });
       }
-      
+
       // Revoke the session
       await db('user_sessions')
         .where({ id: sessionId })
         .update({ revoked_at: new Date() });
-      
+
       // Audit log
       await db('audit_logs').insert({
         user_id: userId,
@@ -73,13 +82,14 @@ export class SessionController {
         },
         status: 'success'
       });
-      
+
       return reply.send({
         success: true,
         message: 'Session revoked successfully'
       });
     } catch (error) {
-      request.log.error({ error, userId, sessionId }, 'Failed to revoke session');
+      // Optional: add logging if needed
+      // console.error('Failed to revoke session', { error, userId, sessionId });
       return reply.status(500).send({
         success: false,
         error: 'Failed to revoke session',
@@ -90,16 +100,20 @@ export class SessionController {
 
   async invalidateAllSessions(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
+    const tenantId = request.user.tenant_id;
     const currentToken = request.headers.authorization?.replace('Bearer ', '');
-    
+
     try {
-      // Revoke all sessions except current
+      // Revoke all sessions except current (with tenant validation)
       const result = await db('user_sessions')
         .where({ user_id: userId })
+        .whereIn('user_id', function() {
+          this.select('id').from('users').where({ tenant_id: tenantId });
+        })
         .whereNull('revoked_at')
         .whereNot('session_token', currentToken)
         .update({ revoked_at: new Date() });
-      
+
       // Audit log
       await db('audit_logs').insert({
         user_id: userId,
@@ -114,14 +128,15 @@ export class SessionController {
         },
         status: 'success'
       });
-      
+
       return reply.send({
         success: true,
         message: `${result} sessions invalidated`,
         sessions_revoked: result
       });
     } catch (error) {
-      request.log.error({ error, userId }, 'Failed to invalidate all sessions');
+      // Optional: add logging if needed
+      // console.error('Failed to invalidate all sessions', { error, userId });
       return reply.status(500).send({
         success: false,
         error: 'Failed to invalidate sessions',

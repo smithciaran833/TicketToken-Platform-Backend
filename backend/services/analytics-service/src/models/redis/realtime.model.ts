@@ -1,5 +1,6 @@
 import { getRedis, getPubClient, getSubClient } from '../../config/redis';
 import { RealTimeMetric } from '../../types';
+import { logger } from '../../utils/logger';
 
 export class RealtimeModel {
   private static redis = getRedis;
@@ -128,7 +129,7 @@ export class RealtimeModel {
           const data = JSON.parse(message);
           callback(data);
         } catch (error) {
-          console.error('Error parsing metric update:', error);
+          logger.error('Error parsing metric update:', error);
         }
       }
     });

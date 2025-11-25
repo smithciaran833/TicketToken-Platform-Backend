@@ -1,17 +1,18 @@
-import { Response, NextFunction } from 'express';
+import { FastifyReply } from 'fastify';
 import { WalletRequest } from '../middleware/wallet.middleware';
 import { transferService } from '../services/transfer.service';
 
 export class TransferController {
-  async initiateTransfer(req: WalletRequest, res: Response, next: NextFunction) {
+  async initiateTransfer(request: WalletRequest, reply: FastifyReply) {
     try {
+      const body = request.body as any;
       const transfer = await transferService.initiateTransfer({
-        ...req.body,
-        buyerId: req.user!.id,
-        buyerWallet: req.wallet!.address,
+        ...body,
+        buyerId: request.user!.id,
+        buyerWallet: request.wallet!.address,
       });
 
-      res.json({
+      reply.send({
         success: true,
         data: {
           transferId: transfer.id,
@@ -20,56 +21,56 @@ export class TransferController {
         },
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async confirmTransfer(req: WalletRequest, res: Response, next: NextFunction) {
+  async confirmTransfer(request: WalletRequest, reply: FastifyReply) {
     try {
-      const { id } = req.params;
-      const { signature } = req.body;
+      const { id } = request.params as { id: string };
+      const { signature } = request.body as { signature: string };
 
       const transfer = await transferService.completeTransfer({
         transferId: id,
         blockchainSignature: signature,
       });
 
-      res.json({
+      reply.send({
         success: true,
         data: transfer,
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getTransfer(req: WalletRequest, res: Response, next: NextFunction) {
+  async getTransfer(request: WalletRequest, reply: FastifyReply) {
     try {
-      const { id } = req.params;
+      const { id } = request.params as { id: string };
 
       const transfer = await transferService.getTransferById(id);
 
-      res.json({
+      reply.send({
         success: true,
         data: transfer,
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getMyPurchases(req: WalletRequest, res: Response, next: NextFunction) {
+  async getMyPurchases(request: WalletRequest, reply: FastifyReply) {
     try {
-      const { limit = 20, offset = 0 } = req.query;
+      const { limit = 20, offset = 0 } = request.query as any;
 
       const transfers = await transferService.getUserTransfers(
-        req.user!.id,
+        request.user!.id,
         'buyer',
         Number(limit),
         Number(offset)
       );
 
-      res.json({
+      reply.send({
         success: true,
         data: transfers,
         pagination: {
@@ -78,22 +79,22 @@ export class TransferController {
         },
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getMySales(req: WalletRequest, res: Response, next: NextFunction) {
+  async getMySales(request: WalletRequest, reply: FastifyReply) {
     try {
-      const { limit = 20, offset = 0 } = req.query;
+      const { limit = 20, offset = 0 } = request.query as any;
 
       const transfers = await transferService.getUserTransfers(
-        req.user!.id,
+        request.user!.id,
         'seller',
         Number(limit),
         Number(offset)
       );
 
-      res.json({
+      reply.send({
         success: true,
         data: transfers,
         pagination: {
@@ -102,39 +103,39 @@ export class TransferController {
         },
       });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async purchaseListing(_req: WalletRequest, res: Response, next: NextFunction) {
+  async purchaseListing(_request: WalletRequest, reply: FastifyReply) {
     try {
-      res.json({ success: true });
+      reply.send({ success: true });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async directTransfer(_req: WalletRequest, res: Response, next: NextFunction) {
+  async directTransfer(_request: WalletRequest, reply: FastifyReply) {
     try {
-      res.json({ success: true });
+      reply.send({ success: true });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async getTransferHistory(_req: WalletRequest, res: Response, next: NextFunction) {
+  async getTransferHistory(_request: WalletRequest, reply: FastifyReply) {
     try {
-      res.json({ history: [] });
+      reply.send({ history: [] });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 
-  async cancelTransfer(_req: WalletRequest, res: Response, next: NextFunction) {
+  async cancelTransfer(_request: WalletRequest, reply: FastifyReply) {
     try {
-      res.json({ success: true });
+      reply.send({ success: true });
     } catch (error) {
-      next(error);
+      throw error;
     }
   }
 }

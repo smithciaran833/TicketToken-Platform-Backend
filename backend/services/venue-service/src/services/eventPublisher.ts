@@ -1,6 +1,7 @@
 const amqplib = require('amqplib');
 import { logger } from '../utils/logger';
 import { createCircuitBreaker } from '../utils/circuitBreaker';
+import { publishSearchSync } from '@tickettoken/shared';
 
 export interface EventMessage {
   eventType: string;
@@ -25,8 +26,7 @@ export class EventPublisher {
 
   constructor() {
     this.rabbitUrl = process.env.RABBITMQ_URL || 'amqp://admin:admin@rabbitmq:5672';
-    
-    // Wrap publish with circuit breaker
+
     const breaker = createCircuitBreaker(
       this.publishInternal.bind(this),
       {
@@ -36,7 +36,7 @@ export class EventPublisher {
         resetTimeout: 30000
       }
     );
-    
+
     this.publishWithBreaker = async (message: EventMessage): Promise<void> => {
       await breaker.fire(message);
     };
@@ -46,20 +46,17 @@ export class EventPublisher {
     try {
       this.connection = await amqplib.connect(this.rabbitUrl);
       this.channel = await this.connection.createChannel();
-      
-      // Declare exchange
       await this.channel.assertExchange(this.exchangeName, 'topic', { durable: true });
-      
+
       this.connected = true;
       logger.info('Connected to RabbitMQ');
-      
-      // Handle connection events
+
       this.connection.on('error', (err: any) => {
         logger.error({ error: err }, 'RabbitMQ connection error');
         this.connected = false;
         this.reconnect();
       });
-      
+
       this.connection.on('close', () => {
         logger.warn('RabbitMQ connection closed');
         this.connected = false;
@@ -68,8 +65,6 @@ export class EventPublisher {
     } catch (error) {
       logger.warn({ error }, 'Could not connect to RabbitMQ - running without event publishing');
       this.connected = false;
-      // Don't throw - allow service to run without RabbitMQ
-      // Retry connection after delay
       setTimeout(() => this.reconnect(), 5000);
     }
   }
@@ -110,11 +105,10 @@ export class EventPublisher {
       await this.publishWithBreaker(message);
     } catch (error) {
       logger.error({ error, message }, 'Failed to publish event');
-      // Don't throw - event publishing failure shouldn't break main flow
     }
   }
 
-  // Venue-specific event methods
+  // Venue-specific event methods with SEARCH SYNC
   async publishVenueCreated(venueId: string, venueData: any, userId?: string): Promise<void> {
     await this.publish({
       eventType: 'created',
@@ -126,6 +120,18 @@ export class EventPublisher {
         version: 1
       }
     });
+
+    // SEARCH SYNC: Publish to search.sync exchange
+    await publishSearchSync('venue.created', {
+      id: venueId,
+      name: venueData.name,
+      type: venueData.type || venueData.venue_type,
+      capacity: venueData.capacity || venueData.max_capacity,
+      city: venueData.city || venueData.address?.city,
+      state: venueData.state_province || venueData.address?.state,
+      country: venueData.country_code || venueData.address?.country,
+      status: venueData.status || 'ACTIVE',
+    });
   }
 
   async publishVenueUpdated(venueId: string, changes: any, userId?: string): Promise<void> {
@@ -136,6 +142,19 @@ export class EventPublisher {
       payload: { changes },
       metadata: {
         userId
+      }
+    });
+
+    // SEARCH SYNC: Publish update to search
+    await publishSearchSync('venue.updated', {
+      id: venueId,
+      changes: {
+        name: changes.name,
+        type: changes.type || changes.venue_type,
+        capacity: changes.capacity || changes.max_capacity,
+        city: changes.city || changes.address?.city,
+        state: changes.state_province || changes.address?.state,
+        status: changes.status,
       }
     });
   }
@@ -150,6 +169,11 @@ export class EventPublisher {
         userId
       }
     });
+
+    // SEARCH SYNC: Remove from search index
+    await publishSearchSync('venue.deleted', {
+      id: venueId,
+    });
   }
 
   async close(): Promise<void> {
@@ -160,8 +184,7 @@ export class EventPublisher {
       await this.connection.close();
     }
   }
-  
-  // Public method to check connection status
+
   public isConnected(): boolean {
     return this.connected;
   }

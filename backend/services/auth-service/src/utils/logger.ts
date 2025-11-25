@@ -1,5 +1,5 @@
 import winston from 'winston';
-import { PIISanitizer, createSanitizingFormat } from '@tickettoken/shared/utils/pii-sanitizer';
+import { PIISanitizer } from "@tickettoken/shared";
 
 // Custom format that sanitizes before logging
 const sanitizingFormat = winston.format((info) => {
@@ -71,7 +71,7 @@ export function logResponse(req: any, res: any, body?: any, meta?: any) {
       method: req.method,
       url: req.url || req.path
     },
-    response: PIISanitizer.sanitizeResponse(res, body),
+    response: PIISanitizer.sanitize({ res, body }),
     ...PIISanitizer.sanitize(meta)
   });
 }

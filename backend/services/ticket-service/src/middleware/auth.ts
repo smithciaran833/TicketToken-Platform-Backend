@@ -1,32 +1,90 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import jwt from 'jsonwebtoken';
+import fs from 'fs';
+import path from 'path';
 import { UnauthorizedError } from '../utils/errors';
+import { logger } from '../utils/logger';
 
-// Import RS256 auth from shared package
-export { authenticate, AuthRequest } from '@tickettoken/shared';
+const log = logger.child({ component: 'AuthMiddleware' });
 
-// Re-export as authMiddleware for backward compatibility
-import { authenticate } from '@tickettoken/shared';
+const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
+  path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
+
+let publicKey: string;
+try {
+  publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+  log.info('JWT public key loaded for verification');
+} catch (error) {
+  log.error('Failed to load JWT public key', { error, path: publicKeyPath });
+  throw new Error('JWT public key not found at ' + publicKeyPath);
+}
+
+export interface AuthRequest extends FastifyRequest {
+  user?: any;
+  userId?: string;
+  tenantId?: string;
+}
+
+export async function authenticate(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  try {
+    const authHeader = request.headers.authorization;
+    
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return reply.status(401).send({ error: 'No token provided' });
+    }
+
+    const token = authHeader.substring(7);
+
+    const decoded = jwt.verify(token, publicKey, {
+      algorithms: ['RS256'],
+      issuer: process.env.JWT_ISSUER || 'tickettoken-auth',
+      audience: process.env.JWT_ISSUER || 'tickettoken-auth'
+    }) as any;
+
+    // Attach user info to request
+    (request as any).user = decoded;
+    (request as any).userId = decoded.userId || decoded.id || decoded.sub;
+    (request as any).tenantId = decoded.tenantId || decoded.tenant_id;
+
+    // Continue to next handler
+  } catch (error: any) {
+    if (error.name === 'TokenExpiredError') {
+      return reply.status(401).send({ error: 'Token expired' });
+    }
+    if (error.name === 'JsonWebTokenError') {
+      return reply.status(401).send({ error: 'Invalid token' });
+    }
+    log.error('Auth error', { error });
+    return reply.status(500).send({ error: 'Authentication error' });
+  }
+}
+
 export const authMiddleware = authenticate;
 
-// Keep service-specific authorization logic
+// Role-based authorization for Fastify
 export const requireRole = (roles: string[]) => {
-  return (req: any, _res: Response, next: NextFunction) => {
-    if (!req.user) {
-      return next(new UnauthorizedError('Unauthorized'));
-    }
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    const user = (request as any).user;
     
-    if (req.user.role && roles.includes(req.user.role)) {
-      return next();
+    if (!user) {
+      throw new UnauthorizedError('Unauthorized');
     }
-    
-    if (req.user.permissions?.includes('admin:all')) {
-      return next();
+
+    if (user.role && roles.includes(user.role)) {
+      return;
     }
-    
-    if (roles.includes('venue_manager') && req.user.permissions?.some((p: string) => p.startsWith('venue:'))) {
-      return next();
+
+    if (user.permissions?.includes('admin:all')) {
+      return;
     }
-    
-    return next(new UnauthorizedError('Insufficient permissions'));
+
+    if (roles.includes('venue_manager') && user.permissions?.some((p: string) => p.startsWith('venue:'))) {
+      return;
+    }
+
+    return reply.status(403).send({ error: 'Insufficient permissions' });
   };
 };

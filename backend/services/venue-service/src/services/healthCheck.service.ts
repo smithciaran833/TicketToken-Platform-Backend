@@ -21,11 +21,15 @@ export interface HealthCheckResult {
 export class HealthCheckService {
   private db: Knex;
   private redis: Redis;
+  private queueService: any;
   private startTime: Date;
+  private rabbitMQCheckCache: { status: string; timestamp: number; result?: any } | null = null;
+  private readonly CACHE_TTL = 10000; // 10 seconds
 
-  constructor(dependencies: { db: Knex; redis: Redis }) {
+  constructor(dependencies: { db: Knex; redis: Redis; queueService?: any }) {
     this.db = dependencies.db;
     this.redis = dependencies.redis;
+    this.queueService = dependencies.queueService;
     this.startTime = new Date();
   }
 
@@ -139,6 +143,12 @@ export class HealthCheckService {
       };
     }
 
+    // Check RabbitMQ connection (optional - service can run without it)
+    businessChecks.rabbitMQ = await this.checkRabbitMQ();
+
+    // Check database migrations status
+    businessChecks.migrations = await this.checkMigrations();
+
     return {
       ...readiness,
       checks: {
@@ -146,5 +156,141 @@ export class HealthCheckService {
         ...businessChecks
       }
     };
+  }
+
+  /**
+   * Check database migration status
+   * Warns if there are pending migrations
+   */
+  private async checkMigrations(): Promise<HealthCheckResult['checks'][string]> {
+    const migrationStart = Date.now();
+    
+    try {
+      // Get current migration version
+      const [currentVersion] = await this.db.migrate.currentVersion();
+      
+      // Get list of all migrations (applied and pending)
+      const [, pending] = await this.db.migrate.list();
+      
+      if (pending.length > 0) {
+        return {
+          status: 'warning',
+          message: `${pending.length} pending migration(s)`,
+          responseTime: Date.now() - migrationStart,
+          details: {
+            currentVersion,
+            pendingCount: pending.length,
+            pendingMigrations: pending.slice(0, 5).map((m: any) => m.name), // First 5
+            note: 'Run migrations before deploying new code'
+          }
+        };
+      }
+
+      return {
+        status: 'ok',
+        responseTime: Date.now() - migrationStart,
+        details: {
+          currentVersion,
+          pendingCount: 0,
+          upToDate: true
+        }
+      };
+    } catch (error: any) {
+      logger.error({ error }, 'Failed to check migration status');
+      
+      return {
+        status: 'error',
+        message: `Migration check failed: ${error.message}`,
+        responseTime: Date.now() - migrationStart,
+        details: {
+          error: error.message
+        }
+      };
+    }
+  }
+
+  /**
+   * Check RabbitMQ connection status
+   * Uses caching to avoid checking on every health check request
+   * RabbitMQ is optional - service reports as 'warning' if unavailable, not 'error'
+   */
+  private async checkRabbitMQ(): Promise<HealthCheckResult['checks'][string]> {
+    const now = Date.now();
+    
+    // Return cached result if still valid
+    if (this.rabbitMQCheckCache && (now - this.rabbitMQCheckCache.timestamp) < this.CACHE_TTL) {
+      return this.rabbitMQCheckCache.result;
+    }
+
+    const rabbitStart = now;
+    
+    // If queueService is not configured, mark as disabled
+    if (!this.queueService) {
+      const result = {
+        status: 'warning' as const,
+        message: 'RabbitMQ not configured (optional)',
+        responseTime: Date.now() - rabbitStart,
+        details: { 
+          enabled: false,
+          note: 'Service can operate without RabbitMQ'
+        }
+      };
+      
+      this.rabbitMQCheckCache = { status: 'warning', timestamp: now, result };
+      return result;
+    }
+
+    try {
+      // Check if queueService has an active connection
+      const isConnected = this.queueService.connection && 
+                         !this.queueService.connection.closed;
+      
+      if (!isConnected) {
+        const result = {
+          status: 'warning' as const,
+          message: 'RabbitMQ disconnected but service operational',
+          responseTime: Date.now() - rabbitStart,
+          details: { 
+            connected: false,
+            note: 'Events will not be published'
+          }
+        };
+        
+        this.rabbitMQCheckCache = { status: 'warning', timestamp: now, result };
+        return result;
+      }
+
+      // Connection is active
+      const channelCount = this.queueService.channel ? 1 : 0;
+      
+      const result = {
+        status: 'ok' as const,
+        responseTime: Date.now() - rabbitStart,
+        details: {
+          connected: true,
+          channels: channelCount,
+          host: process.env.RABBITMQ_HOST || 'localhost',
+          lastCheck: new Date().toISOString()
+        }
+      };
+      
+      this.rabbitMQCheckCache = { status: 'ok', timestamp: now, result };
+      return result;
+    } catch (error: any) {
+      logger.debug({ error }, 'RabbitMQ health check error');
+      
+      const result = {
+        status: 'warning' as const,
+        message: `RabbitMQ check failed: ${error.message}`,
+        responseTime: Date.now() - rabbitStart,
+        details: { 
+          error: error.message,
+          note: 'Service can operate without RabbitMQ'
+        }
+      };
+      
+      this.rabbitMQCheckCache = { status: 'warning', timestamp: now, result };
+      return result;
+    }
   }
 }

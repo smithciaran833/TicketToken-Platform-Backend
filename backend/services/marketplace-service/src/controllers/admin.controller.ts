@@ -1,10 +1,10 @@
-import { Response, NextFunction } from 'express';
+import { FastifyReply } from 'fastify';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
 
 export class AdminController {
-  async getStats(req: AuthRequest, res: Response, next: NextFunction) {
+  async getStats(request: AuthRequest, reply: FastifyReply) {
     try {
       const stats = await db('marketplace_listings')
         .select(
@@ -14,83 +14,83 @@ export class AdminController {
           db.raw('AVG(price) as average_price')
         )
         .first();
-      
-      res.json({ success: true, data: stats });
+
+      reply.send({ success: true, data: stats });
     } catch (error) {
       logger.error('Error getting admin stats:', error);
-      next(error);
+      throw error;
     }
   }
-  
-  async getDisputes(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async getDisputes(request: AuthRequest, reply: FastifyReply) {
     try {
       const disputes = await db('marketplace_disputes')
         .whereIn('status', ['open', 'investigating'])
         .orderBy('created_at', 'desc')
         .limit(50);
-      
-      res.json({ success: true, data: disputes });
+
+      reply.send({ success: true, data: disputes });
     } catch (error) {
       logger.error('Error getting disputes:', error);
-      next(error);
+      throw error;
     }
   }
-  
-  async resolveDispute(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async resolveDispute(request: AuthRequest, reply: FastifyReply) {
     try {
-      const { disputeId } = req.params;
-      const { resolution, reason } = req.body;
-      
+      const { disputeId } = request.params as { disputeId: string };
+      const { resolution, reason } = request.body as { resolution: string; reason: string };
+
       await db('marketplace_disputes')
         .where('id', disputeId)
         .update({
           status: 'resolved',
           resolution,
-          resolved_by: req.user?.id,
+          resolved_by: request.user?.id,
           resolved_at: new Date(),
           updated_at: new Date()
         });
-      
-      res.json({ success: true, message: 'Dispute resolved' });
+
+      reply.send({ success: true, message: 'Dispute resolved' });
     } catch (error) {
       logger.error('Error resolving dispute:', error);
-      next(error);
+      throw error;
     }
   }
-  
-  async getFlaggedUsers(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async getFlaggedUsers(request: AuthRequest, reply: FastifyReply) {
     try {
       const flagged = await db('anti_bot_violations')
         .select('user_id', db.raw('COUNT(*) as violation_count'), db.raw('MAX(flagged_at) as last_flagged'))
         .groupBy('user_id')
         .orderBy('violation_count', 'desc')
         .limit(50);
-      
-      res.json({ success: true, data: flagged });
+
+      reply.send({ success: true, data: flagged });
     } catch (error) {
       logger.error('Error getting flagged users:', error);
-      next(error);
+      throw error;
     }
   }
-  
-  async banUser(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async banUser(request: AuthRequest, reply: FastifyReply) {
     try {
-      const { userId, reason, duration } = req.body;
-      
+      const { userId, reason, duration } = request.body as { userId: string; reason: string; duration?: number };
+
       await db('marketplace_blacklist').insert({
         id: require('uuid').v4(),
         user_id: userId,
         reason,
-        banned_by: req.user?.id,
+        banned_by: request.user?.id,
         banned_at: new Date(),
         expires_at: duration ? new Date(Date.now() + duration * 86400000) : null,
         is_active: true
       });
-      
-      res.json({ success: true, message: 'User banned' });
+
+      reply.send({ success: true, message: 'User banned' });
     } catch (error) {
       logger.error('Error banning user:', error);
-      next(error);
+      throw error;
     }
   }
 }

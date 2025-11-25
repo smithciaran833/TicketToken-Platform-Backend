@@ -1,14 +1,21 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { RiskController } from '../controllers/risk.controller';
 import { requireComplianceOfficer } from '../middleware/auth.middleware';
 
-const router = Router();
+export async function riskRoutes(fastify: FastifyInstance) {
+  const riskController = new RiskController();
 
-// Risk assessment routes
-router.post('/risk/assess', requireComplianceOfficer, RiskController.calculateRiskScore);
-router.get('/risk/:entityId/score', RiskController.calculateRiskScore); // Using same method
-router.put('/risk/:entityId/override', requireComplianceOfficer, RiskController.flagVenue); // Using flag as override
-router.post('/risk/flag', RiskController.flagVenue);
-router.post('/risk/resolve', RiskController.resolveFlag);
+  // Risk assessment routes
+  fastify.post('/risk/assess', {
+    onRequest: requireComplianceOfficer
+  }, riskController.calculateRiskScore);
 
-export default router;
+  fastify.get('/risk/:entityId/score', riskController.calculateRiskScore);
+
+  fastify.put('/risk/:entityId/override', {
+    onRequest: requireComplianceOfficer
+  }, riskController.flagVenue);
+
+  fastify.post('/risk/flag', riskController.flagVenue);
+  fastify.post('/risk/resolve', riskController.resolveFlag);
+}

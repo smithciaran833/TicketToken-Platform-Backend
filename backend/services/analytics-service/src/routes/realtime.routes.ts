@@ -1,80 +1,133 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { realtimeController } from '../controllers/realtime.controller';
 
-const router = Router();
+const metricsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      metrics: { type: 'string' }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const subscribeSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    required: ['metrics'],
+    properties: {
+      metrics: { type: 'string' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const venueParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Get real-time metrics
-router.get(
-  '/venue/:venueId/metrics',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('metrics').optional().isString()
-  ]),
-  realtimeController.getRealTimeMetrics
-);
+const dashboardParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId', 'dashboardId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      dashboardId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Subscribe to metrics (WebSocket upgrade)
-router.get(
-  '/venue/:venueId/subscribe',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    query('metrics').isString()
-  ]),
-  realtimeController.subscribeToMetrics
-);
+const updateCounterSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    required: ['counterType'],
+    properties: {
+      counterType: { type: 'string', minLength: 1 },
+      increment: { type: 'integer' }
+    }
+  }
+} as const;
 
-// Get active sessions
-router.get(
-  '/venue/:venueId/sessions',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID()
-  ]),
-  realtimeController.getActiveSessions
-);
+const counterParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['venueId', 'counterType'],
+    properties: {
+      venueId: { type: 'string', format: 'uuid' },
+      counterType: { type: 'string', minLength: 1 }
+    }
+  }
+} as const;
 
-// Get live dashboard stats
-router.get(
-  '/venue/:venueId/dashboard/:dashboardId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('dashboardId').isUUID()
-  ]),
-  realtimeController.getLiveDashboardStats
-);
+export default async function realtimeRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Update counter
-router.post(
-  '/venue/:venueId/counter',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('venueId').isUUID(),
-    body('counterType').isString().notEmpty(),
-    body('increment').optional().isInt()
-  ]),
-  realtimeController.updateCounter
-);
+  // Get real-time metrics
+  app.get('/venue/:venueId/metrics', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: metricsSchema,
+    handler: realtimeController.getRealTimeMetrics
+  });
 
-// Get counter value
-router.get(
-  '/venue/:venueId/counter/:counterType',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('venueId').isUUID(),
-    param('counterType').isString().notEmpty()
-  ]),
-  realtimeController.getCounter
-);
+  // Subscribe to metrics (WebSocket upgrade)
+  app.get('/venue/:venueId/subscribe', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: subscribeSchema,
+    handler: realtimeController.subscribeToMetrics
+  });
 
-export { router as realtimeRouter };
+  // Get active sessions
+  app.get('/venue/:venueId/sessions', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: venueParamsSchema,
+    handler: realtimeController.getActiveSessions
+  });
+
+  // Get live dashboard stats
+  app.get('/venue/:venueId/dashboard/:dashboardId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dashboardParamsSchema,
+    handler: realtimeController.getLiveDashboardStats
+  });
+
+  // Update counter
+  app.post('/venue/:venueId/counter', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: updateCounterSchema,
+    handler: realtimeController.updateCounter
+  });
+
+  // Get counter value
+  app.get('/venue/:venueId/counter/:counterType', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: counterParamsSchema,
+    handler: realtimeController.getCounter
+  });
+}

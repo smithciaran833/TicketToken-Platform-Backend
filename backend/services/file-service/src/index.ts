@@ -6,6 +6,7 @@ import { logger } from './utils/logger';
 import { connectDatabase } from './config/database.config';
 import { setupStorage } from './storage/storage.setup';
 import { startWorkers } from './workers';
+import { virusScanService } from './services/virus-scan.service';
 
 const PORT = process.env.PORT || 3013;
 
@@ -21,6 +22,10 @@ async function startService() {
     // Setup storage
     await setupStorage();
     logger.info('✅ Storage configured');
+    
+    // Initialize virus scanner
+    await virusScanService.initialize();
+    logger.info('✅ Virus scanner initialized');
     
     // Start background workers
     await startWorkers();

@@ -35,11 +35,18 @@ function subtractCents(base, subtract) {
     if (!Number.isInteger(base) || !Number.isInteger(subtract)) {
         throw new Error('All amounts must be integers');
     }
-    return base - subtract;
+    const result = base - subtract;
+    if (result < 0) {
+        throw new Error('Cannot subtract: result would be negative');
+    }
+    return result;
 }
 function percentOfCents(amountCents, basisPoints) {
     if (!Number.isInteger(amountCents) || !Number.isInteger(basisPoints)) {
         throw new Error('Values must be integers');
+    }
+    if (basisPoints < 0 || basisPoints > 10000) {
+        throw new Error('Basis points must be between 0 and 10000');
     }
     return Math.floor((amountCents * basisPoints) / 10000);
 }

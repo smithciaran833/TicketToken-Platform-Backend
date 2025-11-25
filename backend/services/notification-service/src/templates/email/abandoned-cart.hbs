@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Don't forget your tickets!</title>
+</head>
+<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+  <div style="background-color: #f8f9fa; padding: 20px; border-radius: 10px;">
+    <h1 style="color: #2c3e50; text-align: center;">You left something behind!</h1>
+    
+    <p>Hi {{name}},</p>
+    
+    <p>We noticed you were interested in tickets for <strong>{{eventName}}</strong> but didn't complete your purchase.</p>
+    
+    <div style="background-color: white; padding: 20px; border-radius: 5px; margin: 20px 0;">
+      <h2 style="color: #3498db; margin-top: 0;">Your Cart</h2>
+      
+      {{#each cartItems}}
+      <div style="border-bottom: 1px solid #eee; padding: 10px 0;">
+        <strong>{{ticketType}}</strong><br>
+        Quantity: {{quantity}}<br>
+        Price: {{formatCurrency price}}
+      </div>
+      {{/each}}
+      
+      <div style="margin-top: 20px; padding-top: 20px; border-top: 2px solid #3498db;">
+        <strong style="font-size: 18px;">Total: {{formatCurrency totalAmount}}</strong>
+      </div>
+    </div>
+    
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="{{checkoutUrl}}" style="background-color: #3498db; color: white; padding: 15px 40px; text-decoration: none; border-radius: 5px; font-size: 16px; display: inline-block;">
+        Complete Your Purchase
+      </a>
+    </div>
+    
+    <p style="text-align: center; color: #7f8c8d; font-size: 14px;">
+      This link will expire in 24 hours. Don't miss out!
+    </p>
+  </div>
+  
+  <div style="text-align: center; margin-top: 30px; color: #95a5a6; font-size: 12px;">
+    <p>
+      <a href="{{unsubscribeUrl}}" style="color: #95a5a6;">Unsubscribe</a> |
+      <a href="{{preferencesUrl}}" style="color: #95a5a6;">Email Preferences</a>
+    </p>
+  </div>
+</body>
+</html>

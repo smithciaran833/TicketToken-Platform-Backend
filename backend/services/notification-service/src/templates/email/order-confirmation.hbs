@@ -2,29 +2,51 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Order Confirmation - TicketToken</title>
+  <title>Order Confirmation{{#if venueName}} - {{venueName}}{{/if}}</title>
   <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+    body { font-family: {{#if branding.fontFamily}}{{branding.fontFamily}}{{else}}Arial{{/if}}, sans-serif; line-height: 1.6; color: {{#if branding.textColor}}{{branding.textColor}}{{else}}#333{{/if}}; }
     .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; border-radius: 10px 10px 0 0; }
-    .content { background: #f9f9f9; padding: 30px; border: 1px solid #ddd; border-top: none; }
-    .ticket-info { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; }
+    .header { 
+      background: {{#if branding.primaryColor}}linear-gradient(135deg, {{branding.primaryColor}} 0%, {{branding.secondaryColor}} 100%){{else}}linear-gradient(135deg, #667eea 0%, #764ba2 100%){{/if}}; 
+      color: white; 
+      padding: 30px; 
+      text-align: center; 
+      border-radius: 10px 10px 0 0; 
+    }
+    {{#if branding.logoUrl}}
+    .logo { max-width: 150px; margin-bottom: 20px; }
+    {{/if}}
+    .content { background: {{#if branding.backgroundColor}}{{branding.backgroundColor}}{{else}}#f9f9f9{{/if}}; padding: 30px; border: 1px solid #ddd; border-top: none; }
+    .ticket-info { background: white; padding: 20px; border-radius: 8px; margin: 20px 0; border-left: 4px solid {{#if branding.accentColor}}{{branding.accentColor}}{{else}}#667eea{{/if}}; }
     .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
-    .button { display: inline-block; padding: 12px 30px; background: #667eea; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0; }
+    .button { 
+      display: inline-block; 
+      padding: 12px 30px; 
+      background: {{#if branding.primaryColor}}{{branding.primaryColor}}{{else}}#667eea{{/if}}; 
+      color: white; 
+      text-decoration: none; 
+      border-radius: 5px; 
+      margin: 20px 0; 
+    }
+    .button:hover { opacity: 0.9; }
     .qr-code { text-align: center; margin: 20px 0; }
   </style>
 </head>
 <body>
   <div class="container">
     <div class="header">
+      {{#if branding.logoUrl}}
+      <img src="{{branding.logoUrl}}" alt="Logo" class="logo">
+      {{/if}}
+      {{#if branding.emailHeaderImage}}
+      <img src="{{branding.emailHeaderImage}}" alt="Header" style="max-width: 100%; height: auto; border-radius: 8px; margin-bottom: 15px;">
+      {{/if}}
       <h1>🎉 Order Confirmed!</h1>
       <p>Your tickets are ready</p>
     </div>
-    
     <div class="content">
       <p>Hi {{customerName}},</p>
-      
-      <p>Great news! Your order <strong>#{{orderId}}</strong> has been confirmed and your tickets have been secured on the blockchain.</p>
+      <p>Great news! Your order <strong>#{{orderId}}</strong> has been confirmed and your tickets have been secured{{#unless isWhiteLabel}} on the blockchain{{/unless}}.</p>
       
       <div class="ticket-info">
         <h3>📍 Event Details</h3>
@@ -49,19 +71,35 @@
       <h3>What's Next?</h3>
       <ul>
         <li>Your tickets are stored securely in your account</li>
+        {{#unless isWhiteLabel}}
         <li>You can transfer or resell them on our marketplace</li>
+        {{/unless}}
         <li>Show the QR code at the venue for entry</li>
       </ul>
       
       <p>If you have any questions, feel free to reply to this email.</p>
       
       <p>See you at the event!<br>
-      The TicketToken Team</p>
+      {{#if branding.emailFromName}}The {{branding.emailFromName}} Team{{else}}The TicketToken Team{{/if}}</p>
     </div>
     
     <div class="footer">
+      {{#if branding.emailFooterText}}
+      <p>{{{branding.emailFooterText}}}</p>
+      {{else}}
       <p>© 2025 TicketToken. All rights reserved.</p>
+      {{/if}}
+      
+      {{#unless isWhiteLabel}}
+      <p style="margin-top: 10px; font-size: 11px; color: #999;">Powered by TicketToken</p>
+      {{/unless}}
+      
       <p>This is an automated message, please do not reply directly.</p>
+      
+      <p style="margin-top: 15px;">
+        <a href="{{unsubscribeUrl}}" style="color: #999; text-decoration: none;">Unsubscribe</a> |
+        <a href="{{preferencesUrl}}" style="color: #999; text-decoration: none;">Email Preferences</a>
+      </p>
     </div>
   </div>
 </body>

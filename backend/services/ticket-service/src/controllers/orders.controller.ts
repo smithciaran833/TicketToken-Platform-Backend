@@ -1,24 +1,22 @@
-import { Request, Response } from 'express';
-import { Pool } from 'pg';
+import { FastifyRequest, FastifyReply } from 'fastify';
+import { DatabaseService } from '../services/databaseService';
 import { formatCents } from '@tickettoken/shared';
+import { logger } from '../utils/logger';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
-});
+const log = logger.child({ component: 'OrdersController' });
 
 export class OrdersController {
-  async getOrderById(req: Request, res: Response): Promise<void> {
-    const { orderId } = req.params;
-    const userId = (req as any).user?.id || (req as any).user?.sub;
+  async getOrderById(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const pool = DatabaseService.getPool();
+    const { orderId } = request.params as any;
+    const userId = (request as any).user?.id || (request as any).user?.sub;
 
     if (!orderId) {
-      res.status(400).json({ error: 'Order ID is required' });
-      return;
+      return reply.status(400).send({ error: 'Order ID is required' });
     }
 
     if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
+      return reply.status(401).send({ error: 'Authentication required' });
     }
 
     try {
@@ -27,7 +25,7 @@ export class OrdersController {
           o.id as order_id,
           o.status,
           o.user_id,
-          o.total_amount_cents,
+          o.total_cents,
           o.created_at,
           o.updated_at,
           o.expires_at,
@@ -39,8 +37,7 @@ export class OrdersController {
       const orderResult = await pool.query(orderQuery, [orderId, userId]);
 
       if (orderResult.rows.length === 0) {
-        res.status(404).json({ error: 'Order not found' });
-        return;
+        return reply.status(404).send({ error: 'Order not found' });
       }
 
       const order = orderResult.rows[0];
@@ -49,9 +46,10 @@ export class OrdersController {
         SELECT
           oi.id,
           oi.order_id,
-          oi.tier_id,
+          oi.ticket_type_id,
           oi.quantity,
-          oi.unit_price_cents
+          oi.unit_price_cents,
+          oi.total_price_cents
         FROM order_items oi
         WHERE oi.order_id = $1
       `;
@@ -61,12 +59,11 @@ export class OrdersController {
       const ticketsQuery = `
         SELECT
           t.id,
-          t.mint_address,
+          t.nft_mint_address as mint_address,
           t.status,
           t.user_id
         FROM tickets t
-        JOIN order_items oi ON oi.id = t.order_item_id
-        WHERE oi.order_id = $1 AND t.user_id = $2
+        WHERE t.order_id = $1 AND t.user_id = $2
       `;
 
       const ticketsResult = await pool.query(ticketsQuery, [orderId, userId]);
@@ -74,16 +71,16 @@ export class OrdersController {
       const response = {
         orderId: order.order_id,
         status: order.status,
-        totalCents: order.total_amount_cents,
-        totalFormatted: formatCents(order.total_amount_cents),
+        totalCents: order.total_cents,
+        totalFormatted: formatCents(order.total_cents),
         items: itemsResult.rows.map(item => ({
           id: item.id,
-          tier_id: item.tier_id,
+          ticketTypeId: item.ticket_type_id,  // FIXED: was tier_id
           quantity: item.quantity,
           unitPriceCents: item.unit_price_cents,
-          totalPriceCents: item.unit_price_cents * item.quantity,
+          totalPriceCents: item.total_price_cents,
           unitPriceFormatted: formatCents(item.unit_price_cents),
-          totalPriceFormatted: formatCents(item.unit_price_cents * item.quantity)
+          totalPriceFormatted: formatCents(item.total_price_cents)
         })),
         payment_intent_id: order.payment_intent_id,
         tickets: ticketsResult.rows.length > 0 ? ticketsResult.rows.map(ticket => ({
@@ -96,23 +93,23 @@ export class OrdersController {
         expires_at: order.expires_at
       };
 
-      res.json(response);
+      reply.send(response);
     } catch (error) {
-      console.error('Error fetching order:', error);
-      res.status(500).json({
+      log.error('Error fetching order', { error, orderId, userId });
+      reply.status(500).send({
         error: 'Internal server error',
-        requestId: req.headers['x-request-id']
+        requestId: request.headers['x-request-id']
       });
     }
   }
 
-  async getUserOrders(req: Request, res: Response): Promise<void> {
-    const userId = (req as any).user?.id || (req as any).user?.sub;
-    const { status, limit = 10, offset = 0 } = req.query;
+  async getUserOrders(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const userId = (request as any).user?.id || (request as any).user?.sub;
+    const pool = DatabaseService.getPool();
+    const { status, limit = 10, offset = 0 } = request.query as any;
 
     if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
+      return reply.status(401).send({ error: 'Authentication required' });
     }
 
     try {
@@ -120,7 +117,7 @@ export class OrdersController {
         SELECT
           o.id as order_id,
           o.status,
-          o.total_amount_cents,
+          o.total_cents,
           o.created_at,
           o.updated_at,
           e.name as event_name,
@@ -147,13 +144,13 @@ export class OrdersController {
         status: order.status,
         eventName: order.event_name,
         eventId: order.event_id,
-        totalCents: order.total_amount_cents,
-        totalFormatted: formatCents(order.total_amount_cents),
+        totalCents: order.total_cents,
+        totalFormatted: formatCents(order.total_cents),
         createdAt: order.created_at,
         updatedAt: order.updated_at
       }));
 
-      res.json({
+      reply.send({
         orders,
         pagination: {
           limit: parseInt(limit as string),
@@ -162,30 +159,29 @@ export class OrdersController {
         }
       });
     } catch (error) {
-      console.error('Error fetching user orders:', error);
-      res.status(500).json({
+      log.error('Error fetching user orders', { error, userId });
+      reply.status(500).send({
         error: 'Internal server error',
-        requestId: req.headers['x-request-id']
+        requestId: request.headers['x-request-id']
       });
     }
   }
 
-  async getUserTickets(req: Request, res: Response): Promise<void> {
-    const userId = (req as any).user?.id || (req as any).user?.sub;
-    const { eventId, status } = req.query;
+  async getUserTickets(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+    const userId = (request as any).user?.id || (request as any).user?.sub;
+    const pool = DatabaseService.getPool();
+    const { eventId, status } = request.query as any;
 
     if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
+      return reply.status(401).send({ error: 'Authentication required' });
     }
 
     try {
       let query = `
         SELECT
           t.id,
-          t.ticket_number,
           t.status,
-          t.mint_address,
+          t.nft_mint_address as mint_address,
           t.created_at,
           e.name as event_name,
           e.id as event_id,
@@ -216,7 +212,6 @@ export class OrdersController {
 
       const tickets = ticketsResult.rows.map(ticket => ({
         id: ticket.id,
-        ticketNumber: ticket.ticket_number,
         status: ticket.status,
         mintAddress: ticket.mint_address,
         eventName: ticket.event_name,
@@ -228,12 +223,12 @@ export class OrdersController {
         createdAt: ticket.created_at
       }));
 
-      res.json({ tickets });
+      reply.send({ tickets });
     } catch (error) {
-      console.error('Error fetching user tickets:', error);
-      res.status(500).json({
+      log.error('Error fetching user tickets', { error, userId, eventId, status });
+      reply.status(500).send({
         error: 'Internal server error',
-        requestId: req.headers['x-request-id']
+        requestId: request.headers['x-request-id']
       });
     }
   }

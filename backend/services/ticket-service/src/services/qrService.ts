@@ -13,7 +13,7 @@ export class QRService {
 
   async generateRotatingQR(ticketId: string): Promise<{ qrCode: string; qrImage: string }> {
     const ticket = await this.getTicketData(ticketId);
-    
+
     // Create time-based QR data
     const timestamp = Math.floor(Date.now() / config.qr.rotationInterval);
     const qrData = {
@@ -37,17 +37,21 @@ export class QRService {
       }
     });
 
-    // Store validation data in Redis
-    const validationKey = `qr:${ticketId}:${timestamp}`;
-    await RedisService.set(
-      validationKey,
-      JSON.stringify({
-        ticketId,
-        eventId: ticket.event_id,
-        validUntil: new Date((timestamp + 1) * config.qr.rotationInterval)
-      }),
-      config.qr.rotationInterval * 2 // Keep for 2 rotation periods
-    );
+    // Store validation data in Redis (optional - fail gracefully)
+    try {
+      const validationKey = `qr:${ticketId}:${timestamp}`;
+      await RedisService.set(
+        validationKey,
+        JSON.stringify({
+          ticketId,
+          eventId: ticket.event_id,
+          validUntil: new Date((timestamp + 1) * config.qr.rotationInterval)
+        }),
+        config.qr.rotationInterval * 2
+      );
+    } catch (error) {
+      this.log.warn('Redis storage failed for QR validation data, QR will still work', { ticketId });
+    }
 
     return { qrCode: qrString, qrImage };
   }
@@ -93,7 +97,7 @@ export class QRService {
 
       // Check if ticket already used
       const ticket = await this.getTicketData(qrData.ticketId);
-      
+
       if (ticket.status === TicketStatus.USED) {
         return {
           ticketId: qrData.ticketId,
@@ -125,7 +129,7 @@ export class QRService {
 
         // Update ticket status
         const updateQuery = `
-          UPDATE tickets 
+          UPDATE tickets
           SET status = $1, validated_at = $2, validator_id = $3, entrance = $4
           WHERE id = $5
         `;
@@ -140,7 +144,7 @@ export class QRService {
 
         // Log validation
         const logQuery = `
-          INSERT INTO ticket_validations 
+          INSERT INTO ticket_validations
           (ticket_id, event_id, validated_at, validator_id, entrance, device_id)
           VALUES ($1, $2, $3, $4, $5, $6)
         `;
@@ -155,8 +159,12 @@ export class QRService {
         ]);
       });
 
-      // Clear ticket cache
-      await RedisService.del(`ticket:${qrData.ticketId}`);
+      // Clear ticket cache - fail gracefully if Redis is down
+      try {
+        await RedisService.del(`ticket:${qrData.ticketId}`);
+      } catch (error) {
+        this.log.warn('Redis delete failed after validation', { ticketId: qrData.ticketId });
+      }
 
       return {
         ticketId: qrData.ticketId,
@@ -167,7 +175,7 @@ export class QRService {
 
     } catch (error) {
       this.log.error('QR validation error:', error);
-      
+
       if (error instanceof ValidationError) {
         return {
           ticketId: '',
@@ -189,7 +197,7 @@ export class QRService {
   private async getTicketData(ticketId: string): Promise<any> {
     const query = 'SELECT * FROM tickets WHERE id = $1';
     const result = await DatabaseService.query(query, [ticketId]);
-    
+
     if (result.rows.length === 0) {
       throw new NotFoundError('Ticket');
     }
@@ -200,10 +208,10 @@ export class QRService {
   private encrypt(text: string): string {
     const iv = crypto.randomBytes(16);
     const cipher = crypto.createCipheriv('aes-256-cbc', this.encryptionKey.slice(0, 32), iv);
-    
+
     let encrypted = cipher.update(text, 'utf8', 'hex');
     encrypted += cipher.final('hex');
-    
+
     return iv.toString('hex') + ':' + encrypted;
   }
 
@@ -211,12 +219,12 @@ export class QRService {
     const parts = text.split(':');
     const iv = Buffer.from(parts[0], 'hex');
     const encrypted = parts[1];
-    
+
     const decipher = crypto.createDecipheriv('aes-256-cbc', this.encryptionKey.slice(0, 32), iv);
-    
+
     let decrypted = decipher.update(encrypted, 'hex', 'utf8');
     decrypted += decipher.final('utf8');
-    
+
     return decrypted;
   }
 }

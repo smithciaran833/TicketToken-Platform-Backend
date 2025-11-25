@@ -107,7 +107,7 @@ function getEnvVarAsBoolean(key: string, defaultValue: boolean = false): boolean
 export const env: EnvConfig = {
   // Server
   NODE_ENV: (process.env.NODE_ENV as EnvConfig['NODE_ENV']) || 'development',
-  PORT: getEnvVarAsNumber('PORT', 3009),
+  PORT: getEnvVarAsNumber('PORT', 3007),
   SERVICE_NAME: getEnvVar('SERVICE_NAME', 'notification-service'),
 
   // Database

@@ -1,5 +1,8 @@
 import { NFTMintRequest, MintBatch } from '../../types';
 import { blockchainConfig } from '../../config/blockchain';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'MintBatcherService' });
 
 export class MintBatcherService {
   private pendingBatches: Map<string, MintBatch> = new Map();
@@ -56,7 +59,7 @@ export class MintBatcherService {
     // Update status
     batch.status = 'processing';
     
-    console.log(`Processing batch ${batch.id} with ${batch.ticketIds.length} tickets`);
+    log.info('Processing batch', { batchId: batch.id, ticketCount: batch.ticketIds.length });
     
     // In production, this would submit the batch to the blockchain
     // For now, we'll simulate processing
@@ -92,7 +95,7 @@ export class MintBatcherService {
   }
   
   private async retryBatch(batch: MintBatch): Promise<void> {
-    console.log(`Retrying batch ${batch.id}, attempt ${batch.attempts}`);
+    log.info('Retrying batch', { batchId: batch.id, attempt: batch.attempts });
     batch.status = 'processing';
     
     try {

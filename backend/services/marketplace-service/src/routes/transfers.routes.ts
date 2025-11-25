@@ -1,11 +1,9 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { transferController } from '../controllers/transfer.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { walletMiddleware } from '../middleware/wallet.middleware';
 import { validate } from '../middleware/validation.middleware';
 import Joi from 'joi';
-
-const router = Router();
 
 // Validation schemas
 const purchaseListingSchema = Joi.object({
@@ -18,40 +16,32 @@ const directTransferSchema = Joi.object({
   recipientWallet: Joi.string().required(),
 });
 
-// All transfer routes require authentication
-router.use(authMiddleware);
-router.use(walletMiddleware);
+export default async function transfersRoutes(fastify: FastifyInstance) {
+  // All transfer routes require authentication and wallet
+  const securePreHandler = [authMiddleware, walletMiddleware];
 
-// Purchase listing - SECURED
-router.post(
-  '/purchase',
-  validate(purchaseListingSchema),
-  transferController.purchaseListing.bind(transferController)
-);
+  // Purchase listing
+  fastify.post('/purchase', {
+    preHandler: [...securePreHandler, validate(purchaseListingSchema)]
+  }, transferController.purchaseListing.bind(transferController));
 
-// Direct transfer - SECURED
-router.post(
-  '/direct',
-  validate(directTransferSchema),
-  transferController.directTransfer.bind(transferController)
-);
+  // Direct transfer
+  fastify.post('/direct', {
+    preHandler: [...securePreHandler, validate(directTransferSchema)]
+  }, transferController.directTransfer.bind(transferController));
 
-// Get transfer history - SECURED
-router.get(
-  '/history',
-  transferController.getTransferHistory.bind(transferController)
-);
+  // Get transfer history
+  fastify.get('/history', {
+    preHandler: securePreHandler
+  }, transferController.getTransferHistory.bind(transferController));
 
-// Get transfer by ID - SECURED
-router.get(
-  '/:id',
-  transferController.getTransfer.bind(transferController)
-);
+  // Get transfer by ID
+  fastify.get('/:id', {
+    preHandler: securePreHandler
+  }, transferController.getTransfer.bind(transferController));
 
-// Cancel pending transfer - SECURED
-router.post(
-  '/:id/cancel',
-  transferController.cancelTransfer.bind(transferController)
-);
-
-export default router;
+  // Cancel pending transfer
+  fastify.post('/:id/cancel', {
+    preHandler: securePreHandler
+  }, transferController.cancelTransfer.bind(transferController));
+}

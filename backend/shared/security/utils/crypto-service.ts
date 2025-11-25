@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import bcrypt from 'bcrypt';
-import { promisify } from 'util';
+// import { promisify } from 'util';
 
 export class CryptoService {
   private static readonly ALGORITHM = 'aes-256-gcm';
@@ -21,10 +21,7 @@ export class CryptoService {
 
     const cipher = crypto.createCipheriv(this.ALGORITHM, derivedKey, iv);
 
-    const encrypted = Buffer.concat([
-      cipher.update(text, 'utf8'),
-      cipher.final()
-    ]);
+    const encrypted = Buffer.concat([cipher.update(text, 'utf8'), cipher.final()]);
 
     const tag = cipher.getAuthTag();
 
@@ -50,10 +47,7 @@ export class CryptoService {
     const decipher = crypto.createDecipheriv(this.ALGORITHM, derivedKey, iv);
     decipher.setAuthTag(tag);
 
-    const decrypted = Buffer.concat([
-      decipher.update(encrypted),
-      decipher.final()
-    ]);
+    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
 
     return decrypted.toString('utf8');
   }
@@ -89,10 +83,13 @@ export class CryptoService {
   // Base32 decode helper function
   private static base32Decode(encoded: string): Buffer {
     const base32chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    const bits = encoded.toUpperCase().replace(/=+$/, '').split('').map(
-      char => base32chars.indexOf(char).toString(2).padStart(5, '0')
-    ).join('');
-    
+    const bits = encoded
+      .toUpperCase()
+      .replace(/=+$/, '')
+      .split('')
+      .map((char) => base32chars.indexOf(char).toString(2).padStart(5, '0'))
+      .join('');
+
     const bytes = [];
     for (let i = 0; i < bits.length; i += 8) {
       if (i + 8 <= bits.length) {
@@ -110,6 +107,7 @@ export class CryptoService {
     hmac.update(Buffer.from(counter.toString(16).padStart(16, '0'), 'hex'));
 
     const digest = hmac.digest();
+    if (!digest || digest.length === 0) throw new Error('Invalid digest data');
     const offset = digest[digest.length - 1] & 0x0f;
     const code = digest.readUInt32BE(offset) & 0x7fffffff;
 
@@ -143,10 +141,7 @@ export class CryptoService {
     const key = secret || process.env.SIGNING_SECRET;
     if (!key) throw new Error('Signing secret not configured');
 
-    return crypto
-      .createHmac('sha256', key)
-      .update(data)
-      .digest('hex');
+    return crypto.createHmac('sha256', key).update(data).digest('hex');
   }
 
   // Verify signed data
@@ -157,10 +152,7 @@ export class CryptoService {
     const expected = this.sign(data, key);
 
     // Constant-time comparison to prevent timing attacks
-    return crypto.timingSafeEqual(
-      Buffer.from(signature),
-      Buffer.from(expected)
-    );
+    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
   }
 
   // Encrypt database fields (now async)

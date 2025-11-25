@@ -1,22 +1,31 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { adminController } from '../controllers/admin.controller';
 import { authMiddleware, requireAdmin } from '../middleware/auth.middleware';
 
-const router = Router();
+export default async function adminRoutes(fastify: FastifyInstance) {
+  // All admin routes require authentication and admin role
+  const adminPreHandler = [authMiddleware, requireAdmin];
 
-// All admin routes require authentication and admin role
-router.use(authMiddleware);
-router.use(requireAdmin);
+  // Statistics
+  fastify.get('/stats', {
+    preHandler: adminPreHandler
+  }, adminController.getStats.bind(adminController));
 
-// Statistics
-router.get('/stats', adminController.getStats);
+  // Disputes management
+  fastify.get('/disputes', {
+    preHandler: adminPreHandler
+  }, adminController.getDisputes.bind(adminController));
 
-// Disputes management
-router.get('/disputes', adminController.getDisputes);
-router.put('/disputes/:disputeId/resolve', adminController.resolveDispute);
+  fastify.put('/disputes/:disputeId/resolve', {
+    preHandler: adminPreHandler
+  }, adminController.resolveDispute.bind(adminController));
 
-// User management
-router.get('/flagged-users', adminController.getFlaggedUsers);
-router.post('/ban-user', adminController.banUser);
+  // User management
+  fastify.get('/flagged-users', {
+    preHandler: adminPreHandler
+  }, adminController.getFlaggedUsers.bind(adminController));
 
-export default router;
+  fastify.post('/ban-user', {
+    preHandler: adminPreHandler
+  }, adminController.banUser.bind(adminController));
+}

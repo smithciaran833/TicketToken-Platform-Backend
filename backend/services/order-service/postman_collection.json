@@ -1,0 +1,672 @@
+{
+  "info": {
+    "name": "TicketToken Order Service API",
+    "description": "Complete API collection for the Order Service including authentication, CRUD operations, and internal endpoints.\n\nImport this collection into Postman and set up the environment variables to get started.",
+    "version": "1.0.0",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{jwt_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:3004/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "jwt_token",
+      "value": "your_jwt_token_here",
+      "type": "string"
+    },
+    {
+      "key": "service_key",
+      "value": "your_service_key_here",
+      "type": "string"
+    },
+    {
+      "key": "order_id",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "event_id",
+      "value": "550e8400-e29b-41d4-a716-446655440000",
+      "type": "string"
+    },
+    {
+      "key": "ticket_type_id",
+      "value": "660e8400-e29b-41d4-a716-446655440000",
+      "type": "string"
+    },
+    {
+      "key": "ticket_pricing_id",
+      "value": "770e8400-e29b-41d4-a716-446655440000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Orders",
+      "item": [
+        {
+          "name": "Create Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has order data\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('orderNumber');",
+                  "    pm.expect(jsonData).to.have.property('status');",
+                  "    pm.expect(jsonData.status).to.equal('PENDING');",
+                  "});",
+                  "",
+                  "// Save order ID for subsequent requests",
+                  "const jsonData = pm.response.json();",
+                  "pm.collectionVariables.set(\"order_id\", jsonData.id);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Unique idempotency key"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_id}}\",\n  \"items\": [\n    {\n      \"ticketTypeId\": \"{{ticket_type_id}}\",\n      \"ticketPricingId\": \"{{ticket_pricing_id}}\",\n      \"quantity\": 2\n    }\n  ],\n  \"currency\": \"USD\",\n  \"metadata\": {\n    \"source\": \"postman\",\n    \"testRequest\": true\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/orders",
+              "host": ["{{base_url}}"],
+              "path": ["orders"]
+            },
+            "description": "Create a new order with ticket reservations.\n\n**Rate Limit:** 10 requests per minute\n\n**Features:**\n- Automatic ticket reservation (15min standard, 30min VIP)\n- Fee calculation (platform + processing + tax)\n- Payment intent creation\n- Idempotency support"
+          },
+          "response": [
+            {
+              "name": "Success - Order Created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"eventId\": \"550e8400-e29b-41d4-a716-446655440000\",\n  \"items\": [\n    {\n      \"ticketTypeId\": \"660e8400-e29b-41d4-a716-446655440000\",\n      \"ticketPricingId\": \"770e8400-e29b-41d4-a716-446655440000\",\n      \"quantity\": 2\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{base_url}}/orders",
+                  "host": ["{{base_url}}"],
+                  "path": ["orders"]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"id\": \"order-uuid\",\n  \"orderNumber\": \"ORD-20251122-ABC123\",\n  \"userId\": \"user-uuid\",\n  \"eventId\": \"event-uuid\",\n  \"status\": \"PENDING\",\n  \"items\": [\n    {\n      \"id\": \"item-uuid\",\n      \"ticketTypeId\": \"ticket-type-uuid\",\n      \"ticketPricingId\": \"pricing-uuid\",\n      \"quantity\": 2,\n      \"unitPriceCents\": 10000,\n      \"subtotalCents\": 20000\n    }\n  ],\n  \"pricing\": {\n    \"subtotalCents\": 20000,\n    \"platformFeeCents\": 1000,\n    \"processingFeeCents\": 609,\n    \"taxCents\": 1728,\n    \"totalCents\": 23337\n  },\n  \"currency\": \"USD\",\n  \"paymentIntentId\": \"pi_abc123\",\n  \"reservationExpiresAt\": \"2025-11-22T23:45:00Z\",\n  \"createdAt\": \"2025-11-22T23:30:00Z\",\n  \"updatedAt\": \"2025-11-22T23:30:00Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order has correct structure\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('id');",
+                  "    pm.expect(jsonData).to.have.property('orderNumber');",
+                  "    pm.expect(jsonData).to.have.property('items');",
+                  "    pm.expect(jsonData).to.have.property('pricing');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orders/:orderId",
+              "host": ["{{base_url}}"],
+              "path": ["orders", ":orderId"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}",
+                  "description": "Order UUID"
+                }
+              ]
+            },
+            "description": "Get details of a specific order.\n\n**Authorization:** Owner or admin only\n**Rate Limit:** 100 requests per minute"
+          },
+          "response": []
+        },
+        {
+          "name": "List Orders",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has orders array\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('orders');",
+                  "    pm.expect(jsonData).to.have.property('pagination');",
+                  "    pm.expect(jsonData.orders).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orders?status=CONFIRMED&limit=20&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["orders"],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "CONFIRMED",
+                  "description": "Filter by status"
+                },
+                {
+                  "key": "eventId",
+                  "value": "",
+                  "description": "Filter by event",
+                  "disabled": true
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "description": "Results per page (1-100)"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Pagination offset"
+                }
+              ]
+            },
+            "description": "List orders for the authenticated user with optional filtering.\n\n**Rate Limit:** 100 requests per minute"
+          },
+          "response": []
+        },
+        {
+          "name": "Reserve Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Reservation was extended\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.status).to.equal('RESERVED');",
+                  "    pm.expect(jsonData).to.have.property('reservationExpiresAt');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}",
+                "description": "Unique idempotency key"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/orders/:orderId/reserve",
+              "host": ["{{base_url}}"],
+              "path": ["orders", ":orderId", "reserve"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}"
+                }
+              ]
+            },
+            "description": "Extend or refresh the ticket reservation for an order.\n\n**Rate Limit:** 5 requests per minute\n**Idempotency:** Supported"
+          },
+          "response": []
+        },
+        {
+          "name": "Cancel Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Order was cancelled\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.status).to.equal('CANCELLED');",
+                  "    pm.expect(jsonData).to.have.property('refundStatus');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"User requested cancellation\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/orders/:orderId/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["orders", ":orderId", "cancel"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}"
+                }
+              ]
+            },
+            "description": "Cancel an order and initiate refund if applicable.\n\n**Rate Limit:** 5 requests per minute\n**Policy:** Platform fee (2.5%) and processing fee ($0.30) retained"
+          },
+          "response": []
+        },
+        {
+          "name": "Request Refund",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Refund was initiated\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('refundId');",
+                  "    pm.expect(jsonData.status).to.be.oneOf(['PENDING', 'APPROVED']);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{$guid}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Event cancelled\",\n  \"amount\": 20000\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/orders/:orderId/refund",
+              "host": ["{{base_url}}"],
+              "path": ["orders", ":orderId", "refund"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}"
+                }
+              ]
+            },
+            "description": "Request a refund for a confirmed order.\n\n**Rate Limit:** 3 requests per minute\n**Policy:** \n- Orders <$500: Auto-approved\n- Orders ≥$500: Manual review"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Order Events",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has events array\", function () {",
+                  "    const jsonData = pm.response.json();",
+                  "    pm.expect(jsonData).to.have.property('events');",
+                  "    pm.expect(jsonData.events).to.be.an('array');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/orders/:orderId/events",
+              "host": ["{{base_url}}"],
+              "path": ["orders", ":orderId", "events"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}"
+                }
+              ]
+            },
+            "description": "Get audit log events for an order.\n\n**Authorization:** Owner or admin only"
+          },
+          "response": []
+        }
+      ],
+      "description": "Public-facing order management endpoints"
+    },
+    {
+      "name": "Internal",
+      "item": [
+        {
+          "name": "Confirm Order",
+          "request": {
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "value",
+                  "value": "{{service_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "key",
+                  "value": "Service-Key",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"paymentIntentId\": \"pi_abc123xyz\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/internal/v1/orders/:orderId/confirm",
+              "host": ["{{base_url}}"],
+              "path": ["internal", "v1", "orders", ":orderId", "confirm"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}"
+                }
+              ]
+            },
+            "description": "Update order status to CONFIRMED after payment succeeds.\n\n**Internal Use Only:** Called by payment-service"
+          },
+          "response": []
+        },
+        {
+          "name": "Expire Order",
+          "request": {
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "value",
+                  "value": "{{service_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "key",
+                  "value": "Service-Key",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Reservation expired\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/internal/v1/orders/:orderId/expire",
+              "host": ["{{base_url}}"],
+              "path": ["internal", "v1", "orders", ":orderId", "expire"],
+              "variable": [
+                {
+                  "key": "orderId",
+                  "value": "{{order_id}}"
+                }
+              ]
+            },
+            "description": "Expire an order when reservation times out.\n\n**Internal Use Only:** Called by scheduler"
+          },
+          "response": []
+        },
+        {
+          "name": "Get Expiring Orders",
+          "request": {
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "value",
+                  "value": "{{service_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "key",
+                  "value": "Service-Key",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/internal/v1/orders/expiring?minutes=5&limit=100",
+              "host": ["{{base_url}}"],
+              "path": ["internal", "v1", "orders", "expiring"],
+              "query": [
+                {
+                  "key": "minutes",
+                  "value": "5",
+                  "description": "Look-ahead window"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "description": "Max orders to return"
+                }
+              ]
+            },
+            "description": "Get orders that will expire soon.\n\n**Internal Use Only:** Called by background job"
+          },
+          "response": []
+        },
+        {
+          "name": "Bulk Cancel Orders",
+          "request": {
+            "auth": {
+              "type": "apikey",
+              "apikey": [
+                {
+                  "key": "value",
+                  "value": "{{service_key}}",
+                  "type": "string"
+                },
+                {
+                  "key": "key",
+                  "value": "Service-Key",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{event_id}}\",\n  \"reason\": \"Event cancelled by organizer\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/internal/v1/orders/bulk/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["internal", "v1", "orders", "bulk", "cancel"]
+            },
+            "description": "Cancel all orders for an event.\n\n**Internal Use Only:** Called by event-service"
+          },
+          "response": []
+        }
+      ],
+      "description": "Internal service-to-service endpoints"
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Liveness Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/liveness",
+              "host": ["{{base_url}}"],
+              "path": ["health", "liveness"]
+            },
+            "description": "Kubernetes liveness probe - checks if service is alive"
+          },
+          "response": []
+        },
+        {
+          "name": "Readiness Check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/readiness",
+              "host": ["{{base_url}}"],
+              "path": ["health", "readiness"]
+            },
+            "description": "Kubernetes readiness probe - checks if service is ready to accept traffic"
+          },
+          "response": []
+        }
+      ],
+      "description": "Service health check endpoints"
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Add timestamp to help with idempotency testing",
+          "pm.globals.set('timestamp', new Date().getTime());"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Global test to check response time",
+          "pm.test(\"Response time is less than 5000ms\", function () {",
+          "    pm.expect(pm.response.responseTime).to.be.below(5000);",
+          "});"
+        ]
+      }
+    }
+  ]
+}

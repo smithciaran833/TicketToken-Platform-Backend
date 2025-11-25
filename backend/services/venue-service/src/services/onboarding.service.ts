@@ -82,7 +82,7 @@ export class OnboardingService {
 
   private async hasBasicInfo(venueId: string): Promise<boolean> {
     const venue = await this.db('venues').where({ id: venueId }).first();
-    return !!(venue && venue.name && venue.type && venue.capacity);
+    return !!(venue && venue.name && venue.venue_type && venue.max_capacity);
   }
 
   private async hasAddress(venueId: string): Promise<boolean> {
@@ -136,8 +136,8 @@ export class OnboardingService {
   private async updateBasicInfo(venueId: string, data: any): Promise<void> {
     await this.db('venues').where({ id: venueId }).update({
       name: data.name,
-      type: data.type,
-      capacity: data.capacity,
+      type: data.venue_type,
+      capacity: data.max_capacity,
       updated_at: new Date()
     });
   }
@@ -153,9 +153,9 @@ export class OnboardingService {
     await this.layoutModel.create({
       venue_id: venueId,
       name: data.name,
-      type: data.type,
+      type: data.venue_type,
       sections: data.sections,
-      capacity: data.capacity,
+      capacity: data.max_capacity,
       is_default: true
     });
   }
@@ -163,7 +163,7 @@ export class OnboardingService {
   private async createPaymentIntegration(venueId: string, data: any): Promise<void> {
     await this.integrationModel.create({
       venue_id: venueId,
-      type: data.type,
+      type: data.venue_type,
       config: data.config,
       is_active: true
     });

@@ -1,0 +1,228 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: queue-service
+  labels:
+    app: queue-service
+    version: v1
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: queue-service
+  template:
+    metadata:
+      labels:
+        app: queue-service
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3011"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: queue-service
+        image: queue-service:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 3011
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: PORT
+          value: "3011"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: jwt-secret
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: queue-service-config
+              key: redis-host
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: queue-service-config
+              key: redis-port
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: redis-password
+        - name: STRIPE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: stripe-secret-key
+        - name: STRIPE_WEBHOOK_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: stripe-webhook-secret
+        - name: SOLANA_NETWORK
+          valueFrom:
+            configMapKeyRef:
+              name: queue-service-config
+              key: solana-network
+        - name: SOLANA_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: solana-private-key
+        - name: EMAIL_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: queue-service-config
+              key: email-host
+        - name: EMAIL_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: queue-service-config
+              key: email-port
+        - name: EMAIL_USER
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: email-user
+        - name: EMAIL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: queue-service-secrets
+              key: email-password
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 2000m
+            memory: 2Gi
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: http
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 3
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        startupProbe:
+          httpGet:
+            path: /health/startup
+            port: http
+          initialDelaySeconds: 0
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 30
+        securityContext:
+          runAsNonRoot: true
+          runAsUser: 1001
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+            - ALL
+      securityContext:
+        fsGroup: 1001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: queue-service
+  labels:
+    app: queue-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 3011
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    app: queue-service
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: queue-service-config
+data:
+  redis-host: "redis-master"
+  redis-port: "6379"
+  solana-network: "mainnet-beta"
+  email-host: "smtp.gmail.com"
+  email-port: "587"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: queue-service-secrets
+type: Opaque
+stringData:
+  jwt-secret: "CHANGE_ME"
+  redis-password: "CHANGE_ME"
+  stripe-secret-key: "CHANGE_ME"
+  stripe-webhook-secret: "CHANGE_ME"
+  solana-private-key: "CHANGE_ME"
+  email-user: "CHANGE_ME"
+  email-password: "CHANGE_ME"
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: queue-service
+  labels:
+    app: queue-service
+spec:
+  selector:
+    matchLabels:
+      app: queue-service
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: queue-service-pdb
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: queue-service
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: queue-service-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: queue-service
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80

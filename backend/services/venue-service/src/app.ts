@@ -23,6 +23,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   const redis = new Redis({
     host: process.env.REDIS_HOST || 'localhost',
     port: parseInt(process.env.REDIS_PORT || '6379'),
+    password: process.env.REDIS_PASSWORD,
     retryStrategy: (times: number) => {
       const delay = Math.min(times * 50, 2000);
       return delay;
@@ -78,11 +79,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     if (request.url.startsWith('/health')) {
       return;
     }
-    
+
     try {
       if (process.env.NODE_ENV !== "test") {
         await rateLimiter.checkAllLimits(request, reply);
-
       }
     } catch (error) {
       throw error;

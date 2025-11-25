@@ -1,22 +1,21 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply, FastifyError } from 'fastify';
 import { logger } from '../utils/logger';
 import { AppError } from '../utils/errors';
 
 export function errorMiddleware(
-  error: Error,
-  req: Request,
-  res: Response,
-  next: NextFunction
+  error: FastifyError,
+  request: FastifyRequest,
+  reply: FastifyReply
 ): void {
   logger.error('Error handling request:', {
     error: error.message,
     stack: error.stack,
-    path: req.path,
-    method: req.method
+    path: request.url,
+    method: request.method
   });
 
   if (error instanceof AppError) {
-    res.status(error.statusCode).json({
+    reply.code(error.statusCode).send({
       error: error.message,
       code: error.statusCode
     });
@@ -24,7 +23,7 @@ export function errorMiddleware(
   }
 
   // Default error
-  res.status(500).json({
+  reply.code(500).send({
     error: 'Internal server error',
     message: process.env.NODE_ENV === 'development' ? error.message : undefined
   });

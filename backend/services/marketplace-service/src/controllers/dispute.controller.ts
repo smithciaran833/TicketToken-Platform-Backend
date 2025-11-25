@@ -1,19 +1,19 @@
-import { Response, NextFunction } from 'express';
+import { FastifyReply } from 'fastify';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { disputeService } from '../services/dispute.service';
 import { logger } from '../utils/logger';
 import { ValidationError } from '../utils/errors';
 
 export class DisputeController {
-  async create(req: AuthRequest, res: Response, next: NextFunction) {
+  async create(request: AuthRequest, reply: FastifyReply) {
     try {
-      const { transferId, listingId, reason, description, evidence } = req.body;
-      const userId = req.user?.id;
-      
+      const { transferId, listingId, reason, description, evidence } = request.body as any;
+      const userId = request.user?.id;
+
       if (!userId) {
         throw new ValidationError('User ID required');
       }
-      
+
       const dispute = await disputeService.createDispute(
         transferId,
         listingId,
@@ -22,63 +22,63 @@ export class DisputeController {
         description,
         evidence
       );
-      
-      res.status(201).json({ success: true, data: dispute });
+
+      reply.status(201).send({ success: true, data: dispute });
     } catch (error) {
       logger.error('Error creating dispute:', error);
-      next(error);
+      throw error;
     }
   }
-  
-  async getById(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async getById(request: AuthRequest, reply: FastifyReply) {
     try {
-      const { disputeId } = req.params;
+      const { disputeId } = request.params as { disputeId: string };
       const dispute = await disputeService.getDispute(disputeId);
-      
+
       if (!dispute) {
-        return res.status(404).json({ error: 'Dispute not found' });
+        return reply.status(404).send({ error: 'Dispute not found' });
       }
-      
-      res.json({ success: true, data: dispute });
+
+      reply.send({ success: true, data: dispute });
     } catch (error) {
       logger.error('Error getting dispute:', error);
-      return next(error);
+      throw error;
     }
   }
-  
-  async addEvidence(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async addEvidence(request: AuthRequest, reply: FastifyReply) {
     try {
-      const { disputeId } = req.params;
-      const { type, content, metadata } = req.body;
-      const userId = req.user?.id;
-      
+      const { disputeId } = request.params as { disputeId: string };
+      const { type, content, metadata } = request.body as any;
+      const userId = request.user?.id;
+
       if (!userId) {
         throw new ValidationError('User ID required');
       }
-      
+
       await disputeService.addEvidence(disputeId, userId, type, content, metadata);
-      
-      res.json({ success: true, message: 'Evidence added' });
+
+      reply.send({ success: true, message: 'Evidence added' });
     } catch (error) {
       logger.error('Error adding evidence:', error);
-      next(error);
+      throw error;
     }
   }
-  
-  async getMyDisputes(req: AuthRequest, res: Response, next: NextFunction) {
+
+  async getMyDisputes(request: AuthRequest, reply: FastifyReply) {
     try {
-      const userId = req.user?.id;
-      
+      const userId = request.user?.id;
+
       if (!userId) {
         throw new ValidationError('User ID required');
       }
-      
+
       const disputes = await disputeService.getUserDisputes(userId);
-      
-      res.json({ success: true, data: disputes });
+
+      reply.send({ success: true, data: disputes });
     } catch (error) {
       logger.error('Error getting user disputes:', error);
-      next(error);
+      throw error;
     }
   }
 }

@@ -1,7 +1,7 @@
 export const config = {
   service: {
     name: process.env.SERVICE_NAME || 'queue-service',
-    port: parseInt(process.env.PORT || '3004', 10),
+    port: parseInt(process.env.PORT || '3008', 10),
     env: process.env.NODE_ENV || 'development'
   },
   database: {

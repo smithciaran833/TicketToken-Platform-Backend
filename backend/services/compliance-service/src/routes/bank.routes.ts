@@ -1,11 +1,11 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { BankController } from '../controllers/bank.controller';
 
-const router = Router();
+export async function bankRoutes(fastify: FastifyInstance) {
+  const bankController = new BankController();
 
-// Bank verification routes
-router.post('/bank/verify', BankController.verifyBankAccount);
-router.post('/bank/payout-method', BankController.createPayoutMethod);
-router.get('/bank/:accountId/status', BankController.verifyBankAccount); // Using existing method
-
-export default router;
+  // Bank verification routes
+  fastify.post('/bank/verify', bankController.verifyBankAccount);
+  fastify.post('/bank/payout-method', bankController.createPayoutMethod);
+  fastify.get('/bank/:accountId/status', bankController.verifyBankAccount);
+}

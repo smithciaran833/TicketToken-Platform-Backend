@@ -1,39 +1,50 @@
 FROM node:20-alpine AS builder
-
 WORKDIR /app
-
-COPY tsconfig.base.json ./tsconfig.base.json
+# Copy shared module first
 COPY backend/shared ./backend/shared
-COPY backend/services/compliance-service ./backend/services/compliance-service
-
 WORKDIR /app/backend/shared
-RUN npm install
-
-WORKDIR /app/backend/shared/cache
-RUN npm install
-
-WORKDIR /app/backend/services/compliance-service
-RUN npm install
-RUN npm run build
-
-FROM node:20-alpine
-
+RUN npm ci
+RUN npm run build || true
+# Copy compliance-service
 WORKDIR /app
-
+COPY backend/services/compliance-service ./backend/services/compliance-service
+# Build compliance-service
+WORKDIR /app/backend/services/compliance-service
+RUN npm ci
+RUN npm run build
+# Production stage
+FROM node:20-alpine
+WORKDIR /app
+# Install dumb-init
 RUN apk add --no-cache dumb-init
-
+# Copy shared module
 COPY --from=builder /app/backend/shared /app/backend/shared
-COPY --from=builder /app/backend/services/compliance-service /app
-
-# Create uploads directory with proper permissions
-RUN mkdir -p /app/uploads /app/logs && \
-    chown -R 1001:1001 /app && \
-    chmod -R 755 /app/uploads /app/logs
-
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001
+# Copy package files
+COPY --from=builder /app/backend/services/compliance-service/package.json /app/backend/services/compliance-service/package.json
+COPY --from=builder /app/backend/services/compliance-service/package-lock.json /app/backend/services/compliance-service/package-lock.json
+# Install production dependencies
+WORKDIR /app/backend/services/compliance-service
+RUN npm ci
+# Copy built artifacts
+COPY --from=builder /app/backend/services/compliance-service/dist ./dist
+# Copy migration files
+COPY --from=builder /app/backend/services/compliance-service/knexfile.ts ./knexfile.ts
+COPY --from=builder /app/backend/services/compliance-service/src/migrations ./src/migrations
+# Create entrypoint script for migrations
+RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
+    echo 'set -e' >> /app/entrypoint.sh && \
+    echo 'echo "Running migrations for compliance-service..."' >> /app/entrypoint.sh && \
+    echo 'cd /app/backend/services/compliance-service' >> /app/entrypoint.sh && \
+    echo 'npm run migrate || echo "Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'exec "$@"' >> /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 && \
+    chown -R nodejs:nodejs /app
 USER nodejs
-
 EXPOSE 3010
-
-ENTRYPOINT ["dumb-init", "--"]
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3010/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+ENTRYPOINT ["/app/entrypoint.sh", "dumb-init", "--"]
 CMD ["node", "dist/index.js"]

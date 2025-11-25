@@ -1,10 +1,11 @@
 import { db } from './database.service';
+import { logger } from '../utils/logger';
 
 export class TaxService {
   private readonly FORM_1099_THRESHOLD = 600; // Real IRS threshold
   private readonly TICKET_REPORTING_THRESHOLD = 200; // Per transaction
 
-  async trackSale(venueId: string, amount: number, ticketId: string) {
+  async trackSale(venueId: string, amount: number, ticketId: string, tenantId: string) {
     try {
       // Get current year totals
       const year = new Date().getFullYear();
@@ -12,8 +13,8 @@ export class TaxService {
       const result = await db.query(
         `SELECT COALESCE(SUM(amount), 0) as total
          FROM tax_records
-         WHERE venue_id = $1 AND year = $2`,
-        [venueId, year]
+         WHERE venue_id = $1 AND year = $2 AND tenant_id = $3`,
+        [venueId, year, tenantId]
       );
       
       const currentTotal = parseFloat(result.rows[0]?.total || '0');
@@ -24,15 +25,15 @@ export class TaxService {
       
       // Log the sale
       await db.query(
-        `INSERT INTO tax_records (venue_id, year, amount, ticket_id, threshold_reached)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [venueId, year, amount, ticketId, thresholdReached]
+        `INSERT INTO tax_records (venue_id, year, amount, ticket_id, threshold_reached, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [venueId, year, amount, ticketId, thresholdReached, tenantId]
       );
       
       // Alert if threshold just crossed
       if (!thresholdReached && newTotal >= this.FORM_1099_THRESHOLD) {
-        console.log(`🚨 VENUE ${venueId} has reached $${this.FORM_1099_THRESHOLD} threshold!`);
-        console.log(`📋 1099-K required for tax year ${year}`);
+        logger.info(`🚨 VENUE ${venueId} (tenant ${tenantId}) has reached $${this.FORM_1099_THRESHOLD} threshold!`);
+        logger.info(`📋 1099-K required for tax year ${year}`);
       }
       
       return {
@@ -45,12 +46,12 @@ export class TaxService {
         percentToThreshold: (newTotal / this.FORM_1099_THRESHOLD) * 100
       };
     } catch (error) {
-      console.error('Error tracking sale:', error);
+      logger.error('Error tracking sale:', error);
       throw error;
     }
   }
 
-  async getVenueTaxSummary(venueId: string, year?: number) {
+  async getVenueTaxSummary(venueId: string, year: number | undefined, tenantId: string) {
     const taxYear = year || new Date().getFullYear();
     
     const result = await db.query(
@@ -61,8 +62,8 @@ export class TaxService {
         MIN(created_at) as first_sale,
         MAX(created_at) as last_sale
        FROM tax_records
-       WHERE venue_id = $1 AND year = $2`,
-      [venueId, taxYear]
+       WHERE venue_id = $1 AND year = $2 AND tenant_id = $3`,
+      [venueId, taxYear, tenantId]
     );
     
     const total = parseFloat(result.rows[0]?.total_sales || '0');
@@ -85,7 +86,7 @@ export class TaxService {
     };
   }
 
-  async calculateTax(data: any) {
+  async calculateTax(data: any, tenantId: string) {
     // Simple tax calculation implementation
     const { amount, venueId, taxRate = 0.08 } = data;
     
@@ -94,9 +95,9 @@ export class TaxService {
     
     // Log the calculation
     await db.query(
-      `INSERT INTO tax_calculations (venue_id, amount, tax_rate, tax_amount, total)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [venueId, amount, taxRate, taxAmount, totalWithTax]
+      `INSERT INTO tax_calculations (venue_id, amount, tax_rate, tax_amount, total, tenant_id)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [venueId, amount, taxRate, taxAmount, totalWithTax, tenantId]
     );
     
     return {
@@ -109,7 +110,7 @@ export class TaxService {
     };
   }
 
-  async generateTaxReport(year: number) {
+  async generateTaxReport(year: number, tenantId: string) {
     // Generate comprehensive tax report for the year
     const result = await db.query(
       `SELECT 
@@ -118,10 +119,10 @@ export class TaxService {
         SUM(amount) as total_sales,
         COUNT(CASE WHEN threshold_reached THEN 1 END) as threshold_transactions
        FROM tax_records
-       WHERE year = $1
+       WHERE year = $1 AND tenant_id = $2
        GROUP BY venue_id
        ORDER BY total_sales DESC`,
-      [year]
+      [year, tenantId]
     );
     
     const venues1099Required = result.rows.filter(

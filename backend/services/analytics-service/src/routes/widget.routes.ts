@@ -1,126 +1,210 @@
-import { Router } from 'express';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation';
-import { body, query, param } from 'express-validator';
+import { FastifyInstance } from 'fastify';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 import { widgetController } from '../controllers/widget.controller';
 
-const router = Router();
+const dashboardParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['dashboardId'],
+    properties: {
+      dashboardId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const widgetParamsSchema = {
+  params: {
+    type: 'object',
+    required: ['widgetId'],
+    properties: {
+      widgetId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const getWidgetDataSchema = {
+  params: {
+    type: 'object',
+    required: ['widgetId'],
+    properties: {
+      widgetId: { type: 'string', format: 'uuid' }
+    }
+  },
+  querystring: {
+    type: 'object',
+    properties: {
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' },
+      refresh: { type: 'boolean' }
+    }
+  }
+} as const;
 
-// Get widgets for a dashboard
-router.get(
-  '/dashboard/:dashboardId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('dashboardId').isUUID()
-  ]),
-  widgetController.getWidgets
-);
+const createWidgetSchema = {
+  body: {
+    type: 'object',
+    required: ['dashboardId', 'type', 'title', 'config', 'position', 'size'],
+    properties: {
+      dashboardId: { type: 'string', format: 'uuid' },
+      type: { type: 'string', minLength: 1 },
+      title: { type: 'string', minLength: 1, maxLength: 100 },
+      config: { type: 'object' },
+      position: {
+        type: 'object',
+        required: ['x', 'y'],
+        properties: {
+          x: { type: 'integer', minimum: 0 },
+          y: { type: 'integer', minimum: 0 }
+        }
+      },
+      size: {
+        type: 'object',
+        required: ['width', 'height'],
+        properties: {
+          width: { type: 'integer', minimum: 1, maximum: 12 },
+          height: { type: 'integer', minimum: 1, maximum: 12 }
+        }
+      }
+    }
+  }
+} as const;
 
-// Get a specific widget
-router.get(
-  '/:widgetId',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('widgetId').isUUID()
-  ]),
-  widgetController.getWidget
-);
+const updateWidgetSchema = {
+  params: {
+    type: 'object',
+    required: ['widgetId'],
+    properties: {
+      widgetId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', minLength: 1, maxLength: 100 },
+      config: { type: 'object' },
+      position: { type: 'object' },
+      size: { type: 'object' }
+    }
+  }
+} as const;
 
-// Get widget data
-router.get(
-  '/:widgetId/data',
-  authorize(['analytics.read']),
-  validateRequest([
-    param('widgetId').isUUID(),
-    query('startDate').optional().isISO8601(),
-    query('endDate').optional().isISO8601(),
-    query('refresh').optional().isBoolean()
-  ]),
-  widgetController.getWidgetData
-);
+const moveWidgetSchema = {
+  params: {
+    type: 'object',
+    required: ['widgetId'],
+    properties: {
+      widgetId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    required: ['targetDashboardId'],
+    properties: {
+      targetDashboardId: { type: 'string', format: 'uuid' },
+      position: { type: 'object' }
+    }
+  }
+} as const;
 
-// Create a widget
-router.post(
-  '/',
-  authorize(['analytics.write']),
-  validateRequest([
-    body('dashboardId').isUUID(),
-    body('type').isString().notEmpty(),
-    body('title').isString().notEmpty().isLength({ max: 100 }),
-    body('config').isObject(),
-    body('position').isObject(),
-    body('position.x').isInt({ min: 0 }),
-    body('position.y').isInt({ min: 0 }),
-    body('size').isObject(),
-    body('size.width').isInt({ min: 1, max: 12 }),
-    body('size.height').isInt({ min: 1, max: 12 })
-  ]),
-  widgetController.createWidget
-);
+const duplicateWidgetSchema = {
+  params: {
+    type: 'object',
+    required: ['widgetId'],
+    properties: {
+      widgetId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    properties: {
+      targetDashboardId: { type: 'string', format: 'uuid' }
+    }
+  }
+} as const;
 
-// Update a widget
-router.put(
-  '/:widgetId',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('widgetId').isUUID(),
-    body('title').optional().isString().notEmpty().isLength({ max: 100 }),
-    body('config').optional().isObject(),
-    body('position').optional().isObject(),
-    body('size').optional().isObject()
-  ]),
-  widgetController.updateWidget
-);
+const exportWidgetSchema = {
+  params: {
+    type: 'object',
+    required: ['widgetId'],
+    properties: {
+      widgetId: { type: 'string', format: 'uuid' }
+    }
+  },
+  body: {
+    type: 'object',
+    required: ['format'],
+    properties: {
+      format: { type: 'string', enum: ['csv', 'xlsx', 'json'] },
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' }
+    }
+  }
+} as const;
 
-// Delete a widget
-router.delete(
-  '/:widgetId',
-  authorize(['analytics.delete']),
-  validateRequest([
-    param('widgetId').isUUID()
-  ]),
-  widgetController.deleteWidget
-);
+export default async function widgetRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes
+  app.addHook('onRequest', authenticate);
 
-// Move widget to another dashboard
-router.post(
-  '/:widgetId/move',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('widgetId').isUUID(),
-    body('targetDashboardId').isUUID(),
-    body('position').optional().isObject()
-  ]),
-  widgetController.moveWidget
-);
+  // Get widgets for a dashboard
+  app.get('/dashboard/:dashboardId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dashboardParamsSchema,
+    handler: widgetController.getWidgets
+  });
 
-// Duplicate a widget
-router.post(
-  '/:widgetId/duplicate',
-  authorize(['analytics.write']),
-  validateRequest([
-    param('widgetId').isUUID(),
-    body('targetDashboardId').optional().isUUID()
-  ]),
-  widgetController.duplicateWidget
-);
+  // Get a specific widget
+  app.get('/:widgetId', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: widgetParamsSchema,
+    handler: widgetController.getWidget
+  });
 
-// Export widget data
-router.post(
-  '/:widgetId/export',
-  authorize(['analytics.export']),
-  validateRequest([
-    param('widgetId').isUUID(),
-    body('format').isIn(['csv', 'xlsx', 'json']),
-    body('startDate').optional().isISO8601(),
-    body('endDate').optional().isISO8601()
-  ]),
-  widgetController.exportWidgetData
-);
+  // Get widget data
+  app.get('/:widgetId/data', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: getWidgetDataSchema,
+    handler: widgetController.getWidgetData
+  });
 
-export { router as widgetRouter };
+  // Create a widget
+  app.post('/', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: createWidgetSchema,
+    handler: widgetController.createWidget
+  });
+
+  // Update a widget
+  app.put('/:widgetId', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: updateWidgetSchema,
+    handler: widgetController.updateWidget
+  });
+
+  // Delete a widget
+  app.delete('/:widgetId', {
+    preHandler: [authorize(['analytics.delete'])],
+    schema: widgetParamsSchema,
+    handler: widgetController.deleteWidget
+  });
+
+  // Move widget to another dashboard
+  app.post('/:widgetId/move', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: moveWidgetSchema,
+    handler: widgetController.moveWidget
+  });
+
+  // Duplicate a widget
+  app.post('/:widgetId/duplicate', {
+    preHandler: [authorize(['analytics.write'])],
+    schema: duplicateWidgetSchema,
+    handler: widgetController.duplicateWidget
+  });
+
+  // Export widget data
+  app.post('/:widgetId/export', {
+    preHandler: [authorize(['analytics.export'])],
+    schema: exportWidgetSchema,
+    handler: widgetController.exportWidgetData
+  });
+}

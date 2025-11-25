@@ -1,12 +1,14 @@
-import { createClient } from 'redis';
 import { v4 as uuidv4 } from 'uuid';
 import jwt from 'jsonwebtoken';
-import { config } from '../../config';
+import { RedisService } from '../redisService';
 import { query } from '../../config/database';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'WaitingRoomService' });
 
 // SECURITY FIX: Phase 2.2 - Use cryptographically signed JWT tokens
 const QUEUE_TOKEN_SECRET = process.env.QUEUE_TOKEN_SECRET || (() => {
-  console.error('WARNING: QUEUE_TOKEN_SECRET not set. Using default for development only.');
+  log.error('WARNING: QUEUE_TOKEN_SECRET not set - using default for development only');
   return 'dev-secret-change-in-production';
 })();
 
@@ -21,19 +23,7 @@ export interface QueueTokenPayload {
 }
 
 export class WaitingRoomService {
-  private redis: any; // TODO: Add proper Redis client type
   private processingRate: number = 100; // Users per minute
-
-  constructor() {
-    this.redis = createClient({
-      socket: {
-        host: config.redis.host,
-        port: config.redis.port
-      }
-    });
-
-    this.redis.connect().catch(console.error);
-  }
 
   async joinWaitingRoom(
     eventId: string,
@@ -46,6 +36,7 @@ export class WaitingRoomService {
     estimatedWaitTime: number;
     status: string;
   }> {
+    const redis = RedisService.getClient();
     const queueKey = `waiting_room:${eventId}`;
     const queueId = uuidv4();
     const timestamp = Date.now();
@@ -59,20 +50,21 @@ export class WaitingRoomService {
     // Calculate score (lower timestamp = higher priority, with priority boost)
     const score = timestamp - (priority * 1000000); // Priority users get million-point boost
 
-    // Add to sorted set
-    await this.redis.zAdd(queueKey, {
-      score: score,
-      value: JSON.stringify({
+    // Add to sorted set (ioredis uses lowercase zadd)
+    await redis.zadd(
+      queueKey,
+      score,
+      JSON.stringify({
         queueId,
         userId,
         sessionId,
         timestamp,
         priority
       })
-    });
+    );
 
     // Set queue expiry (2 hours)
-    await this.redis.expire(queueKey, 7200);
+    await redis.expire(queueKey, 7200);
 
     // Get position and estimate
     const position = await this.getQueuePosition(queueKey, queueId);
@@ -137,11 +129,11 @@ export class WaitingRoomService {
     processed: number;
     remaining: number;
   }> {
+    const redis = RedisService.getClient();
     const queueKey = `waiting_room:${eventId}`;
-    const processingKey = `processing:${eventId}`;
 
     // Get current queue size
-    const queueSize = await this.redis.zCard(queueKey) || 0;
+    const queueSize = await redis.zcard(queueKey) || 0;
 
     if (queueSize === 0) {
       return { processed: 0, remaining: 0 };
@@ -161,7 +153,7 @@ export class WaitingRoomService {
     }
 
     // Get next batch of users
-    const users = await this.redis.zRange(queueKey, 0, toProcess - 1) || [];
+    const users = await redis.zrange(queueKey, 0, toProcess - 1) || [];
 
     // Process each user
     let processed = 0;
@@ -173,7 +165,7 @@ export class WaitingRoomService {
       processed++;
 
       // Remove from queue
-      await this.redis.zRem(queueKey, userJson);
+      await redis.zrem(queueKey, userJson);
     }
 
     return {
@@ -186,8 +178,9 @@ export class WaitingRoomService {
     queueKey: string,
     queueId: string
   ): Promise<number> {
+    const redis = RedisService.getClient();
     // Find member with this queueId
-    const members = await this.redis.zRange(queueKey, 0, -1) || [];
+    const members = await redis.zrange(queueKey, 0, -1) || [];
 
     for (let i = 0; i < members.length; i++) {
       const member = JSON.parse(members[i]);
@@ -211,10 +204,12 @@ export class WaitingRoomService {
     queueId: string,
     userId?: string
   ): Promise<string> {
+    const redis = RedisService.getClient();
+    
     // Get userId from queue if not provided
     if (!userId) {
       const queueKey = `waiting_room:${eventId}`;
-      const members = await this.redis.zRange(queueKey, 0, -1) || [];
+      const members = await redis.zrange(queueKey, 0, -1) || [];
       for (const memberJson of members) {
         const member = JSON.parse(memberJson);
         if (member.queueId === queueId) {
@@ -242,7 +237,7 @@ export class WaitingRoomService {
 
     // Still store in Redis for quick validation and revocation
     const tokenKey = `access_token:${payload.jti}`;
-    await this.redis.setEx(tokenKey, 600, JSON.stringify({
+    await redis.setex(tokenKey, 600, JSON.stringify({
       eventId,
       queueId,
       userId: userId || 'unknown',
@@ -258,6 +253,8 @@ export class WaitingRoomService {
     eventId?: string;
   }> {
     try {
+      const redis = RedisService.getClient();
+      
       // Verify JWT signature
       const decoded = jwt.verify(token, QUEUE_TOKEN_SECRET, {
         algorithms: ['HS256'],
@@ -271,7 +268,7 @@ export class WaitingRoomService {
 
       // Check if token still exists in Redis (for revocation)
       const tokenKey = `access_token:${decoded.jti}`;
-      const redisData = await this.redis.get(tokenKey);
+      const redisData = await redis.get(tokenKey);
 
       if (!redisData) {
         // Token was revoked or expired in Redis
@@ -295,8 +292,9 @@ export class WaitingRoomService {
   }
 
   private async getActiveUserCount(eventId: string): Promise<number> {
+    const redis = RedisService.getClient();
     const activeKey = `active_users:${eventId}`;
-    return await this.redis.sCard(activeKey) || 0;
+    return await redis.scard(activeKey) || 0;
   }
 
   private async getMaxActiveUsers(eventId: string): Promise<number> {
@@ -305,12 +303,13 @@ export class WaitingRoomService {
   }
 
   private async moveToProcessing(eventId: string, user: any): Promise<void> {
+    const redis = RedisService.getClient();
     const activeKey = `active_users:${eventId}`;
 
-    await this.redis.sAdd(activeKey, user.userId);
+    await redis.sadd(activeKey, user.userId);
 
     // Set expiry on active user (10 minutes to complete purchase)
-    await this.redis.expire(activeKey, 600);
+    await redis.expire(activeKey, 600);
   }
 
   private async recordQueueActivity(
@@ -339,9 +338,10 @@ export class WaitingRoomService {
     eventId: string,
     userId: string
   ): Promise<any | null> {
+    const redis = RedisService.getClient();
     const queueKey = `waiting_room:${eventId}`;
 
-    const members = await this.redis.zRange(queueKey, 0, -1) || [];
+    const members = await redis.zrange(queueKey, 0, -1) || [];
 
     for (let i = 0; i < members.length; i++) {
       const member = JSON.parse(members[i]);
@@ -365,12 +365,13 @@ export class WaitingRoomService {
     averageWaitTime: number;
     abandonmentRate: number;
   }> {
+    const redis = RedisService.getClient();
     const queueKey = `waiting_room:${eventId}`;
     const activeKey = `active_users:${eventId}`;
 
     const [queueSize, activeCount] = await Promise.all([
-      this.redis.zCard(queueKey),
-      this.redis.sCard(activeKey)
+      redis.zcard(queueKey),
+      redis.scard(activeKey)
     ]);
 
     // Calculate abandonment rate from activity logs

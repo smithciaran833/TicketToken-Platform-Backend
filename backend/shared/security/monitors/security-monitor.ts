@@ -21,15 +21,15 @@ export class SecurityMonitor extends EventEmitter {
 
   private constructor() {
     super();
-    
+
     this.pool = new Pool({
-      connectionString: process.env.DATABASE_URL
+      connectionString: process.env.DATABASE_URL,
     });
-    
+
     this.redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost'
+      host: process.env.REDIS_HOST || 'localhost',
     });
-    
+
     this.alertThresholds = new Map([
       ['failed_login', 5],
       ['rate_limit', 100],
@@ -38,9 +38,9 @@ export class SecurityMonitor extends EventEmitter {
       ['suspicious_ip', 10],
       ['payment_fraud', 1],
     ]);
-    
+
     this.alertCounts = new Map();
-    
+
     this.startMonitoring();
   }
 
@@ -54,16 +54,16 @@ export class SecurityMonitor extends EventEmitter {
   private startMonitoring() {
     // Monitor failed logins
     setInterval(() => this.checkFailedLogins(), 60000);
-    
+
     // Monitor rate limits
     setInterval(() => this.checkRateLimits(), 30000);
-    
+
     // Monitor suspicious activities
     setInterval(() => this.checkSuspiciousActivities(), 60000);
-    
+
     // Monitor system health
     setInterval(() => this.checkSystemHealth(), 300000);
-    
+
     // Monitor payment anomalies
     setInterval(() => this.checkPaymentAnomalies(), 120000);
   }
@@ -83,9 +83,9 @@ export class SecurityMonitor extends EventEmitter {
         severity: 'high',
         description: `Multiple failed login attempts from ${row.ip_address}`,
         metadata: { ip: row.ip_address, attempts: row.attempts },
-        timestamp: new Date()
+        timestamp: new Date(),
       });
-      
+
       // Auto-block IP after threshold
       if (row.attempts > 10) {
         await this.blockIP(row.ip_address);
@@ -95,20 +95,20 @@ export class SecurityMonitor extends EventEmitter {
 
   private async checkRateLimits() {
     const keys = await this.redis.keys('rl:*');
-    
+
     for (const key of keys) {
       const value = await this.redis.get(key);
       const count = parseInt(value || '0');
-      
+
       if (count > 1000) {
         const [, type, identifier] = key.split(':');
-        
+
         this.emit('security:event', {
           type: 'rate_limit',
           severity: 'medium',
           description: `High rate limit consumption: ${type}`,
           metadata: { identifier, count },
-          timestamp: new Date()
+          timestamp: new Date(),
         });
       }
     }
@@ -129,7 +129,7 @@ export class SecurityMonitor extends EventEmitter {
         severity: 'critical',
         description: 'SQL injection attempts detected',
         metadata: { count: sqlInjections.rows[0].count },
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
@@ -152,7 +152,7 @@ export class SecurityMonitor extends EventEmitter {
         severity: 'high',
         description: 'Suspicious access pattern detected',
         metadata: pattern,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
   }
@@ -170,21 +170,22 @@ export class SecurityMonitor extends EventEmitter {
         severity: 'high',
         description: 'Database connection pool near limit',
         metadata: { connections: dbStats.rows[0].connections },
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
     // Check Redis memory
     const redisInfo = await this.redis.info('memory');
     const usedMemory = parseInt(redisInfo.match(/used_memory:(\d+)/)?.[1] || '0');
-    
-    if (usedMemory > 1024 * 1024 * 1024) { // 1GB
+
+    if (usedMemory > 1024 * 1024 * 1024) {
+      // 1GB
       this.emit('security:event', {
         type: 'system_health',
         severity: 'medium',
         description: 'Redis memory usage high',
         metadata: { usedMemory },
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
   }
@@ -209,7 +210,7 @@ export class SecurityMonitor extends EventEmitter {
         severity: 'high',
         description: 'Unusual payment pattern detected',
         metadata: anomaly,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
     }
 
@@ -231,9 +232,9 @@ export class SecurityMonitor extends EventEmitter {
         severity: 'critical',
         description: 'Possible card testing attack',
         metadata: test,
-        timestamp: new Date()
+        timestamp: new Date(),
       });
-      
+
       await this.blockIP(test.ip_address);
     }
   }
@@ -242,13 +243,16 @@ export class SecurityMonitor extends EventEmitter {
     // Add to Redis blacklist
     await this.redis.sadd('blocked_ips', ip);
     await this.redis.expire('blocked_ips', 86400); // 24 hours
-    
+
     // Log the block
-    await this.pool.query(`
+    await this.pool.query(
+      `
       INSERT INTO ip_blocks (ip_address, reason, expires_at)
       VALUES ($1, 'Automatic security block', NOW() + INTERVAL '24 hours')
-    `, [ip]);
-    
+    `,
+      [ip]
+    );
+
     // Update WAF if configured
     if (process.env.CLOUDFLARE_API_KEY) {
       await this.updateCloudflareWAF(ip);
@@ -263,15 +267,15 @@ export class SecurityMonitor extends EventEmitter {
           mode: 'block',
           configuration: {
             target: 'ip',
-            value: ip
+            value: ip,
           },
-          notes: 'Automated security block'
+          notes: 'Automated security block',
         },
         {
           headers: {
             'X-Auth-Key': process.env.CLOUDFLARE_API_KEY,
-            'X-Auth-Email': process.env.CLOUDFLARE_EMAIL
-          }
+            'X-Auth-Email': process.env.CLOUDFLARE_EMAIL,
+          },
         }
       );
     } catch (error) {
@@ -281,18 +285,21 @@ export class SecurityMonitor extends EventEmitter {
 
   async handleSecurityEvent(event: SecurityEvent) {
     // Log to database
-    await this.pool.query(`
+    await this.pool.query(
+      `
       INSERT INTO security_alerts (alert_type, severity, description, metadata)
       VALUES ($1, $2, $3, $4)
-    `, [event.type, event.severity, event.description, JSON.stringify(event.metadata)]);
+    `,
+      [event.type, event.severity, event.description, JSON.stringify(event.metadata)]
+    );
 
     // Check thresholds
     const key = event.type;
     const count = (this.alertCounts.get(key) || 0) + 1;
     this.alertCounts.set(key, count);
-    
+
     const threshold = this.alertThresholds.get(key) || 10;
-    
+
     if (count >= threshold) {
       await this.sendAlert(event);
       this.alertCounts.set(key, 0); // Reset counter
@@ -313,8 +320,8 @@ export class SecurityMonitor extends EventEmitter {
         secure: false,
         auth: {
           user: process.env.SMTP_USER,
-          pass: process.env.SMTP_PASS
-        }
+          pass: process.env.SMTP_PASS,
+        },
       });
 
       await transporter.sendMail({
@@ -328,7 +335,7 @@ export class SecurityMonitor extends EventEmitter {
           <p><strong>Description:</strong> ${event.description}</p>
           <p><strong>Time:</strong> ${event.timestamp}</p>
           <pre>${JSON.stringify(event.metadata, null, 2)}</pre>
-        `
+        `,
       });
     }
 
@@ -336,16 +343,18 @@ export class SecurityMonitor extends EventEmitter {
     if (process.env.SLACK_WEBHOOK_URL) {
       await axios.post(process.env.SLACK_WEBHOOK_URL, {
         text: `🚨 Security Alert: ${event.type}`,
-        attachments: [{
-          color: event.severity === 'critical' ? 'danger' : 'warning',
-          fields: [
-            { title: 'Severity', value: event.severity, short: true },
-            { title: 'Type', value: event.type, short: true },
-            { title: 'Description', value: event.description },
-            { title: 'Metadata', value: '```' + JSON.stringify(event.metadata, null, 2) + '```' }
-          ],
-          ts: Math.floor(event.timestamp.getTime() / 1000)
-        }]
+        attachments: [
+          {
+            color: event.severity === 'critical' ? 'danger' : 'warning',
+            fields: [
+              { title: 'Severity', value: event.severity, short: true },
+              { title: 'Type', value: event.type, short: true },
+              { title: 'Description', value: event.description },
+              { title: 'Metadata', value: '```' + JSON.stringify(event.metadata, null, 2) + '```' },
+            ],
+            ts: Math.floor(event.timestamp.getTime() / 1000),
+          },
+        ],
       });
     }
 
@@ -358,8 +367,8 @@ export class SecurityMonitor extends EventEmitter {
           summary: `${event.type}: ${event.description}`,
           severity: 'critical',
           source: 'security-monitor',
-          custom_details: event.metadata
-        }
+          custom_details: event.metadata,
+        },
       });
     }
   }

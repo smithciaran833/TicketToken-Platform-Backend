@@ -1,6 +1,9 @@
 import { Pool } from 'pg';
 import Stripe from 'stripe';
 import { PaymentState } from '../services/state-machine/payment-state-machine';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'PaymentReconciliation' });
 
 export class PaymentReconciliation {
   private db: Pool;
@@ -12,11 +15,11 @@ export class PaymentReconciliation {
   }
 
   async run(): Promise<void> {
-    console.log('Starting payment reconciliation...');
+    log.info('Starting payment reconciliation');
     
     // Get payments in processing state for more than 10 minutes
     const stuckPayments = await this.db.query(
-      `SELECT * FROM payments 
+      `SELECT * FROM payment_transactions 
        WHERE state = $1 
        AND updated_at < NOW() - INTERVAL '10 minutes'`,
       [PaymentState.PROCESSING]
@@ -41,14 +44,14 @@ export class PaymentReconciliation {
         const newState = this.mapStripeStatus(intent.status);
         if (newState !== payment.state) {
           await this.db.query(
-            'UPDATE payments SET state = $1, updated_at = NOW() WHERE id = $2',
+            'UPDATE payment_transactions SET state = $1, updated_at = NOW() WHERE id = $2',
             [newState, payment.id]
           );
-          console.log(`Reconciled payment ${payment.id}: ${payment.state} -> ${newState}`);
+          log.info('Reconciled payment', { paymentId: payment.id, oldState: payment.state, newState });
         }
       }
     } catch (error) {
-      console.error(`Failed to reconcile payment ${payment.id}:`, error);
+      log.error('Failed to reconcile payment', { paymentId: payment.id, error });
     }
   }
 
@@ -76,7 +79,7 @@ export class PaymentReconciliation {
       );
 
       if (exists.rows.length === 0) {
-        console.log(`Missing webhook event: ${event.id}`);
+        log.warn('Missing webhook event detected', { eventId: event.id, eventType: event.type });
         // Queue it for processing
         await this.db.query(
           `INSERT INTO webhook_inbox (webhook_id, provider, event_type, payload, processed)

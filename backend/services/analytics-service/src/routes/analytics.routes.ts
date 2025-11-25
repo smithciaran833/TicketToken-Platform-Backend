@@ -1,103 +1,230 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { analyticsController } from '../controllers/analytics.controller';
-import { authenticate, authorize } from "../middleware/auth.middleware";
-import { validateRequest } from '../middleware/validation.middleware';
-import { analyticsValidators } from '../validators/analytics.validators';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 
-const router = Router();
+// JSON Schema definitions for validation
+const dateRangeSchema = {
+  querystring: {
+    type: 'object',
+    required: ['startDate', 'endDate'],
+    properties: {
+      startDate: {
+        type: 'string',
+        format: 'date-time',
+        description: 'Start date in ISO 8601 format'
+      },
+      endDate: {
+        type: 'string',
+        format: 'date-time',
+        description: 'End date in ISO 8601 format'
+      }
+    }
+  }
+} as const;
 
-// All routes require authentication
-router.use(authenticate);
+const projectionSchema = {
+  querystring: {
+    type: 'object',
+    properties: {
+      days: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 365,
+        description: 'Number of days to project'
+      }
+    }
+  }
+} as const;
 
-// Apply authentication to all routes
+const churnRiskSchema = {
+  querystring: {
+    type: 'object',
+    properties: {
+      threshold: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 365,
+        description: 'Threshold in days for churn risk'
+      }
+    }
+  }
+} as const;
 
-// Revenue endpoints
-router.get('/revenue/summary',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.dateRange),
-  analyticsController.getRevenueSummary
-);
+const salesMetricsSchema = {
+  querystring: {
+    type: 'object',
+    required: ['startDate', 'endDate'],
+    properties: {
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' },
+      granularity: {
+        type: 'string',
+        enum: ['hour', 'day', 'week', 'month'],
+        description: 'Time granularity for metrics'
+      }
+    }
+  }
+} as const;
 
-router.get('/revenue/by-channel',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.dateRange),
-  analyticsController.getRevenueByChannel
-);
+const topEventsSchema = {
+  querystring: {
+    type: 'object',
+    required: ['startDate', 'endDate'],
+    properties: {
+      startDate: { type: 'string', format: 'date-time' },
+      endDate: { type: 'string', format: 'date-time' },
+      limit: {
+        type: 'integer',
+        minimum: 1,
+        maximum: 100,
+        default: 10,
+        description: 'Number of top events to return'
+      }
+    }
+  }
+} as const;
 
-router.get('/revenue/projections',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.projection),
-  analyticsController.getRevenueProjections
-);
+const customQuerySchema = {
+  body: {
+    type: 'object',
+    required: ['metrics', 'timeRange'],
+    properties: {
+      metrics: {
+        type: 'array',
+        minItems: 1,
+        items: {
+          type: 'string',
+          enum: ['revenue', 'ticketSales', 'conversionRate', 'customerMetrics', 'topEvents', 'salesTrends']
+        }
+      },
+      timeRange: {
+        type: 'object',
+        required: ['start', 'end'],
+        properties: {
+          start: { type: 'string', format: 'date-time' },
+          end: { type: 'string', format: 'date-time' },
+          granularity: {
+            type: 'string',
+            enum: ['hour', 'day', 'week', 'month']
+          }
+        }
+      },
+      filters: {
+        type: 'object',
+        additionalProperties: true
+      },
+      groupBy: {
+        type: 'array',
+        items: { type: 'string' }
+      }
+    }
+  }
+} as const;
 
-// Customer analytics endpoints
-router.get('/customers/lifetime-value',
-  authorize(['analytics.read']),
-  analyticsController.getCustomerLifetimeValue
-);
+const dashboardSchema = {
+  querystring: {
+    type: 'object',
+    properties: {
+      period: {
+        type: 'string',
+        enum: ['24h', '7d', '30d', '90d'],
+        default: '7d',
+        description: 'Time period for dashboard data'
+      }
+    }
+  }
+} as const;
 
-router.get('/customers/segments',
-  authorize(['analytics.read']),
-  analyticsController.getCustomerSegments
-);
+export default async function analyticsRoutes(app: FastifyInstance) {
+  // Apply authentication to all routes in this plugin
+  app.addHook('onRequest', authenticate);
 
-router.get('/customers/churn-risk',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.churnRisk),
-  analyticsController.getChurnRiskAnalysis
-);
+  // Revenue endpoints
+  app.get('/revenue/summary', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dateRangeSchema,
+    handler: analyticsController.getRevenueSummary
+  });
 
-// Sales metrics endpoints
-router.get('/sales/metrics',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.salesMetrics),
-  analyticsController.getSalesMetrics
-);
+  app.get('/revenue/by-channel', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dateRangeSchema,
+    handler: analyticsController.getRevenueByChannel
+  });
 
-router.get('/sales/trends',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.dateRange),
-  analyticsController.getSalesTrends
-);
+  app.get('/revenue/projections', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: projectionSchema,
+    handler: analyticsController.getRevenueProjections
+  });
 
-// Event performance endpoints
-router.get('/events/performance',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.dateRange),
-  analyticsController.getEventPerformance
-);
+  // Customer analytics endpoints
+  app.get('/customers/lifetime-value', {
+    preHandler: [authorize(['analytics.read'])],
+    handler: analyticsController.getCustomerLifetimeValue
+  });
 
-router.get('/events/top-performing',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.topEvents),
-  analyticsController.getTopPerformingEvents
-);
+  app.get('/customers/segments', {
+    preHandler: [authorize(['analytics.read'])],
+    handler: analyticsController.getCustomerSegments
+  });
 
-// Real-time metrics endpoint
-router.get('/realtime/summary',
-  authorize(['analytics.read']),
-  analyticsController.getRealtimeSummary
-);
+  app.get('/customers/churn-risk', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: churnRiskSchema,
+    handler: analyticsController.getChurnRiskAnalysis
+  });
 
-// Conversion metrics
-router.get('/conversions/funnel',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.dateRange),
-  analyticsController.getConversionFunnel
-);
+  // Sales metrics endpoints
+  app.get('/sales/metrics', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: salesMetricsSchema,
+    handler: analyticsController.getSalesMetrics
+  });
 
-// Custom query endpoint for complex analytics
-router.post('/query',
-  authorize(['analytics.read', 'analytics.write']),
-  validateRequest(analyticsValidators.customQuery),
-  analyticsController.executeCustomQuery
-);
+  app.get('/sales/trends', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dateRangeSchema,
+    handler: analyticsController.getSalesTrends
+  });
 
-// Dashboard endpoint - aggregates multiple metrics
-router.get('/dashboard',
-  authorize(['analytics.read']),
-  validateRequest(analyticsValidators.dashboard),
-  analyticsController.getDashboardData
-);
+  // Event performance endpoints
+  app.get('/events/performance', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dateRangeSchema,
+    handler: analyticsController.getEventPerformance
+  });
 
-export default router;
+  app.get('/events/top-performing', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: topEventsSchema,
+    handler: analyticsController.getTopPerformingEvents
+  });
+
+  // Real-time metrics endpoint
+  app.get('/realtime/summary', {
+    preHandler: [authorize(['analytics.read'])],
+    handler: analyticsController.getRealtimeSummary
+  });
+
+  // Conversion metrics
+  app.get('/conversions/funnel', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dateRangeSchema,
+    handler: analyticsController.getConversionFunnel
+  });
+
+  // Custom query endpoint for complex analytics
+  app.post('/query', {
+    preHandler: [authorize(['analytics.read', 'analytics.write'])],
+    schema: customQuerySchema,
+    handler: analyticsController.executeCustomQuery
+  });
+
+  // Dashboard endpoint - aggregates multiple metrics
+  app.get('/dashboard', {
+    preHandler: [authorize(['analytics.read'])],
+    schema: dashboardSchema,
+    handler: analyticsController.getDashboardData
+  });
+}

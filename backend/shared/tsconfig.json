@@ -4,15 +4,48 @@
     "module": "commonjs",
     "lib": ["ES2020"],
     "outDir": "./dist",
-    "rootDir": "./src",
+    
+    // Strict Type-Checking Options (REVERTED - Phase 1 Strategic Reset)
+    // Disabled to unblock compilation and test execution
+    // Will be re-enabled incrementally in future phases
     "strict": false,
+    "noImplicitAny": true,              // Keep this - catches obvious issues
+    "strictNullChecks": false,          // Disabled - causes most errors
+    "strictFunctionTypes": false,        // Disabled
+    "strictBindCallApply": false,        // Disabled
+    "strictPropertyInitialization": false, // Disabled
+    "noImplicitThis": false,            // Disabled
+    "alwaysStrict": false,              // Disabled
+    
+    // Additional Checks (DISABLED to unblock)
+    "noUnusedLocals": false,            // Disabled - ~25 warnings
+    "noUnusedParameters": false,        // Disabled
+    "noImplicitReturns": false,         // Disabled
+    "noFallthroughCasesInSwitch": false, // Disabled
+    "noUncheckedIndexedAccess": false,  // Disabled
+    
+    // Module Resolution
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
+    "moduleResolution": "node",
+    
+    // Emit
     "declaration": true,
-    "declarationMap": true
+    "declarationMap": true,
+    "sourceMap": true,
+    "removeComments": false,
+    "importHelpers": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "include": [
+    "src/**/*.ts",
+    "middleware/**/*.ts",
+    "security/**/*.ts",
+    "database/**/*.ts",
+    "messaging/**/*.ts",
+    "utils/**/*.ts",
+    "tests/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
 }

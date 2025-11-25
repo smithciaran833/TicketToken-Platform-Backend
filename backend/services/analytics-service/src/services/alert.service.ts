@@ -1,6 +1,9 @@
-import { AlertModel } from '../models';
+import { AlertModel, Alert as DBAlert } from '../models';
 import {
   Alert,
+  AlertType,
+  AlertSeverity,
+  AlertStatus,
   AlertInstance,
   ComparisonOperator
 } from '../types';
@@ -18,6 +21,34 @@ export class AlertService {
       this.instance = new AlertService();
     }
     return this.instance;
+  }
+
+  private mapDBAlertToAlert(dbAlert: DBAlert): Alert {
+    return {
+      id: dbAlert.id,
+      venueId: dbAlert.tenant_id,
+      name: dbAlert.message || 'Alert',
+      description: dbAlert.message,
+      type: (dbAlert.alert_type as AlertType) || AlertType.THRESHOLD,
+      severity: (dbAlert.severity as AlertSeverity) || AlertSeverity.WARNING,
+      status: dbAlert.status === 'active' ? AlertStatus.ACTIVE : AlertStatus.DISABLED,
+      conditions: [
+        {
+          id: dbAlert.id,
+          metric: dbAlert.metric_type,
+          operator: ComparisonOperator.GREATER_THAN,
+          value: dbAlert.threshold_value || 0
+        }
+      ],
+      actions: [],
+      enabled: dbAlert.status === 'active',
+      triggerCount: 0,
+      lastTriggered: dbAlert.triggered_at,
+      createdBy: dbAlert.tenant_id,
+      schedule: undefined,
+      createdAt: dbAlert.created_at,
+      updatedAt: dbAlert.updated_at
+    };
   }
 
   async startMonitoring(): Promise<void> {
@@ -41,11 +72,15 @@ export class AlertService {
     data: Omit<Alert, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<Alert> {
     try {
-      const alert = await AlertModel.createAlert(data);
+      const dbAlert = await AlertModel.createAlert(data);
+      if (!dbAlert) {
+        throw new Error('Failed to create alert');
+      }
+      const alert = this.mapDBAlertToAlert(dbAlert);
       this.log.info('Alert created', { alertId: alert.id, name: alert.name });
       return alert;
     } catch (error) {
-      this.log.error('Failed to create alert', { error });
+      this.log.error('Failed to create alert', error);
       throw error;
     }
   }
@@ -55,22 +90,30 @@ export class AlertService {
     data: Partial<Alert>
   ): Promise<Alert> {
     try {
-      const alert = await AlertModel.updateAlert(alertId, data);
+      const dbAlert = await AlertModel.updateAlert(alertId, data);
+      if (!dbAlert) {
+        throw new Error('Alert not found');
+      }
+      const alert = this.mapDBAlertToAlert(dbAlert);
       this.log.info('Alert updated', { alertId });
       return alert;
     } catch (error) {
-      this.log.error('Failed to update alert', { error, alertId });
+      this.log.error('Failed to update alert', error, { alertId });
       throw error;
     }
   }
 
   async toggleAlert(alertId: string, enabled: boolean): Promise<Alert> {
     try {
-      const alert = await AlertModel.toggleAlert(alertId, enabled);
+      const dbAlert = await AlertModel.toggleAlert(alertId, enabled);
+      if (!dbAlert) {
+        throw new Error('Alert not found');
+      }
+      const alert = this.mapDBAlertToAlert(dbAlert);
       this.log.info('Alert toggled', { alertId, enabled });
       return alert;
     } catch (error) {
-      this.log.error('Failed to toggle alert', { error, alertId });
+      this.log.error('Failed to toggle alert', error, { alertId });
       throw error;
     }
   }
@@ -81,14 +124,15 @@ export class AlertService {
       const venues = await this.getMonitoredVenues();
 
       for (const venueId of venues) {
-        const alerts = await AlertModel.getAlertsByVenue(venueId, true);
+        const dbAlerts = await AlertModel.getAlertsByVenue(venueId, true);
+        const alerts = dbAlerts.map(a => this.mapDBAlertToAlert(a));
 
         for (const alert of alerts) {
           await this.checkAlert(alert);
         }
       }
     } catch (error) {
-      this.log.error('Failed to check alerts', { error });
+      this.log.error('Failed to check alerts', error);
     }
   }
 
@@ -122,7 +166,7 @@ export class AlertService {
         }
       }
     } catch (error) {
-      this.log.error('Failed to check alert', { error, alertId: alert.id });
+      this.log.error('Failed to check alert', error, { alertId: alert.id });
     }
   }
 
@@ -141,7 +185,7 @@ export class AlertService {
 
       return true;
     } catch (error) {
-      this.log.error('Failed to evaluate conditions', { error, alertId: alert.id });
+      this.log.error('Failed to evaluate conditions', error, { alertId: alert.id });
       return false;
     }
   }
@@ -202,7 +246,7 @@ export class AlertService {
 
       return instance;
     } catch (error) {
-      this.log.error('Failed to trigger alert', { error, alertId: alert.id });
+      this.log.error('Failed to trigger alert', error, { alertId: alert.id });
       throw error;
     }
   }
@@ -245,8 +289,7 @@ export class AlertService {
             break;
         }
       } catch (error) {
-        this.log.error('Failed to execute alert action', {
-          error,
+        this.log.error('Failed to execute alert action', error, {
           alertId: alert.id,
           actionType: action.type
         });
@@ -264,7 +307,7 @@ export class AlertService {
       await AlertModel.resolveAlertInstance(instance.id);
       this.log.info('Alert resolved', { instanceId: instance.id });
     } catch (error) {
-      this.log.error('Failed to resolve alert', { error, instanceId: instance.id });
+      this.log.error('Failed to resolve alert', error, { instanceId: instance.id });
     }
   }
 
@@ -326,7 +369,8 @@ export class AlertService {
   }
 
   async getAlertsByVenue(venueId: string): Promise<Alert[]> {
-    return await AlertModel.getAlertsByVenue(venueId);
+    const dbAlerts = await AlertModel.getAlertsByVenue(venueId);
+    return dbAlerts.map(a => this.mapDBAlertToAlert(a));
   }
 
   async getAlertInstances(alertId: string, limit: number = 50): Promise<AlertInstance[]> {

@@ -1,12 +1,16 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from './logger';
 
 /**
  * Wraps async route handlers to catch promise rejections
  */
 export function asyncHandler(fn: Function) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    Promise.resolve(fn(req, res, next)).catch(next);
+  return async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      await fn(request, reply);
+    } catch (error) {
+      throw error; // Fastify handles errors automatically
+    }
   };
 }
 
@@ -22,30 +26,25 @@ export function withRetry<T>(
     onError?: (error: any, attempt: number) => void;
   } = {}
 ): Promise<T> {
-  const {
-    maxAttempts = 3,
-    delay = 1000,
-    backoff = 2,
-    onError
-  } = options;
+  const { maxAttempts = 3, delay = 1000, backoff = 2, onError } = options;
 
   return new Promise(async (resolve, reject) => {
     let lastError: any;
-    
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         const result = await fn();
         return resolve(result);
       } catch (error) {
         lastError = error;
-        
+
         if (onError) {
           onError(error, attempt);
         }
 
         if (attempt < maxAttempts) {
           const waitTime = delay * Math.pow(backoff, attempt - 1);
-          await new Promise(resolve => setTimeout(resolve, waitTime));
+          await new Promise((resolve) => setTimeout(resolve, waitTime));
         }
       }
     }
@@ -64,9 +63,7 @@ export function withTimeout<T>(
 ): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
-    )
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMessage)), timeoutMs)),
   ]);
 }
 
@@ -100,18 +97,14 @@ export async function processBatch<T, R>(
     onError?: (error: any, item: T) => void;
   } = {}
 ): Promise<{ results: R[]; errors: Array<{ item: T; error: any }> }> {
-  const {
-    batchSize = 10,
-    continueOnError = false,
-    onError
-  } = options;
+  const { batchSize = 10, continueOnError = false, onError } = options;
 
   const results: R[] = [];
   const errors: Array<{ item: T; error: any }> = [];
 
   for (let i = 0; i < items.length; i += batchSize) {
     const batch = items.slice(i, i + batchSize);
-    
+
     const batchPromises = batch.map(async (item) => {
       try {
         const result = await processor(item);
@@ -119,7 +112,7 @@ export async function processBatch<T, R>(
         return { success: true, result };
       } catch (error) {
         errors.push({ item, error });
-        
+
         if (onError) {
           onError(error, item);
         }
@@ -163,7 +156,7 @@ export class CircuitBreaker {
 
     try {
       const result = await withTimeout(fn(), this.timeout);
-      
+
       if (this.state === 'HALF_OPEN') {
         this.state = 'CLOSED';
         this.failures = 0;
@@ -192,7 +185,7 @@ export class CircuitBreaker {
     return {
       state: this.state,
       failures: this.failures,
-      lastFailureTime: this.lastFailureTime
+      lastFailureTime: this.lastFailureTime,
     };
   }
 }
@@ -205,7 +198,7 @@ export function setupGlobalErrorHandlers() {
     logger.error('Unhandled Promise Rejection', {
       reason: reason?.message || reason,
       stack: reason?.stack,
-      promise: promise.toString()
+      promise: promise.toString(),
     });
 
     // In production, you might want to exit after logging
@@ -220,7 +213,7 @@ export function setupGlobalErrorHandlers() {
   process.on('uncaughtException', (error: Error) => {
     logger.error('Uncaught Exception', {
       message: error.message,
-      stack: error.stack
+      stack: error.stack,
     });
 
     // Exit immediately for uncaught exceptions

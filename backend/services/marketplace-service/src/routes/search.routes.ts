@@ -1,10 +1,8 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { searchController } from '../controllers/search.controller';
 import { authMiddleware } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import Joi from 'joi';
-
-const router = Router();
 
 // Validation schemas
 const searchSchema = Joi.object({
@@ -17,24 +15,18 @@ const searchSchema = Joi.object({
   offset: Joi.number().integer().min(0).default(0),
 });
 
-// Public search (rate limited in production)
-router.get(
-  '/',
-  validate(searchSchema),
-  searchController.searchListings.bind(searchController)
-);
+export default async function searchRoutes(fastify: FastifyInstance) {
+  // Public search (rate limited in production)
+  fastify.get('/', {
+    preHandler: [validate(searchSchema)]
+  }, searchController.searchListings.bind(searchController));
 
-// Authenticated search with personalized results
-router.use(authMiddleware);
+  // Authenticated search with personalized results
+  fastify.get('/recommended', {
+    preHandler: [authMiddleware]
+  }, searchController.getRecommended.bind(searchController));
 
-router.get(
-  '/recommended',
-  searchController.getRecommended.bind(searchController)
-);
-
-router.get(
-  '/watchlist',
-  searchController.getWatchlist.bind(searchController)
-);
-
-export default router;
+  fastify.get('/watchlist', {
+    preHandler: [authMiddleware]
+  }, searchController.getWatchlist.bind(searchController));
+}

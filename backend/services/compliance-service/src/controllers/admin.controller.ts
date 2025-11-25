@@ -1,27 +1,33 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
 import { db } from '../services/database.service';
 import { notificationService } from '../services/notification.service';
+import { logger } from '../utils/logger';
+import { requireTenantId } from '../middleware/tenant.middleware';
 
 export class AdminController {
-  static async getPendingReviews(req: Request, res: Response) {
+  async getPendingReviews(request: FastifyRequest, reply: FastifyReply) {
     try {
+      const tenantId = requireTenantId(request);
+
       const pendingVerifications = await db.query(`
         SELECT v.*, r.risk_score, r.factors, r.recommendation
         FROM venue_verifications v
-        LEFT JOIN risk_assessments r ON v.venue_id = r.venue_id
-        WHERE v.status = 'pending' 
-        OR v.manual_review_required = true
+        LEFT JOIN risk_assessments r ON v.venue_id = r.venue_id AND r.tenant_id = $1
+        WHERE v.tenant_id = $1
+        AND (v.status = 'pending' OR v.manual_review_required = true)
         ORDER BY v.created_at DESC
-      `);
-      
+      `, [tenantId]);
+
       const pendingFlags = await db.query(`
-        SELECT * FROM risk_flags 
-        WHERE resolved = false
+        SELECT * FROM risk_flags
+        WHERE tenant_id = $1 AND resolved = false
         ORDER BY created_at DESC
-      `);
-      
-      res.json({
+      `, [tenantId]);
+
+      logger.info(`Admin retrieved ${pendingVerifications.rows.length} pending reviews for tenant ${tenantId}`);
+
+      return reply.send({
         success: true,
         data: {
           verifications: pendingVerifications.rows,
@@ -30,81 +36,90 @@ export class AdminController {
         }
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error getting pending reviews: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });
     }
   }
-  
-  static async approveVerification(req: Request, res: Response) {
+
+  async approveVerification(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { venueId } = req.params;
-      const { notes } = req.body;
-      
+      const tenantId = requireTenantId(request);
+      const { venueId } = request.params as any;
+      const { notes } = request.body as any;
+
       await db.query(`
-        UPDATE venue_verifications 
-        SET status = 'verified', 
+        UPDATE venue_verifications
+        SET status = 'verified',
             manual_review_required = false,
             manual_review_notes = $2,
             updated_at = NOW()
-        WHERE venue_id = $1
-      `, [venueId, notes]);
-      
-      // Log the action
+        WHERE venue_id = $1 AND tenant_id = $3
+      `, [venueId, notes, tenantId]);
+
+      // Log the action with tenant_id
       await db.query(`
-        INSERT INTO compliance_audit_log 
-        (action, entity_type, entity_id, user_id, metadata)
-        VALUES ('verification_approved', 'venue', $1, $2, $3)
-      `, [venueId, 'admin', JSON.stringify({ notes })]);
-      
+        INSERT INTO compliance_audit_log
+        (action, entity_type, entity_id, user_id, metadata, tenant_id)
+        VALUES ('verification_approved', 'venue', $1, $2, $3, $4)
+      `, [venueId, 'admin', JSON.stringify({ notes }), tenantId]);
+
       // Notify venue
       await notificationService.notifyVerificationStatus(venueId, 'approved');
-      
-      res.json({
+
+      logger.info(`Venue ${venueId} approved by admin for tenant ${tenantId}`);
+
+      return reply.send({
         success: true,
         message: 'Venue verification approved',
         data: { venueId }
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error approving verification: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });
     }
   }
-  
-  static async rejectVerification(req: Request, res: Response) {
+
+  async rejectVerification(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { venueId } = req.params;
-      const { reason, notes } = req.body;
-      
+      const tenantId = requireTenantId(request);
+      const { venueId } = request.params as any;
+      const { reason, notes } = request.body as any;
+
       await db.query(`
-        UPDATE venue_verifications 
+        UPDATE venue_verifications
         SET status = 'rejected',
             manual_review_required = false,
             manual_review_notes = $2,
             updated_at = NOW()
-        WHERE venue_id = $1
-      `, [venueId, notes]);
-      
-      // Log the action
+        WHERE venue_id = $1 AND tenant_id = $3
+      `, [venueId, notes, tenantId]);
+
+      // Log the action with tenant_id
       await db.query(`
-        INSERT INTO compliance_audit_log 
-        (action, entity_type, entity_id, user_id, metadata)
-        VALUES ('verification_rejected', 'venue', $1, $2, $3)
-      `, [venueId, 'admin', JSON.stringify({ reason, notes })]);
-      
+        INSERT INTO compliance_audit_log
+        (action, entity_type, entity_id, user_id, metadata, tenant_id)
+        VALUES ('verification_rejected', 'venue', $1, $2, $3, $4)
+      `, [venueId, 'admin', JSON.stringify({ reason, notes }), tenantId]);
+
       // Notify venue
       await notificationService.notifyVerificationStatus(venueId, 'rejected');
-      
-      res.json({
+
+      logger.info(`Venue ${venueId} rejected by admin for tenant ${tenantId}, reason: ${reason}`);
+
+      return reply.send({
         success: true,
         message: 'Venue verification rejected',
         data: { venueId, reason }
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error rejecting verification: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });

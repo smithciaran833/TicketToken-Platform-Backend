@@ -2,12 +2,25 @@ import { Pool } from 'pg';
 
 export interface ITicket {
   id?: string;
+  tenant_id?: string;
   event_id: string;
   ticket_type_id: string;
-  user_id?: string;
-  status: 'available' | 'reserved' | 'sold' | 'transferred';
-  price: number;
+  order_id?: string;
+  user_id?: string;  // SINGLE owner column
+  status: 'AVAILABLE' | 'RESERVED' | 'SOLD' | 'USED' | 'CANCELLED' | 'EXPIRED' | 'TRANSFERRED';
+  price_cents: number;  // INTEGER cents, not DECIMAL
   seat_number?: string;
+  section?: string;
+  row?: string;
+  qr_code?: string;
+  qr_code_secret?: string;
+  nft_token_id?: string;
+  nft_mint_address?: string;
+  nft_transaction_hash?: string;
+  blockchain_status?: string;
+  payment_id?: string;
+  is_transferable?: boolean;
+  transfer_count?: number;
   barcode?: string;
   metadata?: any;
   created_at?: Date;
@@ -23,22 +36,34 @@ export class TicketModel {
     'ticket_type_id',
     'user_id',
     'status',
-    'price',
+    'price_cents',
     'seat_number',
+    'section',
+    'row',
     'barcode',
     'metadata'
   ];
 
   async create(data: ITicket): Promise<ITicket> {
     const query = `
-      INSERT INTO tickets (event_id, ticket_type_id, user_id, status, price, seat_number, barcode, metadata)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      INSERT INTO tickets (
+        event_id, ticket_type_id, user_id, status, price_cents, 
+        seat_number, section, row, barcode, metadata
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `;
     const values = [
-      data.event_id, data.ticket_type_id, data.user_id,
-      data.status || 'available', data.price, data.seat_number,
-      data.barcode, data.metadata || {}
+      data.event_id,
+      data.ticket_type_id,
+      data.user_id,
+      data.status || 'AVAILABLE',
+      data.price_cents,
+      data.seat_number,
+      data.section,
+      data.row,
+      data.barcode,
+      data.metadata || {}
     ];
     const result = await this.pool.query(query, values);
     return result.rows[0];
@@ -60,7 +85,7 @@ export class TicketModel {
     // SECURITY FIX: Validate fields against whitelist
     const validFields: string[] = [];
     const validValues: any[] = [];
-    
+
     Object.keys(data).forEach(key => {
       if (this.UPDATABLE_FIELDS.includes(key)) {
         validFields.push(key);

@@ -1,4 +1,4 @@
-import { createCache } from './cache/dist';
+import { createCache } from './src/cache/dist/index';
 import axios from 'axios';
 
 const cache = createCache({
@@ -7,7 +7,7 @@ const cache = createCache({
     port: parseInt(process.env.REDIS_PORT || '6379'),
     password: process.env.REDIS_PASSWORD,
     keyPrefix: 'isc:', // inter-service-cache
-  }
+  },
 });
 
 /**
@@ -29,7 +29,7 @@ export class CachedServiceClient {
    */
   async get<T>(path: string, options?: { ttl?: number; skipCache?: boolean }): Promise<T> {
     const cacheKey = `${this.serviceName}:GET:${path}`;
-    
+
     if (!options?.skipCache) {
       const cached = await cache.service.get<T>(cacheKey);
       if (cached) {
@@ -40,11 +40,11 @@ export class CachedServiceClient {
 
     console.log(`Cache MISS: ${cacheKey} - calling service`);
     const response = await axios.get(`${this.baseUrl}${path}`);
-    
+
     // Cache successful responses
     if (response.status === 200 && response.data) {
       await cache.service.set(cacheKey, response.data, {
-        ttl: options?.ttl || this.defaultTTL
+        ttl: options?.ttl || this.defaultTTL,
       });
     }
 
@@ -56,7 +56,7 @@ export class CachedServiceClient {
    */
   async post<T>(path: string, data: any, invalidatePatterns?: string[]): Promise<T> {
     const response = await axios.post(`${this.baseUrl}${path}`, data);
-    
+
     // Invalidate related caches
     if (invalidatePatterns) {
       for (const pattern of invalidatePatterns) {
@@ -71,8 +71,10 @@ export class CachedServiceClient {
    * Invalidate cache for specific paths
    */
   async invalidate(paths: string[]): Promise<void> {
-    const keys = paths.map(path => `${this.serviceName}:GET:${path}`);
-    await cache.service.delete(keys);
+    const keys = paths.map((path) => `${this.serviceName}:GET:${path}`);
+    for (const key of keys) {
+      await cache.service.delete(key);
+    }
   }
 }
 

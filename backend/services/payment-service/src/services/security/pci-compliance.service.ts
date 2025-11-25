@@ -1,4 +1,7 @@
 import { Redis } from 'ioredis';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'PCICompliance' });
 
 export class PCIComplianceService {
   private redis: Redis;
@@ -19,7 +22,7 @@ export class PCIComplianceService {
     
     for (const pattern of sensitivePatterns) {
       if (pattern.test(jsonString)) {
-        console.error('CRITICAL: Attempt to store card data detected!');
+        log.error('CRITICAL: Attempt to store card data detected');
         await this.logSecurityIncident('CARD_DATA_STORAGE_ATTEMPT', data);
         return false;
       }
@@ -39,7 +42,7 @@ export class PCIComplianceService {
     
     // Alert security team in production
     if (process.env.NODE_ENV === 'production') {
-      console.error('SECURITY INCIDENT:', type);
+      log.error('Security incident', { type });
     }
   }
   

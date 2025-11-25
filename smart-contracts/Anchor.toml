@@ -3,12 +3,12 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-tickettoken = "E7D92vNoSj2rqB1PnuZihFZ9hDstnbJMwCFkxx9TxQBL"
-marketplace = "BTNZP23sGbQsMwX1SBiyfTpDDqD8Sev7j78N45QBoYtv"
+tickettoken = "2Pt5c9QcKSxMe9cBpfhdmfWHUwq8NUk7kFmJREJsNm2b"
+marketplace = "AaQ9Un1tdu4QXidcfMgDxp7ATjTujh8McEgzH9nwQCp9"
 
 [programs.devnet]
-tickettoken = "E7D92vNoSj2rqB1PnuZihFZ9hDstnbJMwCFkxx9TxQBL"
-marketplace = "BTNZP23sGbQsMwX1SBiyfTpDDqD8Sev7j78N45QBoYtv"
+tickettoken = "2Pt5c9QcKSxMe9cBpfhdmfWHUwq8NUk7kFmJREJsNm2b"
+marketplace = "AaQ9Un1tdu4QXidcfMgDxp7ATjTujh8McEgzH9nwQCp9"
 
 [registry]
 url = "https://api.apr.dev"

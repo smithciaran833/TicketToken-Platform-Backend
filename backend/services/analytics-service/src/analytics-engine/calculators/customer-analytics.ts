@@ -1,4 +1,16 @@
 import { getDb } from '../../config/database';
+import { logger } from '../../utils/logger';
+
+// Validation constants
+const VALIDATION = {
+  MIN_VENUE_ID_LENGTH: 36,
+  MAX_DAYS_THRESHOLD: 730, // 2 years max
+  MIN_DAYS_THRESHOLD: 1,
+  MAX_RISK_SCORE: 100,
+  MIN_RISK_SCORE: 0,
+  RFM_SCORE_MIN: 1,
+  RFM_SCORE_MAX: 5,
+} as const;
 
 interface CustomerData {
   user_id: string;
@@ -20,7 +32,52 @@ interface CLVData {
 export class CustomerAnalytics {
   private mainDb = getDb();
 
+  /**
+   * Validates venue ID format
+   */
+  private validateVenueId(venueId: string): void {
+    if (!venueId || typeof venueId !== 'string') {
+      throw new Error('Invalid venue ID: must be a non-empty string');
+    }
+    if (venueId.length < VALIDATION.MIN_VENUE_ID_LENGTH) {
+      throw new Error(`Invalid venue ID: must be at least ${VALIDATION.MIN_VENUE_ID_LENGTH} characters`);
+    }
+  }
+
+  /**
+   * Validates days threshold parameter
+   */
+  private validateDaysThreshold(days: number): void {
+    if (!Number.isInteger(days)) {
+      throw new Error('Invalid days threshold: must be an integer');
+    }
+    if (days < VALIDATION.MIN_DAYS_THRESHOLD || days > VALIDATION.MAX_DAYS_THRESHOLD) {
+      throw new Error(`Invalid days threshold: must be between ${VALIDATION.MIN_DAYS_THRESHOLD} and ${VALIDATION.MAX_DAYS_THRESHOLD}`);
+    }
+  }
+
+  /**
+   * Safe division that prevents division by zero
+   */
+  private safeDivide(numerator: number, denominator: number, defaultValue: number = 0): number {
+    if (denominator === 0 || !isFinite(denominator)) {
+      return defaultValue;
+    }
+    const result = numerator / denominator;
+    return isFinite(result) ? result : defaultValue;
+  }
+
+  /**
+   * Validates and clamps a value between min and max
+   */
+  private clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, value));
+  }
+
   async calculateCustomerLifetimeValue(venueId: string) {
+    this.validateVenueId(venueId);
+
+    logger.info('Calculating customer lifetime value', { venueId });
     const customerData = await this.mainDb('tickets')
       .select(
         'user_id',
@@ -34,24 +91,42 @@ export class CustomerAnalytics {
       .whereNotNull('user_id')
       .groupBy('user_id');
 
+    // Validate we have customer data
+    if (!customerData || customerData.length === 0) {
+      logger.warn('No customer data found for venue', { venueId });
+      return {
+        averageClv: 0,
+        totalCustomers: 0,
+        segments: {
+          high: { count: 0, avgValue: 0 },
+          medium: { count: 0, avgValue: 0 },
+          low: { count: 0, avgValue: 0 }
+        }
+      };
+    }
+
     // Calculate CLV metrics
     const clvData: CLVData[] = customerData.map((customer: CustomerData) => {
       const firstPurchase = new Date(customer.first_purchase);
       const lastPurchase = new Date(customer.last_purchase);
       const customerLifespan = (lastPurchase.getTime() - firstPurchase.getTime()) / (1000 * 60 * 60 * 24); // days
 
+      const totalRevenue = parseFloat(customer.total_revenue) || 0;
+      const purchaseCount = customer.purchase_count || 1;
+      
       return {
         customerId: customer.user_id,
-        totalRevenue: parseFloat(customer.total_revenue),
-        purchaseCount: customer.purchase_count,
-        avgOrderValue: parseFloat(customer.total_revenue) / customer.purchase_count,
+        totalRevenue,
+        purchaseCount,
+        avgOrderValue: this.safeDivide(totalRevenue, purchaseCount),
         customerLifespanDays: Math.max(1, customerLifespan),
-        purchaseFrequency: customer.purchase_count / Math.max(1, customerLifespan / 30) // purchases per month
+        purchaseFrequency: this.safeDivide(purchaseCount, Math.max(1, customerLifespan / 30))
       };
     });
 
-    // Calculate average CLV
-    const avgClv = clvData.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0) / clvData.length;
+    // Calculate average CLV (safe division)
+    const totalRevenue = clvData.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0);
+    const avgClv = this.safeDivide(totalRevenue, clvData.length);
 
     // Segment customers
     const segments = {
@@ -60,27 +135,48 @@ export class CustomerAnalytics {
       low: clvData.filter((c: CLVData) => c.totalRevenue <= avgClv * 0.5)
     };
 
-    return {
+    const result = {
       averageClv: avgClv,
       totalCustomers: clvData.length,
       segments: {
         high: {
           count: segments.high.length,
-          avgValue: segments.high.length > 0 ? segments.high.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0) / segments.high.length : 0
+          avgValue: this.safeDivide(
+            segments.high.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0),
+            segments.high.length
+          )
         },
         medium: {
           count: segments.medium.length,
-          avgValue: segments.medium.length > 0 ? segments.medium.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0) / segments.medium.length : 0
+          avgValue: this.safeDivide(
+            segments.medium.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0),
+            segments.medium.length
+          )
         },
         low: {
           count: segments.low.length,
-          avgValue: segments.low.length > 0 ? segments.low.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0) / segments.low.length : 0
+          avgValue: this.safeDivide(
+            segments.low.reduce((sum: number, c: CLVData) => sum + c.totalRevenue, 0),
+            segments.low.length
+          )
         }
       }
     };
+
+    logger.info('CLV calculation completed', { 
+      venueId, 
+      totalCustomers: result.totalCustomers,
+      avgClv: result.averageClv 
+    });
+
+    return result;
   }
 
   async identifyChurnRisk(venueId: string, daysThreshold: number = 90) {
+    this.validateVenueId(venueId);
+    this.validateDaysThreshold(daysThreshold);
+
+    logger.info('Identifying churn risk', { venueId, daysThreshold });
     const now = new Date();
     const thresholdDate = new Date(now.getTime() - daysThreshold * 24 * 60 * 60 * 1000);
 
@@ -104,20 +200,23 @@ export class CustomerAnalytics {
       const daysSinceLastPurchase = Math.floor((now.getTime() - new Date(customer.last_purchase).getTime()) / (1000 * 60 * 60 * 24));
       
       // Simple scoring: higher score = higher risk
-      let riskScore = Math.min(100, (daysSinceLastPurchase / daysThreshold) * 50);
+      let riskScore = this.safeDivide(daysSinceLastPurchase, daysThreshold) * 50;
       
-      // Adjust based on purchase history
-      if (customer.total_purchases > 5) riskScore -= 10;
-      if (customer.total_purchases > 10) riskScore -= 10;
-      if (parseFloat(customer.avg_order_value) > 100) riskScore -= 5;
+      // Adjust based on purchase history (validated values)
+      const totalPurchases = parseInt(customer.total_purchases) || 0;
+      const avgOrderValue = parseFloat(customer.avg_order_value) || 0;
+      
+      if (totalPurchases > 5) riskScore -= 10;
+      if (totalPurchases > 10) riskScore -= 10;
+      if (avgOrderValue > 100) riskScore -= 5;
       
       return {
         customerId: customer.user_id,
         lastPurchase: customer.last_purchase,
         daysSinceLastPurchase,
-        totalPurchases: customer.total_purchases,
-        avgOrderValue: parseFloat(customer.avg_order_value),
-        riskScore: Math.max(0, Math.min(100, riskScore))
+        totalPurchases,
+        avgOrderValue,
+        riskScore: this.clamp(riskScore, VALIDATION.MIN_RISK_SCORE, VALIDATION.MAX_RISK_SCORE)
       };
     });
 
@@ -130,6 +229,9 @@ export class CustomerAnalytics {
   }
 
   async calculateCustomerSegmentation(venueId: string) {
+    this.validateVenueId(venueId);
+
+    logger.info('Calculating customer segmentation (RFM)', { venueId });
     // RFM Analysis (Recency, Frequency, Monetary)
     const customers = await this.mainDb.raw(`
       WITH customer_metrics AS (
@@ -161,6 +263,22 @@ export class CustomerAnalytics {
       FROM rfm_scores
     `, [venueId]);
 
+    // Validate query results
+    if (!customers || !customers.rows || customers.rows.length === 0) {
+      logger.warn('No customer data found for segmentation', { venueId });
+      return [];
+    }
+
+    // Validate RFM scores are within expected range
+    customers.rows.forEach((customer: any) => {
+      if (customer.recency_score < VALIDATION.RFM_SCORE_MIN || customer.recency_score > VALIDATION.RFM_SCORE_MAX) {
+        logger.warn('Invalid recency score detected', { 
+          customerId: customer.user_id, 
+          score: customer.recency_score 
+        });
+      }
+    });
+
     // Categorize segments
     const segments = {
       champions: customers.rows.filter((c: any) => c.rfm_segment.match(/[45][45][45]/)),
@@ -172,12 +290,23 @@ export class CustomerAnalytics {
       hibernating: customers.rows.filter((c: any) => c.rfm_segment.match(/[12][12][12]/))
     };
 
-    return Object.entries(segments).map(([name, customers]) => ({
+    const result = Object.entries(segments).map(([name, customers]) => ({
       segment: name,
       count: customers.length,
-      avgValue: customers.length > 0 ? customers.reduce((sum: number, c: any) => sum + parseFloat(c.monetary_value), 0) / customers.length : 0,
+      avgValue: this.safeDivide(
+        customers.reduce((sum: number, c: any) => sum + (parseFloat(c.monetary_value) || 0), 0),
+        customers.length
+      ),
       characteristics: this.getSegmentCharacteristics(name)
     }));
+
+    logger.info('Customer segmentation completed', { 
+      venueId, 
+      segmentCount: result.length,
+      totalCustomers: customers.rows.length
+    });
+
+    return result;
   }
 
   private getSegmentCharacteristics(segment: string) {

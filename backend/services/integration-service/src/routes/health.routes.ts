@@ -1,8 +1,8 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { healthController } from '../controllers/health.controller';
 
-export const healthRoutes = Router();
-
-healthRoutes.get('/:provider', healthController.getIntegrationHealth);
-healthRoutes.get('/:provider/metrics', healthController.getMetrics);
-healthRoutes.post('/:provider/test', healthController.testConnection);
+export async function healthRoutes(fastify: FastifyInstance) {
+  fastify.get('/:provider', healthController.getIntegrationHealth);
+  fastify.get('/:provider/metrics', healthController.getMetrics);
+  fastify.post('/:provider/test', healthController.testConnection);
+}

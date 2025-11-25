@@ -1,6 +1,9 @@
 import { Pool } from 'pg';
 import { StripeWebhookHandler } from '../webhooks/stripe-handler';
 import Stripe from 'stripe';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'ProcessWebhookQueue' });
 
 export class ProcessWebhookQueueJob {
   private db: Pool;
@@ -58,7 +61,7 @@ export class ProcessWebhookQueueJob {
 
   private async processStripeWebhook(payload: any, webhookId: string): Promise<void> {
     // Process the webhook payload
-    console.log(`Processing Stripe webhook ${webhookId}`);
+    log.info('Processing Stripe webhook', { webhookId });
     // The actual processing is handled by the handler
   }
 }

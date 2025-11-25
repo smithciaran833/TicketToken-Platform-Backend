@@ -9,14 +9,15 @@ export const config: AppConfig = {
   environment: process.env.NODE_ENV || 'development',
   database: {
     host: process.env.DB_HOST || 'postgres',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
+    port: parseInt(process.env.DB_PORT || '6432', 10),
     user: process.env.DB_USER || 'tickettoken_user',
     password: process.env.DB_PASSWORD || '',
     database: process.env.DB_NAME || 'tickettoken'
   },
   redis: {
     host: process.env.REDIS_HOST || 'redis',
-    port: parseInt(process.env.REDIS_PORT || '6379', 10)
+    port: parseInt(process.env.REDIS_PORT || '6379', 10),
+    password: process.env.REDIS_PASSWORD
   },
   services: {
     venueServiceUrl: process.env.VENUE_SERVICE_URL || 'http://venue-service:3002',

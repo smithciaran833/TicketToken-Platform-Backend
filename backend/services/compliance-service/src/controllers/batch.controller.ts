@@ -1,75 +1,96 @@
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
 import { batchService } from '../services/batch.service';
 import { db } from '../services/database.service';
+import { logger } from '../utils/logger';
+import { requireTenantId } from '../middleware/tenant.middleware';
 
 export class BatchController {
-  static async generate1099Forms(req: Request, res: Response) {
+  async generate1099Forms(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const { year } = req.body;
+      const tenantId = requireTenantId(request);
+      const { year } = request.body as any;
       const targetYear = year || new Date().getFullYear() - 1;
       
-      const result = await batchService.generateYear1099Forms(targetYear);
-      
-      res.json({
+      const result = await batchService.generateYear1099Forms(targetYear, tenantId);
+
+      logger.info(`Generated 1099 forms for tenant ${tenantId}, year ${targetYear}: ${result.generated} forms`);
+
+      return reply.send({
         success: true,
         message: `Generated ${result.generated} Form 1099-Ks for year ${targetYear}`,
         data: result
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error generating 1099 forms: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });
     }
   }
-  
-  static async getBatchJobs(req: Request, res: Response) {
+
+  async getBatchJobs(request: FastifyRequest, reply: FastifyReply) {
     try {
-      const jobs = await db.query(
-        `SELECT * FROM compliance_batch_jobs 
-         ORDER BY created_at DESC 
-         LIMIT 20`
-      );
+      const tenantId = requireTenantId(request);
       
-      res.json({
+      const jobs = await db.query(
+        `SELECT * FROM compliance_batch_jobs
+         WHERE tenant_id = $1
+         ORDER BY created_at DESC
+         LIMIT 20`,
+        [tenantId]
+      );
+
+      return reply.send({
         success: true,
         data: jobs.rows
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error getting batch jobs: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });
     }
   }
-  
-  static async runDailyChecks(req: Request, res: Response) {
+
+  async runDailyChecks(request: FastifyRequest, reply: FastifyReply) {
     try {
-      await batchService.dailyComplianceChecks();
+      const tenantId = requireTenantId(request);
       
-      res.json({
+      await batchService.dailyComplianceChecks(tenantId);
+
+      logger.info(`Daily compliance checks completed for tenant ${tenantId}`);
+
+      return reply.send({
         success: true,
         message: 'Daily compliance checks completed'
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error running daily checks: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });
     }
   }
-  
-  static async updateOFACList(req: Request, res: Response) {
+
+  async updateOFACList(request: FastifyRequest, reply: FastifyReply) {
     try {
-      await batchService.processOFACUpdates();
+      const tenantId = requireTenantId(request);
       
-      res.json({
+      await batchService.processOFACUpdates(tenantId);
+
+      logger.info(`OFAC list updated for tenant ${tenantId}`);
+
+      return reply.send({
         success: true,
         message: 'OFAC list updated successfully'
       });
     } catch (error: any) {
-      res.status(500).json({
+      logger.error(`Error updating OFAC list: ${error.message}`);
+      return reply.code(500).send({
         success: false,
         error: error.message
       });

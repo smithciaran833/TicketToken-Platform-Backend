@@ -1,18 +1,19 @@
-// Test setup
-process.env.NODE_ENV = 'test';
-process.env.BLOCKCHAIN_NETWORK = 'testnet';
-process.env.RPC_URL = 'https://polygon-mumbai.infura.io/v3/test';
-process.env.PRIVATE_KEY = '0xtest_private_key';
-process.env.CONTRACT_ADDRESS = '0xtest_contract_address';
-process.env.DATABASE_URL = 'postgresql://test:test@localhost:5432/test';
-process.env.BLOCKCHAIN_SERVICE_PORT = '3015';
+import { config } from 'dotenv';
 
-// Silence console during tests
+// Load test environment variables
+config({ path: '.env.test' });
+
+// Set test environment
+process.env.NODE_ENV = 'test';
+process.env.LOG_LEVEL = 'error';
+
+// Mock console methods during tests to reduce noise
+const noop = () => {};
 global.console = {
   ...console,
-  log: jest.fn(),
-  debug: jest.fn(),
-  info: jest.fn(),
-  warn: jest.fn(),
-  error: jest.fn(),
+  log: noop,
+  debug: noop,
+  info: noop,
+  warn: noop,
+  error: console.error, // Keep error for debugging
 };

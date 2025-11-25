@@ -1,18 +1,14 @@
-const config = require('./index');
-
-module.exports = {
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const queueConfig = {
     redis: {
         host: process.env.REDIS_HOST || 'redis',
-        port: parseInt(process.env.REDIS_PORT) || 6379,
+        port: parseInt(process.env.REDIS_PORT || '6379', 10),
         password: process.env.REDIS_PASSWORD || 'RedisSecurePass2024!',
-        // Bull doesn't support these options, removed:
-        // maxRetriesPerRequest: 3,
-        // enableReadyCheck: true,
-        // retryStrategy: (times) => { ... }
     },
     defaultJobOptions: {
-        removeOnComplete: 100, // Keep last 100 completed jobs
-        removeOnFail: 500,     // Keep last 500 failed jobs
+        removeOnComplete: 100,
+        removeOnFail: 500,
         attempts: 3,
         backoff: {
             type: 'exponential',
@@ -24,7 +20,7 @@ module.exports = {
             concurrency: 5,
             rateLimit: {
                 max: 10,
-                duration: 1000 // 10 operations per second
+                duration: 1000
             }
         },
         'nft-transfer': {
@@ -43,3 +39,5 @@ module.exports = {
         }
     }
 };
+exports.default = queueConfig;
+//# sourceMappingURL=queue.js.map

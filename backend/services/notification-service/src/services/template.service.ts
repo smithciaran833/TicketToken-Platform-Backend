@@ -2,7 +2,7 @@ import { db } from '../config/database';
 import { NotificationTemplate, NotificationChannel } from '../types/notification.types';
 import { logger } from '../config/logger';
 import Handlebars from 'handlebars';
-import { redisHelper } from '../config/redis';
+import { redis } from '../config/redis';
 import { env } from '../config/env';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -17,7 +17,6 @@ export class TemplateService {
   }
 
   private registerHelpers() {
-    // Register common Handlebars helpers
     Handlebars.registerHelper('formatDate', (date: Date) => {
       return new Date(date).toLocaleDateString();
     });
@@ -41,19 +40,23 @@ export class TemplateService {
     Handlebars.registerHelper('lte', (a: any, b: any) => a <= b);
   }
 
+  async getTemplateById(id: string): Promise<NotificationTemplate | null> {
+    const template = await db(this.tableName).where({ id }).first();
+    if (!template) return null;
+    return this.mapToTemplate(template);
+  }
+
   async getTemplate(
     name: string,
     channel: NotificationChannel,
     venueId?: string
   ): Promise<NotificationTemplate | null> {
-    // Check cache first
     const cacheKey = `template:${venueId || 'default'}:${channel}:${name}`;
-    const cached = await redisHelper.get<NotificationTemplate>(cacheKey);
+    const cached = await redis.get(cacheKey);
     if (cached) {
-      return cached;
+      return JSON.parse(cached) as NotificationTemplate;
     }
 
-    // Try to find venue-specific template first
     let template = null;
     if (venueId) {
       template = await db(this.tableName)
@@ -65,7 +68,6 @@ export class TemplateService {
         .first();
     }
 
-    // Fall back to default template
     if (!template) {
       template = await db(this.tableName)
         .whereNull('venue_id')
@@ -78,8 +80,7 @@ export class TemplateService {
 
     if (template) {
       const mapped = this.mapToTemplate(template);
-      // Cache for 1 hour
-      await redisHelper.setWithTTL(cacheKey, mapped, env.TEMPLATE_CACHE_TTL);
+      await redis.setex(cacheKey, env.TEMPLATE_CACHE_TTL, JSON.stringify(mapped));
       return mapped;
     }
 
@@ -95,7 +96,6 @@ export class TemplateService {
     htmlContent?: string;
   }> {
     try {
-      // Compile and cache template
       const contentKey = `${template.id}:content`;
       if (!this.compiledTemplates.has(contentKey)) {
         this.compiledTemplates.set(contentKey, Handlebars.compile(template.content));
@@ -111,7 +111,6 @@ export class TemplateService {
         this.compiledTemplates.set(subjectKey, Handlebars.compile(template.subject));
       }
 
-      // Render templates with data
       const content = this.compiledTemplates.get(contentKey)!(data);
       const htmlContent = template.htmlContent
         ? this.compiledTemplates.get(htmlKey)!(data)
@@ -130,10 +129,8 @@ export class TemplateService {
     }
   }
 
-  // New render method for file-based templates
   async render(templateName: string, data: any): Promise<string> {
     try {
-      // Check if template is already loaded
       if (!this.templates.has(templateName)) {
         await this.loadTemplate(templateName);
       }
@@ -146,7 +143,6 @@ export class TemplateService {
       return template(data);
     } catch (error) {
       logger.error(`Failed to render template ${templateName}:`, error);
-      // Return a basic fallback
       return `<html><body><h1>${templateName}</h1><pre>${JSON.stringify(data, null, 2)}</pre></body></html>`;
     }
   }
@@ -194,12 +190,58 @@ export class TemplateService {
       })
       .returning('*');
 
-    // Clear cache
     const template = this.mapToTemplate(updated);
     const cacheKey = `template:${template.venueId || 'default'}:${template.channel}:${template.name}`;
-    await redisHelper.delete(cacheKey);
+    await redis.del(cacheKey);
 
     return template;
+  }
+
+  async listTemplates(filters: any = {}): Promise<{ templates: NotificationTemplate[]; total: number }> {
+    let query = db(this.tableName);
+
+    if (filters.type) query = query.where({ type: filters.type });
+    if (filters.channel) query = query.where({ channel: filters.channel });
+    if (filters.status) query = query.where({ is_active: filters.status === 'active' });
+
+    const [{ count }] = await query.clone().count('* as count');
+    const templates = await query
+      .orderBy('created_at', 'desc')
+      .limit(filters.limit || 50)
+      .offset(filters.offset || 0);
+
+    return {
+      templates: templates.map(t => this.mapToTemplate(t)),
+      total: parseInt(count as string),
+    };
+  }
+
+  async deleteTemplate(id: string): Promise<void> {
+    await db(this.tableName).where({ id }).update({ is_active: false });
+  }
+
+  async previewTemplate(id: string, sampleData: any): Promise<any> {
+    const template = await db(this.tableName).where({ id }).first();
+    if (!template) throw new Error('Template not found');
+    return this.renderTemplate(this.mapToTemplate(template), sampleData);
+  }
+
+  async getVersionHistory(id: string): Promise<any[]> {
+    return db('template_versions').where({ template_id: id }).orderBy('version', 'desc');
+  }
+
+  async getUsageStats(id: string): Promise<any> {
+    const [stats] = await db('template_usage')
+      .where({ template_id: id })
+      .select(
+        db.raw('COUNT(*) as total_usage'),
+        db.raw('SUM(CASE WHEN success THEN 1 ELSE 0 END)::float / NULLIF(COUNT(*), 0) as success_rate')
+      );
+    return {
+      totalUsage: parseInt(stats?.total_usage || '0'),
+      successRate: parseFloat(stats?.success_rate || '0'),
+      recentUsage: [],
+    };
   }
 
   private mapToTemplate(row: any): NotificationTemplate {

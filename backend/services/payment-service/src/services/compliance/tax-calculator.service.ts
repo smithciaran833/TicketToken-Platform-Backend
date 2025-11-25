@@ -3,6 +3,9 @@ import { query } from '../../config/database';
 import { complianceConfig } from '../../config/compliance';
 import { config } from '../../config';
 import { percentOfCents } from '../../utils/money';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'TaxCalculatorService' });
 
 export class TaxCalculatorService {
   private taxJarClient: any;
@@ -133,7 +136,7 @@ export class TaxCalculatorService {
         breakdown: taxData.tax.breakdown
       };
     } catch (error) {
-      console.error('TaxJar calculation failed:', error);
+      log.error('TaxJar calculation failed', { error });
       return this.calculateBasicTax(amountCents, venueAddress.state);
     }
   }

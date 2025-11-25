@@ -1,38 +1,40 @@
 import { batchService } from './batch.service';
-import { ofacService } from './ofac.service';
+import { realOFACService } from './ofac-real.service';
+import { logger } from '../utils/logger';
 
 export class SchedulerService {
   private jobs: Map<string, NodeJS.Timeout> = new Map();
   
   startScheduledJobs() {
-    console.log('⏰ Starting scheduled jobs...');
+    logger.info('Starting scheduled compliance jobs...');
     
     // Daily OFAC update (3 AM)
     this.scheduleDaily('ofac-update', 3, async () => {
-      console.log('Running OFAC update...');
-      await batchService.processOFACUpdates();
+      logger.info('Running OFAC update...');
+      await realOFACService.downloadAndUpdateOFACList();
     });
     
     // Daily compliance checks (4 AM)
     this.scheduleDaily('compliance-checks', 4, async () => {
-      console.log('Running compliance checks...');
+      logger.info('Running daily compliance checks...');
       await batchService.dailyComplianceChecks();
     });
     
     // Weekly report generation (Sunday 2 AM)
     this.scheduleWeekly('weekly-report', 0, 2, async () => {
-      console.log('Generating weekly compliance report...');
-      // TODO: Generate report
+      logger.info('Generating weekly compliance report...');
+      // TODO: Implement report generation
+      logger.warn('Weekly report generation not yet implemented');
     });
     
     // Yearly 1099 generation (January 15)
     this.scheduleYearly('1099-generation', 1, 15, async () => {
       const previousYear = new Date().getFullYear() - 1;
-      console.log(`Generating 1099s for year ${previousYear}...`);
+      logger.info(`Generating 1099s for year ${previousYear}...`);
       await batchService.generateYear1099Forms(previousYear);
     });
     
-    console.log('✅ Scheduled jobs started');
+    logger.info('Scheduled jobs started successfully');
   }
   
   private scheduleDaily(name: string, hour: number, callback: () => Promise<void>) {
@@ -53,7 +55,7 @@ export class SchedulerService {
     }, timeout);
     
     this.jobs.set(name, job);
-    console.log(`📅 Scheduled ${name} for ${scheduled.toLocaleString()}`);
+    logger.info(`Scheduled ${name} for ${scheduled.toLocaleString()}`);
   }
   
   private scheduleWeekly(name: string, dayOfWeek: number, hour: number, callback: () => Promise<void>) {
@@ -74,7 +76,7 @@ export class SchedulerService {
     }, timeout);
     
     this.jobs.set(name, job);
-    console.log(`📅 Scheduled ${name} for ${scheduled.toLocaleString()}`);
+    logger.info(`Scheduled ${name} for ${scheduled.toLocaleString()}`);
   }
   
   private scheduleYearly(name: string, month: number, day: number, callback: () => Promise<void>) {
@@ -96,13 +98,13 @@ export class SchedulerService {
     }, timeout);
     
     this.jobs.set(name, job);
-    console.log(`📅 Scheduled ${name} for ${scheduled.toLocaleString()}`);
+    logger.info(`Scheduled ${name} for ${scheduled.toLocaleString()}`);
   }
   
   stopAllJobs() {
     for (const [name, job] of this.jobs) {
       clearTimeout(job);
-      console.log(`Stopped job: ${name}`);
+      logger.info(`Stopped job: ${name}`);
     }
     this.jobs.clear();
   }

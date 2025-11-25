@@ -1,124 +1,123 @@
-import { BaseModel } from './base.model';
-import { MetricAggregation, TimeGranularity } from '../../types';
-import { v4 as uuidv4 } from 'uuid';
+import { getDb } from '../../config/database';
 
-export class AggregationModel extends BaseModel {
-  protected static tableName = 'analytics_aggregations';
-  
-  static async createAggregation(
-    venueId: string,
-    data: MetricAggregation
-  ): Promise<MetricAggregation> {
-    const aggregation = {
-      id: uuidv4(),
-      venue_id: venueId,
-      metric_type: data.metricType,
-      period_start: data.period.startDate,
-      period_end: data.period.endDate,
-      granularity: JSON.stringify(data.granularity),
-      data: JSON.stringify(data.data),
-      summary: JSON.stringify(data.summary),
-      created_at: new Date()
-    };
-    
-    return await this.create(aggregation);
+export interface Aggregation {
+  id: string;
+  tenant_id: string;
+  aggregation_type: string;
+  metric_type: string;
+  entity_type: string;
+  entity_id?: string;
+  dimensions: Record<string, any>;
+  time_period: string;
+  period_start: Date;
+  period_end: Date;
+  value: number;
+  unit: string;
+  sample_count: number;
+  metadata: Record<string, any>;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export class AggregationModel {
+  private static tableName = 'analytics_aggregations';
+
+  static async create(aggregation: Omit<Aggregation, 'id' | 'created_at' | 'updated_at'>): Promise<Aggregation> {
+    const db = getDb();
+    const [created] = await db(this.tableName).insert(aggregation).returning('*');
+    return created;
   }
-  
-  static async getAggregations(
-    venueId: string,
-    filters: {
-      metricType?: string;
-      granularity?: TimeGranularity;
-      startDate?: Date;
-      endDate?: Date;
-    }
-  ): Promise<MetricAggregation[]> {
-    const db = this.db();
-    let query = db(this.tableName).where('venue_id', venueId);
-    
-    if (filters.metricType) {
-      query = query.where('metric_type', filters.metricType);
-    }
-    
-    if (filters.granularity) {
-      query = query.where('granularity', JSON.stringify(filters.granularity));
-    }
-    
-    if (filters.startDate && filters.endDate) {
-      query = query.whereBetween('period_start', [
-        filters.startDate,
-        filters.endDate
-      ]);
-    }
-    
-    const results = await query.orderBy('period_start', 'asc');
-    
-    // Transform back to proper format
-    return results.map((row: any) => ({
-      metricType: row.metric_type,
-      period: {
-        startDate: row.period_start,
-        endDate: row.period_end
-      },
-      granularity: JSON.parse(row.granularity),
-      data: JSON.parse(row.data),
-      summary: JSON.parse(row.summary)
-    }));
+
+  static async upsert(aggregation: Omit<Aggregation, 'id' | 'created_at' | 'updated_at'>): Promise<Aggregation> {
+    const db = getDb();
+    const [result] = await db(this.tableName)
+      .insert(aggregation)
+      .onConflict(['tenant_id', 'aggregation_type', 'metric_type', 'entity_type', 'entity_id', 'time_period', 'period_start'])
+      .merge()
+      .returning('*');
+    return result;
   }
-  
-  static async upsertAggregation(
-    venueId: string,
-    aggregation: MetricAggregation
-  ): Promise<MetricAggregation> {
-    const db = this.db();
-    
-    const existing = await db(this.tableName)
-      .where({
-        venue_id: venueId,
-        metric_type: aggregation.metricType,
-        period_start: aggregation.period.startDate,
-        period_end: aggregation.period.endDate,
-        granularity: JSON.stringify(aggregation.granularity)
-      })
+
+  static async findById(id: string, tenantId: string): Promise<Aggregation | null> {
+    const db = getDb();
+    const aggregation = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
       .first();
-    
-    if (existing) {
-      return await this.update(existing.id, {
-        data: JSON.stringify(aggregation.data),
-        summary: JSON.stringify(aggregation.summary),
-        updated_at: new Date()
-      });
-    } else {
-      return await this.createAggregation(venueId, aggregation);
-    }
+    return aggregation || null;
   }
-  
-  static async getHourlyAggregations(
-    venueId: string,
-    date: Date
-  ): Promise<MetricAggregation[]> {
-    const startOfDay = new Date(date);
-    startOfDay.setHours(0, 0, 0, 0);
-    
-    const endOfDay = new Date(date);
-    endOfDay.setHours(23, 59, 59, 999);
-    
-    return await this.getAggregations(venueId, {
-      granularity: { unit: 'hour', value: 1 },
-      startDate: startOfDay,
-      endDate: endOfDay
+
+  static async findByPeriod(
+    timePeriod: string,
+    periodStart: Date,
+    tenantId: string,
+    options: { metricType?: string; entityType?: string; entityId?: string } = {}
+  ): Promise<Aggregation[]> {
+    const db = getDb();
+    let query = db(this.tableName).where({
+      time_period: timePeriod,
+      period_start: periodStart,
+      tenant_id: tenantId,
     });
+
+    if (options.metricType) {
+      query = query.where('metric_type', options.metricType);
+    }
+    if (options.entityType) {
+      query = query.where('entity_type', options.entityType);
+    }
+    if (options.entityId) {
+      query = query.where('entity_id', options.entityId);
+    }
+
+    return query.orderBy('period_start', 'desc');
   }
-  
-  static async getDailyAggregations(
-    venueId: string,
+
+  static async findByDateRange(
     startDate: Date,
-    endDate: Date
-  ): Promise<MetricAggregation[]> {
-    return await this.getAggregations(venueId, {
-      granularity: { unit: 'day', value: 1 },
-      startDate,
-      endDate
+    endDate: Date,
+    tenantId: string,
+    options: { metricType?: string; timePeriod?: string } = {}
+  ): Promise<Aggregation[]> {
+    const db = getDb();
+    let query = db(this.tableName)
+      .where('tenant_id', tenantId)
+      .where('period_start', '>=', startDate)
+      .where('period_end', '<=', endDate);
+
+    if (options.metricType) {
+      query = query.where('metric_type', options.metricType);
+    }
+    if (options.timePeriod) {
+      query = query.where('time_period', options.timePeriod);
+    }
+
+    return query.orderBy('period_start', 'desc');
+  }
+
+  static async delete(id: string, tenantId: string): Promise<boolean> {
+    const db = getDb();
+    const deleted = await db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .delete();
+    return deleted > 0;
+  }
+
+  // Legacy method for backward compatibility
+  static async upsertAggregation(venueId: string, aggregation: any): Promise<Aggregation> {
+    return this.upsert({
+      tenant_id: venueId,
+      aggregation_type: aggregation.aggregationType || aggregation.aggregation_type,
+      metric_type: aggregation.metricType || aggregation.metric_type,
+      entity_type: aggregation.entityType || 'venue',
+      entity_id: aggregation.entityId || venueId,
+      dimensions: aggregation.dimensions || {},
+      time_period: aggregation.timePeriod || aggregation.time_period,
+      period_start: aggregation.periodStart || aggregation.period_start,
+      period_end: aggregation.periodEnd || aggregation.period_end,
+      value: aggregation.value,
+      unit: aggregation.unit || 'count',
+      sample_count: aggregation.sampleCount || aggregation.sample_count || 0,
+      metadata: aggregation.metadata || {},
     });
   }
 }

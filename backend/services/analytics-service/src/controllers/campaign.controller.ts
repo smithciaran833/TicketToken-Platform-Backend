@@ -1,61 +1,120 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface CampaignParams {
+  campaignId: string;
+}
+
+interface GetCampaignsQuery {
+  status?: 'draft' | 'active' | 'paused' | 'completed';
+  type?: string;
+  page?: number;
+  limit?: number;
+}
+
+interface PerformanceQuery {
+  startDate?: string;
+  endDate?: string;
+}
+
+interface AttributionQuery {
+  model?: 'first_touch' | 'last_touch' | 'linear' | 'time_decay' | 'data_driven';
+}
+
+interface ChannelPerformanceQuery {
+  startDate: string;
+  endDate: string;
+}
+
+interface TrackTouchpointBody {
+  venueId: string;
+  customerId: string;
+  channel: string;
+  action: string;
+  value?: number;
+  campaign?: string;
+  metadata?: Record<string, any>;
+}
+
 class CampaignController extends BaseController {
-  getCampaigns = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCampaigns = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: GetCampaignsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { campaigns: [] });
+      return this.success(reply, { campaigns: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCampaign = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCampaign = async (
+    request: FastifyRequest<{ Params: CampaignParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { campaign: {} });
+      return this.success(reply, { campaign: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCampaignPerformance = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCampaignPerformance = async (
+    request: FastifyRequest<{ Params: CampaignParams; Querystring: PerformanceQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { performance: {} });
+      return this.success(reply, { performance: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCampaignAttribution = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCampaignAttribution = async (
+    request: FastifyRequest<{ Params: CampaignParams; Querystring: AttributionQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { attribution: {} });
+      return this.success(reply, { attribution: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getChannelPerformance = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getChannelPerformance = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: ChannelPerformanceQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { channels: [] });
+      return this.success(reply, { channels: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  trackTouchpoint = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  trackTouchpoint = async (
+    request: FastifyRequest<{ Body: TrackTouchpointBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Touchpoint tracked' }, 201);
+      return this.success(reply, { message: 'Touchpoint tracked' }, 201);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getCampaignROI = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getCampaignROI = async (
+    request: FastifyRequest<{ Params: CampaignParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { roi: {} });
+      return this.success(reply, { roi: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

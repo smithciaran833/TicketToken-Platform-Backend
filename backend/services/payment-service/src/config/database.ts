@@ -1,5 +1,9 @@
 import { Pool } from 'pg';
 import { config } from './index';
+import { logger } from '../utils/logger';
+import knex from 'knex';
+
+const log = logger.child({ component: 'Database' });
 
 export const pool = new Pool({
   connectionString: config.database.url,
@@ -9,18 +13,16 @@ export const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle database client', err);
+  log.error('Unexpected error on idle database client', { error: err });
 });
 
 export async function query(text: string, params?: any[]) {
   const start = Date.now();
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
-
   if (duration > 1000) {
-    console.warn('Slow query:', { text, duration, rows: res.rowCount });
+    log.warn('Slow query detected', { text, duration, rows: res.rowCount });
   }
-
   return res;
 }
 
@@ -30,8 +32,7 @@ export async function getClient() {
   
   // Timeout after 60 seconds
   const timeout = setTimeout(() => {
-    console.error('Client has been checked out for more than 60 seconds!');
-    console.error(`Database error occurred`);
+    log.error('Client checked out for more than 60 seconds');
   }, 60000);
 
   const release = () => {
@@ -39,11 +40,28 @@ export async function getClient() {
     originalRelease();
   };
 
-  return { 
-    query: client.query.bind(client), 
-    release, 
-    client 
+  return {
+    query: client.query.bind(client),
+    release,
+    client
   };
 }
 
-export const db = require('knex')(require('./knexfile'));
+export const db = knex({
+  client: 'postgresql',
+  connection: {
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT || '6432'),
+    database: process.env.DB_NAME || 'tickettoken_db',
+    user: process.env.DB_USER || 'postgres',
+    password: process.env.DB_PASSWORD || 'postgres',
+  },
+  pool: {
+    min: 2,
+    max: 10
+  },
+  migrations: {
+    tableName: 'knex_migrations_payment',
+    directory: './src/migrations'
+  }
+});

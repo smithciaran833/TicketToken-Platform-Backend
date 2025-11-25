@@ -5,7 +5,7 @@ import { storageService } from '../storage/storage.service';
 import { logger } from '../utils/logger';
 import fs from 'fs/promises';
 import path from 'path';
-import { auditService } from '@tickettoken/shared/services/audit.service';
+import { auditService } from '@tickettoken/shared';
 
 export class AdminController {
   async getStats(request: FastifyRequest, reply: FastifyReply) {

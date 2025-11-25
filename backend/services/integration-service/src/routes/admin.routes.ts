@@ -1,18 +1,18 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { adminController } from '../controllers/admin.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
-export const adminRoutes = Router();
+export async function adminRoutes(fastify: FastifyInstance) {
+  // ALL admin routes require authentication AND admin role
+  fastify.addHook('onRequest', authenticate);
+  fastify.addHook('onRequest', authorize('admin'));
 
-// ALL admin routes require authentication AND admin role
-adminRoutes.use(authenticate);
-adminRoutes.use(authorize('admin'));
-
-adminRoutes.get('/all-venues', adminController.getAllVenueIntegrations);
-adminRoutes.get('/health-summary', adminController.getHealthSummary);
-adminRoutes.get('/costs', adminController.getCostAnalysis);
-adminRoutes.post('/force-sync', adminController.forceSync);
-adminRoutes.post('/clear-queue', adminController.clearQueue);
-adminRoutes.post('/process-dead-letter', adminController.processDeadLetter);
-adminRoutes.post('/recover-stale', adminController.recoverStale);
-adminRoutes.get('/queue-metrics', adminController.getQueueMetrics);
+  fastify.get('/all-venues', adminController.getAllVenueIntegrations);
+  fastify.get('/health-summary', adminController.getHealthSummary);
+  fastify.get('/costs', adminController.getCostAnalysis);
+  fastify.post('/force-sync', adminController.forceSync);
+  fastify.post('/clear-queue', adminController.clearQueue);
+  fastify.post('/process-dead-letter', adminController.processDeadLetter);
+  fastify.post('/recover-stale', adminController.recoverStale);
+  fastify.get('/queue-metrics', adminController.getQueueMetrics);
+}

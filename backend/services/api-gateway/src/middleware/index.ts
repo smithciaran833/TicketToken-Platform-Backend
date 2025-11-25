@@ -11,6 +11,7 @@ import { setupValidationMiddleware } from './validation.middleware';
 import { setupTimeoutMiddleware } from './timeout.middleware';
 import { setupVenueIsolationMiddleware } from './venue-isolation.middleware';
 import { setupErrorHandler, errorRecoveryMiddleware } from './error-handler.middleware';
+import { domainRoutingMiddleware } from './domain-routing.middleware';
 import { createLogger } from '../utils/logger';
 
 const logger = createLogger('middleware');
@@ -23,10 +24,11 @@ export async function setupMiddleware(server: FastifyInstance) {
 
   // 2. Redis connection (needed by many other middleware)
   await setupRedisMiddleware(server);
+
   // 3. Metrics collection
   await setupMetricsMiddleware(server);
 
-  // 3. Security headers (before everything)
+  // 4. Security headers (before everything)
   await server.register(fastifyHelmet, {
     contentSecurityPolicy: {
       directives: {
@@ -44,43 +46,45 @@ export async function setupMiddleware(server: FastifyInstance) {
     crossOriginEmbedderPolicy: false,
   });
 
-  // 4. CORS (before authentication)
+  // 5. CORS (before authentication)
   await setupCorsMiddleware(server);
 
-  // 5. Request ID and context (for tracing)
+  // 6. Request ID and context (for tracing)
   server.addHook('onRequest', async (request, reply) => {
     // Request ID is already set by Fastify
     reply.header('X-Request-ID', request.id);
-
     // Add request start time for performance tracking
     request.startTime = Date.now();
   });
 
-  // 6. Logging (log all requests)
+  // 7. Domain routing for white-label (early, so it's available for all requests)
+  server.addHook('onRequest', domainRoutingMiddleware);
+
+  // 8. Logging (log all requests)
   await setupLoggingMiddleware(server);
 
-  // 7. Rate limiting (before expensive operations)
+  // 9. Rate limiting (before expensive operations)
   await setupRateLimitMiddleware(server);
 
   // Start dynamic rate limit adjustments
   adjustRateLimits(server);
 
-  // 8. Circuit breaker setup
+  // 10. Circuit breaker setup
   await setupCircuitBreakerMiddleware(server);
 
-  // 9. Request validation
+  // 11. Request validation
   await setupValidationMiddleware(server);
 
-  // 10. Authentication setup
+  // 12. Authentication setup
   await setupAuthMiddleware(server);
 
-  // 11. Venue isolation (after auth)
+  // 13. Venue isolation (after auth)
   await setupVenueIsolationMiddleware(server);
 
-  // 12. Timeout handling
+  // 14. Timeout handling
   await setupTimeoutMiddleware(server);
 
-  // 13. Error handler (last)
+  // 15. Error handler (last)
   await setupErrorHandler(server);
 
   // Add response time header
@@ -91,5 +95,5 @@ export async function setupMiddleware(server: FastifyInstance) {
     }
   });
 
-  logger.info('All middleware configured successfully');
+  logger.info('All middleware configured successfully (including domain routing)');
 }

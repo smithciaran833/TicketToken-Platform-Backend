@@ -1,13 +1,30 @@
-import { createCache } from '@tickettoken/cache';
+import { createCache } from '@tickettoken/shared';
 
 const serviceName = process.env.SERVICE_NAME || 'payment-service';
 
+// DEBUG
+console.log('=== CACHE INTEGRATION DEBUG ===');
+console.log('REDIS_HOST:', process.env.REDIS_HOST);
+console.log('REDIS_PORT:', process.env.REDIS_PORT);
+console.log('REDIS_PASSWORD:', process.env.REDIS_PASSWORD ? '[SET]' : '[NOT SET]');
+console.log('===============================');
+
+// Initialize cache with service-specific config
 const cacheSystem = createCache({
   redis: {
     host: process.env.REDIS_HOST || 'redis',
     port: parseInt(process.env.REDIS_PORT || '6379'),
     password: process.env.REDIS_PASSWORD,
     keyPrefix: `${serviceName}:`,
+  },
+  ttls: {
+    session: 5 * 60,
+    user: 5 * 60,
+    event: 10 * 60,
+    venue: 30 * 60,
+    ticket: 30,
+    template: 60 * 60,
+    search: 5 * 60
   }
 });
 
@@ -16,4 +33,22 @@ export const cacheMiddleware = cacheSystem.middleware;
 export const cacheStrategies = cacheSystem.strategies;
 export const cacheInvalidator = cacheSystem.invalidator;
 export const getCacheStats = () => cache.getStats();
-export const serviceCache = {};
+
+// Service-specific cache functions
+export const serviceCache = {
+  async get(key: string, fetcher?: () => Promise<any>, ttl: number = 300): Promise<any> {
+    return cache.get(key, fetcher, { ttl, level: 'BOTH' });
+  },
+
+  async set(key: string, value: any, ttl: number = 300): Promise<void> {
+    await cache.set(key, value, { ttl, level: 'BOTH' });
+  },
+
+  async delete(keys: string | string[]): Promise<void> {
+    await cache.delete(keys);
+  },
+
+  async flush(): Promise<void> {
+    await cache.flush();
+  }
+};

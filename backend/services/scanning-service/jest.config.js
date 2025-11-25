@@ -1,6 +1,6 @@
-const baseConfig = require('../../shared/jest.config.base1.js');
+const baseConfig = require('../../shared/jest.config.base.js');
 
 module.exports = {
   ...baseConfig,
-  displayName: '${service}',
+  displayName: 'scanning-service',
 };

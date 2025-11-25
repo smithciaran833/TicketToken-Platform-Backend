@@ -1,5 +1,8 @@
 import { Pool } from 'pg';
 import Bull from 'bull';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'PaymentEventProcessor' });
 
 export interface PaymentEvent {
   id: string;
@@ -39,7 +42,7 @@ export class PaymentEventProcessor {
         await this.handlePaymentFailed(event);
         break;
       default:
-        console.log(`Processing event type: ${event.type}`);
+        log.info('Processing event type', { eventType: event.type });
     }
   }
 

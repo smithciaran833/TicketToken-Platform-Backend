@@ -6,13 +6,13 @@ import {
   percentOfCents,
   multiplyCents,
   formatCents,
-  parseToCents
+  parseToCents,
 } from '../../src/utils/money';
 
 describe('Money Utilities', () => {
   describe('toCents', () => {
     test('converts dollars to cents', () => {
-      expect(toCents(10.50)).toBe(1050);
+      expect(toCents(10.5)).toBe(1050);
       expect(toCents(100)).toBe(10000);
       expect(toCents(0.01)).toBe(1);
     });
@@ -32,7 +32,7 @@ describe('Money Utilities', () => {
 
   describe('fromCents', () => {
     test('converts cents to dollars', () => {
-      expect(fromCents(1050)).toBe(10.50);
+      expect(fromCents(1050)).toBe(10.5);
       expect(fromCents(10000)).toBe(100);
       expect(fromCents(1)).toBe(0.01);
     });
@@ -69,10 +69,10 @@ describe('Money Utilities', () => {
     test('calculates percentage using basis points', () => {
       // 10% of $100 = $10
       expect(percentOfCents(10000, 1000)).toBe(1000);
-      
+
       // 7.5% of $100 = $7.50
       expect(percentOfCents(10000, 750)).toBe(750);
-      
+
       // 2.5% of $100 = $2.50
       expect(percentOfCents(10000, 250)).toBe(250);
     });
@@ -144,7 +144,7 @@ describe('Money Utilities', () => {
   describe('Money Precision - No Loss in Chains', () => {
     test('complex calculation maintains precision', () => {
       // Buy 3 tickets at $47.50 each = $142.50
-      const ticketPrice = toCents(47.50);
+      const ticketPrice = toCents(47.5);
       const quantity = 3;
       const subtotal = multiplyCents(ticketPrice, quantity);
       expect(subtotal).toBe(14250);
@@ -168,17 +168,17 @@ describe('Money Utilities', () => {
     test('refund calculation maintains precision', () => {
       const originalAmount = 10000; // $100
       const platformFee = 750; // $7.50
-      
+
       // Partial refund of $50
       const refundAmount = 5000;
-      
+
       // Pro-rata platform fee refund
       const platformFeeRefund = Math.floor((refundAmount / originalAmount) * platformFee);
       expect(platformFeeRefund).toBe(375); // $3.75
-      
+
       const venueRefund = refundAmount - platformFeeRefund;
       expect(venueRefund).toBe(4625); // $46.25
-      
+
       // Verify total
       expect(platformFeeRefund + venueRefund).toBe(5000);
     });
@@ -188,15 +188,15 @@ describe('Money Utilities', () => {
     test('ticket purchase with fees and taxes', () => {
       // $85 ticket
       const ticketPrice = 8500;
-      
+
       // 5% platform fee = $4.25
       const platformFee = percentOfCents(ticketPrice, 500);
       expect(platformFee).toBe(425);
-      
+
       // 7% state tax on ticket only = $5.95
       const tax = percentOfCents(ticketPrice, 700);
       expect(tax).toBe(595);
-      
+
       // Total = $94.20
       const total = addCents(ticketPrice, platformFee, tax);
       expect(total).toBe(9520);
@@ -206,19 +206,19 @@ describe('Money Utilities', () => {
     test('venue royalty split on resale', () => {
       // $200 resale price
       const resalePrice = 20000;
-      
+
       // 10% venue royalty = $20
       const venueRoyalty = percentOfCents(resalePrice, 1000);
       expect(venueRoyalty).toBe(2000);
-      
+
       // 5% platform fee = $10
       const platformFee = percentOfCents(resalePrice, 500);
       expect(platformFee).toBe(1000);
-      
+
       // Seller gets = $170
       const sellerPayout = subtractCents(resalePrice, addCents(venueRoyalty, platformFee));
       expect(sellerPayout).toBe(17000);
-      
+
       // Verify total
       expect(addCents(venueRoyalty, platformFee, sellerPayout)).toBe(20000);
     });

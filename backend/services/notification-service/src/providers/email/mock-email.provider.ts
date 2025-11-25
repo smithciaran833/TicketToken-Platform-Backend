@@ -4,6 +4,7 @@ import * as crypto from 'crypto';
 import { BaseEmailProvider } from './base-email.provider';
 import { SendEmailInput } from './base-email.provider';
 import { NotificationResult } from '../base.provider';
+import { logger } from '../../config/logger';
 
 export class MockEmailProvider extends BaseEmailProvider {
   private sentEmails: NotificationResult[] = [];
@@ -106,7 +107,7 @@ export class MockEmailProvider extends BaseEmailProvider {
 
   async verify(): Promise<boolean> {
     await this.ensureLogDirectory();
-    console.log('MockEmailProvider: Verified (always ready)');
+    logger.info('MockEmailProvider: Verified (always ready)');
     return true;
   }
 

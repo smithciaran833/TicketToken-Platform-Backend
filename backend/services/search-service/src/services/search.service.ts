@@ -1,6 +1,7 @@
 import { Client } from '@elastic/elasticsearch';
 import pino from 'pino';
 import { ConsistencyService } from './consistency.service';
+import { addTenantFilter, canAccessCrossTenant } from '../utils/tenant-filter';
 
 export class SearchService {
   private elasticsearch: Client;
@@ -21,6 +22,8 @@ export class SearchService {
       consistencyToken?: string;
       waitForConsistency?: boolean;
       userId?: string;
+      venueId?: string;
+      userRole?: string;
     }
   ) {
     this.logger.info({ query, type, options }, 'Searching');
@@ -42,19 +45,32 @@ export class SearchService {
     try {
       const indices = type ? [type] : ['venues', 'events'];
 
+      // Build base query
+      let esQuery: any = query ? {
+        multi_match: {
+          query: query,
+          fields: ['name^2', 'description', 'city', 'venue_name'],
+          fuzziness: 'AUTO'
+        }
+      } : {
+        match_all: {}
+      };
+
+      // SECURITY: Add tenant isolation filter
+      // Only allow cross-tenant access for admin roles
+      if (options?.venueId) {
+        const allowCrossTenant = !!(options?.userRole && canAccessCrossTenant(options.userRole));
+        esQuery = addTenantFilter(esQuery, {
+          venueId: options.venueId,
+          allowCrossTenant
+        });
+      }
+
       const response = await this.elasticsearch.search({
         index: indices,
         size: limit,
         body: {
-          query: query ? {
-            multi_match: {
-              query: query,
-              fields: ['name^2', 'description', 'city', 'venue_name'],
-              fuzziness: 'AUTO'
-            }
-          } : {
-            match_all: {}
-          },
+          query: esQuery,
           // Add version-based filtering if needed
           ...(options?.consistencyToken ? {
             min_score: 0.01,
@@ -120,14 +136,26 @@ export class SearchService {
     }
 
     try {
+      // Build base query with date filters
+      let esQuery: any = {
+        bool: {
+          must: mustClauses.length ? mustClauses : [{ match_all: {} }]
+        }
+      };
+
+      // SECURITY: Add tenant isolation filter
+      if (options?.venueId) {
+        const allowCrossTenant = !!(options?.userRole && canAccessCrossTenant(options.userRole));
+        esQuery = addTenantFilter(esQuery, {
+          venueId: options.venueId,
+          allowCrossTenant
+        });
+      }
+
       const response = await this.elasticsearch.search({
         index: 'events',
         body: {
-          query: {
-            bool: {
-              must: mustClauses.length ? mustClauses : { match_all: {} }
-            }
-          },
+          query: esQuery,
           sort: [{ date: 'asc' }]
         },
         preference: options?.userId || options?.consistencyToken

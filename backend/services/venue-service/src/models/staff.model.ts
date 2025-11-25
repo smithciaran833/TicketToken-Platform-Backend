@@ -7,11 +7,23 @@ export interface IStaffMember {
   user_id: string;
   role: 'owner' | 'manager' | 'box_office' | 'door_staff' | 'viewer';
   permissions?: string[];
+  department?: string;
+  job_title?: string;
+  employment_type?: string;
+  start_date?: Date;
+  end_date?: Date;
   is_active?: boolean;
-  last_login_at?: Date;
+  access_areas?: string[];
+  shift_schedule?: any;
+  pin_code?: string;
+  contact_email?: string;
+  contact_phone?: string;
+  emergency_contact?: any;
+  hourly_rate?: number;
+  commission_percentage?: number;
+  added_by?: string;
   created_at?: Date;
   updated_at?: Date;
-  deleted_at?: Date;
 }
 
 export interface IStaffWithUser extends IStaffMember {
@@ -31,14 +43,12 @@ export class StaffModel extends BaseModel {
   async findByVenueAndUser(venueId: string, userId: string): Promise<IStaffMember | null> {
     return this.db(this.tableName)
       .where({ venue_id: venueId, user_id: userId })
-      .whereNull('deleted_at')
       .first();
   }
 
   async getVenueStaff(venueId: string, includeInactive = false): Promise<IStaffMember[]> {
     let query = this.db(this.tableName)
-      .where({ venue_id: venueId })
-      .whereNull('deleted_at');
+      .where({ venue_id: venueId });
 
     if (!includeInactive) {
       query = query.where({ is_active: true });
@@ -50,21 +60,34 @@ export class StaffModel extends BaseModel {
   async getStaffByRole(venueId: string, role: IStaffMember['role']): Promise<IStaffMember[]> {
     return this.db(this.tableName)
       .where({ venue_id: venueId, role, is_active: true })
-      .whereNull('deleted_at')
       .orderBy('created_at', 'asc');
   }
 
   async addStaffMember(staffData: Partial<IStaffMember>): Promise<IStaffMember> {
     const existing = await this.findByVenueAndUser(staffData.venue_id!, staffData.user_id!);
-    if (existing) {
+    if (existing && existing.is_active) {
       throw new Error('Staff member already exists for this venue');
+    }
+
+    // If exists but inactive, reactivate instead of creating new
+    if (existing && !existing.is_active) {
+      const [reactivated] = await this.db(this.tableName)
+        .where({ id: existing.id })
+        .update({
+          is_active: true,
+          role: staffData.role,
+          permissions: staffData.permissions || this.getDefaultPermissions(staffData.role!),
+          updated_at: new Date()
+        })
+        .returning('*');
+      return reactivated;
     }
 
     const permissions = staffData.permissions || this.getDefaultPermissions(staffData.role!);
 
     return this.create({
       ...staffData,
-      permissions: JSON.stringify(permissions),
+      permissions: permissions,
       is_active: true,
     });
   }
@@ -73,9 +96,9 @@ export class StaffModel extends BaseModel {
     const updateData: any = { role };
 
     if (permissions) {
-      updateData.permissions = JSON.stringify(permissions);
+      updateData.permissions = permissions;
     } else {
-      updateData.permissions = JSON.stringify(this.getDefaultPermissions(role));
+      updateData.permissions = this.getDefaultPermissions(role);
     }
 
     return this.update(id, updateData);
@@ -92,13 +115,14 @@ export class StaffModel extends BaseModel {
   }
 
   async updateLastLogin(id: string): Promise<void> {
-    await this.update(id, { last_login_at: new Date() });
+    await this.db(this.tableName)
+      .where({ id })
+      .update({ updated_at: new Date() });
   }
 
   async getUserVenues(userId: string): Promise<Array<{ venue_id: string; role: string }>> {
     return this.db(this.tableName)
       .where({ user_id: userId, is_active: true })
-      .whereNull('deleted_at')
       .select('venue_id', 'role');
   }
 
@@ -153,7 +177,12 @@ export class StaffModel extends BaseModel {
   }
 
   async validateStaffLimit(venueId: string): Promise<{ canAdd: boolean; limit: number; current: number }> {
-    const currentStaff = await this.count({ venue_id: venueId, is_active: true });
+    const result = await this.db(this.tableName)
+      .where({ venue_id: venueId, is_active: true })
+      .count('* as count')
+      .first();
+    
+    const currentStaff = parseInt(String(result?.count || '0'), 10);
     const limit = 50;
 
     return {

@@ -5,63 +5,81 @@
 
 import Redis from 'ioredis';
 import { getRedisConfig } from '../config';
-import {
-  LockTimeoutError,
-  LockContentionError,
-  LockSystemError
-} from '../errors/lock-errors';
+import { LockTimeoutError, LockContentionError, LockSystemError } from '../errors/lock-errors';
 
-// Initialize Redis client for locks
-const redisConfig = getRedisConfig();
-const redis = typeof redisConfig === 'string'
-  ? new Redis(redisConfig)
-  : new Redis({
-      host: redisConfig.host,
-      port: redisConfig.port,
-      password: redisConfig.password,
+// Lazy initialize Redis client for locks
+let redis: Redis | null = null;
+
+function getRedisClient(): Redis {
+  if (!redis) {
+    const redisConfig = getRedisConfig();
+    redis =
+      typeof redisConfig === 'string'
+        ? new Redis(redisConfig)
+        : new Redis({
+            host: redisConfig.host,
+            port: redisConfig.port,
+            password: redisConfig.password,
+          });
+
+    // Handle Redis connection errors
+    redis.on('error', (err) => {
+      console.error('Redis connection error for distributed locks:', err);
     });
 
-// Handle Redis connection errors
-redis.on('error', (err) => {
-  console.error('Redis connection error for distributed locks:', err);
-});
-
-redis.on('connect', () => {
-  console.log('Redis connected for distributed locks');
-});
+    redis.on('connect', () => {
+      console.log('Redis connected for distributed locks');
+    });
+  }
+  return redis;
+}
 
 /**
  * Lock key generator with environment prefix
  */
 export class LockKeys {
-  private static readonly ENV_PREFIX = process.env.NODE_ENV || 'dev';
+  private static getEnvPrefix(): string {
+    return process.env.NODE_ENV || 'dev';
+  }
 
   static inventory(eventId: string, tierId: string): string {
-    return `${this.ENV_PREFIX}:lock:inventory:${eventId}:${tierId}`;
+    return `${this.getEnvPrefix()}:lock:inventory:${eventId}:${tierId}`;
   }
 
   static listing(listingId: string): string {
-    return `${this.ENV_PREFIX}:lock:listing:${listingId}`;
+    return `${this.getEnvPrefix()}:lock:listing:${listingId}`;
   }
 
   static ticket(ticketId: string): string {
-    return `${this.ENV_PREFIX}:lock:ticket:${ticketId}`;
+    return `${this.getEnvPrefix()}:lock:ticket:${ticketId}`;
   }
 
   static userPurchase(userId: string): string {
-    return `${this.ENV_PREFIX}:lock:user:${userId}:purchase`;
+    return `${this.getEnvPrefix()}:lock:user:${userId}:purchase`;
   }
 
   static reservation(reservationId: string): string {
-    return `${this.ENV_PREFIX}:lock:reservation:${reservationId}`;
+    return `${this.getEnvPrefix()}:lock:reservation:${reservationId}`;
   }
 
   static payment(paymentId: string): string {
-    return `${this.ENV_PREFIX}:lock:payment:${paymentId}`;
+    return `${this.getEnvPrefix()}:lock:payment:${paymentId}`;
   }
 
   static refund(paymentId: string): string {
-    return `${this.ENV_PREFIX}:lock:refund:${paymentId}`;
+    return `${this.getEnvPrefix()}:lock:refund:${paymentId}`;
+  }
+
+  static order(orderId: string): string {
+    return `${this.getEnvPrefix()}:lock:order:${orderId}`;
+  }
+
+  static orderConfirmation(orderId: string): string {
+    return `${this.getEnvPrefix()}:lock:order:${orderId}:confirm`;
+  }
+
+  static orderCancellation(orderId: string): string {
+    return `${this.getEnvPrefix()}:lock:order:${orderId}:cancel`;
   }
 }
 
@@ -75,15 +93,6 @@ interface LockOptions {
 
 /**
  * Execute a function with a distributed lock using Redis SET NX
- *
- * @param key - The lock key
- * @param ttlMs - Lock duration in milliseconds
- * @param fn - The function to execute while holding the lock
- * @param options - Optional metadata for logging and metrics
- * @returns The result of the function
- * @throws {LockTimeoutError} When lock cannot be acquired within timeout
- * @throws {LockContentionError} When resource is locked by another process
- * @throws {LockSystemError} When Redis or system errors occur
  */
 export async function withLock<T>(
   key: string,
@@ -94,19 +103,16 @@ export async function withLock<T>(
   const startTime = Date.now();
   const service = options?.service || 'unknown';
   const lockType = options?.lockType || parseLockType(key);
-  const lockValue = `${process.pid}-${Date.now()}`; // Unique lock value
+  const lockValue = `${process.pid}-${Date.now()}`;
   let acquired = false;
 
   try {
-    // Try to acquire lock with retry logic
-    const maxRetries = 50; // 50 retries = ~5 seconds of attempts
+    const maxRetries = 50;
     const retryDelayMs = 100;
 
     for (let attempt = 0; attempt < maxRetries; attempt++) {
-      // SET key value PX milliseconds NX
-      // Returns 'OK' if set, null if key already exists
-      const result = await redis.set(key, lockValue, 'PX', ttlMs, 'NX');
-      
+      const result = await getRedisClient().set(key, lockValue, 'PX', ttlMs, 'NX');
+
       if (result === 'OK') {
         acquired = true;
         const acquisitionTime = Date.now() - startTime;
@@ -114,9 +120,8 @@ export async function withLock<T>(
         break;
       }
 
-      // Lock is held by another process, wait and retry
       if (attempt < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+        await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
       }
     }
 
@@ -125,56 +130,42 @@ export async function withLock<T>(
       console.error(`Lock timeout: ${key} after ${acquisitionTime}ms`, {
         service,
         lockType,
-        ttlMs
+        ttlMs,
       });
 
-      throw new LockTimeoutError(
-        `Failed to acquire lock after ${acquisitionTime}ms`,
-        key,
-        ttlMs
-      );
+      throw new LockTimeoutError(`Failed to acquire lock after ${acquisitionTime}ms`, key, ttlMs);
     }
 
-    // Execute the protected function
     const result = await fn();
-
     return result;
-
   } catch (error: any) {
-    // If we threw a lock error, re-throw it
-    if (error instanceof LockTimeoutError || 
-        error instanceof LockContentionError || 
-        error instanceof LockSystemError) {
+    if (
+      error instanceof LockTimeoutError ||
+      error instanceof LockContentionError ||
+      error instanceof LockSystemError
+    ) {
       throw error;
     }
 
-    // Check for Redis connection errors
-    if (error.message && (
-      error.message.includes('Redis') ||
-      error.message.includes('ECONNREFUSED') ||
-      error.message.includes('ETIMEDOUT')
-    )) {
+    if (
+      error.message &&
+      (error.message.includes('Redis') ||
+        error.message.includes('ECONNREFUSED') ||
+        error.message.includes('ETIMEDOUT'))
+    ) {
       console.error(`Lock system error: ${key}`, {
         service,
         lockType,
-        error: error.message
+        error: error.message,
       });
 
-      throw new LockSystemError(
-        'Lock system unavailable',
-        key,
-        error
-      );
+      throw new LockSystemError('Lock system unavailable', key, error);
     }
 
-    // Re-throw business logic errors
     throw error;
-
   } finally {
-    // Always attempt to release the lock
     if (acquired) {
       try {
-        // Only delete if we still own the lock (check value matches)
         const script = `
           if redis.call("get", KEYS[1]) == ARGV[1] then
             return redis.call("del", KEYS[1])
@@ -182,8 +173,8 @@ export async function withLock<T>(
             return 0
           end
         `;
-        await redis.eval(script, 1, key, lockValue);
-        
+        await getRedisClient().eval(script, 1, key, lockValue);
+
         const totalTime = Date.now() - startTime;
         console.log(`Lock released: ${key} (held for ${totalTime}ms)`);
       } catch (err: any) {
@@ -218,10 +209,7 @@ export async function withLockRetry<T>(
     } catch (error: any) {
       lastError = error;
 
-      if (
-        !(error instanceof LockTimeoutError) &&
-        !(error instanceof LockContentionError)
-      ) {
+      if (!(error instanceof LockTimeoutError) && !(error instanceof LockContentionError)) {
         throw error;
       }
 
@@ -232,7 +220,7 @@ export async function withLockRetry<T>(
       const delayMs = initialDelayMs * Math.pow(backoffMultiplier, attempt);
       console.log(`Lock retry attempt ${attempt + 1}/${maxRetries} for ${key} after ${delayMs}ms`);
 
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
@@ -242,13 +230,10 @@ export async function withLockRetry<T>(
 /**
  * Try to acquire a lock without waiting
  */
-export async function tryLock(
-  key: string,
-  ttlMs: number
-): Promise<boolean> {
+export async function tryLock(key: string, ttlMs: number): Promise<boolean> {
   try {
     const lockValue = `${process.pid}-${Date.now()}`;
-    const result = await redis.set(key, lockValue, 'PX', ttlMs, 'NX');
+    const result = await getRedisClient().set(key, lockValue, 'PX', ttlMs, 'NX');
     return result === 'OK';
   } catch (error: any) {
     return false;
@@ -311,7 +296,9 @@ export class LockMetrics {
 }
 
 // Export Redis client for testing
-export { redis as lockRedisClient };
+export function lockRedisClient(): Redis {
+  return getRedisClient();
+}
 
-// Compatibility exports (not used in SET NX implementation but kept for interface)
-export const redlock = null;
+// Compatibility exports
+export const redlock: any = null;

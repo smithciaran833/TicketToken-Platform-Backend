@@ -1,66 +1,76 @@
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'this-is-a-very-long-secret-key-that-is-at-least-32-characters';
+// Require JWT_SECRET - fail fast if not provided
+if (!process.env.JWT_SECRET) {
+  throw new Error('JWT_SECRET environment variable is required');
+}
 
-export interface AuthRequest extends Request {
-  user?: any;
-  tenantId?: string;
+const JWT_SECRET = process.env.JWT_SECRET;
+
+export interface AuthUser {
+  roles?: string[];
+  tenant_id?: string;
+  [key: string]: any;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    user?: AuthUser;
+    tenantId?: string;
+  }
 }
 
 // Standard authentication middleware
-export function authenticate(req: AuthRequest, res: Response, next: NextFunction): void {
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  
+export async function authenticate(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const token = request.headers.authorization?.replace('Bearer ', '');
+
   if (!token) {
-    res.status(401).json({ error: 'Authentication required' });
-    return;
+    return reply.code(401).send({ error: 'Authentication required' });
   }
-  
+
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    req.user = decoded;
-    req.tenantId = decoded.tenant_id || '00000000-0000-0000-0000-000000000001';
-    next();
+    const decoded = jwt.verify(token, JWT_SECRET) as AuthUser;
+    request.user = decoded;
+    
+    // Require tenant_id in JWT - no default fallback
+    if (!decoded.tenant_id) {
+      return reply.code(401).send({ error: 'Token missing tenant_id' });
+    }
+    
+    request.tenantId = decoded.tenant_id;
   } catch (error) {
-    res.status(401).json({ error: 'Invalid token' });
-    return;
+    return reply.code(401).send({ error: 'Invalid token' });
   }
 }
 
 // Admin only middleware
-export function requireAdmin(req: AuthRequest, res: Response, next: NextFunction): void {
-  if (!req.user?.roles?.includes('admin')) {
-    res.status(403).json({ error: 'Admin access required' });
-    return;
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  if (!request.user?.roles?.includes('admin')) {
+    return reply.code(403).send({ error: 'Admin access required' });
   }
-  next();
 }
 
 // Compliance officer middleware
-export function requireComplianceOfficer(req: AuthRequest, res: Response, next: NextFunction): void {
+export async function requireComplianceOfficer(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const validRoles = ['admin', 'compliance_officer', 'compliance_manager'];
-  const hasRole = req.user?.roles?.some((role: string) => validRoles.includes(role));
-  
+  const hasRole = request.user?.roles?.some((role: string) => validRoles.includes(role));
+
   if (!hasRole) {
-    res.status(403).json({ error: 'Compliance officer access required' });
-    return;
+    return reply.code(403).send({ error: 'Compliance officer access required' });
   }
-  next();
 }
 
 // Webhook authentication (different from user auth)
 export function webhookAuth(secret: string) {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    const signature = req.headers['x-webhook-signature'] as string;
-    
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const signature = request.headers['x-webhook-signature'] as string;
+
     if (!signature || signature !== secret) {
-      res.status(401).json({ error: 'Invalid webhook signature' });
-      return;
+      return reply.code(401).send({ error: 'Invalid webhook signature' });
     }
-    
-    // Set default tenant for webhooks
-    (req as AuthRequest).tenantId = '00000000-0000-0000-0000-000000000001';
-    next();
+
+    // Tenant ID should be provided in webhook payload
+    // We'll set it when processing the webhook body
   };
 }

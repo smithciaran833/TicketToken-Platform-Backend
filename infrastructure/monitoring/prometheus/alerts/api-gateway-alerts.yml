@@ -1,0 +1,270 @@
+groups:
+  - name: api_gateway_critical
+    interval: 30s
+    rules:
+      # Service Availability
+      - alert: APIGatewayDown
+        expr: up{job="api-gateway"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: api-gateway
+        annotations:
+          summary: "API Gateway is down"
+          description: "API Gateway instance {{ $labels.instance }} has been down for more than 1 minute"
+          
+      - alert: APIGatewayHighErrorRate
+        expr: |
+          (sum(rate(http_requests_total{service="api-gateway",status_code=~"5.."}[5m])) 
+          / sum(rate(http_requests_total{service="api-gateway"}[5m]))) * 100 > 5
+        for: 5m
+        labels:
+          severity: critical
+          service: api-gateway
+        annotations:
+          summary: "High 5xx error rate on API Gateway"
+          description: "API Gateway 5xx error rate is {{ $value | humanizePercentage }} (threshold: 5%)"
+          
+      - alert: APIGatewayHighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket{service="api-gateway"}[5m])) by (le)
+          ) > 2
+        for: 10m
+        labels:
+          severity: critical
+          service: api-gateway
+        annotations:
+          summary: "High latency on API Gateway"
+          description: "API Gateway p95 latency is {{ $value }}s (threshold: 2s)"
+
+  - name: api_gateway_warning
+    interval: 1m
+    rules:
+      # Circuit Breakers
+      - alert: CircuitBreakerOpen
+        expr: circuit_breaker_state{service="api-gateway"} == 1
+        for: 2m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "Circuit breaker open for {{ $labels.service }}"
+          description: "Circuit breaker for {{ $labels.service }} has been open for more than 2 minutes"
+          
+      - alert: CircuitBreakerHighFailureRate
+        expr: |
+          rate(circuit_breaker_failures_total{service="api-gateway"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High circuit breaker failure rate"
+          description: "Circuit breaker for {{ $labels.service }} is experiencing {{ $value }} failures/s"
+          
+      # Authentication
+      - alert: HighAuthenticationFailureRate
+        expr: |
+          (sum(rate(auth_attempts_total{service="api-gateway",status="failure"}[5m])) 
+          / sum(rate(auth_attempts_total{service="api-gateway"}[5m]))) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High authentication failure rate"
+          description: "Authentication failure rate is {{ $value | humanizePercentage }} (threshold: 10%)"
+          
+      - alert: JWTValidationErrors
+        expr: rate(jwt_validation_errors_total{service="api-gateway"}[5m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High JWT validation error rate"
+          description: "JWT validation errors are occurring at {{ $value }}/s for error type: {{ $labels.error_type }}"
+
+  - name: api_gateway_security
+    interval: 1m
+    rules:
+      # Security Violations
+      - alert: SecurityViolationDetected
+        expr: increase(security_violations_total{service="api-gateway"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: api-gateway
+          security: true
+        annotations:
+          summary: "Security violation detected"
+          description: "{{ $value }} security violations of type {{ $labels.violation_type }} detected in the last 5 minutes"
+          
+      - alert: CrossTenantAccessAttempt
+        expr: increase(cross_tenant_attempts_total{service="api-gateway"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+          service: api-gateway
+          security: true
+        annotations:
+          summary: "Cross-tenant access attempt detected"
+          description: "{{ $value }} cross-tenant access attempts detected from {{ $labels.source_tenant }} to {{ $labels.target_tenant }}"
+          
+      - alert: DangerousHeadersFiltered
+        expr: rate(dangerous_headers_filtered_total{service="api-gateway"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+          security: true
+        annotations:
+          summary: "High rate of dangerous headers being filtered"
+          description: "{{ $value }}/s dangerous headers ({{ $labels.header_name }}) are being filtered"
+          
+      - alert: HighRateLimitViolations
+        expr: rate(rate_limit_exceeded_total{service="api-gateway"}[5m]) > 100
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High rate of rate limit violations"
+          description: "{{ $value }}/s rate limit violations on endpoint {{ $labels.endpoint }}"
+
+  - name: api_gateway_performance
+    interval: 1m
+    rules:
+      # Memory
+      - alert: HighMemoryUsage
+        expr: |
+          (memory_usage_bytes{service="api-gateway",type="heapUsed"} 
+          / memory_usage_bytes{service="api-gateway",type="heapTotal"}) * 100 > 90
+        for: 10m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanizePercentage }} (threshold: 90%)"
+          
+      - alert: HighEventLoopLag
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(event_loop_lag_seconds_bucket{service="api-gateway"}[5m])) by (le)
+          ) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High event loop lag detected"
+          description: "Event loop lag p95 is {{ $value }}s (threshold: 0.1s)"
+          
+      - alert: TooManyActiveConnections
+        expr: active_connections{service="api-gateway"} > 1000
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "Too many active connections"
+          description: "Active connections: {{ $value }} (threshold: 1000)"
+
+  - name: api_gateway_downstream
+    interval: 1m
+    rules:
+      # Downstream Services
+      - alert: DownstreamServiceDown
+        expr: health_check_status{service="api-gateway"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: api-gateway
+        annotations:
+          summary: "Downstream service {{ $labels.check_type }} is down"
+          description: "Health check for {{ $labels.check_type }} has been failing for more than 2 minutes"
+          
+      - alert: DownstreamServiceHighLatency
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(downstream_request_duration_seconds_bucket{service="api-gateway"}[5m])) by (le, service)
+          ) > 5
+        for: 10m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High latency for downstream service {{ $labels.service }}"
+          description: "Downstream service {{ $labels.service }} p95 latency is {{ $value }}s (threshold: 5s)"
+          
+      - alert: DownstreamServiceHighErrorRate
+        expr: |
+          (sum(rate(downstream_errors_total{service="api-gateway"}[5m])) by (service) 
+          / sum(rate(downstream_requests_total{service="api-gateway"}[5m])) by (service)) * 100 > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High error rate for downstream service {{ $labels.service }}"
+          description: "Downstream service {{ $labels.service }} error rate is {{ $value | humanizePercentage }}"
+
+  - name: api_gateway_cache
+    interval: 1m
+    rules:
+      # Cache Performance
+      - alert: LowCacheHitRate
+        expr: |
+          (sum(rate(cache_hits_total{service="api-gateway"}[5m])) 
+          / (sum(rate(cache_hits_total{service="api-gateway"}[5m])) 
+          + sum(rate(cache_misses_total{service="api-gateway"}[5m])))) * 100 < 50
+        for: 15m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "Low cache hit rate"
+          description: "Cache hit rate is {{ $value | humanizePercentage }} (threshold: 50%)"
+          
+      - alert: HighCacheErrorRate
+        expr: rate(cache_errors_total{service="api-gateway"}[5m]) > 10
+        for: 5m
+        labels:
+          severity: warning
+          service: api-gateway
+        annotations:
+          summary: "High cache error rate"
+          description: "Cache errors occurring at {{ $value }}/s for type: {{ $labels.cache_type }}"
+          
+  - name: api_gateway_slo
+    interval: 1m
+    rules:
+      # SLO Alerts (Service Level Objectives)
+      - alert: AvailabilitySLOViolation
+        expr: |
+          (sum(rate(http_requests_total{service="api-gateway",status_code!~"5.."}[5m])) 
+          / sum(rate(http_requests_total{service="api-gateway"}[5m]))) * 100 < 99.9
+        for: 15m
+        labels:
+          severity: critical
+          service: api-gateway
+          slo: availability
+        annotations:
+          summary: "Availability SLO violation"
+          description: "Service availability is {{ $value | humanizePercentage }} (SLO: 99.9%)"
+          
+      - alert: LatencySLOViolation
+        expr: |
+          histogram_quantile(0.95, 
+            sum(rate(http_request_duration_seconds_bucket{service="api-gateway"}[5m])) by (le)
+          ) > 1
+        for: 15m
+        labels:
+          severity: warning
+          service: api-gateway
+          slo: latency
+        annotations:
+          summary: "Latency SLO violation"
+          description: "P95 latency is {{ $value }}s (SLO: 1s)"

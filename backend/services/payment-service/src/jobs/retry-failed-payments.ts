@@ -1,6 +1,9 @@
 import { Pool } from 'pg';
 import Stripe from 'stripe';
 import { PaymentState } from '../services/state-machine/payment-state-machine';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'RetryFailedPayments' });
 
 export class RetryFailedPaymentsJob {
   private db: Pool;
@@ -43,7 +46,7 @@ export class RetryFailedPaymentsJob {
         
         if (paymentIntent.status === 'requires_payment_method') {
           // Payment method failed, need customer action
-          console.log(`Payment ${payment.id} requires new payment method`);
+          log.info('Payment requires new payment method', { paymentId: payment.id });
         } else {
           // Attempt to confirm again
           await this.stripe.paymentIntents.confirm(payment.provider_payment_id);
@@ -51,7 +54,7 @@ export class RetryFailedPaymentsJob {
       }
       // Add other providers here when you implement them
     } catch (error) {
-      console.error(`Failed to retry payment ${payment.id}:`, error);
+      log.error('Failed to retry payment', { paymentId: payment.id, error });
     }
   }
 }

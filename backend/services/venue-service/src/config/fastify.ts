@@ -8,11 +8,28 @@ import swaggerUi from '@fastify/swagger-ui';
 import { AwilixContainer } from 'awilix';
 import { logger } from '../utils/logger';
 import { httpRequestDuration, httpRequestTotal, register } from '../utils/metrics';
+import fs from 'fs';
+import path from 'path';
 
 // Import route handlers
 import { venueRoutes } from '../controllers/venues.controller';
 import healthRoutes from '../routes/health.routes';
 import internalValidationRoutes from '../routes/internal-validation.routes';
+import { brandingRoutes } from '../routes/branding.routes';
+import { domainRoutes } from '../routes/domain.routes';
+
+// Load RSA public key for JWT verification
+const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
+  path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
+
+let publicKey: string;
+try {
+  publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+  logger.info('✓ JWT RS256 public key loaded successfully');
+} catch (error) {
+  logger.error('✗ Failed to load JWT public key:', error);
+  throw new Error('JWT public key not found at: ' + publicKeyPath);
+}
 
 export async function configureFastify(
   fastify: FastifyInstance,
@@ -74,27 +91,26 @@ export async function configureFastify(
 
   // Rate limiting - DISABLED FOR TESTS
   if (process.env.NODE_ENV !== "test") {
-    // Disable rate limiting in test environment
-    if (process.env.NODE_ENV !== 'test') {
-      await fastify.register(rateLimit, {
-        max: 100,
-        timeWindow: '1 minute',
-        keyGenerator: (request): string => {
-          const apiKey = request.headers['x-api-key'] as string;
-          const venueId = request.headers['x-venue-id'] as string;
-          return apiKey || venueId || request.ip;
-        },
-      });
-    } else {
-      logger.info('Rate limiting disabled in test environment');
-    }
+    await fastify.register(rateLimit, {
+      max: 100,
+      timeWindow: '1 minute',
+      keyGenerator: (request): string => {
+        const apiKey = request.headers['x-api-key'] as string;
+        const venueId = request.headers['x-venue-id'] as string;
+        return apiKey || venueId || request.ip;
+      },
+    });
+  } else {
+    logger.info('Rate limiting disabled in test environment');
   }
 
-  // JWT
+  // JWT - RS256 with public key verification
   await fastify.register(jwt, {
-    secret: process.env.JWT_ACCESS_SECRET || 'change-this-secret',
+    secret: {
+      public: publicKey,
+    },
     verify: {
-      algorithms: ['HS256'],
+      algorithms: ['RS256'],
     },
   });
 
@@ -124,6 +140,7 @@ export async function configureFastify(
           { name: 'integrations', description: 'Third-party integrations' },
           { name: 'compliance', description: 'Compliance and regulatory' },
           { name: 'analytics', description: 'Analytics and reporting' },
+          { name: 'branding', description: 'White-label branding' },
           { name: 'health', description: 'Health check endpoints' },
         ],
         securityDefinitions: {
@@ -181,6 +198,7 @@ export async function configureFastify(
   // Register routes
   await fastify.register(internalValidationRoutes, { prefix: '/' });
   await fastify.register(venueRoutes, { prefix: '/api/v1/venues' });
+  await fastify.register(brandingRoutes, { prefix: '/api/v1/branding' });
+  await fastify.register(domainRoutes, { prefix: '/api/v1/domains' });
   await fastify.register(healthRoutes, { prefix: '/' });
-  // Add other routes as needed
 }

@@ -1,77 +1,147 @@
-// import { serviceCache } from '../services/cache-integration'; // TODO: Remove if not needed
-import { Request, Response, NextFunction } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { BaseController } from './base.controller';
 
+interface VenueParams {
+  venueId: string;
+}
+
+interface ReportParams {
+  reportId: string;
+}
+
+interface ScheduleActionParams {
+  reportId: string;
+  action: 'pause' | 'resume';
+}
+
+interface GetReportsQuery {
+  type?: string;
+  page?: number;
+  limit?: number;
+}
+
+interface GenerateReportBody {
+  venueId: string;
+  templateId: string;
+  name: string;
+  parameters: Record<string, any>;
+  format: 'pdf' | 'xlsx' | 'csv';
+  schedule?: Record<string, any>;
+}
+
+interface ScheduleReportBody {
+  venueId: string;
+  templateId: string;
+  name: string;
+  schedule: {
+    frequency: 'daily' | 'weekly' | 'monthly';
+    time: string;
+  };
+  recipients: Array<{ email: string }>;
+}
+
+interface UpdateScheduleBody {
+  schedule: Record<string, any>;
+  recipients?: any[];
+}
+
 class ReportsController extends BaseController {
-  getReportTemplates = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getReportTemplates = async (
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { templates: [] });
+      return this.success(reply, { templates: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getReports = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getReports = async (
+    request: FastifyRequest<{ Params: VenueParams; Querystring: GetReportsQuery }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { reports: [] });
+      return this.success(reply, { reports: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getReport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getReport = async (
+    request: FastifyRequest<{ Params: ReportParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { report: {} });
+      return this.success(reply, { report: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  generateReport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  generateReport = async (
+    request: FastifyRequest<{ Body: GenerateReportBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { reportId: 'report-123' }, 202);
+      return this.success(reply, { reportId: 'report-123' }, 202);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  scheduleReport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  scheduleReport = async (
+    request: FastifyRequest<{ Body: ScheduleReportBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { schedule: {} }, 201);
+      return this.success(reply, { schedule: {} }, 201);
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  updateReportSchedule = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  updateReportSchedule = async (
+    request: FastifyRequest<{ Params: ReportParams; Body: UpdateScheduleBody }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { schedule: {} });
+      return this.success(reply, { schedule: {} });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  deleteReport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  deleteReport = async (
+    request: FastifyRequest<{ Params: ReportParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Report deleted' });
+      return this.success(reply, { message: 'Report deleted' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  getScheduledReports = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  getScheduledReports = async (
+    request: FastifyRequest<{ Params: VenueParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { reports: [] });
+      return this.success(reply, { reports: [] });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 
-  toggleScheduledReport = async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
+  toggleScheduledReport = async (
+    request: FastifyRequest<{ Params: ScheduleActionParams }>,
+    reply: FastifyReply
+  ): Promise<FastifyReply> => {
     try {
-      this.success(res, { message: 'Schedule updated' });
+      return this.success(reply, { message: 'Schedule updated' });
     } catch (error) {
-      this.handleError(error, res, next);
+      return this.handleError(error, reply);
     }
   };
 }

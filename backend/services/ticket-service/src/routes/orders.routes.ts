@@ -1,9 +1,9 @@
-import { Router } from 'express';
+import { FastifyInstance } from 'fastify';
 import { ordersController } from '../controllers/orders.controller';
 
-const router = Router();
-
-// GET /ticket/orders/:orderId
-router.get('/:orderId', ordersController.getOrderById.bind(ordersController));
-
-export default router;
+export default async function orderRoutes(fastify: FastifyInstance) {
+  // GET /orders/:orderId
+  fastify.get('/:orderId', 
+    (request, reply) => ordersController.getOrderById(request, reply)
+  );
+}

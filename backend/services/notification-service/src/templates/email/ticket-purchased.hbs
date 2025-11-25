@@ -1,67 +1,125 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Your Tickets Are Ready!</title>
-    <style>
-        body { font-family: 'Segoe UI', Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
-        .container { max-width: 600px; margin: 0 auto; background: white; }
-        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px; text-align: center; }
-        .content { padding: 30px; }
-        .ticket-box { background: #f8f9fa; border: 2px dashed #dee2e6; border-radius: 8px; padding: 20px; margin: 20px 0; }
-        .qr-code { text-align: center; margin: 20px 0; }
-        .button { display: inline-block; padding: 14px 28px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; font-weight: bold; }
-        .footer { background: #f8f9fa; padding: 20px; text-align: center; color: #6c757d; font-size: 14px; }
-        .important { background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; }
-    </style>
+  <meta charset="UTF-8">
+  <title>Ticket Purchase Confirmed{{#if venueName}} - {{venueName}}{{/if}}</title>
+  <style>
+    body { font-family: {{#if branding.fontFamily}}{{branding.fontFamily}}{{else}}Arial{{/if}}, sans-serif; line-height: 1.6; color: {{#if branding.textColor}}{{branding.textColor}}{{else}}#333{{/if}}; }
+    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+    .header { 
+      background: {{#if branding.primaryColor}}linear-gradient(135deg, {{branding.primaryColor}} 0%, {{branding.secondaryColor}} 100%){{else}}linear-gradient(135deg, #667eea 0%, #764ba2 100%){{/if}}; 
+      color: white; 
+      padding: 30px; 
+      text-align: center; 
+      border-radius: 10px 10px 0 0; 
+    }
+    {{#if branding.logoUrl}}
+    .logo { max-width: 150px; margin-bottom: 20px; }
+    {{/if}}
+    .content { background: {{#if branding.backgroundColor}}{{branding.backgroundColor}}{{else}}#f9f9f9{{/if}}; padding: 30px; border: 1px solid #ddd; border-top: none; }
+    .ticket { background: white; padding: 25px; border-radius: 8px; margin: 20px 0; border-left: 4px solid {{#if branding.accentColor}}{{branding.accentColor}}{{else}}#667eea{{/if}}; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+    .ticket-header { border-bottom: 2px dashed #ddd; padding-bottom: 15px; margin-bottom: 15px; }
+    .footer { text-align: center; padding: 20px; color: #666; font-size: 12px; }
+    .button { 
+      display: inline-block; 
+      padding: 12px 30px; 
+      background: {{#if branding.primaryColor}}{{branding.primaryColor}}{{else}}#667eea{{/if}}; 
+      color: white !important; 
+      text-decoration: none; 
+      border-radius: 5px; 
+      margin: 20px 0; 
+    }
+    .qr-code { text-align: center; margin: 20px 0; padding: 20px; background: #f5f5f5; border-radius: 8px; }
+    .event-info { margin: 15px 0; }
+    .event-info p { margin: 8px 0; }
+    .highlight { color: {{#if branding.primaryColor}}{{branding.primaryColor}}{{else}}#667eea{{/if}}; font-weight: bold; }
+  </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>🎫 Your Tickets Are Ready!</h1>
-        </div>
-        <div class="content">
-            <p>Hi {{user.name}},</p>
-            <p>Great news! Your tickets have been successfully purchased and are ready for use.</p>
-            
-            <div class="ticket-box">
-                <h2>📍 Event Details</h2>
-                <p><strong>Event:</strong> {{event.name}}</p>
-                <p><strong>Date:</strong> {{event.date}}</p>
-                <p><strong>Time:</strong> {{event.time}}</p>
-                <p><strong>Venue:</strong> {{event.venue}}</p>
-                <p><strong>Tickets:</strong> {{ticketCount}} × {{ticketType}}</p>
-                <p><strong>Order ID:</strong> #{{orderId}}</p>
-            </div>
-            
-            {{#if nftMinted}}
-            <div class="important">
-                <strong>🎉 NFT Tickets Minted!</strong><br>
-                Your tickets have been minted as NFTs and are available in your wallet.
-                Transaction ID: {{transactionId}}
-            </div>
-            {{/if}}
-            
-            <div style="text-align: center; margin: 30px 0;">
-                <a href="{{ticketUrl}}" class="button">View Your Tickets</a>
-            </div>
-            
-            <h3>What's Next?</h3>
-            <ul>
-                <li>Save this email for your records</li>
-                <li>Add the event to your calendar</li>
-                <li>Download the TicketToken mobile app for easy entry</li>
-                {{#if transferable}}
-                <li>You can transfer or sell these tickets on our marketplace</li>
-                {{/if}}
-            </ul>
-            
-            <p>If you have any questions, contact us at {{supportEmail}}</p>
-        </div>
-        <div class="footer">
-            <p>© 2024 TicketToken. All rights reserved.</p>
-            <p><a href="{{unsubscribeUrl}}">Unsubscribe</a> | <a href="{{privacyUrl}}">Privacy Policy</a></p>
-        </div>
+  <div class="container">
+    <div class="header">
+      {{#if branding.logoUrl}}
+      <img src="{{branding.logoUrl}}" alt="Logo" class="logo">
+      {{/if}}
+      <h1>🎫 Your Tickets Are Ready!</h1>
+      <p>Successfully purchased and secured</p>
     </div>
+    
+    <div class="content">
+      <p>Hi {{userName}},</p>
+      
+      <p>Congratulations! Your ticket purchase for <strong>{{eventName}}</strong> has been confirmed. Your tickets have been {{#unless isWhiteLabel}}minted as NFTs and {{/unless}}are ready to use.</p>
+      
+      <div class="ticket">
+        <div class="ticket-header">
+          <h2 style="margin: 0; color: {{#if branding.primaryColor}}{{branding.primaryColor}}{{else}}#667eea{{/if}};">{{eventName}}</h2>
+        </div>
+        
+        <div class="event-info">
+          <p><strong>📅 Date & Time:</strong> {{eventDate}}</p>
+          <p><strong>📍 Venue:</strong> {{venueName}}</p>
+          {{#if venueAddress}}
+          <p><strong>🗺️ Address:</strong> {{venueAddress}}</p>
+          {{/if}}
+          <p><strong>🎫 Tickets:</strong> {{ticketQuantity}} x {{ticketType}}</p>
+          <p><strong>💰 Total Paid:</strong> <span class="highlight">${{totalAmount}}</span></p>
+          {{#if seatInfo}}
+          <p><strong>💺 Seats:</strong> {{seatInfo}}</p>
+          {{/if}}
+        </div>
+        
+        {{#if qrCodeUrl}}
+        <div class="qr-code">
+          <img src="{{qrCodeUrl}}" alt="Ticket QR Code" width="200" height="200">
+          <p style="margin: 10px 0 0 0; font-size: 14px; color: #666;">Scan this code at the venue entrance</p>
+        </div>
+        {{/if}}
+      </div>
+      
+      <center>
+        <a href="{{ticketUrl}}" class="button">View Digital Tickets</a>
+      </center>
+      
+      <h3>Important Information:</h3>
+      <ul>
+        <li>✅ Your tickets are securely stored in your account</li>
+        <li>📱 Access them anytime from your mobile device</li>
+        {{#unless isWhiteLabel}}
+        <li>🔄 Transfer or resell on our marketplace if needed</li>
+        <li>⛓️ Each ticket is a unique NFT with proof of authenticity</li>
+        {{/unless}}
+        <li>🚪 Arrive early to avoid queues at entry</li>
+      </ul>
+      
+      {{#if eventNotes}}
+      <div style="background: #fffbea; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+        <strong>⚠️ Event Notes:</strong>
+        <p style="margin: 5px 0 0 0;">{{eventNotes}}</p>
+      </div>
+      {{/if}}
+      
+      <p>Have questions? We're here to help! Reply to this email or contact our support team.</p>
+      
+      <p>Looking forward to seeing you at the event!<br>
+      {{#if branding.emailFromName}}{{branding.emailFromName}}{{else}}TicketToken{{/if}}</p>
+    </div>
+    
+    <div class="footer">
+      {{#if branding.emailFooterText}}
+      <p>{{{branding.emailFooterText}}}</p>
+      {{else}}
+      <p>© 2025 TicketToken. All rights reserved.</p>
+      {{/if}}
+      
+      {{#unless isWhiteLabel}}
+      <p style="margin-top: 10px; font-size: 11px; color: #999;">Powered by TicketToken - Blockchain Ticketing Platform</p>
+      {{/unless}}
+      
+      <p style="margin-top: 15px;">
+        <a href="{{unsubscribeUrl}}" style="color: #999; text-decoration: none;">Unsubscribe</a> |
+        <a href="{{preferencesUrl}}" style="color: #999; text-decoration: none;">Email Preferences</a>
+      </p>
+    </div>
+  </div>
 </body>
 </html>

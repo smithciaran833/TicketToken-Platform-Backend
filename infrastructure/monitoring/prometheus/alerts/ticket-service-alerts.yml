@@ -1,0 +1,316 @@
+groups:
+  - name: ticket_service_alerts
+    interval: 30s
+    rules:
+      # ==========================================
+      # SERVICE AVAILABILITY ALERTS
+      # ==========================================
+      - alert: TicketServiceDown
+        expr: up{job="ticket-service"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: availability
+        annotations:
+          summary: "Ticket Service is down"
+          description: "Ticket Service instance {{ $labels.instance }} has been down for more than 1 minute."
+          runbook: "https://docs.tickettoken.com/runbooks/service-down"
+
+      - alert: TicketServiceHighRestart
+        expr: changes(process_start_time_seconds{job="ticket-service"}[15m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: stability
+        annotations:
+          summary: "Ticket Service is restarting frequently"
+          description: "Ticket Service has restarted {{ $value }} times in the last 15 minutes."
+
+      # ==========================================
+      # PERFORMANCE ALERTS
+      # ==========================================
+      - alert: TicketServiceHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="ticket-service"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: performance
+        annotations:
+          summary: "High latency detected in Ticket Service"
+          description: "95th percentile latency is {{ $value }}s (threshold: 1s)"
+          runbook: "https://docs.tickettoken.com/runbooks/high-latency"
+
+      - alert: TicketServiceCriticalLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="ticket-service"}[5m])) > 3
+        for: 2m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: performance
+        annotations:
+          summary: "Critical latency in Ticket Service"
+          description: "95th percentile latency is {{ $value }}s (threshold: 3s)"
+
+      - alert: TicketServiceSlowDatabaseQueries
+        expr: histogram_quantile(0.95, rate(db_query_duration_seconds_bucket{job="ticket-service"}[5m])) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: database
+        annotations:
+          summary: "Slow database queries detected"
+          description: "95th percentile database query duration is {{ $value }}s"
+
+      # ==========================================
+      # ERROR RATE ALERTS
+      # ==========================================
+      - alert: TicketServiceHighErrorRate
+        expr: (rate(http_requests_total{job="ticket-service",status=~"5.."}[5m]) / rate(http_requests_total{job="ticket-service"}[5m])) * 100 > 5
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: errors
+        annotations:
+          summary: "High error rate in Ticket Service"
+          description: "Error rate is {{ $value | humanize }}% (threshold: 5%)"
+          runbook: "https://docs.tickettoken.com/runbooks/high-error-rate"
+
+      - alert: TicketServiceCriticalErrorRate
+        expr: (rate(http_requests_total{job="ticket-service",status=~"5.."}[5m]) / rate(http_requests_total{job="ticket-service"}[5m])) * 100 > 10
+        for: 2m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: errors
+        annotations:
+          summary: "Critical error rate in Ticket Service"
+          description: "Error rate is {{ $value | humanize }}% (threshold: 10%)"
+
+      - alert: TicketServiceHighClientErrorRate
+        expr: (rate(http_requests_total{job="ticket-service",status=~"4.."}[5m]) / rate(http_requests_total{job="ticket-service"}[5m])) * 100 > 20
+        for: 10m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: errors
+        annotations:
+          summary: "High 4xx error rate"
+          description: "Client error rate is {{ $value | humanize }}%"
+
+      # ==========================================
+      # BUSINESS LOGIC ALERTS
+      # ==========================================
+      - alert: TicketServiceHighPurchaseFailureRate
+        expr: (rate(ticket_purchase_failures_total{job="ticket-service"}[5m]) / rate(ticket_purchases_total{job="ticket-service"}[5m])) * 100 > 10
+        for: 10m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: business
+        annotations:
+          summary: "High purchase failure rate"
+          description: "Purchase failure rate is {{ $value | humanize }}% (threshold: 10%)"
+
+      - alert: TicketServiceNoRecentPurchases
+        expr: sum(increase(ticket_purchases_total{job="ticket-service"}[1h])) < 1
+        for: 2h
+        labels:
+          severity: info
+          service: ticket-service
+          component: business
+        annotations:
+          summary: "No ticket purchases in last 2 hours"
+          description: "There have been no ticket purchases for 2 hours (off-peak expected)"
+
+      - alert: TicketServiceHighReservationExpiry
+        expr: rate(reservation_expiry_total{job="ticket-service"}[5m]) > 10
+        for: 15m
+        labels:
+          severity: info
+          service: ticket-service
+          component: business
+        annotations:
+          summary: "High rate of reservation expiries"
+          description: "{{ $value }} reservations are expiring per second"
+
+      # ==========================================
+      # RATE LIMITING ALERTS
+      # ==========================================
+      - alert: TicketServiceHighRateLimitHits
+        expr: rate(rate_limit_hits_total{job="ticket-service"}[5m]) > 50
+        for: 10m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: rate_limiting
+        annotations:
+          summary: "High rate of rate limit hits"
+          description: "Rate limits are being hit {{ $value }} times per second"
+
+      - alert: TicketServiceRateLimitFlood
+        expr: rate(rate_limit_hits_total{job="ticket-service"}[1m]) > 100
+        for: 2m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: rate_limiting
+        annotations:
+          summary: "Possible DDoS attack - rate limit flood"
+          description: "Rate limits being hit {{ $value }} times per second"
+
+      # ==========================================
+      # DATABASE ALERTS
+      # ==========================================
+      - alert: TicketServiceDatabaseConnectionPoolExhausted
+        expr: db_connection_pool_active{job="ticket-service"} / db_connection_pool_total{job="ticket-service"} > 0.9
+        for: 5m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: database
+        annotations:
+          summary: "Database connection pool nearly exhausted"
+          description: "Database connection pool usage is at {{ $value | humanizePercentage }}"
+          runbook: "https://docs.tickettoken.com/runbooks/db-pool-exhausted"
+
+      - alert: TicketServiceDatabaseConnectionErrors
+        expr: rate(db_connection_errors_total{job="ticket-service"}[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: database
+        annotations:
+          summary: "Database connection errors detected"
+          description: "{{ $value }} database connection errors per second"
+
+      # ==========================================
+      # REDIS ALERTS
+      # ==========================================
+      - alert: TicketServiceRedisConnectionDown
+        expr: redis_connection_status{job="ticket-service"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: redis
+        annotations:
+          summary: "Redis connection is down"
+          description: "Unable to connect to Redis for {{ $labels.instance }}"
+
+      - alert: TicketServiceLowRedisCacheHitRate
+        expr: (rate(redis_cache_hits_total{job="ticket-service"}[5m]) / (rate(redis_cache_hits_total{job="ticket-service"}[5m]) + rate(redis_cache_misses_total{job="ticket-service"}[5m]))) * 100 < 50
+        for: 15m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: redis
+        annotations:
+          summary: "Low Redis cache hit rate"
+          description: "Cache hit rate is {{ $value | humanize }}% (threshold: 50%)"
+
+      # ==========================================
+      # RESOURCE UTILIZATION ALERTS
+      # ==========================================
+      - alert: TicketServiceHighMemoryUsage
+        expr: process_resident_memory_bytes{job="ticket-service"} > 1073741824
+        for: 10m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: resources
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value | humanize1024 }} (threshold: 1GB)"
+
+      - alert: TicketServiceMemoryLeak
+        expr: increase(process_resident_memory_bytes{job="ticket-service"}[1h]) > 209715200
+        for: 2h
+        labels:
+          severity: warning
+          service: ticket-service
+          component: resources
+        annotations:
+          summary: "Possible memory leak detected"
+          description: "Memory increased by {{ $value | humanize1024 }} in 1 hour"
+
+      - alert: TicketServiceHighCPUUsage
+        expr: rate(process_cpu_seconds_total{job="ticket-service"}[5m]) * 100 > 80
+        for: 10m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: resources
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value | humanize }}%"
+
+      - alert: TicketServiceHighEventLoopLag
+        expr: nodejs_eventloop_lag_seconds{job="ticket-service"} > 0.1
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: performance
+        annotations:
+          summary: "High Node.js event loop lag"
+          description: "Event loop lag is {{ $value }}s (threshold: 0.1s)"
+          runbook: "https://docs.tickettoken.com/runbooks/event-loop-lag"
+
+      - alert: TicketServiceCriticalEventLoopLag
+        expr: nodejs_eventloop_lag_seconds{job="ticket-service"} > 1
+        for: 2m
+        labels:
+          severity: critical
+          service: ticket-service
+          component: performance
+        annotations:
+          summary: "Critical event loop lag"
+          description: "Event loop lag is {{ $value }}s - service may be unresponsive"
+
+      # ==========================================
+      # DEPENDENCY ALERTS
+      # ==========================================
+      - alert: TicketServiceExternalServiceFailure
+        expr: rate(external_service_errors_total{job="ticket-service"}[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: dependencies
+        annotations:
+          summary: "External service failures detected"
+          description: "{{ $value }} external service errors per second for {{ $labels.service_name }}"
+
+      # ==========================================
+      # DATA CONSISTENCY ALERTS
+      # ==========================================
+      - alert: TicketServiceHighReservationBacklog
+        expr: active_reservations{job="ticket-service"} > 10000
+        for: 30m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: data
+        annotations:
+          summary: "High number of active reservations"
+          description: "{{ $value }} active reservations (may indicate cleanup issues)"
+
+      # ==========================================
+      # METRIC COLLECTION ALERTS
+      # ==========================================
+      - alert: TicketServiceMetricsScrapeFailing
+        expr: up{job="ticket-service"} == 0 or absent(up{job="ticket-service"})
+        for: 5m
+        labels:
+          severity: warning
+          service: ticket-service
+          component: monitoring
+        annotations:
+          summary: "Unable to scrape metrics from Ticket Service"
+          description: "Prometheus cannot scrape metrics from {{ $labels.instance }}"

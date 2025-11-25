@@ -1,4 +1,4 @@
-import { createCache } from '@tickettoken/shared/cache/dist';
+import { createCache } from '@tickettoken/shared';
 
 const serviceName = process.env.SERVICE_NAME || 'integration-service';
 
