@@ -32,3 +32,5 @@ coverage/
 # Misc
 *.tgz
 *.lock
+*.sql
+money_migration_backup_20250930_132830.sql
