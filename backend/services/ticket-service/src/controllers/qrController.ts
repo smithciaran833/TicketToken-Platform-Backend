@@ -10,9 +10,10 @@ export class QRController {
   ): Promise<void> {
     const { ticketId } = request.params as any;
     const user = (request as any).user;
+    const tenantId = (request as any).tenantId;
 
-    // Verify ticket ownership - use user_id only
-    const ticket = await ticketService.getTicket(ticketId);
+    // SECURITY FIX: Verify ticket ownership with tenant isolation
+    const ticket = await ticketService.getTicket(ticketId, tenantId);
 
     if (ticket.userId !== user!.id && user!.role !== 'admin') {
       throw new ForbiddenError('You do not own this ticket');
@@ -56,8 +57,10 @@ export class QRController {
   ): Promise<void> {
     const { ticketId } = request.body as any;
     const user = (request as any).user;
+    const tenantId = (request as any).tenantId;
 
-    const ticket = await ticketService.getTicket(ticketId);
+    // SECURITY FIX: Verify ticket ownership with tenant isolation
+    const ticket = await ticketService.getTicket(ticketId, tenantId);
 
     if (ticket.userId !== user!.id && user!.role !== 'admin') {
       throw new ForbiddenError('You do not own this ticket');

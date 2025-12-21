@@ -121,12 +121,12 @@ class GDPRService {
    * Get user's notification records
    */
   private async getNotifications(userId: string): Promise<any[]> {
-    return await db('notifications')
+    return await db('notification_history')
       .select(
         'id',
         'channel',
         'type',
-        'template',
+        'template_name as template',
         'priority',
         'status',
         'created_at',
@@ -184,7 +184,7 @@ class GDPRService {
    * Get user's consent records
    */
   private async getConsentRecords(userId: string): Promise<any[]> {
-    return await db('consent')
+    return await db('consent_records')
       .select(
         'channel',
         'type',
@@ -214,9 +214,9 @@ class GDPRService {
    * Verify if user has opted out of all communications
    */
   async hasOptedOutCompletely(userId: string): Promise<boolean> {
-    const consents = await db('consent')
+    const consents = await db('consent_records')
       .where('customer_id', userId)
-      .where('granted', true);
+      .where('status', 'granted');
 
     return consents.length === 0;
   }
@@ -309,7 +309,7 @@ class GDPRService {
     const reasons: string[] = [];
 
     // Check for active pending notifications
-    const pendingNotifications = await db('notifications')
+    const pendingNotifications = await db('notification_history')
       .where('recipient_id', userId)
       .where('status', 'pending')
       .count('* as count')

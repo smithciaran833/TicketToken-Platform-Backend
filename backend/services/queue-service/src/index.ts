@@ -4,19 +4,15 @@ dotenv.config({ path: `.env.${process.env.NODE_ENV || 'development'}` });
 import { createApp } from './app';
 import { logger } from './utils/logger';
 import { connectDatabase } from './config/database.config';
-import { connectRedis } from './config/redis.config';
 import { QueueFactory } from './queues/factories/queue.factory';
 import { MoneyQueue } from './queues/definitions/money.queue';
 import { CommunicationQueue } from './queues/definitions/communication.queue';
 import { BackgroundQueue } from './queues/definitions/background.queue';
 import { RecoveryService } from './services/recovery.service';
 import { MonitoringService } from './services/monitoring.service';
+import { QueueRegistry } from './services/queue-registry.service';
 
 const PORT = process.env.PORT || 3011;
-
-let moneyQueue: MoneyQueue;
-let communicationQueue: CommunicationQueue;
-let backgroundQueue: BackgroundQueue;
 
 async function startService() {
   try {
@@ -27,18 +23,20 @@ async function startService() {
     await connectDatabase();
     logger.info('✅ PostgreSQL connected');
 
-    await connectRedis();
-    logger.info('✅ Redis connected');
-
-    // Initialize queue factory
+    // Initialize queue factory (pg-boss)
     await QueueFactory.initialize();
     logger.info('✅ Queue factory initialized');
 
     // Initialize queue definitions
-    moneyQueue = new MoneyQueue();
-    communicationQueue = new CommunicationQueue();
-    backgroundQueue = new BackgroundQueue();
+    const moneyQueue = new MoneyQueue();
+    const communicationQueue = new CommunicationQueue();
+    const backgroundQueue = new BackgroundQueue();
     logger.info('✅ All queues ready');
+
+    // Register queues in singleton registry
+    const queueRegistry = QueueRegistry.getInstance();
+    queueRegistry.initialize(moneyQueue, communicationQueue, backgroundQueue);
+    logger.info('✅ Queue registry initialized');
 
     // Recover pending jobs
     const recoveryService = new RecoveryService();
@@ -52,11 +50,6 @@ async function startService() {
 
     // Create Fastify app with all routes
     const app = await createApp();
-
-    // Make queues available globally for controllers
-    global.moneyQueue = moneyQueue;
-    global.communicationQueue = communicationQueue;
-    global.backgroundQueue = backgroundQueue;
 
     // Start server
     await app.listen({ port: Number(PORT), host: '0.0.0.0' });
@@ -80,13 +73,6 @@ async function startService() {
     logger.error('Failed to start Queue Service:', error);
     process.exit(1);
   }
-}
-
-// Add global type declarations
-declare global {
-  var moneyQueue: MoneyQueue;
-  var communicationQueue: CommunicationQueue;
-  var backgroundQueue: BackgroundQueue;
 }
 
 startService();

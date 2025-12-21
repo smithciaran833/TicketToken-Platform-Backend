@@ -7,6 +7,7 @@ import { publishSearchSync } from '@tickettoken/shared';
 import { pino } from 'pino';
 import Redis from 'ioredis';
 import { validateTimezoneOrThrow } from '../utils/timezone-validator';
+import { EventBlockchainService, EventBlockchainData } from './blockchain.service';
 import {
   EventModel,
   IEvent,
@@ -27,6 +28,7 @@ export class EventService {
   private metadataModel: EventMetadataModel;
   private securityValidator: EventSecurityValidator;
   private auditLogger: EventAuditLogger;
+  private blockchainService: EventBlockchainService;
 
   constructor(
     private db: Knex,
@@ -39,6 +41,16 @@ export class EventService {
     this.metadataModel = new EventMetadataModel(db);
     this.securityValidator = new EventSecurityValidator();
     this.auditLogger = new EventAuditLogger(db);
+    this.blockchainService = new EventBlockchainService();
+  }
+
+  /**
+   * Generate a numeric event ID for blockchain from UUID
+   * Uses first 8 chars of UUID converted to number
+   */
+  private generateBlockchainEventId(uuid: string): number {
+    const hex = uuid.replace(/-/g, '').substring(0, 8);
+    return parseInt(hex, 16);
   }
 
   async createEvent(data: any, authToken: string, userId: string, tenantId: string, requestInfo?: any): Promise<any> {
@@ -49,7 +61,6 @@ export class EventService {
 
     const venueDetails = await this.venueServiceClient.getVenue(data.venue_id, authToken);
 
-    // Determine and validate timezone
     const timezone = data.timezone || venueDetails?.timezone || 'UTC';
     try {
       validateTimezoneOrThrow(timezone);
@@ -134,7 +145,11 @@ export class EventService {
       meta_keywords: data.meta_keywords,
       external_id: data.external_id,
       metadata: data.metadata,
-      created_by: userId
+      created_by: userId,
+      artist_wallet: data.artist_wallet,
+      artist_percentage: data.artist_percentage || 0,
+      venue_percentage: data.venue_percentage || 0,
+      blockchain_status: 'pending'
     };
 
     if (scheduleData.starts_at) {
@@ -196,11 +211,75 @@ export class EventService {
       return { event: newEvent, schedule, capacity, metadata };
     });
 
+    // Blockchain integration
+    if (result.schedule?.starts_at && data.artist_wallet) {
+      try {
+        const blockchainEventId = this.generateBlockchainEventId(result.event.id!);
+
+        const blockchainData: EventBlockchainData = {
+          eventId: blockchainEventId,
+          venueId: data.venue_id,
+          name: data.name,
+          ticketPrice: 0,
+          totalTickets: capacityData?.total_capacity || 0,
+          startTime: new Date(result.schedule.starts_at),
+          endTime: new Date(result.schedule.ends_at || result.schedule.starts_at),
+          refundWindow: data.cancellation_deadline_hours || 24,
+          metadataUri: data.banner_image_url || data.image_url || '',
+          description: data.short_description || data.description || '',
+          transferable: true,
+          resaleable: data.resaleable !== false,
+          merkleTree: process.env.DEFAULT_MERKLE_TREE || '',
+          artistWallet: data.artist_wallet,
+          artistPercentage: data.artist_percentage || 0,
+          venuePercentage: data.venue_percentage || 0,
+        };
+
+        const blockchainResult = await this.blockchainService.createEventOnChain(blockchainData);
+
+        await this.db('events')
+          .where({ id: result.event.id, tenant_id: tenantId })
+          .update({
+            event_pda: blockchainResult.eventPda,
+            blockchain_status: 'synced',
+            updated_at: new Date()
+          });
+
+        result.event.event_pda = blockchainResult.eventPda;
+        result.event.blockchain_status = 'synced';
+
+        logger.info({
+          msg: `Event ${result.event.id} synced to blockchain`,
+          eventId: result.event.id,
+          blockchainEventId,
+          eventPda: blockchainResult.eventPda,
+          signature: blockchainResult.signature,
+        });
+      } catch (blockchainError) {
+        logger.error({
+          msg: `Failed to sync event ${result.event.id} to blockchain`,
+          eventId: result.event.id,
+          error: blockchainError instanceof Error ? blockchainError.message : String(blockchainError),
+        });
+
+        await this.db('events')
+          .where({ id: result.event.id, tenant_id: tenantId })
+          .update({
+            blockchain_status: 'failed',
+            updated_at: new Date()
+          });
+
+        result.event.blockchain_status = 'failed';
+      }
+    }
+
     if (this.redis) {
       try {
         await this.redis.del(`venue:events:${data.venue_id}`);
+        const { cacheInvalidationTotal } = await import('../utils/metrics');
+        cacheInvalidationTotal.inc({ status: 'success', cache_key: 'venue_events' });
       } catch (err) {
-        logger.warn('Redis cache clear failed, continuing...');
+        logger.error({ error: err }, 'Redis cache clear failed for venue events');
       }
     }
 
@@ -210,7 +289,6 @@ export class EventService {
       tenantId
     }, 'Event created');
 
-    // SEARCH SYNC: Publish event creation
     await publishSearchSync('event.created', {
       id: result.event.id,
       name: result.event.name,
@@ -337,13 +415,12 @@ export class EventService {
         await this.redis.del(`venue:events:${event.venue_id}`);
         await this.redis.del(`event:${eventId}`);
       } catch (err) {
-        logger.warn('Redis cache clear failed, continuing...');
+        logger.error({ error: err }, 'Redis cache clear failed for event update');
       }
     }
 
     logger.info({ eventId, tenantId }, 'Event updated');
 
-    // SEARCH SYNC: Publish event update
     await publishSearchSync('event.updated', {
       id: eventId,
       changes: {
@@ -398,16 +475,13 @@ export class EventService {
         await this.redis.del(`venue:events:${event.venue_id}`);
         await this.redis.del(`event:${eventId}`);
       } catch (err) {
-        logger.warn('Redis cache clear failed, continuing...');
+        logger.error({ error: err }, 'Redis cache clear failed for event deletion');
       }
     }
 
     logger.info({ eventId, tenantId }, 'Event deleted');
 
-    // SEARCH SYNC: Publish event deletion
-    await publishSearchSync('event.deleted', {
-      id: eventId,
-    });
+    await publishSearchSync('event.deleted', { id: eventId });
   }
 
   async publishEvent(eventId: string, userId: string, tenantId: string): Promise<any> {
@@ -430,7 +504,6 @@ export class EventService {
 
     logger.info({ eventId, tenantId }, 'Event published');
 
-    // SEARCH SYNC: Update status to published
     await publishSearchSync('event.updated', {
       id: eventId,
       changes: { status: 'PUBLISHED' }

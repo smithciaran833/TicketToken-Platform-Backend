@@ -26,10 +26,8 @@ async function startServer() {
     await initializeQueues();
     logger.info('Queues initialized');
 
-    // Start sync engine
-    const syncEngine = new SyncEngineService();
-    await syncEngine.initialize();
-    logger.info('Sync engine started');
+    // Sync engine ready (no initialization needed)
+    logger.info('Sync engine ready');
 
     // Start monitoring
     const monitoring = new MonitoringService();

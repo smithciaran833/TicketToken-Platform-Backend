@@ -7,9 +7,9 @@ const log = logger.child({ component: 'OrdersController' });
 
 export class OrdersController {
   async getOrderById(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-    const pool = DatabaseService.getPool();
     const { orderId } = request.params as any;
     const userId = (request as any).user?.id || (request as any).user?.sub;
+    const tenantId = (request as any).tenantId || (request as any).user?.tenant_id;
 
     if (!orderId) {
       return reply.status(400).send({ error: 'Order ID is required' });
@@ -20,81 +20,79 @@ export class OrdersController {
     }
 
     try {
-      const orderQuery = `
-        SELECT
-          o.id as order_id,
-          o.status,
-          o.user_id,
-          o.total_cents,
-          o.created_at,
-          o.updated_at,
-          o.expires_at,
-          o.payment_intent_id
-        FROM orders o
-        WHERE o.id = $1 AND o.user_id = $2
-      `;
+      const result = await DatabaseService.transaction(async (client) => {
+        if (tenantId) {
+          await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+        }
 
-      const orderResult = await pool.query(orderQuery, [orderId, userId]);
+        const orderQuery = `
+          SELECT
+            o.id as order_id,
+            o.status,
+            o.user_id,
+            o.total_cents,
+            o.created_at,
+            o.updated_at,
+            o.reservation_expires_at,
+            o.payment_intent_id
+          FROM orders o
+          WHERE o.id = $1 AND o.user_id = $2
+        `;
 
-      if (orderResult.rows.length === 0) {
+        const orderResult = await client.query(orderQuery, [orderId, userId]);
+
+        if (orderResult.rows.length === 0) {
+          return null;
+        }
+
+        const order = orderResult.rows[0];
+
+        const itemsQuery = `
+          SELECT
+            oi.id,
+            oi.order_id,
+            oi.ticket_type_id,
+            oi.quantity,
+            oi.unit_price_cents,
+            oi.total_price_cents
+          FROM order_items oi
+          WHERE oi.order_id = $1
+        `;
+
+        const itemsResult = await client.query(itemsQuery, [orderId]);
+
+        return { order, items: itemsResult.rows };
+      });
+
+      if (!result) {
         return reply.status(404).send({ error: 'Order not found' });
       }
 
-      const order = orderResult.rows[0];
-
-      const itemsQuery = `
-        SELECT
-          oi.id,
-          oi.order_id,
-          oi.ticket_type_id,
-          oi.quantity,
-          oi.unit_price_cents,
-          oi.total_price_cents
-        FROM order_items oi
-        WHERE oi.order_id = $1
-      `;
-
-      const itemsResult = await pool.query(itemsQuery, [orderId]);
-
-      const ticketsQuery = `
-        SELECT
-          t.id,
-          t.nft_mint_address as mint_address,
-          t.status,
-          t.user_id
-        FROM tickets t
-        WHERE t.order_id = $1 AND t.user_id = $2
-      `;
-
-      const ticketsResult = await pool.query(ticketsQuery, [orderId, userId]);
+      const { order, items } = result;
 
       const response = {
         orderId: order.order_id,
         status: order.status,
-        totalCents: order.total_cents,
-        totalFormatted: formatCents(order.total_cents),
-        items: itemsResult.rows.map(item => ({
+        totalCents: Number(order.total_cents),
+        totalFormatted: formatCents(Number(order.total_cents)),
+        items: items.map((item: any) => ({
           id: item.id,
-          ticketTypeId: item.ticket_type_id,  // FIXED: was tier_id
+          ticketTypeId: item.ticket_type_id,
           quantity: item.quantity,
-          unitPriceCents: item.unit_price_cents,
-          totalPriceCents: item.total_price_cents,
-          unitPriceFormatted: formatCents(item.unit_price_cents),
-          totalPriceFormatted: formatCents(item.total_price_cents)
+          unitPriceCents: Number(item.unit_price_cents),
+          totalPriceCents: Number(item.total_price_cents),
+          unitPriceFormatted: formatCents(Number(item.unit_price_cents)),
+          totalPriceFormatted: formatCents(Number(item.total_price_cents))
         })),
         payment_intent_id: order.payment_intent_id,
-        tickets: ticketsResult.rows.length > 0 ? ticketsResult.rows.map(ticket => ({
-          id: ticket.id,
-          mint_address: ticket.mint_address,
-          status: ticket.status
-        })) : undefined,
         created_at: order.created_at,
         updated_at: order.updated_at,
-        expires_at: order.expires_at
+        expires_at: order.reservation_expires_at
       };
 
       reply.send(response);
     } catch (error) {
+      console.error('ORDERS CONTROLLER ERROR:', error);
       log.error('Error fetching order', { error, orderId, userId });
       reply.status(500).send({
         error: 'Internal server error',
@@ -105,7 +103,7 @@ export class OrdersController {
 
   async getUserOrders(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const userId = (request as any).user?.id || (request as any).user?.sub;
-    const pool = DatabaseService.getPool();
+    const tenantId = (request as any).tenantId || (request as any).user?.tenant_id;
     const { status, limit = 10, offset = 0 } = request.query as any;
 
     if (!userId) {
@@ -113,45 +111,52 @@ export class OrdersController {
     }
 
     try {
-      let query = `
-        SELECT
-          o.id as order_id,
-          o.status,
-          o.total_cents,
-          o.created_at,
-          o.updated_at,
-          e.name as event_name,
-          e.id as event_id
-        FROM orders o
-        LEFT JOIN events e ON o.event_id = e.id
-        WHERE o.user_id = $1
-      `;
+      const orders = await DatabaseService.transaction(async (client) => {
+        if (tenantId) {
+          await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+        }
 
-      const queryParams: any[] = [userId];
+        let query = `
+          SELECT
+            o.id as order_id,
+            o.status,
+            o.total_cents,
+            o.created_at,
+            o.updated_at,
+            e.name as event_name,
+            e.id as event_id
+          FROM orders o
+          LEFT JOIN events e ON o.event_id = e.id
+          WHERE o.user_id = $1
+        `;
 
-      if (status) {
-        query += ` AND o.status = $2`;
-        queryParams.push(status);
-      }
+        const queryParams: any[] = [userId];
 
-      query += ` ORDER BY o.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
-      queryParams.push(limit, offset);
+        if (status) {
+          query += ` AND o.status = $2`;
+          queryParams.push(status);
+        }
 
-      const ordersResult = await pool.query(query, queryParams);
+        query += ` ORDER BY o.created_at DESC LIMIT $${queryParams.length + 1} OFFSET $${queryParams.length + 2}`;
+        queryParams.push(limit, offset);
 
-      const orders = ordersResult.rows.map(order => ({
+        const result = await client.query(query, queryParams);
+        return result.rows;
+      });
+
+      const formattedOrders = orders.map((order: any) => ({
         orderId: order.order_id,
         status: order.status,
         eventName: order.event_name,
         eventId: order.event_id,
-        totalCents: order.total_cents,
-        totalFormatted: formatCents(order.total_cents),
+        totalCents: Number(order.total_cents),
+        totalFormatted: formatCents(Number(order.total_cents)),
         createdAt: order.created_at,
         updatedAt: order.updated_at
       }));
 
       reply.send({
-        orders,
+        orders: formattedOrders,
         pagination: {
           limit: parseInt(limit as string),
           offset: parseInt(offset as string),
@@ -159,6 +164,7 @@ export class OrdersController {
         }
       });
     } catch (error) {
+      console.error('ORDERS CONTROLLER ERROR:', error);
       log.error('Error fetching user orders', { error, userId });
       reply.status(500).send({
         error: 'Internal server error',
@@ -169,7 +175,7 @@ export class OrdersController {
 
   async getUserTickets(request: FastifyRequest, reply: FastifyReply): Promise<void> {
     const userId = (request as any).user?.id || (request as any).user?.sub;
-    const pool = DatabaseService.getPool();
+    const tenantId = (request as any).tenantId || (request as any).user?.tenant_id;
     const { eventId, status } = request.query as any;
 
     if (!userId) {
@@ -177,54 +183,62 @@ export class OrdersController {
     }
 
     try {
-      let query = `
-        SELECT
-          t.id,
-          t.status,
-          t.nft_mint_address as mint_address,
-          t.created_at,
-          e.name as event_name,
-          e.id as event_id,
-          e.start_date,
-          tt.name as ticket_type,
-          tt.price_cents
-        FROM tickets t
-        JOIN ticket_types tt ON t.ticket_type_id = tt.id
-        JOIN events e ON t.event_id = e.id
-        WHERE t.user_id = $1
-      `;
+      const tickets = await DatabaseService.transaction(async (client) => {
+        if (tenantId) {
+          await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+        }
 
-      const queryParams: any[] = [userId];
+        let query = `
+          SELECT
+            t.id,
+            t.status,
+            t.is_nft,
+            t.created_at as ticket_created_at,
+            e.name as event_name,
+            e.id as event_id,
+            e.created_at as event_date,
+            tt.name as ticket_type,
+            tt.price
+          FROM tickets t
+          JOIN ticket_types tt ON t.ticket_type_id = tt.id
+          JOIN events e ON t.event_id = e.id
+          WHERE t.user_id = $1
+        `;
 
-      if (eventId) {
-        query += ` AND t.event_id = $2`;
-        queryParams.push(eventId);
-      }
+        const queryParams: any[] = [userId];
 
-      if (status) {
-        query += ` AND t.status = $${queryParams.length + 1}`;
-        queryParams.push(status);
-      }
+        if (eventId) {
+          query += ` AND t.event_id = $2`;
+          queryParams.push(eventId);
+        }
 
-      query += ` ORDER BY e.start_date DESC, t.created_at DESC`;
+        if (status) {
+          query += ` AND t.status = $${queryParams.length + 1}`;
+          queryParams.push(status);
+        }
 
-      const ticketsResult = await pool.query(query, queryParams);
+        query += ` ORDER BY e.created_at DESC, t.created_at DESC`;
 
-      const tickets = ticketsResult.rows.map(ticket => ({
+        const result = await client.query(query, queryParams);
+        return result.rows;
+      });
+
+      const formattedTickets = tickets.map((ticket: any) => ({
         id: ticket.id,
         status: ticket.status,
-        mintAddress: ticket.mint_address,
+        mintAddress: ticket.is_nft,
         eventName: ticket.event_name,
         eventId: ticket.event_id,
-        eventDate: ticket.start_date,
+        eventDate: ticket.event_date,
         ticketType: ticket.ticket_type,
-        priceCents: ticket.price_cents,
-        priceFormatted: formatCents(ticket.price_cents),
-        createdAt: ticket.created_at
+        priceCents: Math.round(Number(ticket.price) * 100),
+        priceFormatted: formatCents(Math.round(Number(ticket.price) * 100)),
+        createdAt: ticket.ticket_created_at
       }));
 
-      reply.send({ tickets });
+      reply.send({ tickets: formattedTickets });
     } catch (error) {
+      console.error('ORDERS CONTROLLER ERROR:', error);
       log.error('Error fetching user tickets', { error, userId, eventId, status });
       reply.status(500).send({
         error: 'Internal server error',

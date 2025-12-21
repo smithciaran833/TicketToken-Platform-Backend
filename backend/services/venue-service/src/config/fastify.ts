@@ -90,7 +90,7 @@ export async function configureFastify(
   });
 
   // Rate limiting - DISABLED FOR TESTS
-  if (process.env.NODE_ENV !== "test") {
+  if (true) { // Rate limiting enabled for tests
     await fastify.register(rateLimit, {
       max: 100,
       timeWindow: '1 minute',

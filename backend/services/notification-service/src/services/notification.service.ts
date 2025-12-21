@@ -230,12 +230,12 @@ export class NotificationService {
 
   private async checkConsent(recipientId: string, channel: string, type: string): Promise<boolean> {
     // Check consent in database
-    const consent = await db('consent')
+    const consent = await db('consent_records')
       .where({
         customer_id: recipientId,
         channel,
         type,
-        granted: true
+        status: 'granted'
       })
       .first();
 
@@ -243,15 +243,15 @@ export class NotificationService {
   }
 
   private async storeNotification(request: NotificationRequest): Promise<string> {
-    const [notification] = await db('notifications')
+    const [notification] = await db('notification_history')
       .insert({
         venue_id: request.venueId,
         recipient_id: request.recipientId,
         channel: request.channel,
         type: request.type,
-        template: request.template,
+        template_name: request.template,
         priority: request.priority,
-        data: JSON.stringify(request.data),
+        metadata: request.data,
         status: 'pending'
       })
       .returning('id');
@@ -260,7 +260,7 @@ export class NotificationService {
   }
 
   private async updateNotificationStatus(id: string, status: string): Promise<void> {
-    await db('notifications')
+    await db('notification_history')
       .where({ id })
       .update({
         status,

@@ -1,106 +1,223 @@
 import Joi from 'joi';
 
+// ============================================
+// AUTHENTICATION SCHEMAS
+// ============================================
+
 export const registerSchema = Joi.object({
-  email: Joi.string().email().required().messages({
-    'string.email': 'Please provide a valid email address',
-    'any.required': 'Email is required',
+  email: Joi.string().email().max(255).required(),
+  password: Joi.string().min(8).max(128).required(),
+  firstName: Joi.string().max(50).required(),
+  lastName: Joi.string().max(50).required(),
+  phone: Joi.string().max(20).optional(),
+  tenant_id: Joi.string().uuid().required().messages({
+    'string.guid': 'Invalid tenant_id format - must be a valid UUID',
+    'string.base': 'tenant_id must be a string',
+    'any.required': 'tenant_id is required'
   }),
-  password: Joi.string().min(8).max(128).required().messages({
-    'string.min': 'Password must be at least 8 characters long',
-    'any.required': 'Password is required',
-  }),
-  firstName: Joi.string().min(1).max(100).required().messages({
-    'any.required': 'First name is required',
-  }),
-  lastName: Joi.string().min(1).max(100).required().messages({
-    'any.required': 'Last name is required',
-  }),
-  phone: Joi.string().pattern(/^\+?[1-9]\d{1,14}$/).optional().messages({
-    'string.pattern.base': 'Please provide a valid phone number',
-  }),
-});
+}).unknown(false);
 
 export const loginSchema = Joi.object({
-  email: Joi.string().email().required(),
-  password: Joi.string().required(),
-});
+  email: Joi.string().email().max(255).required(),
+  password: Joi.string().max(128).required(),
+  mfaToken: Joi.string().length(6).optional(),
+}).unknown(false);
 
 export const refreshTokenSchema = Joi.object({
-  refreshToken: Joi.string().required(),
-});
+  refreshToken: Joi.string().max(512).required(),
+}).unknown(false);
 
 export const verifyEmailSchema = Joi.object({
-  token: Joi.string().required(),
-});
+  token: Joi.string().max(256).required(),
+}).unknown(false);
 
 export const forgotPasswordSchema = Joi.object({
-  email: Joi.string().email().required(),
-});
+  email: Joi.string().email().max(255).required(),
+}).unknown(false);
 
 export const resetPasswordSchema = Joi.object({
-  token: Joi.string().required(),
+  token: Joi.string().max(256).required(),
   newPassword: Joi.string().min(8).max(128).required(),
-});
+}).unknown(false);
 
 export const changePasswordSchema = Joi.object({
-  currentPassword: Joi.string().required(),
+  currentPassword: Joi.string().max(128).required(),
   newPassword: Joi.string().min(8).max(128).required(),
-});
+}).unknown(false);
 
-export const setupMFASchema = Joi.object({
-  password: Joi.string().required(),
-});
+export const logoutSchema = Joi.object({
+  refreshToken: Joi.string().max(512).optional(),
+}).unknown(false);
+
+// ============================================
+// MFA SCHEMAS
+// ============================================
+
+export const setupMFASchema = Joi.object({}).unknown(false);
 
 export const verifyMFASchema = Joi.object({
-  token: Joi.string().length(6).pattern(/^\d+$/).required(),
-});
+  token: Joi.string().length(6).required(),
+}).unknown(false);
+
+export const disableMFASchema = Joi.object({
+  password: Joi.string().max(128).required(),
+  token: Joi.string().length(6).required(),
+}).unknown(false);
+
+// ============================================
+// WALLET SCHEMAS
+// ============================================
+
+export const walletNonceSchema = Joi.object({
+  publicKey: Joi.string().min(32).max(128).required(),
+  chain: Joi.string().valid('solana', 'ethereum').required(),
+}).unknown(false);
+
+export const walletRegisterSchema = Joi.object({
+  publicKey: Joi.string().min(32).max(128).required(),
+  signature: Joi.string().min(64).max(256).required(),
+  nonce: Joi.string().min(32).max(128).required(),
+  chain: Joi.string().valid('solana', 'ethereum').required(),
+  tenant_id: Joi.string().uuid().required(),
+}).unknown(false);
+
+export const walletLoginSchema = Joi.object({
+  publicKey: Joi.string().min(32).max(128).required(),
+  signature: Joi.string().min(64).max(256).required(),
+  nonce: Joi.string().min(32).max(128).required(),
+  chain: Joi.string().valid('solana', 'ethereum').required(),
+}).unknown(false);
+
+export const walletLinkSchema = Joi.object({
+  publicKey: Joi.string().min(32).max(128).required(),
+  signature: Joi.string().min(64).max(256).required(),
+  nonce: Joi.string().min(32).max(128).required(),
+  chain: Joi.string().valid('solana', 'ethereum').required(),
+}).unknown(false);
+
+export const connectWalletSchema = Joi.object({
+  walletAddress: Joi.string().max(128).required(),
+  walletType: Joi.string().valid('phantom', 'solflare', 'metamask').required(),
+}).unknown(false);
+
+// ============================================
+// BIOMETRIC SCHEMAS
+// ============================================
+
+export const biometricRegisterSchema = Joi.object({
+  publicKey: Joi.string().max(2048).required(),
+  deviceId: Joi.string().max(255).required(),
+  biometricType: Joi.string().valid('faceId', 'touchId', 'fingerprint').optional(),
+}).unknown(false);
+
+export const biometricChallengeSchema = Joi.object({
+  userId: Joi.string().uuid().required(),
+}).unknown(false);
+
+export const biometricAuthenticateSchema = Joi.object({
+  userId: Joi.string().uuid().required(),
+  credentialId: Joi.string().uuid().required(),
+  signature: Joi.string().max(2048).required(),
+  challenge: Joi.string().max(256).required(),
+}).unknown(false);
+
+// ============================================
+// OAUTH SCHEMAS
+// ============================================
+
+// OAuth Callback Schema (for authorization code flow)
+export const oauthCallbackSchema = Joi.object({
+  code: Joi.string().max(2048).required(),
+  state: Joi.string().max(256).optional(),
+  tenant_id: Joi.string().uuid().optional(),
+}).unknown(false);
+
+// OAuth Link Schema (for linking accounts)
+export const oauthLinkSchema = Joi.object({
+  code: Joi.string().max(2048).required(),
+  state: Joi.string().max(256).optional(),
+}).unknown(false);
+
+// OAuth Login Schema (legacy - kept for backward compatibility)
+export const oauthLoginSchema = Joi.object({
+  code: Joi.string().max(2048).required(),
+  state: Joi.string().max(256).optional(),
+}).unknown(false);
+
+// ============================================
+// PROFILE SCHEMAS
+// ============================================
+
+export const updateProfileSchema = Joi.object({
+  firstName: Joi.string().max(50).optional(),
+  lastName: Joi.string().max(50).optional(),
+  phone: Joi.string().max(20).optional(),
+  email: Joi.string().email().max(255).optional(),
+}).unknown(false);
+
+// ============================================
+// ROLE MANAGEMENT SCHEMAS
+// ============================================
 
 export const grantRoleSchema = Joi.object({
   userId: Joi.string().uuid().required(),
+  role: Joi.string().max(50).required(),
+}).unknown(false);
+
+// ============================================
+// PARAM VALIDATION SCHEMAS
+// ============================================
+
+export const providerParamSchema = Joi.object({
+  provider: Joi.string()
+    .valid('google', 'github', 'facebook', 'apple')
+    .required()
+    .messages({
+      'any.only': 'Provider must be one of: google, github, facebook, apple',
+      'any.required': 'Provider is required'
+    })
+}).unknown(false);
+
+export const sessionIdParamSchema = Joi.object({
+  sessionId: Joi.string().uuid().required()
+}).unknown(false);
+
+export const venueIdParamSchema = Joi.object({
+  venueId: Joi.string().uuid().required()
+}).unknown(false);
+
+export const userIdParamSchema = Joi.object({
+  userId: Joi.string().uuid().required()
+}).unknown(false);
+
+export const credentialIdParamSchema = Joi.object({
+  credentialId: Joi.string().uuid().required()
+}).unknown(false);
+
+export const venueIdAndUserIdParamSchema = Joi.object({
   venueId: Joi.string().uuid().required(),
-  role: Joi.string().valid('venue-owner', 'venue-manager', 'box-office', 'door-staff').required(),
-  expiresAt: Joi.date().optional(),
-});
+  userId: Joi.string().uuid().required()
+}).unknown(false);
 
+export const publicKeyParamSchema = Joi.object({
+  publicKey: Joi.string()
+    .min(32)
+    .max(128)
+    .pattern(/^[1-9A-HJ-NP-Za-km-z]+$/)  // Base58 for Solana/Bitcoin
+    .required()
+}).unknown(false);
 
-export const disableMFASchema = Joi.object({
-  password: Joi.string().required().messages({
-    'any.required': 'Password is required to disable MFA',
-    'string.empty': 'Password cannot be empty'
-  })
-});
+// ============================================
+// EMPTY BODY & QUERY SCHEMAS
+// ============================================
 
-export const updateProfileSchema = Joi.object({
-  first_name: Joi.string().min(1).max(100).optional(),
-  last_name: Joi.string().min(1).max(100).optional(),
-  phone: Joi.string().pattern(/^\+?[1-9]\d{1,14}$/).optional().messages({
-    'string.pattern.base': 'Please provide a valid phone number',
-  }),
-  preferences: Joi.object().unknown(true).optional()
-});
+// For endpoints that accept no body
+export const emptyBodySchema = Joi.object({}).unknown(false);
 
-export const walletLoginSchema = Joi.object({
-  walletAddress: Joi.string().required(),
-  signature: Joi.string().required(),
-  message: Joi.string().required(),
-});
-
-export const connectWalletSchema = Joi.object({
-  walletAddress: Joi.string().required(),
-  walletType: Joi.string().valid('phantom', 'solflare', 'metamask').required(),
-});
-
-export const biometricRegisterSchema = Joi.object({
-  publicKey: Joi.string().required(),
-  deviceId: Joi.string().required(),
-});
-
-export const oauthLinkSchema = Joi.object({
-  provider: Joi.string().valid('google', 'facebook', 'twitter').required(),
-  accessToken: Joi.string().required(),
-});
-
-export const oauthLoginSchema = Joi.object({
-  provider: Joi.string().valid('google', 'facebook', 'twitter').required(),
-  accessToken: Joi.string().required(),
-});
+// For optional pagination on GET requests
+export const paginationQuerySchema = Joi.object({
+  page: Joi.number().integer().min(1).default(1),
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  sortBy: Joi.string().valid('created_at', 'updated_at', 'name').optional(),
+  order: Joi.string().valid('asc', 'desc').default('desc')
+}).unknown(false);

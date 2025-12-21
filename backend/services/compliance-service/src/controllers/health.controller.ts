@@ -1,11 +1,11 @@
 import { serviceCache } from '../services/cache-integration';
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../services/database.service';
 import { redis } from '../services/redis.service';
 
 export class HealthController {
-  static async checkHealth(req: Request, res: Response) {
-    res.json({
+  static async checkHealth(req: FastifyRequest, reply: FastifyReply) {
+    return reply.send({
       status: 'healthy',
       service: 'compliance-service',
       timestamp: new Date().toISOString(),
@@ -15,7 +15,7 @@ export class HealthController {
     });
   }
 
-  static async checkReadiness(req: Request, res: Response) {
+  static async checkReadiness(req: FastifyRequest, reply: FastifyReply) {
     const checks: any = {
       database: false,
       redis: false
@@ -42,7 +42,7 @@ export class HealthController {
 
     const ready = checks.database; // Redis is optional
 
-    res.status(ready ? 200 : 503).json({
+    return reply.status(ready ? 200 : 503).send({
       ready,
       service: 'compliance-service',
       checks

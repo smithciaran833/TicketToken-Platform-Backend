@@ -20,11 +20,13 @@ export const JOB_TYPES = {
   NFT_MINT: 'nft-mint',
   
   // Communication queue jobs
+  EMAIL_SEND: 'send-email', // Keep EMAIL_SEND for backwards compatibility
   SEND_EMAIL: 'send-email',
   SEND_SMS: 'send-sms',
   SEND_PUSH: 'send-push',
   
   // Background queue jobs
+  ANALYTICS_PROCESS: 'analytics-track', // Keep ANALYTICS_PROCESS for backwards compatibility
   ANALYTICS_TRACK: 'analytics-track',
   CLEANUP_OLD_DATA: 'cleanup-old-data',
   GENERATE_REPORT: 'generate-report'

@@ -54,7 +54,7 @@ export async function healthRoutes(fastify: FastifyInstance) {
         ofacLastUpdate: lastUpdate
       });
     } catch (error: any) {
-      logger.error('Health check failed:', error);
+      logger.error({ error }, 'Health check failed:');
       return reply.status(503).send({
         ready: false,
         checks,

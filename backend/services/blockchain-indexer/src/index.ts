@@ -5,6 +5,7 @@ import rateLimit from '@fastify/rate-limit';
 import cors from '@fastify/cors';
 import { v4 as uuidv4 } from 'uuid';
 import { connectMongoDB, disconnectMongoDB } from './config/mongodb';
+import { setTenantContext } from './middleware/tenant-context';
 import BlockchainIndexer from './indexer';
 import config from './config';
 import logger from './utils/logger';
@@ -78,6 +79,15 @@ async function startService(): Promise<void> {
     await app.register(rateLimit, {
       max: 100,
       timeWindow: '1 minute'
+    });
+
+    // Tenant isolation middleware
+    app.addHook('onRequest', async (request, reply) => {
+      try {
+        await setTenantContext(request, reply);
+      } catch (error) {
+        // Allow request to proceed - RLS will block unauthorized access
+      }
     });
 
     app.get('/health', async (request, reply) => {

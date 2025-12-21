@@ -1,4 +1,4 @@
-import { redis } from '../config/redis';
+import { getRedis } from '../config/redis';
 import { env } from '../config/env';
 import { RateLimitError } from '../errors';
 
@@ -12,6 +12,7 @@ export class LockoutService {
   }
 
   async recordFailedAttempt(userId: string, ipAddress: string): Promise<void> {
+    const redis = getRedis();
     const userKey = `lockout:user:${userId}`;
     const ipKey = `lockout:ip:${ipAddress}`;
 
@@ -42,6 +43,7 @@ export class LockoutService {
   }
 
   async checkLockout(userId: string, ipAddress: string): Promise<void> {
+    const redis = getRedis();
     const userKey = `lockout:user:${userId}`;
     const ipKey = `lockout:ip:${ipAddress}`;
 
@@ -68,6 +70,7 @@ export class LockoutService {
   }
 
   async clearFailedAttempts(userId: string, ipAddress: string): Promise<void> {
+    const redis = getRedis();
     const userKey = `lockout:user:${userId}`;
     const ipKey = `lockout:ip:${ipAddress}`;
 

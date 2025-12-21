@@ -1,3 +1,18 @@
+/**
+ * DYNAMIC FEE CALCULATOR - For Transaction Processing
+ * 
+ * Complete fee calculation including:
+ * - Dynamic venue tier pricing (STARTER/PRO/ENTERPRISE)
+ * - Sales tax (TaxJar integration)
+ * - Blockchain gas fees (Solana/Polygon)
+ * - Redis caching for performance
+ * - Integer cents calculation (PCI DSS compliant)
+ * 
+ * For simple UI previews, use ../fee-calculator.service.ts
+ * 
+ * @see docs/FEE_CALCULATOR_ARCHITECTURE.md
+ */
+
 import { feeConfig } from '../../config/fees';
 import { VenueTier, DynamicFees, FeeBreakdown } from '../../types';
 import { VenueAnalyticsService } from './venue-analytics.service';

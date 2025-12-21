@@ -56,6 +56,16 @@ export interface IVenue {
   collection_address?: string;
   royalty_percentage?: number;
 
+  // Stripe Connect
+  stripe_connect_account_id?: string;
+  stripe_connect_status?: string;
+  stripe_connect_charges_enabled?: boolean;
+  stripe_connect_payouts_enabled?: boolean;
+  stripe_connect_details_submitted?: boolean;
+  stripe_connect_capabilities?: Record<string, any>;
+  stripe_connect_country?: string;
+  stripe_connect_onboarded_at?: Date;
+
   // Status & Verification
   status?: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'CLOSED';
   is_verified?: boolean;
@@ -174,6 +184,13 @@ export class VenueModel extends BaseModel {
       metadata: { onboarding_status: status }
     });
     return !!result;
+  }
+
+  /**
+   * Check if venue can receive payments via Stripe Connect
+   */
+  canReceivePayments(venue: IVenue): boolean {
+    return !!(venue.stripe_connect_charges_enabled && venue.stripe_connect_payouts_enabled);
   }
 
   async getActiveVenues(options: any = {}): Promise<IVenue[]> {
@@ -302,6 +319,16 @@ export class VenueModel extends BaseModel {
     if (venueData.collection_address !== undefined) dbData.collection_address = venueData.collection_address;
     if (venueData.royalty_percentage !== undefined) dbData.royalty_percentage = venueData.royalty_percentage;
 
+    // Stripe Connect fields
+    if (venueData.stripe_connect_account_id !== undefined) dbData.stripe_connect_account_id = venueData.stripe_connect_account_id;
+    if (venueData.stripe_connect_status !== undefined) dbData.stripe_connect_status = venueData.stripe_connect_status;
+    if (venueData.stripe_connect_charges_enabled !== undefined) dbData.stripe_connect_charges_enabled = venueData.stripe_connect_charges_enabled;
+    if (venueData.stripe_connect_payouts_enabled !== undefined) dbData.stripe_connect_payouts_enabled = venueData.stripe_connect_payouts_enabled;
+    if (venueData.stripe_connect_details_submitted !== undefined) dbData.stripe_connect_details_submitted = venueData.stripe_connect_details_submitted;
+    if (venueData.stripe_connect_capabilities !== undefined) dbData.stripe_connect_capabilities = venueData.stripe_connect_capabilities;
+    if (venueData.stripe_connect_country !== undefined) dbData.stripe_connect_country = venueData.stripe_connect_country;
+    if (venueData.stripe_connect_onboarded_at !== undefined) dbData.stripe_connect_onboarded_at = venueData.stripe_connect_onboarded_at;
+
     if (venueData.status !== undefined) dbData.status = venueData.status;
     if (venueData.is_active !== undefined) {
       dbData.status = venueData.is_active ? 'ACTIVE' : 'INACTIVE';
@@ -388,6 +415,14 @@ export class VenueModel extends BaseModel {
       wallet_address: dbVenue.wallet_address,
       collection_address: dbVenue.collection_address,
       royalty_percentage: dbVenue.royalty_percentage ? parseFloat(dbVenue.royalty_percentage) : undefined,
+      stripe_connect_account_id: dbVenue.stripe_connect_account_id,
+      stripe_connect_status: dbVenue.stripe_connect_status,
+      stripe_connect_charges_enabled: dbVenue.stripe_connect_charges_enabled,
+      stripe_connect_payouts_enabled: dbVenue.stripe_connect_payouts_enabled,
+      stripe_connect_details_submitted: dbVenue.stripe_connect_details_submitted,
+      stripe_connect_capabilities: dbVenue.stripe_connect_capabilities,
+      stripe_connect_country: dbVenue.stripe_connect_country,
+      stripe_connect_onboarded_at: dbVenue.stripe_connect_onboarded_at,
       status: dbVenue.status,
       is_verified: dbVenue.is_verified,
       verified_at: dbVenue.verified_at,

@@ -17,6 +17,22 @@ export async function errorHandler(
     ip: request.ip
   });
 
+  // Handle PostgreSQL FK violations (tenant isolation enforcement)
+  if ((error as any).code === '23503') {
+    return reply.status(400).send({
+      error: 'Invalid tenant ID. The specified tenant does not exist.',
+      code: 'INVALID_TENANT'
+    });
+  }
+
+  // Handle PostgreSQL unique violations
+  if ((error as any).code === '23505') {
+    return reply.status(409).send({
+      error: 'A record with this value already exists.',
+      code: 'DUPLICATE_ENTRY'
+    });
+  }
+
   if (error instanceof AppError) {
     return reply.status(error.statusCode).send({
       error: error.message,

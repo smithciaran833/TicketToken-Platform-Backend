@@ -19,6 +19,9 @@ pub struct Event {
     pub transferable: bool,           // 1 byte - Can tickets be traded
     pub resaleable: bool,             // 1 byte - Can be resold
     pub merkle_tree: Pubkey,          // 32 bytes - Compressed NFT tree
+    pub artist_wallet: Pubkey,        // 32 bytes - Royalty recipient
+    pub artist_percentage: u16,       // 2 bytes - Basis points (500 = 5%)
+    pub venue_percentage: u16,        // 2 bytes - Basis points (500 = 5%)
     pub bump: u8,                     // 1 byte - PDA bump seed
 }
 
@@ -40,8 +43,11 @@ impl Event {
         1 +                           // transferable
         1 +                           // resaleable
         32 +                          // merkle_tree
+        32 +                          // artist_wallet
+        2 +                           // artist_percentage
+        2 +                           // venue_percentage
         1;                            // bump
-    // Total: 455 bytes (updated from spec to include merkle_tree)
+    // Total: 491 bytes (updated to include royalty fields)
 
     pub fn is_active(&self) -> Result<bool> {
         let now = Clock::get().map_err(|_| TicketTokenError::ClockError)?.unix_timestamp;

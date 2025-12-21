@@ -13,14 +13,15 @@ export class VenueAuditLogger {
     try {
       const auditEntry = {
         id: uuidv4(),
+        service: 'venue-service',
         action: action || 'venue_created',
+        action_type: 'CREATE',
         user_id: userId,
         resource_type: 'venue',
         resource_id: venueId,
         ip_address: data?.ipAddress || null,
         user_agent: data?.userAgent || null,
         metadata: data || {},
-        status: 'success',
         created_at: new Date()
       };
 

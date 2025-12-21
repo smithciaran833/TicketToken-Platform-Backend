@@ -3,19 +3,21 @@ seeds = false
 skip-lint = false
 
 [programs.localnet]
-tickettoken = "2Pt5c9QcKSxMe9cBpfhdmfWHUwq8NUk7kFmJREJsNm2b"
-marketplace = "AaQ9Un1tdu4QXidcfMgDxp7ATjTujh8McEgzH9nwQCp9"
+tickettoken = "BnYanHjkV6bBDFYfC7F76TyYk6NA9p3wvcAfY1XZCXYS"
 
 [programs.devnet]
-tickettoken = "2Pt5c9QcKSxMe9cBpfhdmfWHUwq8NUk7kFmJREJsNm2b"
-marketplace = "AaQ9Un1tdu4QXidcfMgDxp7ATjTujh8McEgzH9nwQCp9"
+tickettoken = "BnYanHjkV6bBDFYfC7F76TyYk6NA9p3wvcAfY1XZCXYS"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "devnet"
-wallet = "~/.config/solana/id.json"
+cluster = "localnet"
+wallet = "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/devnet-wallet.json"
 
 [scripts]
-test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+test = "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+
+[test]
+startup_wait = 10000
+shutdown_wait = 2000

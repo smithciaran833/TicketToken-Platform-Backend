@@ -1,7 +1,7 @@
 import { buildApp } from './app';
 import { env } from './config/env';
 import { pool } from './config/database';
-import { redis, closeRedisConnections } from './config/redis';
+import { initRedis, getRedis, closeRedisConnections } from './config/redis';
 
 async function start() {
   try {
@@ -9,8 +9,11 @@ async function start() {
     await pool.query('SELECT NOW()');
     console.log('✅ Database connected');
 
+    // Initialize Redis
+    await initRedis();
+    
     // Test Redis connection
-    await redis.ping();
+    await getRedis().ping();
     console.log('✅ Redis connected');
 
     // Build and start Fastify app

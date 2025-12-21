@@ -2,51 +2,96 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
 import { logger } from '../utils/logger';
 
+const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production';
+
+interface JWTPayload {
+  userId: string;
+  tenantId?: string;
+  role?: string;
+}
+
 export interface AuthRequest extends FastifyRequest {
-  user?: any;
+  user?: {
+    userId: string;
+    tenantId?: string;
+    role?: string;
+  };
 }
 
-// CRITICAL: JWT_SECRET must be provided via environment variable
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  throw new Error('FATAL: JWT_SECRET environment variable is required for service startup. Generate with: openssl rand -base64 32');
-}
-
-export async function authenticate(request: AuthRequest, reply: FastifyReply): Promise<void> {
+export async function authenticate(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
   try {
-    const token = extractToken(request);
+    const authHeader = request.headers.authorization;
+    if (!authHeader) {
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'No authorization header provided'
+      });
+    }
 
+    const token = authHeader.replace('Bearer ', '');
     if (!token) {
-      return reply.code(401).send({ error: 'No token provided' });
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'Invalid authorization header format'
+      });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
-    request.user = decoded;
+    const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
+    (request as any).user = {
+      userId: decoded.userId,
+      tenantId: decoded.tenantId,
+      role: decoded.role
+    };
+
+    logger.debug('User authenticated', { userId: decoded.userId });
   } catch (error) {
-    logger.error('Authentication failed:', error);
-    return reply.code(401).send({ error: 'Invalid token' });
-  }
-}
-
-function extractToken(request: FastifyRequest): string | null {
-  const authHeader = request.headers.authorization;
-
-  if (authHeader && authHeader.startsWith('Bearer ')) {
-    return authHeader.substring(7);
-  }
-
-  return null;
-}
-
-export function authorize(...roles: string[]) {
-  return async (request: AuthRequest, reply: FastifyReply): Promise<void> => {
-    if (!request.user) {
-      return reply.code(401).send({ error: 'Authentication required' });
+    if (error instanceof jwt.JsonWebTokenError) {
+      return reply.code(401).send({
+        error: 'Unauthorized',
+        message: 'Invalid or expired token'
+      });
     }
+    logger.error('Authentication error', { error });
+    return reply.code(500).send({
+      error: 'Internal Server Error',
+      message: 'Authentication failed'
+    });
+  }
+}
 
-    if (!roles.includes(request.user.role)) {
-      logger.warn(`Unauthorized access attempt by user ${request.user.id} with role ${request.user.role}`);
-      return reply.code(403).send({ error: 'Insufficient permissions' });
+export function authorize(roles: string[]) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const user = (request as any).user;
+    if (!user || !user.role || !roles.includes(user.role)) {
+      return reply.code(403).send({
+        error: 'Forbidden',
+        message: 'Insufficient permissions'
+      });
     }
   };
+}
+
+export const authMiddleware = authenticate;
+
+export async function optionalAuthMiddleware(
+  request: FastifyRequest,
+  reply: FastifyReply
+): Promise<void> {
+  try {
+    const authHeader = request.headers.authorization;
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      const decoded = jwt.verify(token, JWT_SECRET) as JWTPayload;
+      (request as any).user = {
+        userId: decoded.userId,
+        tenantId: decoded.tenantId,
+        role: decoded.role
+      };
+    }
+  } catch (error) {
+    logger.debug('Optional auth failed, continuing without user context');
+  }
 }

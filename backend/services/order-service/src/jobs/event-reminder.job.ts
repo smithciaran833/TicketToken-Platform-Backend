@@ -1,8 +1,12 @@
 import { JobExecutor } from './job-executor';
 import { getDatabase } from '../config/database';
 import { logger } from '../utils/logger';
-import { notificationService } from '../services/notification.service';
-import { NotificationType } from '../types/notification.types';
+// import { notificationService } from '../services/notification.service';
+// import { NotificationType } from '../types/notification.types';
+
+const NotificationType = {
+  EVENT_REMINDER: 'EVENT_REMINDER'
+} as const;
 
 export class EventReminderJob extends JobExecutor {
   constructor() {
@@ -15,11 +19,14 @@ export class EventReminderJob extends JobExecutor {
     });
   }
 
+  private get db() {
+    return getDatabase();
+  }
+
   protected async executeCore(): Promise<void> {
-    const db = getDatabase();
     try {
       // Find events happening in the next 24 hours that haven't had reminders sent
-      const result = await db.query(
+      const result = await this.db.query(
         `SELECT DISTINCT o.*, e.event_date, e.event_name
          FROM orders o
          JOIN events e ON o.event_id = e.id
@@ -56,8 +63,7 @@ export class EventReminderJob extends JobExecutor {
       };
 
       // Schedule reminder notification
-      const db = getDatabase();
-      await db.query(
+      await this.db.query(
         `INSERT INTO scheduled_notifications (tenant_id, order_id, user_id, notification_type, channel, scheduled_for, metadata)
          VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
         [

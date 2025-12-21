@@ -3,9 +3,14 @@ import { promisify } from 'util';
 import { resolve4 } from 'dns';
 import { config } from './index';
 import { pino } from 'pino';
+import pg from 'pg';
 
 const logger = pino({ name: 'database' });
 const resolveDns = promisify(resolve4);
+
+// Configure pg to parse NUMERIC and DECIMAL types as numbers instead of strings
+// Type IDs: 1700 = NUMERIC/DECIMAL
+pg.types.setTypeParser(1700, (val: string) => parseFloat(val));
 
 export let db: Knex;
 
@@ -17,16 +22,22 @@ export async function connectDatabase() {
     try {
       logger.info(`Database connection attempt ${attempt}/${MAX_RETRIES}...`);
       
-      // Force DNS resolution to bypass Node.js DNS cache
-      const dbIps = await resolveDns(config.database.host);
-      const dbIp = dbIps[0];
-      logger.info(`Resolved ${config.database.host} to ${dbIp}`);
+      // Try DNS resolution, but fall back to hostname if it fails
+      let host = config.database.host;
+      try {
+        const dbIps = await resolveDns(config.database.host);
+        host = dbIps[0];
+        logger.info(`Resolved ${config.database.host} to ${host}`);
+      } catch (dnsError) {
+        logger.warn({ error: dnsError }, `DNS resolution failed, using hostname directly: ${config.database.host}`);
+        // Continue with original hostname
+      }
       
-      // Create database connection using resolved IP
+      // Create database connection
       db = knex({
         client: 'postgresql',
         connection: {
-          host: dbIp, // Use resolved IP instead of hostname
+          host, // Use resolved IP or original hostname
           port: config.database.port,
           user: config.database.user,
           password: config.database.password,
@@ -38,7 +49,7 @@ export async function connectDatabase() {
           max: 10,
           acquireTimeoutMillis: 30000,
           idleTimeoutMillis: 30000,
-          propagateCreateError: false
+          propagateCreateError: true // Changed to true to properly surface connection errors
         },
         migrations: {
           directory: './src/migrations',

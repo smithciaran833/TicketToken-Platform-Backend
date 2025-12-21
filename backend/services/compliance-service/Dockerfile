@@ -35,7 +35,7 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'set -e' >> /app/entrypoint.sh && \
     echo 'echo "Running migrations for compliance-service..."' >> /app/entrypoint.sh && \
     echo 'cd /app/backend/services/compliance-service' >> /app/entrypoint.sh && \
-    echo 'npm run migrate || echo "Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'npm run migrate || exit 1' >> /app/entrypoint.sh && \
     echo 'exec "$@"' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 # Create non-root user
@@ -47,4 +47,4 @@ EXPOSE 3010
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3010/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 ENTRYPOINT ["/app/entrypoint.sh", "dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/services/compliance-service/src/index.js"]

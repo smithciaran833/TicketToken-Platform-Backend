@@ -1,4 +1,4 @@
-import { redis } from '../config/redis';
+import { getRedis } from '../config/redis';
 import { RateLimitError } from '../errors';
 
 interface RateLimitOptions {
@@ -20,6 +20,7 @@ export class RateLimiter {
   }
 
   async consume(key: string, _points = 1): Promise<void> {
+    const redis = getRedis();
     const fullKey = `${this.keyPrefix}:${key}`;
     const blockKey = `${fullKey}:block`;
 
@@ -51,6 +52,7 @@ export class RateLimiter {
   }
 
   async reset(key: string): Promise<void> {
+    const redis = getRedis();
     const fullKey = `${this.keyPrefix}:${key}`;
     const blockKey = `${fullKey}:block`;
     

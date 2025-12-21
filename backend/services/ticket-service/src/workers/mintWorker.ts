@@ -1,6 +1,7 @@
 import { DatabaseService } from '../services/databaseService';
 import { logger } from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 
 const log = logger.child({ component: 'MintWorker' });
 
@@ -10,6 +11,7 @@ interface MintJob {
   eventId: string;
   quantity: number;
   ticketTypeId?: string;
+  tenantId?: string;
   timestamp: string;
 }
 
@@ -23,37 +25,70 @@ class MintWorkerClass {
     try {
       await client.query('BEGIN');
 
-      let ticketTypeId = job.ticketTypeId;
+      // Get order details including tenant_id
+      const orderResult = await client.query(
+        `SELECT o.tenant_id, o.event_id, oi.ticket_type_id
+         FROM orders o
+         LEFT JOIN order_items oi ON oi.order_id = o.id
+         WHERE o.id = $1
+         LIMIT 1`,
+        [job.orderId]
+      );
+
+      if (orderResult.rows.length === 0) {
+        throw new Error('Order not found');
+      }
+
+      const orderData = orderResult.rows[0];
+      const tenantId = job.tenantId || orderData.tenant_id;
+      const ticketTypeId = job.ticketTypeId || orderData.ticket_type_id;
+      const eventId = job.eventId || orderData.event_id;
 
       if (!ticketTypeId) {
-        const orderResult = await client.query(
-          `SELECT oi.ticket_type_id
-           FROM order_items oi
-           WHERE oi.order_id = $1
-           LIMIT 1`,
-          [job.orderId]
-        );
+        throw new Error('No ticket type found for order');
+      }
 
-        if (orderResult.rows.length > 0) {
-          ticketTypeId = orderResult.rows[0].ticket_type_id;
-        } else {
-          throw new Error('No ticket type found for order');
-        }
+      if (!tenantId) {
+        throw new Error('No tenant found for order');
       }
 
       const tickets = [];
       for (let i = 0; i < job.quantity; i++) {
         const ticketId = uuidv4();
+        const ticketNumber = `TKT-${Date.now()}-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+        const qrCode = `QR-${ticketNumber}`;
 
-        const nftMint = await this.mintNFT(ticketId, job.userId, job.eventId);
+        const nftMint = await this.mintNFT(ticketId, job.userId, eventId);
 
+        // Insert ticket using actual schema columns
+        // Store NFT data in metadata JSONB field
         await client.query(
           `INSERT INTO tickets (
-            id, order_id, user_id, event_id, ticket_type_id,
-            nft_mint_address, nft_transaction_hash,
-            status, price_cents, is_transferable, transfer_count, created_at
-          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'SOLD', 0, true, 0, NOW())`,
-          [ticketId, job.orderId, job.userId, job.eventId, ticketTypeId, nftMint.address, nftMint.signature]
+            id, tenant_id, user_id, event_id, ticket_type_id,
+            ticket_number, qr_code, status, price_cents,
+            is_nft, is_transferable, transfer_count,
+            metadata, purchased_at, created_at, updated_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW(), NOW())`,
+          [
+            ticketId,
+            tenantId,
+            job.userId,
+            eventId,
+            ticketTypeId,
+            ticketNumber,
+            qrCode,
+            'active',  // Valid status from check constraint
+            0,
+            true,      // is_nft = true for minted tickets
+            true,
+            0,
+            JSON.stringify({
+              nft_mint_address: nftMint.address,
+              nft_transaction_hash: nftMint.signature,
+              minted_at: new Date().toISOString(),
+              order_id: job.orderId
+            })
+          ]
         );
 
         tickets.push({
@@ -107,11 +142,6 @@ class MintWorkerClass {
     const mockSignature = `sig_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Random failure disabled for tests
-    // if (Math.random() < 0.05) {
-    //   throw new Error('Mock mint failure - network timeout');
-    // }
 
     return {
       address: mockAddress,

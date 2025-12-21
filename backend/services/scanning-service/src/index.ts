@@ -11,6 +11,7 @@ import cors from '@fastify/cors';
 import { initializeDatabase, getPool } from './config/database';
 import { initializeRedis, getRedis } from './config/redis';
 import logger from './utils/logger';
+import { setTenantContext } from './middleware/tenant-context';
 
 // Import routes
 import scanRoutes from './routes/scan';
@@ -45,9 +46,26 @@ async function startService(): Promise<void> {
     
     fastifyInstance = app;
 
+    // Decorate with database pool for middleware
+    app.decorate('db', getPool());
+
     // Register plugins
     await app.register(helmet);
     await app.register(cors);
+
+    // ====================================
+    // TENANT ISOLATION MIDDLEWARE
+    // ====================================
+    // This middleware sets the PostgreSQL session variable for Row Level Security
+    // IMPORTANT: Register AFTER authentication middleware (when added)
+    app.addHook('onRequest', async (request, reply) => {
+      try {
+        await setTenantContext(request, reply);
+      } catch (error) {
+        logger.error('Failed to set tenant context', error);
+        // Allow request to proceed - RLS will block unauthorized access
+      }
+    });
 
     // Phase 3.5: Enhanced health check (Returns 503 during shutdown)
     app.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {

@@ -20,7 +20,7 @@ pub struct CreateVenue<'info> {
     #[account(
         init,
         payer = owner,
-        space = Venue::SIZE,
+        space = 8 + Venue::SIZE,
         seeds = [VENUE_SEED, venue_id.as_bytes()],
         bump
     )]

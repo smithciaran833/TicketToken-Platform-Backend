@@ -15,7 +15,8 @@ interface IntegrationParams extends VenueParams {
 }
 
 interface CreateIntegrationBody {
-  type: 'square' | 'stripe' | 'toast' | 'mailchimp' | 'twilio';
+  provider?: 'square' | 'stripe' | 'toast' | 'mailchimp' | 'twilio';
+  type?: 'square' | 'stripe' | 'toast' | 'mailchimp' | 'twilio';
   config?: Record<string, any>;
   credentials: Record<string, any>;
 }
@@ -75,7 +76,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
 
           // Start with config_data fields
           const config = { ...(configData || {}) };
-          
+
           // Mask sensitive fields that are already in config_data
           if (config.apiKey) config.apiKey = '***';
           if (config.secretKey) config.secretKey = '***';
@@ -144,9 +145,12 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('Insufficient permissions to create integrations');
         }
 
+        // Map 'provider' to 'type' if provider is used
+        const integrationType = body.provider || body.type;
+
         // Transform data to match service expectations
         const integrationData = {
-          type: body.type,
+          type: integrationType,
           config: body.config || {},
           encrypted_credentials: body.credentials,
           status: 'active'
@@ -154,7 +158,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
 
         const integration = await integrationService.createIntegration(venueId, integrationData);
 
-        logger.info({ venueId, integrationType: body.type, userId }, 'Integration created');
+        logger.info({ venueId, integrationType, userId }, 'Integration created');
         venueOperations.inc({ operation: 'create_integration', status: 'success' });
 
         return reply.status(201).send(integration);

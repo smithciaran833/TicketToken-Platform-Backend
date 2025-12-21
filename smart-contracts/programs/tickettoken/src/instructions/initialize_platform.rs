@@ -11,7 +11,7 @@ pub struct InitializePlatform<'info> {
     #[account(
         init,
         payer = owner,
-        space = Platform::SIZE,
+        space = 8 + Platform::SIZE,
         seeds = [PLATFORM_SEED],
         bump
     )]

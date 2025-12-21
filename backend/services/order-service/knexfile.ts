@@ -1,7 +1,12 @@
 import type { Knex } from 'knex';
 import dotenv from 'dotenv';
+import pg from 'pg';
 
 dotenv.config();
+
+// Configure pg to parse NUMERIC and DECIMAL types as numbers instead of strings
+// Type IDs: 1700 = NUMERIC/DECIMAL
+pg.types.setTypeParser(1700, (val: string) => parseFloat(val));
 
 const config: { [key: string]: Knex.Config } = {
   development: {
@@ -18,15 +23,15 @@ const config: { [key: string]: Knex.Config } = {
       max: 10,
     },
     migrations: {
-      tableName: 'knex_migrations',
+      tableName: 'knex_migrations_order_service',
       directory: './src/migrations',
       extension: 'ts',
+      loadExtensions: ['.ts'],
     },
     seeds: {
       directory: './src/seeds',
     },
   },
-
   production: {
     client: 'postgresql',
     connection: process.env.DATABASE_URL,
@@ -35,9 +40,10 @@ const config: { [key: string]: Knex.Config } = {
       max: 10,
     },
     migrations: {
-      tableName: 'knex_migrations',
+      tableName: 'knex_migrations_order_service',
       directory: './src/migrations',
       extension: 'ts',
+      loadExtensions: ['.ts'],
     },
   },
 };

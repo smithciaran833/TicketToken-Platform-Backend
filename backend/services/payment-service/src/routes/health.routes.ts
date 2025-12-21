@@ -11,7 +11,7 @@ export default async function healthRoutes(fastify: FastifyInstance) {
   // Basic health check
   fastify.get('/health', async (request: FastifyRequest, reply: FastifyReply) => {
     return { 
-      status: 'ok', 
+      status: 'healthy', 
       service: 'payment-service',
       timestamp: new Date().toISOString()
     };
@@ -25,7 +25,7 @@ export default async function healthRoutes(fastify: FastifyInstance) {
       const duration = Date.now() - start;
       
       return {
-        status: 'ok',
+        status: 'healthy',
         database: 'connected',
         responseTime: `${duration}ms`,
         service: 'payment-service'
@@ -50,7 +50,7 @@ export default async function healthRoutes(fastify: FastifyInstance) {
       const duration = Date.now() - start;
       
       return {
-        status: 'ok',
+        status: 'healthy',
         redis: 'connected',
         responseTime: `${duration}ms`,
         service: 'payment-service'
@@ -85,7 +85,7 @@ export default async function healthRoutes(fastify: FastifyInstance) {
       const duration = Date.now() - start;
       
       return {
-        status: 'ok',
+        status: 'healthy',
         stripe: 'connected',
         responseTime: `${duration}ms`,
         service: 'payment-service'

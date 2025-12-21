@@ -13,15 +13,20 @@ export interface MarketplaceTransfer {
   transferSignature: string;
   blockHeight?: number;
   paymentCurrency: 'USDC' | 'SOL';
-  paymentAmount?: number;     // Amount in smallest unit (lamports/microUSDC)
-  usdValue: number;           // INTEGER CENTS
+  paymentAmount?: number;
+  usdValue: number;
   status: 'initiated' | 'pending' | 'completed' | 'failed' | 'disputed';
   initiatedAt: Date;
   completedAt?: Date;
   failedAt?: Date;
   failureReason?: string;
-  networkFee?: number;        // Blockchain fee in smallest unit
-  networkFeeUsd?: number;     // INTEGER CENTS
+  networkFee?: number;
+  networkFeeUsd?: number;
+  paymentMethod: 'crypto' | 'fiat';
+  fiatCurrency?: string;
+  stripePaymentIntentId?: string;
+  stripeTransferId?: string;
+  stripeApplicationFeeAmount?: number;
   createdAt: Date;
 }
 
@@ -35,7 +40,11 @@ export interface CreateTransferInput {
   sellerWallet: string;
   paymentCurrency: 'USDC' | 'SOL';
   paymentAmount: number;
-  usdValue: number;           // INTEGER CENTS
+  usdValue: number;
+  paymentMethod?: 'crypto' | 'fiat';
+  fiatCurrency?: string;
+  stripePaymentIntentId?: string;
+  stripeApplicationFeeAmount?: number;
 }
 
 export class TransferModel {
@@ -56,6 +65,10 @@ export class TransferModel {
         payment_currency: input.paymentCurrency,
         payment_amount: input.paymentAmount,
         usd_value: input.usdValue,
+        payment_method: input.paymentMethod || 'crypto',
+        fiat_currency: input.fiatCurrency,
+        stripe_payment_intent_id: input.stripePaymentIntentId,
+        stripe_application_fee_amount: input.stripeApplicationFeeAmount,
         status: 'initiated',
         transfer_signature: '',
       })
@@ -76,6 +89,14 @@ export class TransferModel {
     const transfer = await db(this.tableName)
       .where({ listing_id: listingId })
       .orderBy('created_at', 'desc')
+      .first();
+
+    return transfer ? this.mapToTransfer(transfer) : null;
+  }
+
+  async findByStripePaymentIntentId(paymentIntentId: string): Promise<MarketplaceTransfer | null> {
+    const transfer = await db(this.tableName)
+      .where({ stripe_payment_intent_id: paymentIntentId })
       .first();
 
     return transfer ? this.mapToTransfer(transfer) : null;
@@ -176,7 +197,7 @@ export class TransferModel {
       .first();
 
     if (!result || !result.total) return 0;
-    return parseInt(String(result.total));  // Return integer cents
+    return parseInt(String(result.total));
   }
 
   private mapToTransfer(row: any): MarketplaceTransfer {
@@ -193,14 +214,19 @@ export class TransferModel {
       blockHeight: row.block_height,
       paymentCurrency: row.payment_currency,
       paymentAmount: row.payment_amount ? parseInt(row.payment_amount) : undefined,
-      usdValue: parseInt(row.usd_value),  // INTEGER CENTS
+      usdValue: parseInt(row.usd_value),
       status: row.status,
       initiatedAt: row.initiated_at,
       completedAt: row.completed_at,
       failedAt: row.failed_at,
       failureReason: row.failure_reason,
       networkFee: row.network_fee ? parseInt(row.network_fee) : undefined,
-      networkFeeUsd: row.network_fee_usd ? parseInt(row.network_fee_usd) : undefined,  // INTEGER CENTS
+      networkFeeUsd: row.network_fee_usd ? parseInt(row.network_fee_usd) : undefined,
+      paymentMethod: row.payment_method || 'crypto',
+      fiatCurrency: row.fiat_currency,
+      stripePaymentIntentId: row.stripe_payment_intent_id,
+      stripeTransferId: row.stripe_transfer_id,
+      stripeApplicationFeeAmount: row.stripe_application_fee_amount ? parseInt(row.stripe_application_fee_amount) : undefined,
       createdAt: row.created_at,
     };
   }

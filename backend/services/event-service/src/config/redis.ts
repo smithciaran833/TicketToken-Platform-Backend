@@ -1,28 +1,36 @@
-import Redis from 'ioredis';
-import { config } from './index';
-import { pino } from 'pino';
+import type Redis from 'ioredis';
+import { getRedisClient, getRedisPubClient, getRedisSubClient, getConnectionManager } from '@tickettoken/shared';
 
-const logger = pino({ name: 'redis' });
+let redis: Redis;
+let redisPub: Redis;
+let redisSub: Redis;
+let initialized = false;
 
-export const createRedisConnection = (): Redis => {
-  const redis = new Redis({
-    host: config.redis.host,
-    port: config.redis.port,
-    password: config.redis.password,
-    retryStrategy: (times: number) => {
-      const delay = Math.min(times * 50, 2000);
-      return delay;
-    },
-    maxRetriesPerRequest: 3
-  });
+export async function initRedis(): Promise<void> {
+  if (initialized) return;
+  redis = await getRedisClient();
+  redisPub = await getRedisPubClient();
+  redisSub = await getRedisSubClient();
+  initialized = true;
+}
 
-  redis.on('connect', () => {
-    logger.info('Redis connection established');
-  });
-
-  redis.on('error', (error) => {
-    logger.error({ error }, 'Redis connection error');
-  });
-
+export function getRedis(): Redis {
+  if (!redis) throw new Error('Redis not initialized');
   return redis;
-};
+}
+
+export function getPub(): Redis {
+  if (!redisPub) throw new Error('Redis pub not initialized');
+  return redisPub;
+}
+
+export function getSub(): Redis {
+  if (!redisSub) throw new Error('Redis sub not initialized');
+  return redisSub;
+}
+
+export async function closeRedisConnections(): Promise<void> {
+  const connectionManager = getConnectionManager();
+  await connectionManager.disconnect();
+  initialized = false;
+}

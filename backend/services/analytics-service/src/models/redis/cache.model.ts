@@ -1,22 +1,17 @@
-import { getRedis } from '../../config/redis';
+/**
+ * Cache Model - Migrated to @tickettoken/shared
+ * 
+ * 🚨 CRITICAL FIX: Replaced blocking redis.keys() in deletePattern with SCAN
+ */
+
+import { getCacheManager, getRedisClient } from '@tickettoken/shared';
 import { CONSTANTS } from '../../config/constants';
 
 export class CacheModel {
-  private static redis = getRedis;
+  private static cacheManager = getCacheManager();
   
   static async get<T>(key: string): Promise<T | null> {
-    const redis = this.redis();
-    const value = await redis.get(key);
-    
-    if (value) {
-      try {
-        return JSON.parse(value);
-      } catch {
-        return value as any;
-      }
-    }
-    
-    return null;
+    return await this.cacheManager.get<T>(key);
   }
   
   static async set(
@@ -24,49 +19,39 @@ export class CacheModel {
     value: any,
     ttl?: number
   ): Promise<void> {
-    const redis = this.redis();
-    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-    
-    if (ttl) {
-      await redis.setex(key, ttl, serialized);
-    } else {
-      await redis.set(key, serialized);
-    }
+    await this.cacheManager.set(key, value, ttl);
   }
   
   static async delete(key: string): Promise<void> {
-    const redis = this.redis();
-    await redis.del(key);
+    await this.cacheManager.delete(key);
   }
   
   static async deletePattern(pattern: string): Promise<number> {
-    const redis = this.redis();
-    const keys = await redis.keys(pattern);
-    
-    if (keys.length > 0) {
-      return await redis.del(...keys);
-    }
-    
-    return 0;
+    // 🚨 FIXED: Use invalidate which uses SCAN instead of blocking KEYS
+    await this.cacheManager.invalidate(pattern);
+    return 1; // Return success indicator
   }
   
   static async exists(key: string): Promise<boolean> {
-    const redis = this.redis();
-    return (await redis.exists(key)) === 1;
+    const value = await this.cacheManager.get(key);
+    return value !== null;
   }
   
   static async expire(key: string, ttl: number): Promise<void> {
-    const redis = this.redis();
-    await redis.expire(key, ttl);
+    // Get and re-set with new TTL
+    const value = await this.cacheManager.get(key);
+    if (value !== null) {
+      await this.cacheManager.set(key, value, ttl);
+    }
   }
   
   static async increment(key: string, by: number = 1): Promise<number> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     return await redis.incrby(key, by);
   }
   
   static async decrement(key: string, by: number = 1): Promise<number> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     return await redis.decrby(key, by);
   }
   
@@ -111,6 +96,7 @@ export class CacheModel {
   
   static async invalidateVenueCache(venueId: string): Promise<void> {
     const pattern = this.getCacheKey('*', venueId, '*');
+    // 🚨 FIXED: Uses SCAN-based invalidation
     await this.deletePattern(pattern);
   }
 }

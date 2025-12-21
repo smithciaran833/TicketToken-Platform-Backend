@@ -18,7 +18,7 @@ export class AutomationService {
   private triggers: Map<string, cron.ScheduledTask> = new Map();
 
   async initializeAutomations() {
-    const automations = await db('automation_triggers')
+    const automations = await db('email_automation_triggers')
       .where('enabled', true);
 
     for (const automation of automations) {
@@ -37,7 +37,7 @@ export class AutomationService {
   }): Promise<string> {
     const id = uuidv4();
 
-    await db('automation_triggers').insert({
+    await db('email_automation_triggers').insert({
       id,
       venue_id: automation.venueId,
       name: automation.name,
@@ -223,11 +223,11 @@ export class AutomationService {
 
     for (const cart of abandonedCarts) {
       // Trigger abandoned cart automation
-      const triggers = await db('automation_triggers')
+      const triggers = await db('email_automation_triggers')
         .where('trigger_type', 'behavior')
         .whereRaw(`conditions->>'behaviorType' = 'cart_abandoned'`)
         .where('venue_id', cart.venue_id)
-        .where('enabled', true);
+        .where('is_active', true);
 
       for (const trigger of triggers) {
         await this.executeActions(trigger);

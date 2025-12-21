@@ -1,15 +1,15 @@
 -- Fix Phase 2: Payment Methods
+-- Note: payment_methods table doesn't exist in schema, use metadata from payment_transactions
 DROP VIEW IF EXISTS financial_summary_payment_methods CASCADE;
 
 CREATE OR REPLACE VIEW financial_summary_payment_methods AS
 SELECT 
     fsb.*,
-    pm.type as payment_method,
-    pm.provider as gateway,
-    pm.provider_payment_method_id as gateway_transaction_id
+    t.metadata->>'payment_method' as payment_method,
+    t.metadata->>'gateway' as gateway,
+    t.stripe_payment_intent_id as gateway_transaction_id
 FROM financial_summary_basic fsb
-LEFT JOIN transactions t ON fsb.transaction_id = t.id
-LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id;
+LEFT JOIN payment_transactions t ON fsb.transaction_id = t.id;
 -- Fix all financial summary views to work with actual schema
 
 -- Phase 1 already works
@@ -30,7 +30,7 @@ SELECT
     END as net_amount,
     NULL::text as refund_reason
 FROM financial_summary_payment_methods fspm
-JOIN transactions t ON fspm.transaction_id = t.id;
+JOIN payment_transactions t ON fspm.transaction_id = t.id;
 
 -- Phase 4: Fees
 DROP VIEW IF EXISTS financial_summary_with_fees CASCADE;
@@ -64,23 +64,18 @@ SELECT
 FROM financial_summary_with_refunds fswr;
 
 -- Phase 5: Settlements
+-- Note: settlement_batches is for batch processing, not individual transactions
+-- Removed settlement join as settlements don't link to individual transactions
 DROP VIEW IF EXISTS financial_summary_with_settlements CASCADE;
 CREATE OR REPLACE VIEW financial_summary_with_settlements AS
 SELECT 
     fswf.*,
-    s.status as settlement_status,
-    s.settled_at as settlement_date,
-    s.amount as settlement_amount,
-    CASE 
-        WHEN s.status = 'completed' THEN s.amount
-        ELSE 0
-    END as paid_out_amount,
-    CASE 
-        WHEN s.status IN ('pending', 'processing') THEN fswf.net_revenue_after_fees
-        ELSE 0
-    END as pending_payout
-FROM financial_summary_with_fees fswf
-LEFT JOIN settlements s ON fswf.transaction_id = s.transaction_id;
+    NULL::varchar as settlement_status,
+    NULL::timestamp as settlement_date,
+    NULL::numeric as settlement_amount,
+    0::numeric as paid_out_amount,
+    fswf.net_revenue_after_fees as pending_payout
+FROM financial_summary_with_fees fswf;
 
 -- Phase 6: Taxes
 DROP VIEW IF EXISTS financial_summary_with_taxes CASCADE;

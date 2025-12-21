@@ -24,6 +24,8 @@ export interface MarketplaceListing {
   approvalNotes?: string;
   viewCount: number;
   favoriteCount: number;
+  acceptsFiatPayment: boolean;
+  acceptsCryptoPayment: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +40,8 @@ export interface CreateListingInput {
   walletAddress: string;
   expiresAt?: Date;
   requiresApproval?: boolean;
+  acceptsFiatPayment?: boolean;
+  acceptsCryptoPayment?: boolean;
 }
 
 export interface UpdateListingInput {
@@ -62,6 +66,8 @@ export class ListingModel {
         wallet_address: input.walletAddress,
         expires_at: input.expiresAt,
         requires_approval: input.requiresApproval || false,
+        accepts_fiat_payment: input.acceptsFiatPayment || false,
+        accepts_crypto_payment: input.acceptsCryptoPayment !== false,
         status: input.requiresApproval ? 'pending_approval' : 'active',
       })
       .returning('*');
@@ -236,6 +242,8 @@ export class ListingModel {
       approvalNotes: row.approval_notes,
       viewCount: row.view_count,
       favoriteCount: row.favorite_count,
+      acceptsFiatPayment: row.accepts_fiat_payment || false,
+      acceptsCryptoPayment: row.accepts_crypto_payment !== false,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };

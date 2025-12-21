@@ -6,6 +6,8 @@ import venueRoutes from './venue.routes';
 import complianceRoutes from './compliance.routes';
 import webhookRoutes from './webhook.routes';
 import internalRoutes from './internal.routes';
+import intentsRoutes from './intents.routes';
+import refundRoutes from './refund.routes';
 
 export default async function routes(fastify: FastifyInstance) {
   // Health check
@@ -24,5 +26,7 @@ export default async function routes(fastify: FastifyInstance) {
   await fastify.register(venueRoutes, { prefix: '/venues' });
   await fastify.register(complianceRoutes, { prefix: '/compliance' });
   await fastify.register(webhookRoutes, { prefix: '/webhooks' });
+  await fastify.register(intentsRoutes, { prefix: '/intents' });
+  await fastify.register(refundRoutes, { prefix: '/refunds' });
   await fastify.register(internalRoutes); // Internal routes at root level
 }

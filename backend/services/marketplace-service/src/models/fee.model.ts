@@ -17,6 +17,9 @@ export interface PlatformFee {
   venueFeeSignature?: string;
   platformFeeCollected: boolean;
   venueFeeCollected: boolean;
+  sellerTransferId?: string;      // Stripe transfer ID for seller
+  venueTransferId?: string;       // Stripe transfer ID for venue
+  venueReceivedCents?: number;    // Actual amount venue received
   createdAt: Date;
 }
 
@@ -83,7 +86,10 @@ export class FeeModel {
     platformCollected?: boolean,
     venueCollected?: boolean,
     platformSignature?: string,
-    venueSignature?: string
+    venueSignature?: string,
+    sellerTransferId?: string,
+    venueTransferId?: string,
+    venueReceivedCents?: number
   ): Promise<PlatformFee | null> {
     const updateData: any = {};
 
@@ -99,9 +105,46 @@ export class FeeModel {
     if (venueSignature) {
       updateData.venue_fee_signature = venueSignature;
     }
+    if (sellerTransferId) {
+      updateData.seller_transfer_id = sellerTransferId;
+    }
+    if (venueTransferId) {
+      updateData.venue_transfer_id = venueTransferId;
+    }
+    if (venueReceivedCents !== undefined) {
+      updateData.venue_received_cents = venueReceivedCents;
+    }
 
     const [fee] = await db(this.tableName)
       .where({ id })
+      .update(updateData)
+      .returning('*');
+
+    return fee ? this.mapToFee(fee) : null;
+  }
+
+  /**
+   * Record Stripe transfer IDs for reconciliation
+   */
+  async recordTransferIds(
+    feeId: string,
+    sellerTransferId: string,
+    venueTransferId: string | null,
+    venueAmount: number
+  ): Promise<PlatformFee | null> {
+    const updateData: any = {
+      seller_transfer_id: sellerTransferId,
+      platform_fee_collected: true, // Seller transfer succeeded
+    };
+
+    if (venueTransferId) {
+      updateData.venue_transfer_id = venueTransferId;
+      updateData.venue_received_cents = venueAmount;
+      updateData.venue_fee_paid = true; // Venue transfer succeeded
+    }
+
+    const [fee] = await db(this.tableName)
+      .where({ id: feeId })
       .update(updateData)
       .returning('*');
 
@@ -162,6 +205,9 @@ export class FeeModel {
       venueFeeSignature: row.venue_fee_signature,
       platformFeeCollected: row.platform_fee_collected,
       venueFeeCollected: row.venue_fee_paid,
+      sellerTransferId: row.seller_transfer_id,
+      venueTransferId: row.venue_transfer_id,
+      venueReceivedCents: row.venue_received_cents ? parseInt(row.venue_received_cents) : undefined,
       createdAt: row.created_at,
     };
   }

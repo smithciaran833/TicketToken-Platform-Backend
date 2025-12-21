@@ -41,6 +41,28 @@ export async function errorHandler(
     'Request error occurred'
   );
 
+  // Handle PostgreSQL FK violations (tenant isolation enforcement)
+  if ((error as any).code === '23503') {
+    return reply.status(400).send({
+      statusCode: 400,
+      error: 'Bad Request',
+      message: 'Invalid tenant ID. The specified tenant does not exist.',
+      requestId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
+  // Handle PostgreSQL unique violations
+  if ((error as any).code === '23505') {
+    return reply.status(409).send({
+      statusCode: 409,
+      error: 'Conflict',
+      message: 'A record with this value already exists.',
+      requestId,
+      timestamp: new Date().toISOString(),
+    });
+  }
+
   // Determine status code
   const statusCode = error.statusCode || (error as any).status || 500;
 

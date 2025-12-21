@@ -28,6 +28,7 @@ export enum OrderEventType {
 
 export interface Order {
   id: string;
+  tenantId: string;
   userId: string;
   eventId: string;
   orderNumber: string;
@@ -52,6 +53,7 @@ export interface Order {
 
 export interface OrderItem {
   id: string;
+  tenantId: string;
   orderId: string;
   ticketTypeId: string;
   quantity: number;
@@ -62,6 +64,7 @@ export interface OrderItem {
 
 export interface OrderEvent {
   id: string;
+  tenantId: string;
   orderId: string;
   eventType: OrderEventType;
   userId?: string;
@@ -71,6 +74,7 @@ export interface OrderEvent {
 
 export interface OrderRefund {
   id: string;
+  tenantId: string;
   refundId: string;
   orderId: string;
   refundAmountCents: number;

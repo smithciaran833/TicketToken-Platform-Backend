@@ -1,11 +1,24 @@
 import crypto from 'crypto';
+import Stripe from 'stripe';
 import { DatabaseService } from './databaseService';
-import { PaymentService } from './paymentService';
+import { PaymentProcessorService } from './core/payment-processor.service';
+import { config } from '../config';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'WebhookProcessor' });
 
 class WebhookProcessorClass {
+  private stripe: Stripe;
+  private paymentProcessor: PaymentProcessorService;
+
+  constructor() {
+    this.stripe = new Stripe(config.stripe.secretKey, {
+      apiVersion: '2023-10-16'
+    });
+    const db = DatabaseService.getPool();
+    this.paymentProcessor = new PaymentProcessorService(this.stripe, db);
+  }
+
   async processStripeWebhook(webhookId: string) {
     const db = DatabaseService.getPool();
     
@@ -59,7 +72,18 @@ class WebhookProcessorClass {
   
   private async handlePaymentSucceeded(paymentIntent: any) {
     log.info('Processing payment success', { id: paymentIntent.id });
-    await PaymentService.confirmPayment(paymentIntent.id);
+    
+    // Extract user ID from payment intent metadata
+    const userId = paymentIntent.metadata?.userId || paymentIntent.metadata?.user_id;
+    
+    if (!userId) {
+      log.warn('Payment intent missing userId in metadata', { 
+        paymentIntentId: paymentIntent.id,
+        metadata: paymentIntent.metadata 
+      });
+    }
+    
+    await this.paymentProcessor.confirmPayment(paymentIntent.id, userId);
   }
   
   private async handlePaymentFailed(paymentIntent: any) {

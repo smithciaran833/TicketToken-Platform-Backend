@@ -4,13 +4,13 @@ import { VenueBalance } from '../types';
 export class VenueBalanceModel {
   static async getBalance(venueId: string): Promise<VenueBalance> {
     const text = `
-      SELECT 
+      SELECT
         venue_id,
         COALESCE(SUM(CASE WHEN balance_type = 'available' THEN amount ELSE 0 END), 0) as available,
         COALESCE(SUM(CASE WHEN balance_type = 'pending' THEN amount ELSE 0 END), 0) as pending,
         COALESCE(SUM(CASE WHEN balance_type = 'reserved' THEN amount ELSE 0 END), 0) as reserved,
         'USD' as currency
-      FROM venue_balances 
+      FROM venue_balances
       WHERE venue_id = $1
       GROUP BY venue_id
     `;
@@ -44,20 +44,42 @@ export class VenueBalanceModel {
       const upsertText = `
         INSERT INTO venue_balances (venue_id, amount, balance_type)
         VALUES ($1, $2, $3)
-        ON CONFLICT (venue_id, balance_type) 
-        DO UPDATE SET 
-          amount = venue_balances.amount + $2,
+        ON CONFLICT (venue_id, balance_type)
+        DO UPDATE SET
+          amount = venue_balances.amount + EXCLUDED.amount,
           updated_at = CURRENT_TIMESTAMP
         RETURNING *
       `;
 
       await client.query(upsertText, [venueId, amount, type]);
 
-      // Get the updated balances
-      const balances = await this.getBalance(venueId);
+      // Get the updated balances using the same transaction client
+      const balanceText = `
+        SELECT
+          venue_id,
+          COALESCE(SUM(CASE WHEN balance_type = 'available' THEN amount ELSE 0 END), 0) as available,
+          COALESCE(SUM(CASE WHEN balance_type = 'pending' THEN amount ELSE 0 END), 0) as pending,
+          COALESCE(SUM(CASE WHEN balance_type = 'reserved' THEN amount ELSE 0 END), 0) as reserved,
+          'USD' as currency
+        FROM venue_balances
+        WHERE venue_id = $1
+        GROUP BY venue_id
+      `;
+
+      const balanceResult = await client.query(balanceText, [venueId]);
 
       await client.query('COMMIT');
-      return balances;
+
+      if (balanceResult.rows.length === 0) {
+        return {
+          available: 0,
+          pending: 0,
+          reserved: 0,
+          currency: 'USD'
+        };
+      }
+
+      return balanceResult.rows[0];
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -69,7 +91,7 @@ export class VenueBalanceModel {
   static async createInitialBalance(venueId: string): Promise<VenueBalance> {
     // Create initial zero balances for all types
     const types = ['available', 'pending', 'reserved'];
-    
+
     for (const type of types) {
       await query(
         `INSERT INTO venue_balances (venue_id, amount, balance_type)

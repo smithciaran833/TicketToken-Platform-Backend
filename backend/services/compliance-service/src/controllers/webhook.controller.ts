@@ -48,7 +48,7 @@ export class WebhookController {
 
       return reply.send({ received: true });
     } catch (error: any) {
-      logger.error('Plaid webhook error:', error);
+      logger.error({ error }, 'Plaid webhook error:');
       return reply.code(500).send({ error: error.message });
     }
   }
@@ -87,7 +87,7 @@ export class WebhookController {
 
       return reply.send({ received: true });
     } catch (error: any) {
-      logger.error('Stripe webhook error:', error);
+      logger.error({ error }, 'Stripe webhook error:');
       return reply.code(400).send({ error: error.message });
     }
   }
@@ -121,7 +121,7 @@ export class WebhookController {
 
       return reply.send({ received: true });
     } catch (error: any) {
-      logger.error('SendGrid webhook error:', error);
+      logger.error({ error }, 'SendGrid webhook error:');
       return reply.code(500).send({ error: error.message });
     }
   }

@@ -64,15 +64,17 @@ export class TicketController {
     reply: FastifyReply
   ): Promise<void> {
     const user = (request as any).user;
+    const tenantId = (request as any).tenantId;
     const body = request.body as any;
-    
+
     if (!user?.id) {
       return reply.status(401).send({ error: "User not authenticated" });
     }
 
     const result = await this.ticketService.createReservation({
       ...body,
-      userId: user.id
+      userId: user.id,
+      tenantId
     });
 
     // Transform snake_case to camelCase for API response
@@ -100,7 +102,7 @@ export class TicketController {
     reply: FastifyReply
   ): Promise<void> {
     const user = (request as any).user;
-    
+
     if (!user?.id) {
       return reply.status(401).send({ error: "User not authenticated" });
     }
@@ -120,6 +122,17 @@ export class TicketController {
   ): Promise<void> {
     const { userId } = request.params as any;
     const tenantId = (request as any).tenantId;
+    const authenticatedUser = (request as any).user;
+
+    // SECURITY FIX: Prevent users from viewing other users' tickets
+    // Only allow if: 1) userId matches authenticated user, OR 2) user is admin
+    if (authenticatedUser.id !== userId && authenticatedUser.role !== 'admin') {
+      return reply.status(403).send({
+        error: 'FORBIDDEN',
+        message: 'You can only view your own tickets'
+      });
+    }
+
     const tickets = await this.ticketService.getUserTickets(userId, tenantId);
 
     reply.send({
@@ -150,6 +163,37 @@ export class TicketController {
       success: true,
       message: "Reservation released",
       data: result
+    });
+  }
+
+  async getTicketById(
+    request: FastifyRequest,
+    reply: FastifyReply
+  ): Promise<void> {
+    const { ticketId } = request.params as any;
+    const tenantId = (request as any).tenantId;
+    const user = (request as any).user;
+
+    const ticket = await this.ticketService.getTicket(ticketId, tenantId);
+
+    if (!ticket) {
+      return reply.status(404).send({
+        error: 'NOT_FOUND',
+        message: 'Ticket not found'
+      });
+    }
+
+    // Security: Only owner or admin can view ticket
+    if (ticket.user_id !== user?.id && user?.role !== 'admin') {
+      return reply.status(403).send({
+        error: 'FORBIDDEN',
+        message: 'You do not own this ticket'
+      });
+    }
+
+    reply.send({
+      success: true,
+      data: ticket
     });
   }
 
@@ -249,7 +293,7 @@ export class TicketController {
     reply: FastifyReply
   ): Promise<void> {
     const user = (request as any).user;
-    
+
     if (!user?.id) {
       return reply.status(401).send({ error: 'User not authenticated' });
     }

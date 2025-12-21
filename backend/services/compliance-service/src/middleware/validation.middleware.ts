@@ -42,13 +42,13 @@ export function validateBody<T>(schema: ZodSchema<T>) {
       // Replace request body with validated data
       request.body = validated;
       
-      logger.debug('Request body validation passed', {
+      logger.debug({
         route: request.url,
         method: request.method,
       });
     } catch (error) {
       if (error instanceof ZodError) {
-        logger.warn('Request body validation failed', {
+        logger.warn({
           route: request.url,
           method: request.method,
           errors: error.errors,
@@ -78,13 +78,13 @@ export function validateQuery<T>(schema: ZodSchema<T>) {
       // Replace request query with validated data
       request.query = validated;
       
-      logger.debug('Query parameters validation passed', {
+      logger.debug({
         route: request.url,
         method: request.method,
       });
     } catch (error) {
       if (error instanceof ZodError) {
-        logger.warn('Query parameters validation failed', {
+        logger.warn({
           route: request.url,
           method: request.method,
           errors: error.errors,
@@ -114,13 +114,13 @@ export function validateParams<T>(schema: ZodSchema<T>) {
       // Replace request params with validated data
       request.params = validated;
       
-      logger.debug('URL parameters validation passed', {
+      logger.debug({
         route: request.url,
         method: request.method,
       });
     } catch (error) {
       if (error instanceof ZodError) {
-        logger.warn('URL parameters validation failed', {
+        logger.warn({
           route: request.url,
           method: request.method,
           errors: error.errors,
@@ -170,13 +170,13 @@ export function validate(schemas: {
         request.params = schemas.params.parse(request.params);
       }
 
-      logger.debug('Combined validation passed', {
+      logger.debug({
         route: request.url,
         method: request.method,
       });
     } catch (error) {
       if (error instanceof ZodError) {
-        logger.warn('Combined validation failed', {
+        logger.warn({
           route: request.url,
           method: request.method,
           errors: error.errors,
@@ -241,7 +241,7 @@ export function validateFileUpload(options: {
     const data = await request.file();
 
     if (!data && options.required) {
-      logger.warn('File upload required but not provided', {
+      logger.warn({
         route: request.url,
       });
       return reply.code(400).send({
@@ -256,7 +256,7 @@ export function validateFileUpload(options: {
       if (options.maxSize) {
         const buffer = await data.toBuffer();
         if (buffer.length > options.maxSize) {
-          logger.warn('File upload exceeds size limit', {
+          logger.warn({
             route: request.url,
             size: buffer.length,
             maxSize: options.maxSize,
@@ -271,7 +271,7 @@ export function validateFileUpload(options: {
 
       // Check MIME type
       if (options.allowedMimeTypes && !options.allowedMimeTypes.includes(data.mimetype)) {
-        logger.warn('File upload has invalid MIME type', {
+        logger.warn({
           route: request.url,
           mimeType: data.mimetype,
           allowed: options.allowedMimeTypes,
@@ -293,7 +293,7 @@ export function validateFileUpload(options: {
 export function setupValidationErrorHandler(fastify: any) {
   fastify.setErrorHandler((error: any, request: FastifyRequest, reply: FastifyReply) => {
     if (error instanceof ZodError) {
-      logger.error('Unhandled validation error', {
+      logger.error({
         route: request.url,
         method: request.method,
         errors: error.errors,

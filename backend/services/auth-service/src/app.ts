@@ -36,7 +36,7 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // CSRF Protection
   await app.register(csrf, {
-    cookieOpts: { 
+    cookieOpts: {
       signed: true,
       sameSite: 'strict',
       httpOnly: true,
@@ -72,48 +72,86 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Register auth routes
-  await app.register(authRoutes, { 
+  await app.register(authRoutes, {
     prefix: '/auth',
-    container 
+    container
   });
 
   // Global error handler
-  app.setErrorHandler((error, request, reply) => {
+  app.setErrorHandler((error: any, request, reply) => {
     request.log.error(error);
-    
+
     // CSRF token errors
     if (error.code === 'FST_CSRF_INVALID_TOKEN' || error.code === 'FST_CSRF_MISSING_TOKEN') {
       return reply.status(403).send({
-        success: false,
         error: 'Invalid or missing CSRF token',
         code: 'CSRF_ERROR'
       });
     }
 
+    // Rate limiting
     if (error.statusCode === 429) {
       return reply.status(429).send({
-        success: false,
         error: 'Too many requests. Please try again later.',
       });
     }
 
-    if (error.statusCode === 401) {
+    // Map error messages to status codes
+    const errorMessage = error.message || '';
+
+    // 422 Unprocessable Entity - validation errors from our ValidationError class
+    if (error.statusCode === 422) {
+      return reply.status(422).send({
+        error: error.message,
+        ...(error.errors && { errors: error.errors })
+      });
+    }
+
+    // 409 Conflict - duplicate resources
+    if (errorMessage.includes('already registered') || errorMessage.includes('already exists')) {
+      return reply.status(409).send({
+        error: error.message
+      });
+    }
+
+    // 401 Unauthorized - authentication failures
+    if (errorMessage.includes('Invalid credentials') ||
+        errorMessage.includes('Invalid password') ||
+        errorMessage.includes('Invalid refresh token') ||
+        error.statusCode === 401) {
       return reply.status(401).send({
-        success: false,
         error: error.message || 'Unauthorized',
       });
     }
 
+    // 400 Bad Request - validation errors (includes errors array with field details)
+    if (error.statusCode === 400) {
+      // If we have validation errors array with details, use the detailed message
+      if (error.errors && Array.isArray(error.errors) && error.errors.length > 0) {
+        // Use the first error message which should contain field info
+        const firstError = error.errors[0];
+        const errorText = typeof firstError === 'string' ? firstError : 
+                         firstError.message || error.message;
+        return reply.status(400).send({
+          error: errorText,
+          ...(error.errors && { errors: error.errors })
+        });
+      }
+      return reply.status(400).send({
+        error: error.message,
+      });
+    }
+
+    // 400 Bad Request - Fastify validation
     if (error.validation) {
       return reply.status(400).send({
-        success: false,
         error: 'Validation error',
         details: error.validation,
       });
     }
 
+    // Default 500
     return reply.status(error.statusCode || 500).send({
-      success: false,
       error: error.message || 'Internal server error',
     });
   });

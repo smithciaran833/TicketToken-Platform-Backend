@@ -41,7 +41,9 @@ export interface Dependencies {
   config: AppConfig;
   db: Knex;
   redis: Redis;
+  mongodb?: any;
   venueServiceClient: VenueServiceClient;
+  eventContentService: any;
   eventService: any;
   pricingService: any;
   capacityService: any;

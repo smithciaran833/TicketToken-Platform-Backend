@@ -9,7 +9,8 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { DatabaseService } from './services/databaseService';
-import { RedisService } from './services/redisService';
+import { initRedis, getRedis, closeRedisConnections } from './config/redis';
+import { initializeMongoDB, closeMongoDB } from './config/mongodb';
 import { createDependencyContainer } from './config/dependencies';
 import { ReservationCleanupService } from './services/reservation-cleanup.service';
 import { db, connectDatabase } from './config/database';
@@ -30,7 +31,10 @@ const app = Fastify({
         ignore: 'pid,hostname'
       }
     }
-  }
+  },
+  requestTimeout: 30000, // 30 second timeout for all requests
+  connectionTimeout: 10000, // 10 second connection timeout
+  keepAliveTimeout: 72000 // 72 seconds (longer than AWS ALB idle timeout)
 });
 
 const PORT = parseInt(process.env.PORT || '3003', 10);
@@ -50,8 +54,12 @@ async function start(): Promise<void> {
     logger.info('Knex database connected');
 
     // Initialize Redis
-    await RedisService.initialize();
+    await initRedis();
     logger.info('Redis connected');
+
+    // Initialize MongoDB
+    await initializeMongoDB();
+    logger.info('MongoDB connected');
 
     // Create dependency injection container
     const container = createDependencyContainer();
@@ -82,14 +90,55 @@ async function start(): Promise<void> {
     registerErrorHandler(app);
 
     // Register health and metrics routes (no prefix, no auth)
-    app.get('/health', async (_request, _reply) => {
-      return {
+    app.get('/health', async (_request, reply) => {
+      const health: any = {
         status: 'healthy',
         service: 'event-service',
         security: 'enabled',
-        reservationCleanup: cleanupService?.getStatus() || { isRunning: false },
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        checks: {
+          database: 'unknown',
+          redis: 'unknown',
+          reservationCleanup: 'unknown'
+        }
       };
+
+      let isHealthy = true;
+
+      // Check database connectivity
+      try {
+        await db.raw('SELECT 1');
+        health.checks.database = 'healthy';
+      } catch (error) {
+        health.checks.database = 'unhealthy';
+        isHealthy = false;
+        logger.error({ error }, 'Database health check failed');
+      }
+
+      // Check Redis connectivity
+      try {
+        const redis = getRedis();
+        await redis.ping();
+        health.checks.redis = 'healthy';
+      } catch (error) {
+        health.checks.redis = 'unhealthy';
+        isHealthy = false;
+        logger.error({ error }, 'Redis health check failed');
+      }
+
+      // Check reservation cleanup service
+      if (cleanupService) {
+        const status = cleanupService.getStatus();
+        health.checks.reservationCleanup = status.isRunning ? 'healthy' : 'stopped';
+        health.reservationCleanup = status;
+      } else {
+        health.checks.reservationCleanup = 'not_started';
+      }
+
+      health.status = isHealthy ? 'healthy' : 'degraded';
+
+      // Return appropriate status code
+      return reply.status(isHealthy ? 200 : 503).send(health);
     });
 
     app.get('/metrics', async (_request, reply) => {
@@ -144,12 +193,13 @@ const gracefulShutdown = async (signal: string) => {
       logger.info('Knex database connection closed');
     }
 
-    // 5. Close Redis connection
-    const redis = RedisService.getClient();
-    if (redis) {
-      redis.disconnect();
-      logger.info('Redis connection closed');
-    }
+    // 5. Close MongoDB connection
+    await closeMongoDB();
+    logger.info('MongoDB connection closed');
+
+    // 6. Close Redis connections
+    await closeRedisConnections();
+    logger.info('Redis connections closed');
 
     logger.info('Graceful shutdown completed successfully');
     process.exit(0);

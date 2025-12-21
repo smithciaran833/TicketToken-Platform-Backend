@@ -19,7 +19,7 @@ export class Form1099DAService {
     // Get all NFT transactions for the user
     const transactions = await this.getUserNFTTransactions(userId, taxYear);
 
-    // Calculate total proceeds
+    // Calculate total proceeds (convert from cents to dollars)
     const totalProceeds = transactions.reduce((sum, tx) => sum + tx.proceeds, 0);
 
     // Check if meets reporting threshold ($600)
@@ -77,31 +77,34 @@ export class Form1099DAService {
     const yearStart = new Date(taxYear, 0, 1);
     const yearEnd = new Date(taxYear + 1, 0, 1);
 
+    // Query marketplace_listings (not resale_listings)
+    // price and original_face_value are in INTEGER CENTS
     const sqlQuery = `
       SELECT
-        rl.id as transaction_id,
-        rl.created_at as disposed_date,
-        rl.price as proceeds,
-        t.purchase_price as cost_basis,
+        ml.id as transaction_id,
+        ml.sold_at as disposed_date,
+        ml.price as proceeds_cents,
+        ml.original_face_value as cost_basis_cents,
         t.purchased_at as acquired_date,
         e.name as event_name,
-        rl.ticket_id
-      FROM resale_listings rl
-      JOIN tickets t ON rl.ticket_id = t.id
+        ml.ticket_id
+      FROM marketplace_listings ml
+      JOIN tickets t ON ml.ticket_id = t.id
       JOIN events e ON t.event_id = e.id
-      WHERE rl.seller_id = $1
-        AND rl.status = 'sold'
-        AND rl.sold_at >= $2
-        AND rl.sold_at < $3
-      ORDER BY rl.sold_at`;
-    
+      WHERE ml.seller_id = $1
+        AND ml.status = 'sold'
+        AND ml.sold_at >= $2
+        AND ml.sold_at < $3
+      ORDER BY ml.sold_at`;
+
     const result = await query(sqlQuery, [userId, yearStart, yearEnd]);
 
+    // Convert cents to dollars for tax reporting
     return result.rows.map((row: any) => ({
       transactionId: row.transaction_id,
       disposedDate: row.disposed_date,
-      proceeds: parseFloat(row.proceeds),
-      costBasis: parseFloat(row.cost_basis),
+      proceeds: row.proceeds_cents / 100, // Convert cents to dollars
+      costBasis: row.cost_basis_cents / 100, // Convert cents to dollars
       acquiredDate: row.acquired_date,
       eventName: row.event_name,
       ticketId: row.ticket_id
@@ -114,7 +117,7 @@ export class Form1099DAService {
       `SELECT
         u.id,
         u.email,
-        u.first_name || ' ' || u.last_name as name,
+        COALESCE(u.first_name || ' ' || u.last_name, u.email) as name,
         uti.address,
         uti.tin,
         uti.tin_type
@@ -157,16 +160,17 @@ export class Form1099DAService {
     errors: any[];
   }> {
     // Get all users who need 1099-DA
+    // Note: price is in cents, threshold is in dollars, so multiply threshold by 100
     const usersQuery = `
       SELECT DISTINCT
-        rl.seller_id as user_id,
-        SUM(rl.price) as total_proceeds,
+        ml.seller_id as user_id,
+        SUM(ml.price) / 100.0 as total_proceeds,
         COUNT(*) as transaction_count
-      FROM resale_listings rl
-      WHERE rl.status = 'sold'
-        AND EXTRACT(YEAR FROM rl.sold_at) = $1
-      GROUP BY rl.seller_id
-      HAVING SUM(rl.price) >= $2`;
+      FROM marketplace_listings ml
+      WHERE ml.status = 'sold'
+        AND EXTRACT(YEAR FROM ml.sold_at) = $1
+      GROUP BY ml.seller_id
+      HAVING SUM(ml.price) / 100.0 >= $2`;
 
     const users = await query(usersQuery, [
       taxYear,

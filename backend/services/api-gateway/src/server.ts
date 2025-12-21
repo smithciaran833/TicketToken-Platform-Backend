@@ -8,6 +8,7 @@ import { setupServices } from './services';
 import { setupSwagger } from './plugins/swagger';
 import { gracefulShutdown } from './utils/graceful-shutdown';
 import { nanoid } from 'nanoid';
+import { initRedis, getRedis } from './config/redis';
 
 // Create Fastify instance with custom logger
 const server: FastifyInstance = fastify({
@@ -39,6 +40,13 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start server
 async function start() {
   try {
+    // Initialize Redis clients
+    await initRedis();
+    logger.info('Redis initialized');
+    
+    // Decorate Fastify with Redis
+    server.decorate('redis', getRedis());
+    
     // Setup dependency injection and services
     await setupServices(server);
 

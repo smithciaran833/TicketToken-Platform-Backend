@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../../adapters/bull-job-adapter';
 import { BaseWorker } from '../base.worker';
 import { JobResult } from '../../types/job.types';
 import { IdempotencyService } from '../../services/idempotency.service';
@@ -21,7 +21,7 @@ export class RefundProcessor extends BaseWorker<RefundJobData, JobResult> {
     this.idempotencyService = new IdempotencyService();
   }
 
-  protected async execute(job: Job<RefundJobData>): Promise<JobResult> {
+  protected async execute(job: BullJobData<RefundJobData>): Promise<JobResult> {
     const { transactionId, amount, reason } = job.data;
 
     // Generate idempotency key
@@ -61,8 +61,8 @@ export class RefundProcessor extends BaseWorker<RefundJobData, JobResult> {
       // Store result for idempotency (90 days for refunds)
       await this.idempotencyService.store(
         idempotencyKey,
-        job.queue.name,
-        job.name,
+        job.queue?.name || 'money',
+        job.name || 'refund-process',
         result,
         90 * 24 * 60 * 60
       );

@@ -238,15 +238,85 @@ export type Tickettoken = {
       ]
     },
     {
-      "name": "verifyTicket",
+      "name": "registerTicket",
       "accounts": [
         {
-          "name": "validator",
+          "name": "authority",
           "isMut": true,
           "isSigner": true
         },
         {
           "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "ticketId",
+          "type": "u64"
+        },
+        {
+          "name": "nftAssetId",
+          "type": "publicKey"
+        },
+        {
+          "name": "ownerId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "transferTicket",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "newOwnerId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "verifyTicket",
+      "accounts": [
+        {
+          "name": "validator",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
           "isMut": true,
           "isSigner": false
         }
@@ -340,6 +410,18 @@ export type Tickettoken = {
             "type": "publicKey"
           },
           {
+            "name": "artistWallet",
+            "type": "publicKey"
+          },
+          {
+            "name": "artistPercentage",
+            "type": "u16"
+          },
+          {
+            "name": "venuePercentage",
+            "type": "u16"
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -382,6 +464,48 @@ export type Tickettoken = {
           {
             "name": "totalFeesCollected",
             "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ticket",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "event",
+            "type": "publicKey"
+          },
+          {
+            "name": "ticketId",
+            "type": "u64"
+          },
+          {
+            "name": "nftAssetId",
+            "type": "publicKey"
+          },
+          {
+            "name": "currentOwnerId",
+            "type": "string"
+          },
+          {
+            "name": "used",
+            "type": "bool"
+          },
+          {
+            "name": "verifiedAt",
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "transferCount",
+            "type": "u32"
           },
           {
             "name": "bump",
@@ -625,6 +749,18 @@ export type Tickettoken = {
           {
             "name": "resaleable",
             "type": "bool"
+          },
+          {
+            "name": "artistWallet",
+            "type": "publicKey"
+          },
+          {
+            "name": "artistPercentage",
+            "type": "u16"
+          },
+          {
+            "name": "venuePercentage",
+            "type": "u16"
           }
         ]
       }
@@ -807,6 +943,21 @@ export type Tickettoken = {
         {
           "name": "event",
           "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "ticket",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "ticketId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "owner",
+          "type": "string",
           "index": false
         },
         {
@@ -1012,6 +1163,31 @@ export type Tickettoken = {
       "code": 6033,
       "name": "ReentrancyLocked",
       "msg": "Reentrancy locked"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidRoyaltyPercentage",
+      "msg": "Invalid royalty percentage - total must not exceed 100%"
+    },
+    {
+      "code": 6035,
+      "name": "TicketAlreadyUsed",
+      "msg": "Ticket has already been used"
+    },
+    {
+      "code": 6036,
+      "name": "InvalidTicket",
+      "msg": "Invalid ticket for this event"
+    },
+    {
+      "code": 6037,
+      "name": "TransferNotAllowed",
+      "msg": "Ticket transfer not allowed for this event"
+    },
+    {
+      "code": 6038,
+      "name": "OwnerIdTooLong",
+      "msg": "Owner ID exceeds maximum length"
     }
   ]
 };
@@ -1256,15 +1432,85 @@ export const IDL: Tickettoken = {
       ]
     },
     {
-      "name": "verifyTicket",
+      "name": "registerTicket",
       "accounts": [
         {
-          "name": "validator",
+          "name": "authority",
           "isMut": true,
           "isSigner": true
         },
         {
           "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "ticketId",
+          "type": "u64"
+        },
+        {
+          "name": "nftAssetId",
+          "type": "publicKey"
+        },
+        {
+          "name": "ownerId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "transferTicket",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "newOwnerId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "verifyTicket",
+      "accounts": [
+        {
+          "name": "validator",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
           "isMut": true,
           "isSigner": false
         }
@@ -1358,6 +1604,18 @@ export const IDL: Tickettoken = {
             "type": "publicKey"
           },
           {
+            "name": "artistWallet",
+            "type": "publicKey"
+          },
+          {
+            "name": "artistPercentage",
+            "type": "u16"
+          },
+          {
+            "name": "venuePercentage",
+            "type": "u16"
+          },
+          {
             "name": "bump",
             "type": "u8"
           }
@@ -1400,6 +1658,48 @@ export const IDL: Tickettoken = {
           {
             "name": "totalFeesCollected",
             "type": "u64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "ticket",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "event",
+            "type": "publicKey"
+          },
+          {
+            "name": "ticketId",
+            "type": "u64"
+          },
+          {
+            "name": "nftAssetId",
+            "type": "publicKey"
+          },
+          {
+            "name": "currentOwnerId",
+            "type": "string"
+          },
+          {
+            "name": "used",
+            "type": "bool"
+          },
+          {
+            "name": "verifiedAt",
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "transferCount",
+            "type": "u32"
           },
           {
             "name": "bump",
@@ -1643,6 +1943,18 @@ export const IDL: Tickettoken = {
           {
             "name": "resaleable",
             "type": "bool"
+          },
+          {
+            "name": "artistWallet",
+            "type": "publicKey"
+          },
+          {
+            "name": "artistPercentage",
+            "type": "u16"
+          },
+          {
+            "name": "venuePercentage",
+            "type": "u16"
           }
         ]
       }
@@ -1825,6 +2137,21 @@ export const IDL: Tickettoken = {
         {
           "name": "event",
           "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "ticket",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "ticketId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "owner",
+          "type": "string",
           "index": false
         },
         {
@@ -2030,6 +2357,31 @@ export const IDL: Tickettoken = {
       "code": 6033,
       "name": "ReentrancyLocked",
       "msg": "Reentrancy locked"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidRoyaltyPercentage",
+      "msg": "Invalid royalty percentage - total must not exceed 100%"
+    },
+    {
+      "code": 6035,
+      "name": "TicketAlreadyUsed",
+      "msg": "Ticket has already been used"
+    },
+    {
+      "code": 6036,
+      "name": "InvalidTicket",
+      "msg": "Invalid ticket for this event"
+    },
+    {
+      "code": 6037,
+      "name": "TransferNotAllowed",
+      "msg": "Ticket transfer not allowed for this event"
+    },
+    {
+      "code": 6038,
+      "name": "OwnerIdTooLong",
+      "msg": "Owner ID exceeds maximum length"
     }
   ]
 };

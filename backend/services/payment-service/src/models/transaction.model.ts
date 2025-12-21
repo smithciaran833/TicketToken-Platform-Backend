@@ -1,14 +1,14 @@
 import { query, getClient } from '../config/database';
-import { Transaction, TransactionStatus } from '../types/payment.types';
+import { Transaction, TransactionStatus, TransactionType } from '../types/payment.types';
 
 export class TransactionModel {
   static async create(data: Partial<Transaction> & { idempotencyKey?: string; tenantId?: string }): Promise<Transaction> {
     const text = `
       INSERT INTO payment_transactions (
-        venue_id, user_id, event_id, amount, currency, status,
+        venue_id, user_id, event_id, type, amount, currency, status,
         platform_fee, venue_payout, gas_fee_paid, tax_amount, total_amount,
         stripe_payment_intent_id, metadata, idempotency_key, tenant_id
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING *
     `;
 
@@ -16,6 +16,7 @@ export class TransactionModel {
       data.venueId,
       data.userId,
       data.eventId,
+      data.type || TransactionType.TICKET_PURCHASE,
       data.amount || 0,
       data.currency || 'USD',
       data.status || TransactionStatus.PENDING,
@@ -88,9 +89,6 @@ export class TransactionModel {
   }
 
   static async update(id: string, data: Partial<Transaction>): Promise<Transaction> {
-    // SECURITY NOTE: Building parameterized query safely
-    // The paramIndex is only used to create placeholder numbers ($1, $2, etc.)
-    // The actual values are passed separately in the values array
     const updates: string[] = [];
     const values: any[] = [];
     let paramIndex = 1;
@@ -132,8 +130,6 @@ export class TransactionModel {
     updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(id);
 
-    // SECURITY: This query is parameterized - the values are in the values array
-    // The ${updates.join(', ')} only contains column names and parameter placeholders
     const text = `
       UPDATE payment_transactions
       SET ${updates.join(', ')}
@@ -188,6 +184,7 @@ export class TransactionModel {
       venueId: row.venue_id,
       userId: row.user_id,
       eventId: row.event_id,
+      type: row.type as TransactionType,
       amount: parseInt(row.amount),
       currency: row.currency,
       status: row.status as TransactionStatus,

@@ -5,6 +5,7 @@ import { withLock, LockKeys } from '@tickettoken/shared';
 import { transferService } from '../services/transfer.service';
 import { blockchainService } from '../services/blockchain.service';
 import { listingModel } from '../models/listing.model';
+import { stripePaymentService } from '../services/stripe-payment.service';
 
 export class BuyController extends EventEmitter {
   private log = logger.child({ component: 'BuyController' });
@@ -13,10 +14,14 @@ export class BuyController extends EventEmitter {
     const { listingId } = request.params as { listingId: string };
     const buyerId = (request as any).user.id;
     const buyerWallet = (request as any).user.walletAddress;
-    const { offeredPrice } = request.body as { offeredPrice?: number };
+    const { offeredPrice, paymentMethod = 'crypto' } = request.body as { 
+      offeredPrice?: number;
+      paymentMethod?: 'crypto' | 'fiat';
+    };
 
-    if (!buyerWallet) {
-      reply.status(400).send({ error: 'Wallet address required for purchase' });
+    // Validate payment method requirements
+    if (paymentMethod === 'crypto' && !buyerWallet) {
+      reply.status(400).send({ error: 'Wallet address required for crypto purchase' });
       return;
     }
 
@@ -57,78 +62,12 @@ export class BuyController extends EventEmitter {
         }
 
         try {
-          // Step 1: Initiate transfer (creates transfer record)
-          this.log.info('Initiating transfer', { listingId, buyerId, purchasePrice });
-          
-          const transfer = await transferService.initiateTransfer({
-            listingId,
-            buyerId,
-            buyerWallet,
-            paymentCurrency: 'USDC',
-            eventStartTime: new Date(listing.eventId) // TODO: Get actual event start time
-          });
-
-          this.log.info('Transfer initiated', { transferId: transfer.id });
-
-          // Step 2: Execute blockchain transfer
-          this.log.info('Executing blockchain transfer', { transferId: transfer.id });
-          
-          const blockchainResult = await blockchainService.transferNFT({
-            tokenId: listing.ticketId,
-            fromWallet: listing.walletAddress,
-            toWallet: buyerWallet,
-            listingId: listing.id,
-            price: purchasePrice
-          });
-
-          this.log.info('Blockchain transfer successful', {
-            transferId: transfer.id,
-            signature: blockchainResult.signature,
-            blockHeight: blockchainResult.blockHeight
-          });
-
-          // Step 3: Complete transfer (marks listing sold)
-          await transferService.completeTransfer({
-            transferId: transfer.id,
-            blockchainSignature: blockchainResult.signature
-          });
-
-          this.log.info('Transfer completed successfully', {
-            transferId: transfer.id,
-            listingId,
-            buyerId,
-            signature: blockchainResult.signature
-          });
-
-          // Emit event for other systems
-          this.emit('ticket.sold', {
-            transferId: transfer.id,
-            listingId,
-            buyerId,
-            sellerId: listing.sellerId,
-            ticketId: listing.ticketId,
-            price: purchasePrice,
-            signature: blockchainResult.signature
-          });
-
-          // Calculate fees for response
-          const platformFee = Math.round(purchasePrice * 0.025); // 2.5%
-          const venueFee = Math.round(purchasePrice * 0.05); // 5%
-
-          reply.send({
-            success: true,
-            transfer: {
-              id: transfer.id,
-              ticketId: listing.ticketId,
-              price: purchasePrice,
-              platformFee,
-              venueFee,
-              total: purchasePrice + platformFee + venueFee,
-              signature: blockchainResult.signature,
-              blockHeight: blockchainResult.blockHeight,
-              status: 'completed'
-            }
-          });
+          // Route to appropriate payment flow
+          if (paymentMethod === 'fiat') {
+            await this.processFiatPurchase(listing, buyerId, purchasePrice, reply);
+          } else {
+            await this.processCryptoPurchase(listing, buyerId, buyerWallet, purchasePrice, reply);
+          }
 
         } catch (transferError: any) {
           // Handle transfer failure
@@ -202,6 +141,163 @@ export class BuyController extends EventEmitter {
     reply.status(409).send({
       error: 'Unable to complete purchase due to high demand',
       message: 'Please try again'
+    });
+  }
+
+  /**
+   * Process crypto (blockchain) purchase
+   */
+  private async processCryptoPurchase(
+    listing: any,
+    buyerId: string,
+    buyerWallet: string,
+    purchasePrice: number,
+    reply: FastifyReply
+  ): Promise<void> {
+    // Step 1: Initiate transfer (creates transfer record)
+    this.log.info('Initiating crypto transfer', { listingId: listing.id, buyerId, purchasePrice });
+    
+    const transfer = await transferService.initiateTransfer({
+      listingId: listing.id,
+      buyerId,
+      buyerWallet,
+      paymentCurrency: 'USDC',
+      eventStartTime: new Date(listing.eventId),
+      paymentMethod: 'crypto',
+    });
+
+    this.log.info('Transfer initiated', { transferId: transfer.id });
+
+    // Step 2: Execute blockchain transfer
+    this.log.info('Executing blockchain transfer', { transferId: transfer.id });
+    
+    const blockchainResult = await blockchainService.transferNFT({
+      tokenId: listing.ticketId,
+      fromWallet: listing.walletAddress,
+      toWallet: buyerWallet,
+      listingId: listing.id,
+      price: purchasePrice
+    });
+
+    this.log.info('Blockchain transfer successful', {
+      transferId: transfer.id,
+      signature: blockchainResult.signature,
+      blockHeight: blockchainResult.blockHeight
+    });
+
+    // Step 3: Complete transfer (marks listing sold)
+    await transferService.completeTransfer({
+      transferId: transfer.id,
+      blockchainSignature: blockchainResult.signature
+    });
+
+    this.log.info('Crypto transfer completed successfully', {
+      transferId: transfer.id,
+      listingId: listing.id,
+      buyerId,
+      signature: blockchainResult.signature
+    });
+
+    // Emit event for other systems
+    this.emit('ticket.sold', {
+      transferId: transfer.id,
+      listingId: listing.id,
+      buyerId,
+      sellerId: listing.sellerId,
+      ticketId: listing.ticketId,
+      price: purchasePrice,
+      signature: blockchainResult.signature
+    });
+
+    // Calculate fees for response
+    const platformFee = Math.round(purchasePrice * 0.025); // 2.5%
+    const venueFee = Math.round(purchasePrice * 0.05); // 5%
+
+    reply.send({
+      success: true,
+      transfer: {
+        id: transfer.id,
+        ticketId: listing.ticketId,
+        price: purchasePrice,
+        platformFee,
+        venueFee,
+        total: purchasePrice + platformFee + venueFee,
+        signature: blockchainResult.signature,
+        blockHeight: blockchainResult.blockHeight,
+        status: 'completed',
+        paymentMethod: 'crypto',
+      }
+    });
+  }
+
+  /**
+   * Process fiat (Stripe) purchase
+   */
+  private async processFiatPurchase(
+    listing: any,
+    buyerId: string,
+    purchasePrice: number,
+    reply: FastifyReply
+  ): Promise<void> {
+    this.log.info('Initiating fiat purchase', { listingId: listing.id, buyerId, purchasePrice });
+
+    // Get seller's Stripe Connect account
+    const sellerStripeAccountId = await stripePaymentService.getSellerStripeAccountId(listing.sellerId);
+
+    if (!sellerStripeAccountId) {
+      reply.status(400).send({
+        error: 'Seller not configured for fiat payments',
+        message: 'This seller has not connected their payment account'
+      });
+      return;
+    }
+
+    // Create Stripe PaymentIntent
+    const paymentResult = await stripePaymentService.createPaymentIntent({
+      listingId: listing.id,
+      sellerId: listing.sellerId,
+      sellerStripeAccountId,
+      buyerId,
+      amountCents: purchasePrice,
+      currency: 'usd',
+      metadata: {
+        ticket_id: listing.ticketId,
+        event_id: listing.eventId,
+        venue_id: listing.venueId,
+      },
+    });
+
+    // Create transfer record with Stripe info
+    const transfer = await transferService.initiateFiatTransfer({
+      listingId: listing.id,
+      buyerId,
+      sellerId: listing.sellerId,
+      paymentIntentId: paymentResult.paymentIntentId,
+      amountCents: purchasePrice,
+      applicationFeeCents: paymentResult.applicationFeeAmountCents,
+      currency: 'usd',
+    });
+
+    this.log.info('Fiat payment initiated', {
+      transferId: transfer.id,
+      paymentIntentId: paymentResult.paymentIntentId,
+    });
+
+    // Return client secret for frontend to complete payment
+    reply.send({
+      success: true,
+      transfer: {
+        id: transfer.id,
+        ticketId: listing.ticketId,
+        price: purchasePrice,
+        platformFee: Math.round(paymentResult.applicationFeeAmountCents * 0.025 / 0.075), // Proportional
+        venueFee: Math.round(paymentResult.applicationFeeAmountCents * 0.05 / 0.075), // Proportional
+        total: purchasePrice,
+        status: 'pending_payment',
+        paymentMethod: 'fiat',
+        clientSecret: paymentResult.clientSecret,
+        paymentIntentId: paymentResult.paymentIntentId,
+      },
     });
   }
 }

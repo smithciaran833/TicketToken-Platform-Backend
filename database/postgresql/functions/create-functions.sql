@@ -13,14 +13,15 @@ RETURNS TABLE(
 BEGIN
     RETURN QUERY
     SELECT 
-        SUM(t.price) as total_revenue,
+        SUM(t.price_cents)::NUMERIC / 100 as total_revenue,
         COUNT(t.id)::INTEGER as total_tickets_sold,
-        COUNT(DISTINCT e.id)::INTEGER as total_events,
-        AVG(t.price) as avg_ticket_price
+        COUNT(DISTINCT tt.event_id)::INTEGER as total_events,
+        (AVG(t.price_cents)::NUMERIC / 100) as avg_ticket_price
     FROM tickets t
-    JOIN events e ON t.event_id = e.id
+    JOIN ticket_types tt ON t.ticket_type_id = tt.id
+    JOIN events e ON tt.event_id = e.id
     WHERE e.venue_id = venue_id_param
-    AND t.status = 'valid';
+    AND t.status = 'active';
 END;
 $$ LANGUAGE plpgsql;
 
@@ -30,59 +31,13 @@ RETURNS INTEGER AS $$
 DECLARE
     available_count INTEGER;
 BEGIN
-    SELECT COUNT(*) INTO available_count
+    SELECT COALESCE(SUM(available), 0) INTO available_count
     FROM ticket_types tt
     WHERE tt.event_id = event_id_param
-    AND tt.available_quantity > 0;
+    AND tt.available > 0
+    AND tt.is_active = true;
     
     RETURN available_count;
-END;
-$$ LANGUAGE plpgsql;
-
--- Function: Process ticket purchase (with transaction)
-CREATE OR REPLACE FUNCTION purchase_ticket(
-    p_event_id UUID,
-    p_user_id UUID,
-    p_ticket_type_id UUID,
-    p_quantity INTEGER
-)
-RETURNS TABLE(
-    success BOOLEAN,
-    message TEXT,
-    ticket_ids UUID[]
-) AS $$
-DECLARE
-    v_available INTEGER;
-    v_ticket_ids UUID[];
-    v_ticket_id UUID;
-BEGIN
-    -- Start transaction
-    -- Check availability
-    SELECT available_quantity INTO v_available
-    FROM ticket_types
-    WHERE id = p_ticket_type_id
-    FOR UPDATE;
-    
-    IF v_available < p_quantity THEN
-        RETURN QUERY SELECT FALSE, 'Not enough tickets available', NULL::UUID[];
-        RETURN;
-    END IF;
-    
-    -- Update availability
-    UPDATE ticket_types
-    SET available_quantity = available_quantity - p_quantity
-    WHERE id = p_ticket_type_id;
-    
-    -- Create tickets
-    FOR i IN 1..p_quantity LOOP
-        INSERT INTO tickets (event_id, user_id, ticket_type_id, status)
-        VALUES (p_event_id, p_user_id, p_ticket_type_id, 'valid')
-        RETURNING id INTO v_ticket_id;
-        
-        v_ticket_ids := array_append(v_ticket_ids, v_ticket_id);
-    END LOOP;
-    
-    RETURN QUERY SELECT TRUE, 'Purchase successful', v_ticket_ids;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -101,11 +56,10 @@ BEGIN
     SELECT 
         (SELECT COUNT(*) FROM users WHERE created_at > NOW() - INTERVAL '1 day' * days_back),
         (SELECT COUNT(*) FROM venues WHERE is_verified = true),
-        (SELECT COUNT(*) FROM events WHERE event_date > NOW()),
-        (SELECT COUNT(*) FROM tickets WHERE purchase_date > NOW() - INTERVAL '1 day' * days_back),
-        (SELECT SUM(price) FROM tickets t 
-         JOIN ticket_types tt ON t.ticket_type_id = tt.id 
-         WHERE t.purchase_date > NOW() - INTERVAL '1 day' * days_back),
+        (SELECT COUNT(*) FROM events WHERE starts_at > NOW()),
+        (SELECT COUNT(*) FROM tickets WHERE purchased_at > NOW() - INTERVAL '1 day' * days_back),
+        (SELECT COALESCE(SUM(price_cents), 0)::NUMERIC / 100 FROM tickets
+         WHERE purchased_at > NOW() - INTERVAL '1 day' * days_back),
         (SELECT COUNT(*) FROM marketplace_listings WHERE status = 'active');
 END;
 $$ LANGUAGE plpgsql;
@@ -121,14 +75,13 @@ BEGIN
     SELECT COUNT(*) INTO recent_purchases
     FROM tickets
     WHERE user_id = user_id_param
-    AND purchase_date > NOW() - INTERVAL '1 hour';
+    AND purchased_at > NOW() - INTERVAL '1 hour';
     
     -- Check failed logins
-    SELECT failed_login_attempts INTO failed_logins
+    SELECT COALESCE(failed_login_attempts, 0) INTO failed_logins
     FROM users
     WHERE id = user_id_param;
     
     RETURN (recent_purchases > 20 OR failed_logins > 5);
 END;
 $$ LANGUAGE plpgsql;
-

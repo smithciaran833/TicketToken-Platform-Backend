@@ -208,7 +208,7 @@ export class RefundController {
 
         // Store refund with REAL Stripe refund ID
         await client.query(
-          `INSERT INTO refunds (id, payment_intent_id, amount, status, reason, tenant_id, stripe_refund_id, created_at)
+          `INSERT INTO payment_refunds (id, transaction_id, amount, status, reason, tenant_id, stripe_refund_id, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
           [
             stripeRefund.id,  // Use Stripe's refund ID

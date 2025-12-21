@@ -15,13 +15,13 @@ class DashboardService {
     trendData: any[];
   }> {
     try {
-      const [totalResult] = await db('notifications')
+      const [totalResult] = await db('notification_history')
         .whereBetween('created_at', [timeRange.start, timeRange.end])
         .count('* as count');
 
       const totalNotifications = parseInt(totalResult.count as string);
 
-      const [deliveryResult] = await db('notifications')
+      const [deliveryResult] = await db('notification_history')
         .whereBetween('created_at', [timeRange.start, timeRange.end])
         .where('status', 'delivered')
         .count('* as count');
@@ -30,7 +30,7 @@ class DashboardService {
         ? (parseInt(deliveryResult.count as string) / totalNotifications) * 100
         : 0;
 
-      const channelBreakdown = await db('notifications')
+      const channelBreakdown = await db('notification_history')
         .whereBetween('created_at', [timeRange.start, timeRange.end])
         .select('channel')
         .count('* as count')
@@ -41,7 +41,7 @@ class DashboardService {
         channelData[row.channel as string] = parseInt(row.count as string);
       });
 
-      const trendData = await db('notifications')
+      const trendData = await db('notification_history')
         .whereBetween('created_at', [timeRange.start, timeRange.end])
         .select(db.raw('DATE(created_at) as date'))
         .count('* as count')
@@ -119,7 +119,7 @@ class DashboardService {
     }>;
   }> {
     try {
-      const channels = await db('notifications')
+      const channels = await db('notification_history')
         .whereBetween('created_at', [timeRange.start, timeRange.end])
         .select('channel')
         .count('* as sent')
@@ -209,7 +209,7 @@ class DashboardService {
     converted: number;
   }> {
     try {
-      let query = db('notifications');
+      let query = db('notification_history');
 
       if (campaignId) {
         query = query.where({ campaign_id: campaignId });
@@ -219,7 +219,7 @@ class DashboardService {
         .select(
           db.raw('COUNT(*) as sent'),
           db.raw('SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) as delivered', ['delivered']),
-          db.raw('SUM(CASE WHEN opened_at IS NOT NULL THEN 1 ELSE 0 END) as opened'),
+          db.raw('SUM(CASE WHEN read_at IS NOT NULL THEN 1 ELSE 0 END) as opened'),
           db.raw('SUM(CASE WHEN clicked_at IS NOT NULL THEN 1 ELSE 0 END) as clicked'),
           db.raw('SUM(CASE WHEN converted_at IS NOT NULL THEN 1 ELSE 0 END) as converted')
         );
@@ -242,7 +242,7 @@ class DashboardService {
    */
   async exportAnalytics(format: 'json' | 'csv', timeRange: { start: Date; end: Date }): Promise<any> {
     try {
-      const data = await db('notifications')
+      const data = await db('notification_history')
         .whereBetween('created_at', [timeRange.start, timeRange.end])
         .select('*');
 

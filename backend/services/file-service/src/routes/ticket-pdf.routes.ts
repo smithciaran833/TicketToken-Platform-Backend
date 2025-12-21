@@ -1,24 +1,25 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { ticketPDFService } from '../services/ticket-pdf.service';
 
-const router = Router();
+export default async function ticketPdfRoutes(
+  fastify: FastifyInstance,
+  opts: FastifyPluginOptions
+): Promise<void> {
+  /**
+   * POST /api/v1/tickets/pdf/generate
+   * Generate branded ticket PDF
+   */
+  fastify.post('/generate', async (req, reply) => {
+    try {
+      const { ticketData, venueId } = req.body as any;
 
-/**
- * POST /api/v1/tickets/pdf/generate
- * Generate branded ticket PDF
- */
-router.post('/generate', async (req, res) => {
-  try {
-    const { ticketData, venueId } = req.body;
+      const pdfBuffer = await ticketPDFService.generateTicketPDF(ticketData, venueId);
 
-    const pdfBuffer = await ticketPDFService.generateTicketPDF(ticketData, venueId);
-
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="ticket-${ticketData.ticketId}.pdf"`);
-    res.send(pdfBuffer);
-  } catch (error: any) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-export default router;
+      reply.header('Content-Type', 'application/pdf');
+      reply.header('Content-Disposition', `attachment; filename="ticket-${ticketData.ticketId}.pdf"`);
+      return reply.send(pdfBuffer);
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message });
+    }
+  });
+}

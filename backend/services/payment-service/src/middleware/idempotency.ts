@@ -34,7 +34,7 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
     }
 
     // 3. Scope by user (required)
-    const userId = (request as any).user?.id;
+    const userId = (request as any).userId || (request as any).user?.sub || (request as any).user?.id;
 
     if (!userId) {
       return reply.status(401).send({

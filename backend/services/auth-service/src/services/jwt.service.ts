@@ -3,7 +3,8 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { env } from '../config/env';
-import { redis } from '../config/redis';
+import { getScanner } from '@tickettoken/shared';
+import { getRedis } from '../config/redis';
 import { TokenError } from '../errors';
 import { pool } from '../config/database';
 
@@ -12,6 +13,7 @@ interface TokenPayload {
   type: 'access' | 'refresh';
   jti: string;
   tenant_id: string;
+  email?: string;
   permissions?: string[];
   role?: string;
   family?: string;
@@ -50,6 +52,7 @@ try {
 
 export class JWTService {
   private readonly issuer: string;
+  private scanner = getScanner();
 
   constructor() {
     this.issuer = env.JWT_ISSUER;
@@ -66,12 +69,13 @@ export class JWTService {
       tenantId = result.rows[0]?.tenant_id || '00000000-0000-0000-0000-000000000001';
     }
 
-    // Access token - now includes tenant_id
+    // Access token - now includes tenant_id and email
     const accessTokenPayload = {
       sub: user.id,
       type: 'access' as const,
       jti: crypto.randomUUID(),
       tenant_id: tenantId,
+      email: user.email,
       permissions: user.permissions || ['buy:tickets', 'view:events', 'transfer:tickets'],
       role: user.role || 'customer',
     };
@@ -116,6 +120,7 @@ export class JWTService {
       userAgent: user.userAgent || 'unknown',
     };
 
+    const redis = getRedis();
     await redis.setex(
       `refresh_token:${refreshTokenId}`,
       7 * 24 * 60 * 60, // 7 days
@@ -156,6 +161,8 @@ export class JWTService {
 
   async refreshTokens(refreshToken: string, ipAddress: string, userAgent: string): Promise<{ accessToken: string; refreshToken: string }> {
     try {
+      const redis = getRedis();
+      
       // Verify refresh token
       const decoded = jwt.verify(refreshToken, publicKey, {
         algorithms: ['RS256'],  // Changed from HS256
@@ -212,8 +219,9 @@ export class JWTService {
   }
 
   async invalidateTokenFamily(family: string): Promise<void> {
-    // Find all tokens in the family
-    const keys = await redis.keys('refresh_token:*');
+    // 🚨 FIXED: Use SCAN instead of blocking KEYS command
+    const redis = getRedis();
+    const keys = await this.scanner.scanKeys('refresh_token:*');
 
     for (const key of keys) {
       const data = await redis.get(key);
@@ -227,7 +235,9 @@ export class JWTService {
   }
 
   async revokeAllUserTokens(userId: string): Promise<void> {
-    const keys = await redis.keys('refresh_token:*');
+    // 🚨 FIXED: Use SCAN instead of blocking KEYS command
+    const redis = getRedis();
+    const keys = await this.scanner.scanKeys('refresh_token:*');
 
     for (const key of keys) {
       const data = await redis.get(key);

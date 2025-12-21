@@ -26,7 +26,7 @@ class SegmentationService {
   }): Promise<Segment> {
     const segmentId = uuidv4();
     
-    const [segment] = await db('segments')
+    const [segment] = await db('audience_segments')
       .insert({
         id: segmentId,
         name: data.name,
@@ -42,7 +42,7 @@ class SegmentationService {
   }
 
   async matchesSegment(userId: string, segmentId: string): Promise<boolean> {
-    const segment = await db('segments').where({ id: segmentId }).first();
+    const segment = await db('audience_segments').where({ id: segmentId }).first();
     if (!segment) return false;
 
     const rules: SegmentRule[] = JSON.parse(segment.rules);
@@ -94,7 +94,7 @@ class SegmentationService {
   }
 
   async listSegments(): Promise<Segment[]> {
-    const segments = await db('segments').orderBy('created_at', 'desc');
+    const segments = await db('audience_segments').orderBy('created_at', 'desc');
     return segments.map(s => this.mapToSegment(s));
   }
 

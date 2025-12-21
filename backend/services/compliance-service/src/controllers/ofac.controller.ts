@@ -35,7 +35,7 @@ export class OFACController {
         }
       });
     } catch (error: any) {
-      logger.error('OFAC check failed:', error);
+      logger.error({ error }, 'OFAC check failed:');
       return reply.code(500).send({
         success: false,
         error: error.message

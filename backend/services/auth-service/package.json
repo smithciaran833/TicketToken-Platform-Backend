@@ -42,8 +42,9 @@
     "apple-signin-auth": "^2.0.0",
     "argon2": "^0.44.0",
     "awilix": "^9.0.0",
-    "axios": "^1.6.5",
+    "axios": "^1.13.2",
     "bcrypt": "^5.1.1",
+    "bs58": "^6.0.0",
     "dotenv": "^16.6.1",
     "ethers": "^6.15.0",
     "fastify": "^4.29.1",
@@ -66,6 +67,7 @@
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.2",
+    "@types/bs58": "^4.0.4",
     "@types/jest": "^29.5.11",
     "@types/joi": "^17.2.2",
     "@types/jsonwebtoken": "^9.0.5",
@@ -75,6 +77,7 @@
     "@types/speakeasy": "^2.0.10",
     "jest": "^29.7.0",
     "ts-jest": "^29.1.1",
+    "tsx": "^4.21.0",
     "typescript": "^5.3.3"
   }
 }

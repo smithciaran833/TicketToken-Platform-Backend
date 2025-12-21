@@ -4,13 +4,23 @@ import { orderConfig } from '../config';
 import { logger } from '../utils/logger';
 
 export class ReminderJob {
-  private orderService: OrderService;
+  private _orderService?: OrderService;
   private intervalId: NodeJS.Timeout | null = null;
   private sentReminders: Set<string> = new Set();
 
   constructor() {
-    const pool = getDatabase();
-    this.orderService = new OrderService(pool);
+    // Lightweight constructor - no database calls
+  }
+
+  private get db() {
+    return getDatabase();
+  }
+
+  private get orderService() {
+    if (!this._orderService) {
+      this._orderService = new OrderService(this.db);
+    }
+    return this._orderService;
   }
 
   start(): void {
@@ -42,9 +52,11 @@ export class ReminderJob {
   private async sendExpirationReminders(): Promise<void> {
     try {
       const minutesBeforeExpiration = orderConfig.reservation.durationMinutes;
-      
+
       // Get orders expiring in the next N minutes
+      // TODO: This job needs to iterate over all tenants or accept tenantId as constructor param
       const expiringOrders = await this.orderService.getExpiringReservations(
+        'system', // Placeholder tenantId - needs proper multi-tenant support
         minutesBeforeExpiration,
         100
       );
@@ -72,7 +84,7 @@ export class ReminderJob {
           });
 
           this.sentReminders.add(order.id);
-          
+
           logger.debug('Expiration reminder sent', {
             orderId: order.id,
             expiresAt: order.expiresAt,
@@ -90,7 +102,7 @@ export class ReminderJob {
         this.sentReminders.clear();
       }
     } catch (error) {
-      logger.error('Reminder job failed', { 
+      logger.error('Reminder job failed', {
         error: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined
       });
@@ -113,7 +125,7 @@ export class ReminderJob {
       // In a full implementation, this would publish to RabbitMQ/event bus
       // For now, we'll use HTTP to notification service as a fallback
       const notificationServiceUrl = process.env.NOTIFICATION_SERVICE_URL;
-      
+
       if (!notificationServiceUrl) {
         logger.warn('NOTIFICATION_SERVICE_URL not configured, skipping reminder');
         return;

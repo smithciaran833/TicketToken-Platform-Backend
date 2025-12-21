@@ -1,27 +1,27 @@
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  
+
   // Test files
   roots: ['<rootDir>/tests'],
   testMatch: [
     '**/*.test.ts',
     '**/*.spec.ts'
   ],
-  
+
   // Module resolution
   moduleFileExtensions: ['ts', 'js', 'json'],
   moduleNameMapper: {
-    '^@tickettoken/shared/utils/(.*)$': '<rootDir>/../../shared/dist/utils/$1',
-    '^@tickettoken/shared/(.*)$': '<rootDir>/../../shared/dist/$1',
-    '^@tickettoken/shared$': '<rootDir>/../../shared/dist/index.js',
+    '^@tickettoken/shared/utils/(.*)$': '<rootDir>/../../shared/dist/src/utils/$1',
+    '^@tickettoken/shared/(.*)$': '<rootDir>/../../shared/dist/src/$1',
+    '^@tickettoken/shared$': '<rootDir>/../../shared/dist/src/index.js',
   },
-  
+
   // Transform
   transformIgnorePatterns: [
     'node_modules/(?!@tickettoken)',
   ],
-  
+
   // Coverage
   collectCoverageFrom: [
     'src/**/*.ts',
@@ -39,14 +39,14 @@ module.exports = {
       lines: 70,
     },
   },
-  
+
   // Performance
   maxWorkers: 4,
   testTimeout: 30000,  // 30 seconds per test
-  
+
   // Reporting
   verbose: true,
-  
+
   // Error handling
   bail: false,
   errorOnDeprecated: true,

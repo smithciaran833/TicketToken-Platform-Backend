@@ -3,6 +3,7 @@ import { getPool } from '../config/database';
 import { uploadToIPFS, TicketMetadata } from './MetadataService';
 import { Connection, Keypair } from '@solana/web3.js';
 import { RealCompressedNFT } from './RealCompressedNFT';
+import { MintingBlockchainService, TicketBlockchainData } from './blockchain.service';
 import logger from '../utils/logger';
 import { checkWalletBalance } from '../utils/solana';
 import {
@@ -19,6 +20,7 @@ interface TicketData {
   orderId: string;
   eventId: string;
   tenantId: string;
+  userId?: string;
   ownerAddress?: string;
   metadata?: {
     eventName?: string;
@@ -52,10 +54,12 @@ export class MintingOrchestrator {
   private connection: Connection | null = null;
   private wallet: Keypair | null = null;
   private nftService: RealCompressedNFT;
+  private blockchainService: MintingBlockchainService;
   private initialized: boolean = false;
 
   constructor() {
     this.nftService = new RealCompressedNFT();
+    this.blockchainService = new MintingBlockchainService();
   }
 
   private async ensureInitialized(): Promise<void> {
@@ -110,8 +114,8 @@ export class MintingOrchestrator {
         ticketId,
         ownerAddress,
         metadata: {
-          name: metadata?.eventName 
-            ? `${metadata.eventName} - ${metadata.tier || 'General'}` 
+          name: metadata?.eventName
+            ? `${metadata.eventName} - ${metadata.tier || 'General'}`
             : `Ticket #${ticketId}`,
           uri: metadataUri
         }
@@ -119,7 +123,7 @@ export class MintingOrchestrator {
 
       // Generate asset ID from merkle tree + ticket
       const assetId = `${mintResult.merkleTree}:${ticketId}`;
-      const mintAddress = mintResult.merkleTree; // For cNFTs, we use merkle tree as reference
+      const mintAddress = mintResult.merkleTree;
 
       // 4. Save to database
       await this.saveMintRecord({
@@ -131,7 +135,65 @@ export class MintingOrchestrator {
         assetId
       });
 
-      // Record success metrics
+      // 5. Register ticket on blockchain
+      if (ticketData.userId) {
+        try {
+          const pool = getPool();
+          const eventResult = await pool.query(
+            'SELECT event_pda FROM events WHERE id = $1',
+            [ticketData.eventId]
+          );
+
+          if (eventResult.rows.length > 0 && eventResult.rows[0].event_pda) {
+            const eventPda = eventResult.rows[0].event_pda;
+
+            const blockchainData: TicketBlockchainData = {
+              eventPda,
+              ticketId: parseInt(ticketId, 10),
+              nftAssetId: assetId,
+              ownerId: ticketData.userId,
+            };
+
+            const blockchainResult = await this.blockchainService.registerTicketOnChain(blockchainData);
+
+            await pool.query(`
+              UPDATE tickets
+              SET ticket_pda = $1,
+                  event_pda = $2,
+                  blockchain_status = 'registered',
+                  updated_at = NOW()
+              WHERE id::text = $3 AND tenant_id::text = $4
+            `, [blockchainResult.ticketPda, eventPda, ticketId, tenantId]);
+
+            logger.info(`Ticket ${ticketId} registered on blockchain`, {
+              ticketId,
+              ticketPda: blockchainResult.ticketPda,
+              signature: blockchainResult.signature,
+            });
+          } else {
+            logger.warn(`Event ${ticketData.eventId} has no event_pda, skipping blockchain registration`, {
+              ticketId,
+              eventId: ticketData.eventId,
+            });
+          }
+        } catch (blockchainError) {
+          logger.error(`Failed to register ticket ${ticketId} on blockchain`, {
+            ticketId,
+            error: blockchainError instanceof Error ? blockchainError.message : String(blockchainError),
+          });
+
+          const pool = getPool();
+          await pool.query(`
+            UPDATE tickets
+            SET blockchain_status = 'failed',
+                updated_at = NOW()
+            WHERE id::text = $1 AND tenant_id::text = $2
+          `, [ticketId, tenantId]);
+        }
+      } else {
+        logger.warn(`Ticket ${ticketId} has no userId, skipping blockchain registration`);
+      }
+
       mintsSuccessTotal.inc({ tenant_id: tenantId });
       mintsTotal.inc({ status: 'completed', tenant_id: tenantId });
       endTimer();
@@ -206,7 +268,6 @@ export class MintingOrchestrator {
     try {
       await client.query('BEGIN');
 
-      // Ensure nft_mints table exists
       await client.query(`
         CREATE TABLE IF NOT EXISTS nft_mints (
           id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
@@ -256,7 +317,6 @@ export class MintingOrchestrator {
         'completed'
       ]);
 
-      // Update tickets table with mint information (if exists)
       await client.query(`
         UPDATE tickets
         SET

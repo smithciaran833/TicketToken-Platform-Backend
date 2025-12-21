@@ -15,17 +15,17 @@ interface Alert {
 
 export class NotificationManager {
   private emailTransporter: nodemailer.Transporter | null = null;
-  private slackClient: WebClient | null = null;
-  
+  private slackClient: InstanceType<typeof WebClient> | null = null;
+
   constructor() {
     this.initializeEmailTransporter();
     this.initializeSlackClient();
   }
-  
+
   private initializeEmailTransporter(): void {
     if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
       try {
-        this.emailTransporter = nodemailer.createTransporter({
+        this.emailTransporter = nodemailer.createTransport({
           host: process.env.SMTP_HOST,
           port: parseInt(process.env.SMTP_PORT || '587'),
           secure: process.env.SMTP_SECURE === 'true',
@@ -42,7 +42,7 @@ export class NotificationManager {
       logger.warn('Email notification disabled: Missing SMTP configuration');
     }
   }
-  
+
   private initializeSlackClient(): void {
     if (process.env.SLACK_TOKEN) {
       try {
@@ -55,11 +55,11 @@ export class NotificationManager {
       logger.warn('Slack notification disabled: Missing SLACK_TOKEN');
     }
   }
-  
+
   async send(channel: string, message: string, alert: Alert): Promise<void> {
     try {
       logger.debug(`Sending notification via ${channel}`, { alert: alert.ruleName });
-      
+
       switch (channel.toLowerCase()) {
         case 'email':
           await this.sendEmail(message, alert);
@@ -81,17 +81,17 @@ export class NotificationManager {
       throw error;
     }
   }
-  
+
   private async sendEmail(message: string, alert: Alert): Promise<void> {
     if (!this.emailTransporter) {
       throw new Error('Email transporter not initialized');
     }
-    
+
     const toEmail = process.env.ALERT_TO_EMAIL || process.env.SMTP_USER;
     if (!toEmail) {
       throw new Error('No email recipient configured (ALERT_TO_EMAIL or SMTP_USER)');
     }
-    
+
     try {
       await this.emailTransporter.sendMail({
         from: process.env.SMTP_USER,
@@ -100,17 +100,17 @@ export class NotificationManager {
         text: message,
         html: this.formatEmailHtml(message, alert)
       });
-      
+
       logger.info(`Email notification sent to ${toEmail}`);
     } catch (error) {
       logger.error('Failed to send email:', error);
       throw error;
     }
   }
-  
+
   private formatEmailHtml(message: string, alert: Alert): string {
     const severityColor = this.getSeverityColor(alert.severity);
-    
+
     return `
       <!DOCTYPE html>
       <html>
@@ -128,20 +128,20 @@ export class NotificationManager {
         <div class="alert-box">
           <h2>🚨 Monitoring Alert</h2>
           <p class="severity">${alert.severity.toUpperCase()}: ${alert.ruleName}</p>
-          
+
           <dl class="details">
             <dt>Current Value:</dt>
             <dd>${alert.value}</dd>
-            
+
             <dt>Threshold:</dt>
             <dd>${alert.threshold}</dd>
-            
+
             <dt>Message:</dt>
             <dd>${alert.message}</dd>
-            
+
             <dt>Time:</dt>
             <dd>${alert.timestamp.toLocaleString()}</dd>
-            
+
             <dt>Rule ID:</dt>
             <dd>${alert.ruleId}</dd>
           </dl>
@@ -150,7 +150,7 @@ export class NotificationManager {
       </html>
     `;
   }
-  
+
   private getSeverityColor(severity: string): string {
     switch (severity) {
       case 'critical':
@@ -165,14 +165,14 @@ export class NotificationManager {
         return '#6c757d';
     }
   }
-  
+
   private async sendSlack(message: string, alert: Alert): Promise<void> {
     if (!this.slackClient) {
       throw new Error('Slack client not initialized');
     }
-    
+
     const channel = process.env.SLACK_CHANNEL || '#monitoring-alerts';
-    
+
     try {
       await this.slackClient.chat.postMessage({
         channel,
@@ -226,20 +226,20 @@ export class NotificationManager {
           }
         ]
       });
-      
+
       logger.info(`Slack notification sent to ${channel}`);
     } catch (error) {
       logger.error('Failed to send Slack message:', error);
       throw error;
     }
   }
-  
+
   private async sendPagerDuty(message: string, alert: Alert): Promise<void> {
     const routingKey = process.env.PAGERDUTY_ROUTING_KEY;
     if (!routingKey) {
       throw new Error('PagerDuty routing key not configured (PAGERDUTY_ROUTING_KEY)');
     }
-    
+
     try {
       const event = {
         routing_key: routingKey,
@@ -260,20 +260,20 @@ export class NotificationManager {
           }
         }
       };
-      
+
       await axios.post('https://events.pagerduty.com/v2/enqueue', event, {
         headers: {
           'Content-Type': 'application/json'
         }
       });
-      
+
       logger.info('PagerDuty incident created');
     } catch (error) {
       logger.error('Failed to send PagerDuty event:', error);
       throw error;
     }
   }
-  
+
   private mapSeverityToPagerDuty(severity: string): string {
     switch (severity) {
       case 'critical':
@@ -288,13 +288,13 @@ export class NotificationManager {
         return 'warning';
     }
   }
-  
+
   private async sendWebhook(message: string, alert: Alert): Promise<void> {
     const webhookUrl = process.env.WEBHOOK_URL;
     if (!webhookUrl) {
       throw new Error('Webhook URL not configured (WEBHOOK_URL)');
     }
-    
+
     try {
       await axios.post(webhookUrl, {
         alert: {
@@ -314,7 +314,7 @@ export class NotificationManager {
         },
         timeout: 5000
       });
-      
+
       logger.info('Webhook notification sent');
     } catch (error) {
       logger.error('Failed to send webhook:', error);

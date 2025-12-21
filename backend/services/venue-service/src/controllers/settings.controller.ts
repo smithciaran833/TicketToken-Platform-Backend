@@ -39,49 +39,12 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           .first();
 
         if (!settings) {
-          return reply.send({
-            general: {
-              timezone: 'UTC',
-              currency: 'USD',
-              language: 'en'
-            },
-            ticketing: {
-              allowRefunds: true,
-              refundWindow: 24,
-              maxTicketsPerOrder: 10
-            }
-          });
+          throw new NotFoundError('Settings not found');
         }
 
-        return reply.send({
-          general: {
-            timezone: 'UTC',
-            currency: settings.accepted_currencies?.[0] || 'USD',
-            language: 'en'
-          },
-          ticketing: {
-            allowRefunds: settings.ticket_resale_allowed,
-            refundWindow: 24,
-            maxTicketsPerOrder: settings.max_tickets_per_order,
-            allowPrintAtHome: settings.allow_print_at_home,
-            allowMobileTickets: settings.allow_mobile_tickets,
-            requireIdVerification: settings.require_id_verification,
-            ticketTransferAllowed: settings.ticket_transfer_allowed
-          },
-          fees: {
-            serviceFeePercentage: settings.service_fee_percentage,
-            facilityFeeAmount: settings.facility_fee_amount,
-            processingFeePercentage: settings.processing_fee_percentage
-          },
-          payment: {
-            methods: settings.payment_methods,
-            acceptedCurrencies: settings.accepted_currencies,
-            payoutFrequency: settings.payout_frequency,
-            minimumPayoutAmount: settings.minimum_payout_amount
-          }
-        });
+        return reply.send(settings);
       } catch (error: any) {
-        if (error instanceof ForbiddenError) {
+        if (error instanceof ForbiddenError || error instanceof NotFoundError) {
           throw error;
         }
         logger.error({ error, venueId: request.params.venueId }, 'Failed to get settings');
@@ -111,62 +74,56 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('Insufficient permissions to update settings');
         }
 
+        // Validate inputs
+        if (body.max_tickets_per_order !== undefined && body.max_tickets_per_order < 0) {
+          return reply.status(400).send({ error: 'max_tickets_per_order must be non-negative' });
+        }
+        if (body.service_fee_percentage !== undefined && (body.service_fee_percentage < 0 || body.service_fee_percentage > 100)) {
+          return reply.status(400).send({ error: 'service_fee_percentage must be between 0 and 100' });
+        }
+
         const currentSettings = await db('venue_settings')
           .where({ venue_id: venueId })
           .first();
 
-        const updates: any = {};
-
-        if (body.general) {
-          if (body.general.currency) {
-            updates.accepted_currencies = [body.general.currency];
-          }
+        if (!currentSettings) {
+          throw new NotFoundError('Settings not found');
         }
 
-        if (body.ticketing) {
-          if (body.ticketing.maxTicketsPerOrder !== undefined) {
-            updates.max_tickets_per_order = body.ticketing.maxTicketsPerOrder;
-          }
-          if (body.ticketing.allowRefunds !== undefined) {
-            updates.ticket_resale_allowed = body.ticketing.allowRefunds;
-          }
-        }
+        const updates: any = { ...body };
+        updates.updated_at = new Date();
 
-        if (Object.keys(updates).length > 0) {
-          updates.updated_at = new Date();
+        await db('venue_settings')
+          .where({ venue_id: venueId })
+          .update(updates);
 
-          await db('venue_settings')
-            .where({ venue_id: venueId })
-            .update(updates);
-
-          await auditService.logAction({
-            service: 'venue-service',
-            action: 'update_venue_settings',
-            actionType: 'CONFIG',
-            userId,
-            userRole,
-            resourceType: 'venue_settings',
-            resourceId: venueId,
-            previousValue: {
-              maxTicketsPerOrder: currentSettings?.max_tickets_per_order,
-              ticketResaleAllowed: currentSettings?.ticket_resale_allowed,
-              acceptedCurrencies: currentSettings?.accepted_currencies,
-            },
-            newValue: updates,
-            metadata: {
-              settingsChanged: Object.keys(updates),
-              role: accessDetails?.role,
-            },
-            ipAddress: request.ip,
-            userAgent: request.headers['user-agent'],
-            success: true,
-          });
-        }
+        await auditService.logAction({
+          service: 'venue-service',
+          action: 'update_venue_settings',
+          actionType: 'CONFIG',
+          userId,
+          userRole,
+          resourceType: 'venue_settings',
+          resourceId: venueId,
+          previousValue: currentSettings,
+          newValue: updates,
+          metadata: {
+            settingsChanged: Object.keys(body),
+            role: accessDetails?.role,
+          },
+          ipAddress: request.ip,
+          userAgent: request.headers['user-agent'],
+          success: true,
+        });
 
         logger.info({ venueId, userId }, 'Settings updated');
         venueOperations.inc({ operation: 'settings_update', status: 'success' });
 
-        return reply.send({ success: true, message: 'Settings updated' });
+        const updatedSettings = await db('venue_settings')
+          .where({ venue_id: venueId })
+          .first();
+
+        return reply.send(updatedSettings);
       } catch (error: any) {
         venueOperations.inc({ operation: 'settings_update', status: 'error' });
 
@@ -184,7 +141,7 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           errorMessage: error instanceof Error ? error.message : 'Unknown error',
         });
 
-        if (error instanceof ForbiddenError) {
+        if (error instanceof ForbiddenError || error instanceof NotFoundError) {
           throw error;
         }
         logger.error({ error, venueId: request.params.venueId }, 'Failed to update settings');

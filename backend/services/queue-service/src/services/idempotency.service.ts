@@ -1,21 +1,14 @@
 import { Pool } from 'pg';
-import Redis from 'ioredis';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { getPool } from '../config/database.config';
 
 export class IdempotencyService {
   private pool: Pool;
-  private redis: Redis;
   private readonly DEFAULT_TTL = 86400; // 24 hours
 
   constructor() {
     this.pool = getPool();
-    this.redis = new Redis({
-      host: process.env.REDIS_HOST || 'redis',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      db: 4 // Separate DB for idempotency
-    });
   }
 
   /**
@@ -42,20 +35,8 @@ export class IdempotencyService {
         return `email-${data.template}-${data.to}-${date}`;
       
       case 'send-sms':
-
-      case 'analytics-event':
-        // For analytics, use event type and timestamp to prevent duplicates
-        return `analytics-${data.eventType}-${data.venueId || 'global'}-${data.userId || 'anonymous'}-${data.timestamp}`;
-        // For SMS, more restrictive
-
-      case 'analytics-event':
-        // For analytics, use event type and timestamp to prevent duplicates
-        return `analytics-${data.eventType}-${data.venueId || 'global'}-${data.userId || 'anonymous'}-${data.timestamp}`;
+        // For SMS, more restrictive - include hour to prevent spam
         const hour = new Date().getHours();
-
-      case 'analytics-event':
-        // For analytics, use event type and timestamp to prevent duplicates
-        return `analytics-${data.eventType}-${data.venueId || 'global'}-${data.userId || 'anonymous'}-${data.timestamp}`;
         return `sms-${data.to}-${data.template}-${hour}`;
 
       case 'analytics-event':
@@ -75,14 +56,6 @@ export class IdempotencyService {
    * Check if a job with this key was already processed
    */
   async check(key: string): Promise<any | null> {
-    // Check Redis first (fast)
-    const cached = await this.redis.get(`idem:${key}`);
-    if (cached) {
-      logger.info(`Idempotency hit (Redis): ${key}`);
-      return JSON.parse(cached);
-    }
-
-    // Check PostgreSQL (persistent)
     const result = await this.pool.query(
       'SELECT result FROM idempotency_keys WHERE key = $1 AND expires_at > NOW()',
       [key]
@@ -90,14 +63,6 @@ export class IdempotencyService {
 
     if (result.rows.length > 0) {
       logger.info(`Idempotency hit (PostgreSQL): ${key}`);
-      
-      // Cache in Redis for next time
-      await this.redis.setex(
-        `idem:${key}`,
-        3600, // 1 hour cache
-        JSON.stringify(result.rows[0].result)
-      );
-      
       return result.rows[0].result;
     }
 
@@ -116,7 +81,7 @@ export class IdempotencyService {
   ): Promise<void> {
     const expiresAt = new Date(Date.now() + ttlSeconds * 1000);
 
-    // Store in PostgreSQL for persistence
+    // Store in PostgreSQL
     await this.pool.query(
       `INSERT INTO idempotency_keys 
        (key, queue_name, job_type, result, processed_at, expires_at)
@@ -124,13 +89,6 @@ export class IdempotencyService {
        ON CONFLICT (key) DO UPDATE 
        SET result = $4, processed_at = NOW()`,
       [key, queueName, jobType, result, expiresAt]
-    );
-
-    // Store in Redis for fast access
-    await this.redis.setex(
-      `idem:${key}`,
-      ttlSeconds,
-      JSON.stringify(result)
     );
 
     logger.info(`Idempotency stored: ${key} for ${ttlSeconds}s`);

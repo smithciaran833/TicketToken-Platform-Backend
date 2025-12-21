@@ -40,7 +40,7 @@ COPY --from=builder /app/backend/services/venue-service/src/migrations ./src/mig
 RUN echo '#!/bin/sh' > ./entrypoint.sh && \
     echo 'set -e' >> ./entrypoint.sh && \
     echo 'echo "Running migrations for venue-service..."' >> ./entrypoint.sh && \
-    echo 'npm run migrate || echo "Migration failed, continuing..."' >> ./entrypoint.sh && \
+    echo 'npm run migrate || exit 1' >> ./entrypoint.sh && \
     echo 'exec "$@"' >> ./entrypoint.sh && \
     chmod +x ./entrypoint.sh
 

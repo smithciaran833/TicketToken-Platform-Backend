@@ -31,7 +31,7 @@ export function isSupportedVersion(eventType: string, version: string): boolean 
  */
 export function getLatestVersion(eventType: string): string {
   const versions = EventVersionHistory[eventType as keyof typeof EventVersionHistory];
-  if (!versions || versions.length === 0) {
+  if (!versions) {
     return CURRENT_EVENT_VERSION;
   }
   return versions[versions.length - 1];
@@ -64,11 +64,11 @@ export function migrateEventPayload(
 ): any {
   const migrationKey = `${fromVersion}->${toVersion}`;
   const eventMigrations = VersionMigrations[eventType];
-  
+
   if (!eventMigrations || !eventMigrations[migrationKey]) {
     // No migration needed or available
     return payload;
   }
-  
+
   return eventMigrations[migrationKey](payload);
 }

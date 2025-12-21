@@ -3,6 +3,9 @@ import { authenticateFastify } from '../middleware/auth';
 import { tenantHook } from '../middleware/tenant';
 import * as eventsController from '../controllers/events.controller';
 
+// UUID format pattern
+const uuidPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
+
 export default async function eventsRoutes(app: FastifyInstance) {
   // List events
   app.get('/events', {
@@ -21,7 +24,16 @@ export default async function eventsRoutes(app: FastifyInstance) {
 
   // Get single event
   app.get('/events/:id', {
-    preHandler: [authenticateFastify, tenantHook]
+    preHandler: [authenticateFastify, tenantHook],
+    schema: {
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', pattern: uuidPattern }
+        }
+      }
+    }
   }, eventsController.getEvent as any);
 
   // Create event
@@ -34,7 +46,7 @@ export default async function eventsRoutes(app: FastifyInstance) {
         properties: {
           name: { type: 'string' },
           description: { type: 'string' },
-          venue_id: { type: 'string' }
+          venue_id: { type: 'string', pattern: uuidPattern }
         }
       }
     }
@@ -44,12 +56,19 @@ export default async function eventsRoutes(app: FastifyInstance) {
   app.put('/events/:id', {
     preHandler: [authenticateFastify, tenantHook],
     schema: {
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', pattern: uuidPattern }
+        }
+      },
       body: {
         type: 'object',
         properties: {
           name: { type: 'string' },
           description: { type: 'string' },
-          venue_id: { type: 'string' },
+          venue_id: { type: 'string', pattern: uuidPattern },
           status: { type: 'string', enum: ['DRAFT', 'PUBLISHED', 'CANCELLED'] }
         }
       }
@@ -58,16 +77,43 @@ export default async function eventsRoutes(app: FastifyInstance) {
 
   // Delete event
   app.delete('/events/:id', {
-    preHandler: [authenticateFastify, tenantHook]
+    preHandler: [authenticateFastify, tenantHook],
+    schema: {
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', pattern: uuidPattern }
+        }
+      }
+    }
   }, eventsController.deleteEvent as any);
 
   // Publish event
   app.post('/events/:id/publish', {
-    preHandler: [authenticateFastify, tenantHook]
+    preHandler: [authenticateFastify, tenantHook],
+    schema: {
+      params: {
+        type: 'object',
+        required: ['id'],
+        properties: {
+          id: { type: 'string', pattern: uuidPattern }
+        }
+      }
+    }
   }, eventsController.publishEvent as any);
 
   // Get events by venue
   app.get('/venues/:venueId/events', {
-    preHandler: [authenticateFastify, tenantHook]
+    preHandler: [authenticateFastify, tenantHook],
+    schema: {
+      params: {
+        type: 'object',
+        required: ['venueId'],
+        properties: {
+          venueId: { type: 'string', pattern: uuidPattern }
+        }
+      }
+    }
   }, eventsController.getVenueEvents as any);
 }

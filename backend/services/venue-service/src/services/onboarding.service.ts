@@ -87,9 +87,8 @@ export class OnboardingService {
 
   private async hasAddress(venueId: string): Promise<boolean> {
     const venue = await this.db('venues').where({ id: venueId }).first();
-    if (!venue || !venue.address) return false;
-    const address = venue.address;
-    return !!(address.street && address.city && address.state && address.zipCode);
+    if (!venue) return false;
+    return !!(venue.address_line1 && venue.city && venue.state_province && venue.postal_code);
   }
 
   private async hasLayout(venueId: string): Promise<boolean> {
@@ -99,13 +98,12 @@ export class OnboardingService {
 
   private async hasPaymentIntegration(venueId: string): Promise<boolean> {
     const integrations = await this.integrationModel.findByVenue(venueId);
-    return integrations.some((i: any) => i.type === 'stripe' || i.type === 'square');
+    return integrations.some((i: any) => i.integration_type === 'stripe' || i.integration_type === 'square');
   }
 
   private async hasStaff(venueId: string): Promise<boolean> {
     const staffCount = await this.db('venue_staff')
-      .where({ venue_id: venueId })
-      .whereNull('deleted_at')
+      .where({ venue_id: venueId, is_active: true })
       .count('* as count')
       .first();
     return parseInt(String(staffCount?.count || '0'), 10) > 1;
@@ -136,15 +134,20 @@ export class OnboardingService {
   private async updateBasicInfo(venueId: string, data: any): Promise<void> {
     await this.db('venues').where({ id: venueId }).update({
       name: data.name,
-      type: data.venue_type,
-      capacity: data.max_capacity,
+      venue_type: data.venue_type,
+      max_capacity: data.max_capacity,
       updated_at: new Date()
     });
   }
 
   private async updateAddress(venueId: string, data: any): Promise<void> {
     await this.db('venues').where({ id: venueId }).update({
-      address: data,
+      address_line1: data.street || data.address_line1,
+      address_line2: data.address_line2 || null,
+      city: data.city,
+      state_province: data.state || data.state_province,
+      postal_code: data.zipCode || data.postal_code,
+      country_code: data.country || data.country_code || 'US',
       updated_at: new Date()
     });
   }
@@ -153,9 +156,9 @@ export class OnboardingService {
     await this.layoutModel.create({
       venue_id: venueId,
       name: data.name,
-      type: data.venue_type,
+      type: data.type || 'general',
       sections: data.sections,
-      capacity: data.max_capacity,
+      capacity: data.max_capacity || data.capacity,
       is_default: true
     });
   }
@@ -163,8 +166,8 @@ export class OnboardingService {
   private async createPaymentIntegration(venueId: string, data: any): Promise<void> {
     await this.integrationModel.create({
       venue_id: venueId,
-      type: data.venue_type,
-      config: data.config,
+      integration_type: data.type,
+      config_data: data.config || {},
       is_active: true
     });
   }

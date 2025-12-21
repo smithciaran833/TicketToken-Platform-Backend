@@ -1,17 +1,25 @@
 import { QueueService as queueService } from '../services/queueService';
-import { QUEUES } from '@tickettoken/shared';
 import { v4 as uuidv4 } from 'uuid';
 import { DatabaseService } from './databaseService';
 import { RedisService } from './redisService';
-import { SolanaService } from './solanaService';
-import { TicketStatus, TransferRecord } from '../types';
 import { NotFoundError, ValidationError, ForbiddenError } from '../utils/errors';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
+export interface TransferRecord {
+  id?: string;
+  ticketId?: string;
+  fromUserId: string;
+  toUserId: string;
+  toEmail?: string;
+  transferredAt: Date;
+  reason?: string;
+  status?: string;
+}
+
 export class TransferService {
   private log = logger.child({ component: 'TransferService' });
-  
+
   // Transfer configuration constants
   private readonly TRANSFER_COOLDOWN_MINUTES = 30;
   private readonly MAX_DAILY_TRANSFERS = 10;
@@ -30,7 +38,7 @@ export class TransferService {
 
     return await DatabaseService.transaction(async (client) => {
       // Lock ticket for update
-      const ticketQuery = 'SELECT * FROM tickets WHERE id = $1 FOR UPDATE';
+      const ticketQuery = 'SELECT * FROM tickets WHERE id = $1 AND deleted_at IS NULL FOR UPDATE';
       const ticketResult = await client.query(ticketQuery, [ticketId]);
 
       if (ticketResult.rows.length === 0) {
@@ -44,21 +52,21 @@ export class TransferService {
         throw new ForbiddenError('You do not own this ticket');
       }
 
-      // Validate ticket status
-      if (ticket.status !== TicketStatus.SOLD) {
+      // Validate ticket status (must be 'active' to transfer)
+      if (ticket.status !== 'active') {
         throw new ValidationError(`Cannot transfer ticket with status: ${ticket.status}`);
+      }
+
+      // Check if ticket is transferable
+      if (ticket.is_transferable === false) {
+        throw new ValidationError('This ticket is non-transferable');
       }
 
       // Enhanced transfer restrictions checking
       const eventQuery = `
-        SELECT 
-          e.*, 
-          v.transfer_deadline_hours,
-          e.allow_transfers,
-          e.max_transfers_per_ticket,
-          e.transfer_blackout_start,
-          e.transfer_blackout_end,
-          e.require_identity_verification
+        SELECT
+          e.*,
+          v.transfer_deadline_hours
         FROM events e
         JOIN venues v ON e.venue_id = v.id
         WHERE e.id = $1
@@ -72,9 +80,11 @@ export class TransferService {
       }
 
       // Check transfer deadline
-      const hoursUntilEvent = (new Date(event.start_date).getTime() - Date.now()) / (1000 * 60 * 60);
-      if (hoursUntilEvent < event.transfer_deadline_hours) {
-        throw new ValidationError('Transfer deadline has passed for this event');
+      if (event.start_date && event.transfer_deadline_hours) {
+        const hoursUntilEvent = (new Date(event.start_date).getTime() - Date.now()) / (1000 * 60 * 60);
+        if (hoursUntilEvent < event.transfer_deadline_hours) {
+          throw new ValidationError('Transfer deadline has passed for this event');
+        }
       }
 
       // Check blackout periods
@@ -87,95 +97,71 @@ export class TransferService {
 
       // Check max transfers limit
       const transferCountQuery = `
-        SELECT COUNT(*) as transfer_count 
-        FROM ticket_transfers 
-        WHERE ticket_id = $1
+        SELECT COUNT(*) as transfer_count
+        FROM ticket_transfers
+        WHERE ticket_id = $1 AND status = 'completed'
       `;
       const transferCountResult = await client.query(transferCountQuery, [ticketId]);
       const transferCount = parseInt(transferCountResult.rows[0].transfer_count);
-      
+
       if (event.max_transfers_per_ticket && transferCount >= event.max_transfers_per_ticket) {
         throw new ValidationError(`Maximum transfer limit (${event.max_transfers_per_ticket}) reached`);
       }
 
-      // Check identity verification requirement
+      // Get recipient email for transfer record
+      const recipientQuery = 'SELECT email, identity_verified FROM users WHERE id = $1';
+      const recipientResult = await client.query(recipientQuery, [toUserId]);
+      
+      if (recipientResult.rows.length === 0) {
+        throw new NotFoundError('Recipient user');
+      }
+
+      const recipient = recipientResult.rows[0];
+
+      // Check identity verification requirement if event requires it
       if (event.require_identity_verification) {
-        const verificationQuery = `
-          SELECT identity_verified 
-          FROM users 
-          WHERE id IN ($1, $2)
-        `;
-        const verificationResult = await client.query(verificationQuery, [fromUserId, toUserId]);
+        const fromUserQuery = 'SELECT identity_verified FROM users WHERE id = $1';
+        const fromUserResult = await client.query(fromUserQuery, [fromUserId]);
         
-        for (const user of verificationResult.rows) {
-          if (!user.identity_verified) {
-            throw new ValidationError('Identity verification required for transfers');
-          }
+        if (!fromUserResult.rows[0]?.identity_verified || !recipient.identity_verified) {
+          throw new ValidationError('Identity verification required for transfers');
         }
       }
 
-      // Update ticket ownership
+      // Update ticket ownership and status
       const updateQuery = `
         UPDATE tickets
-        SET user_id = $1, status = $2, updated_at = NOW()
-        WHERE id = $3
+        SET user_id = $1, status = 'transferred', transfer_count = transfer_count + 1, updated_at = NOW()
+        WHERE id = $2
       `;
-      await client.query(updateQuery, [toUserId, TicketStatus.TRANSFERRED, ticketId]);
+      await client.query(updateQuery, [toUserId, ticketId]);
 
-      // Record transfer
-      const transferRecord: TransferRecord = {
-        fromUserId,
-        toUserId,
-        transferredAt: new Date(),
-        reason
-      };
+      // Create transfer record with all required fields
+      const transferId = uuidv4();
+      const acceptanceCode = Math.random().toString(36).substring(2, 14).toUpperCase();
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
 
       const transferQuery = `
         INSERT INTO ticket_transfers
-        (id, ticket_id, from_user_id, to_user_id, reason, transferred_at)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        (id, tenant_id, ticket_id, from_user_id, to_user_id, to_email, transfer_method, 
+         status, acceptance_code, is_gift, expires_at, message, transferred_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, NOW())
+        RETURNING *
       `;
       await client.query(transferQuery, [
-        uuidv4(),
+        transferId,
+        ticket.tenant_id,
         ticketId,
         fromUserId,
         toUserId,
-        reason || null,
-        new Date()
+        recipient.email,
+        'direct', // Direct transfer between users
+        'completed',
+        acceptanceCode,
+        true, // is_gift
+        expiresAt,
+        reason || null
       ]);
-
-      // Update transfer history
-      const historyQuery = `
-        UPDATE tickets
-        SET transfer_history = transfer_history || $1::jsonb
-        WHERE id = $2
-      `;
-      await client.query(historyQuery, [
-        JSON.stringify([transferRecord]),
-        ticketId
-      ]);
-
-      // Transfer NFT if minted
-      if (ticket.nft_token_id) {
-        try {
-          const txHash = await SolanaService.transferNFT(
-            ticket.nft_token_id,
-            fromUserId,
-            toUserId
-          );
-
-          transferRecord.transactionHash = txHash;
-
-          // Update transfer record with blockchain transaction
-          await client.query(
-            'UPDATE ticket_transfers SET transaction_hash = $1 WHERE ticket_id = $2 AND transferred_at = $3',
-            [txHash, ticketId, transferRecord.transferredAt]
-          );
-        } catch (error) {
-          this.log.error('NFT transfer failed:', error);
-          // Continue with database transfer even if blockchain fails
-        }
-      }
 
       // Clear cache (non-blocking)
       try {
@@ -185,28 +171,43 @@ export class TransferService {
       }
 
       // Publish transfer event
-      await queueService.publish(config.rabbitmq.queues.ticketEvents, {
-        type: 'ticket.transferred',
+      try {
+        await queueService.publish(config.rabbitmq?.queues?.ticketEvents || 'ticket.events', {
+          type: 'ticket.transferred',
+          ticketId,
+          fromUserId,
+          toUserId,
+          timestamp: new Date()
+        });
+
+        // Send notifications
+        await queueService.publish(config.rabbitmq?.queues?.notifications || 'notifications', {
+          type: 'ticket.transfer.sender',
+          userId: fromUserId,
+          ticketId,
+          toUserId
+        });
+
+        await queueService.publish(config.rabbitmq?.queues?.notifications || 'notifications', {
+          type: 'ticket.transfer.receiver',
+          userId: toUserId,
+          ticketId,
+          fromUserId
+        });
+      } catch (error) {
+        this.log.warn('Failed to publish transfer events:', error);
+      }
+
+      const transferRecord: TransferRecord = {
+        id: transferId,
         ticketId,
         fromUserId,
         toUserId,
-        timestamp: new Date()
-      });
-
-      // Send notifications
-      await queueService.publish(config.rabbitmq.queues.notifications, {
-        type: 'ticket.transfer.sender',
-        userId: fromUserId,
-        ticketId,
-        toUserId
-      });
-
-      await queueService.publish(config.rabbitmq.queues.notifications, {
-        type: 'ticket.transfer.receiver',
-        userId: toUserId,
-        ticketId,
-        fromUserId
-      });
+        toEmail: recipient.email,
+        transferredAt: new Date(),
+        reason,
+        status: 'completed'
+      };
 
       return transferRecord;
     });
@@ -214,12 +215,21 @@ export class TransferService {
 
   async getTransferHistory(ticketId: string): Promise<TransferRecord[]> {
     const query = `
-      SELECT * FROM ticket_transfers
+      SELECT 
+        id,
+        ticket_id as "ticketId",
+        from_user_id as "fromUserId",
+        to_user_id as "toUserId",
+        to_email as "toEmail",
+        transferred_at as "transferredAt",
+        message as reason,
+        status
+      FROM ticket_transfers
       WHERE ticket_id = $1
       ORDER BY transferred_at DESC
     `;
 
-    const result = await DatabaseService.query<TransferRecord>(query, [ticketId]);
+    const result = await DatabaseService.query(query, [ticketId]);
     return result.rows;
   }
 
@@ -229,121 +239,105 @@ export class TransferService {
     toUserId: string
   ): Promise<{ valid: boolean; reason?: string }> {
     try {
-      // Check if users exist and are not the same
+      // Check if users are not the same
       if (fromUserId === toUserId) {
         return { valid: false, reason: 'Cannot transfer ticket to yourself' };
       }
 
-      // Check user blacklists
-      const blacklistQuery = `
-        SELECT 1 FROM user_blacklists 
-        WHERE (user_id = $1 OR user_id = $2) 
-        AND (action_type = 'transfer' OR action_type = 'all')
-        AND (expires_at IS NULL OR expires_at > NOW())
-        LIMIT 1
-      `;
-      const blacklistResult = await DatabaseService.query(blacklistQuery, [fromUserId, toUserId]);
-      
-      if (blacklistResult.rows.length > 0) {
-        return { valid: false, reason: 'User is blacklisted from transfers' };
-      }
-
       // Check transfer cooldown period (prevent rapid transfers)
       const cooldownQuery = `
-        SELECT transferred_at 
-        FROM ticket_transfers 
-        WHERE ticket_id = $1 
-        ORDER BY transferred_at DESC 
+        SELECT transferred_at
+        FROM ticket_transfers
+        WHERE ticket_id = $1 AND status = 'completed'
+        ORDER BY transferred_at DESC
         LIMIT 1
       `;
       const cooldownResult = await DatabaseService.query(cooldownQuery, [ticketId]);
-      
+
       if (cooldownResult.rows.length > 0) {
         const lastTransfer = new Date(cooldownResult.rows[0].transferred_at);
         const minutesSinceLastTransfer = (Date.now() - lastTransfer.getTime()) / (1000 * 60);
-        
+
         if (minutesSinceLastTransfer < this.TRANSFER_COOLDOWN_MINUTES) {
-          return { 
-            valid: false, 
-            reason: `Please wait ${Math.ceil(this.TRANSFER_COOLDOWN_MINUTES - minutesSinceLastTransfer)} minutes before transferring again` 
+          return {
+            valid: false,
+            reason: `Please wait ${Math.ceil(this.TRANSFER_COOLDOWN_MINUTES - minutesSinceLastTransfer)} minutes before transferring again`
           };
         }
       }
 
       // Check rate limiting for user transfers
       const rateLimitQuery = `
-        SELECT COUNT(*) as transfer_count 
-        FROM ticket_transfers 
-        WHERE from_user_id = $1 
+        SELECT COUNT(*) as transfer_count
+        FROM ticket_transfers
+        WHERE from_user_id = $1
         AND transferred_at > NOW() - INTERVAL '24 hours'
+        AND status = 'completed'
       `;
       const rateLimitResult = await DatabaseService.query(rateLimitQuery, [fromUserId]);
       const dailyTransfers = parseInt(rateLimitResult.rows[0].transfer_count);
-      
+
       if (dailyTransfers >= this.MAX_DAILY_TRANSFERS) {
-        return { 
-          valid: false, 
-          reason: `Daily transfer limit (${this.MAX_DAILY_TRANSFERS}) exceeded` 
+        return {
+          valid: false,
+          reason: `Daily transfer limit (${this.MAX_DAILY_TRANSFERS}) exceeded`
         };
       }
 
       // Verify recipient can receive tickets
       const recipientQuery = `
-        SELECT 
+        SELECT
           status as account_status,
           can_receive_transfers,
           email_verified
-        FROM users 
+        FROM users
         WHERE id = $1
       `;
       const recipientResult = await DatabaseService.query(recipientQuery, [toUserId]);
-      
+
       if (recipientResult.rows.length === 0) {
         return { valid: false, reason: 'Recipient user not found' };
       }
-      
+
       const recipient = recipientResult.rows[0];
-      
+
       if (recipient.account_status !== 'ACTIVE') {
         return { valid: false, reason: 'Recipient account is not active' };
       }
-      
+
       if (recipient.can_receive_transfers === false) {
         return { valid: false, reason: 'Recipient cannot receive transfers' };
       }
-      
+
       if (!recipient.email_verified) {
         return { valid: false, reason: 'Recipient must verify email to receive transfers' };
       }
 
-      // Check ticket-specific transfer rules
+      // Check ticket exists and is transferable
       const ticketQuery = `
-        SELECT 
+        SELECT
           t.status,
           t.is_transferable,
-          t.transfer_locked_until,
+          t.tenant_id,
           e.id as event_id
         FROM tickets t
         JOIN events e ON t.event_id = e.id
-        WHERE t.id = $1
+        WHERE t.id = $1 AND t.deleted_at IS NULL
       `;
       const ticketResult = await DatabaseService.query(ticketQuery, [ticketId]);
-      
+
       if (ticketResult.rows.length === 0) {
         return { valid: false, reason: 'Ticket not found' };
       }
-      
+
       const ticket = ticketResult.rows[0];
-      
+
       if (ticket.is_transferable === false) {
         return { valid: false, reason: 'This ticket is non-transferable' };
       }
-      
-      if (ticket.transfer_locked_until && new Date(ticket.transfer_locked_until) > new Date()) {
-        return { 
-          valid: false, 
-          reason: `Ticket is locked from transfers until ${new Date(ticket.transfer_locked_until).toLocaleString()}` 
-        };
+
+      if (ticket.status !== 'active') {
+        return { valid: false, reason: `Ticket status '${ticket.status}' does not allow transfers` };
       }
 
       return { valid: true };

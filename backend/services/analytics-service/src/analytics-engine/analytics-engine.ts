@@ -1,3 +1,4 @@
+import type Redis from 'ioredis';
 import { getRedis } from '../config/redis';
 import CacheManager from '../config/redis-cache-strategies';
 import { logger } from '../utils/logger';
@@ -98,7 +99,7 @@ export class AnalyticsEngine {
 
   private async calculateConversionRate(query: AnalyticsQuery) {
     // Get page views from Redis
-    const redis = getRedis();
+    const redis: Redis = getRedis();
     const dates = this.getDateRange(query.timeRange.start, query.timeRange.end);
     
     const conversionData = await Promise.all(dates.map(async (date: Date) => {

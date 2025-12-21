@@ -32,7 +32,7 @@ COPY --from=builder /app/backend/services/order-service/src/migrations ./src/mig
 RUN echo '#!/bin/sh' > ./entrypoint.sh && \
     echo 'set -e' >> ./entrypoint.sh && \
     echo 'echo "Running migrations for order-service..."' >> ./entrypoint.sh && \
-    echo 'npm run migrate || echo "Migration failed, continuing..."' >> ./entrypoint.sh && \
+    echo 'npm run migrate || exit 1' >> ./entrypoint.sh && \
     echo 'exec "$@"' >> ./entrypoint.sh && \
     chmod +x ./entrypoint.sh
 RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
@@ -41,4 +41,4 @@ EXPOSE 3005
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3005/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 ENTRYPOINT ["./entrypoint.sh", "dumb-init", "--"]
-CMD ["node", "dist/index.js"]
+CMD ["node", "dist/services/order-service/src/index.js"]

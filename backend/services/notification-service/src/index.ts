@@ -3,6 +3,7 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { closeDatabaseConnections, db } from './config/database';
 import { closeRedisConnections } from './config/redis';
+import { initializeMongoDB, closeMongoDB } from './config/mongodb';
 import { rabbitmqService } from './config/rabbitmq';
 import { eventHandler } from './events/event-handler';
 import { FastifyInstance } from 'fastify';
@@ -13,6 +14,9 @@ async function startServer() {
   try {
     logger.info('Running database migrations...');
     await db.migrate.latest();
+
+    logger.info('Connecting to MongoDB...');
+    await initializeMongoDB();
 
     logger.info('Connecting to RabbitMQ...');
     await rabbitmqService.connect();
@@ -49,6 +53,7 @@ async function gracefulShutdown() {
     }
 
     await rabbitmqService.close();
+    await closeMongoDB();
     await closeDatabaseConnections();
     await closeRedisConnections();
 

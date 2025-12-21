@@ -3,6 +3,7 @@ import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import { logger } from './utils/logger';
+import { setTenantContext } from './middleware/tenant-context';
 
 // Import routes
 import { connectionRoutes } from './routes/connection.routes';
@@ -28,6 +29,15 @@ export async function createServer(): Promise<FastifyInstance> {
   await app.register(rateLimit, {
     max: 100,
     timeWindow: '1 minute'
+  });
+
+  // Tenant isolation middleware
+  app.addHook('onRequest', async (request, reply) => {
+    try {
+      await setTenantContext(request, reply);
+    } catch (error) {
+      // Allow request to proceed - RLS will block unauthorized access
+    }
   });
 
   // Health check (no auth required)

@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../adapters/bull-job-adapter';
 import { nftService, MintNFTRequest, MintNFTResult } from '../services/nft.service';
 import { emailService } from '../services/email.service';
 import { webhookService } from '../services/webhook.service';
@@ -28,7 +28,7 @@ export interface MintJobResult extends MintNFTResult {
  * Process NFT mint job
  * Creates a Solana NFT ticket and handles the result
  */
-export async function processMint(job: Job<MintJobData>): Promise<MintJobResult> {
+export async function processMint(job: BullJobData<MintJobData>): Promise<MintJobResult> {
   const startTime = Date.now();
   const { ticketId, orderId, userId, tenantId, eventId, ...mintRequest } = job.data;
 
@@ -41,7 +41,7 @@ export async function processMint(job: Job<MintJobData>): Promise<MintJobResult>
     eventId,
     recipient: mintRequest.recipientAddress,
     nftName: mintRequest.metadata.name,
-    attempt: job.attemptsMade + 1,
+    attempt: (job.attemptsMade || 0) + 1,
   });
 
   try {
@@ -55,12 +55,12 @@ export async function processMint(job: Job<MintJobData>): Promise<MintJobResult>
     }
 
     // Update job progress
-    await job.progress(10);
+    await job.progress?.(10);
 
     // Mint NFT via Solana/Metaplex
     const result = await nftService.mintNFT(mintRequest);
 
-    await job.progress(90);
+    await job.progress?.(90);
 
     const processingTime = Date.now() - startTime;
 
@@ -75,7 +75,7 @@ export async function processMint(job: Job<MintJobData>): Promise<MintJobResult>
       });
 
       // Update job progress
-      await job.progress(100);
+      await job.progress?.(100);
 
       return {
         ...result,
@@ -105,7 +105,7 @@ export async function processMint(job: Job<MintJobData>): Promise<MintJobResult>
       orderId,
       userId,
       error: error.message,
-      attempt: job.attemptsMade + 1,
+      attempt: (job.attemptsMade || 0) + 1,
       processingTime,
     });
 
@@ -118,7 +118,7 @@ export async function processMint(job: Job<MintJobData>): Promise<MintJobResult>
  * Handle mint job failure
  * Called when all retry attempts have been exhausted
  */
-export async function onMintFailed(job: Job<MintJobData>, error: Error): Promise<void> {
+export async function onMintFailed(job: BullJobData<MintJobData>, error: Error): Promise<void> {
   const { ticketId, orderId, userId, tenantId, eventId } = job.data;
 
   logger.error('Mint job failed permanently', {
@@ -160,7 +160,7 @@ export async function onMintFailed(job: Job<MintJobData>, error: Error): Promise
 /**
  * Handle mint job completion
  */
-export async function onMintCompleted(job: Job<MintJobData>, result: MintJobResult): Promise<void> {
+export async function onMintCompleted(job: BullJobData<MintJobData>, result: MintJobResult): Promise<void> {
   const { ticketId, orderId, userId, tenantId, eventId } = job.data;
 
   logger.info('Mint job completed', {
@@ -207,7 +207,7 @@ export async function onMintCompleted(job: Job<MintJobData>, result: MintJobResu
 /**
  * Handle mint job progress
  */
-export async function onMintProgress(job: Job<MintJobData>, progress: number): Promise<void> {
+export async function onMintProgress(job: BullJobData<MintJobData>, progress: number): Promise<void> {
   logger.debug('Mint job progress', {
     jobId: job.id,
     ticketId: job.data.ticketId,
@@ -227,7 +227,7 @@ export interface TransferJobData {
   tenantId?: string;
 }
 
-export async function processTransfer(job: Job<TransferJobData>): Promise<any> {
+export async function processTransfer(job: BullJobData<TransferJobData>): Promise<any> {
   const startTime = Date.now();
   const { mintAddress, recipientAddress, ticketId, orderId, userId } = job.data;
 
@@ -237,7 +237,7 @@ export async function processTransfer(job: Job<TransferJobData>): Promise<any> {
     orderId,
     mintAddress,
     recipient: recipientAddress,
-    attempt: job.attemptsMade + 1,
+    attempt: (job.attemptsMade || 0) + 1,
   });
 
   try {

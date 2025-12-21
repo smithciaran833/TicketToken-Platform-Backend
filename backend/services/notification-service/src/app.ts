@@ -16,6 +16,7 @@ import analyticsRoutes from './routes/analytics.routes';
 import preferencesRoutes from './routes/preferences.routes';
 import metricsRoutes from './routes/metrics.routes';
 import gdprRoutes from './routes/gdpr.routes';
+import marketingRoutes from './routes/marketing.routes';
 import { webhookController } from './controllers/webhook.controller';
 import { metricsService } from './services/metrics.service';
 
@@ -84,6 +85,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(analyticsRoutes, { prefix: '/api' });
   await app.register(preferencesRoutes, { prefix: '/api' });
   await app.register(gdprRoutes, { prefix: '/api' });
+  await app.register(marketingRoutes, { prefix: '/api/marketing' });
 
   // Webhook endpoints
   app.post('/webhooks/sendgrid', 

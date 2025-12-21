@@ -7,6 +7,7 @@ export interface PaymentJobData {
   venueId: string;
   eventId: string;
   amount: number;
+  currency?: string;
   paymentMethod: string;
   idempotencyKey?: string;
 }

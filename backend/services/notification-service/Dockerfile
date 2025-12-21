@@ -49,7 +49,7 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'set -e' >> /app/entrypoint.sh && \
     echo 'echo "Running migrations for notification-service..."' >> /app/entrypoint.sh && \
     echo 'cd /app/backend/services/notification-service' >> /app/entrypoint.sh && \
-    echo 'npm run migrate || echo "Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'npm run migrate || exit 1' >> /app/entrypoint.sh && \
     echo 'exec "$@"' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 

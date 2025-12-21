@@ -1,5 +1,6 @@
 import crypto from 'crypto';
 import { FastifyRequest } from 'fastify';
+import { AuthUser } from '../types';
 
 // Input sanitization
 export function sanitizeInput(input: any): any {
@@ -80,7 +81,8 @@ export function validateRequestSignature(
 // Rate limit key generation with IP anonymization
 export function generateRateLimitKey(request: FastifyRequest): string {
   const ip = request.ip;
-  const userId = request.user?.id;
+  const user = request.user as AuthUser | undefined;
+  const userId = user?.id;
   
   if (userId) {
     return `user:${userId}`;

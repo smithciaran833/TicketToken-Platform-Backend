@@ -3,12 +3,22 @@ import { getDatabase } from '../config/database';
 import { logger } from '../utils/logger';
 
 export class ReconciliationJob {
-  private orderService: OrderService;
+  private _orderService?: OrderService;
   private intervalId: NodeJS.Timeout | null = null;
 
   constructor() {
-    const pool = getDatabase();
-    this.orderService = new OrderService(pool);
+    // Lightweight constructor - no database calls
+  }
+
+  private get db() {
+    return getDatabase();
+  }
+
+  private get orderService() {
+    if (!this._orderService) {
+      this._orderService = new OrderService(this.db);
+    }
+    return this._orderService;
   }
 
   /**
@@ -104,7 +114,6 @@ export class ReconciliationJob {
    * These may be stuck due to failed payment confirmation
    */
   private async findStaleReservedOrders(): Promise<any[]> {
-    const pool = getDatabase();
     const query = `
       SELECT * FROM orders 
       WHERE status = 'RESERVED' 
@@ -113,7 +122,7 @@ export class ReconciliationJob {
       ORDER BY created_at ASC
       LIMIT 100
     `;
-    const result = await pool.query(query);
+    const result = await this.db.query(query);
     return result.rows;
   }
 
@@ -122,7 +131,6 @@ export class ReconciliationJob {
    * Verify they have proper payment confirmation
    */
   private async findUnconfirmedPaymentOrders(): Promise<any[]> {
-    const pool = getDatabase();
     const query = `
       SELECT * FROM orders 
       WHERE status = 'CONFIRMED' 
@@ -131,7 +139,7 @@ export class ReconciliationJob {
       ORDER BY confirmed_at DESC
       LIMIT 50
     `;
-    const result = await pool.query(query);
+    const result = await this.db.query(query);
     return result.rows;
   }
 
@@ -161,8 +169,7 @@ export class ReconciliationJob {
     });
 
     // Add order event for tracking
-    const pool = getDatabase();
-    await pool.query(
+    await this.db.query(
       `INSERT INTO order_events (order_id, event_type, metadata)
        VALUES ($1, $2, $3)`,
       [
@@ -196,8 +203,7 @@ export class ReconciliationJob {
     });
 
     // Add order event for tracking
-    const pool = getDatabase();
-    await pool.query(
+    await this.db.query(
       `INSERT INTO order_events (order_id, event_type, metadata)
        VALUES ($1, $2, $3)`,
       [

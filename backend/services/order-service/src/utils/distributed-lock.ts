@@ -1,4 +1,4 @@
-import { RedisService } from '../services/redis.service';
+import { getRedis } from '../config/redis';
 import { logger } from './logger';
 
 export interface LockOptions {
@@ -23,7 +23,7 @@ export async function withLock<T>(
   options: LockOptions = {}
 ): Promise<T> {
   const opts = { ...DEFAULT_OPTIONS, ...options };
-  const client = RedisService.getClient();
+  const client = getRedis();
   const lockValue = `lock:${Date.now()}:${Math.random()}`;
   let acquired = false;
 
@@ -76,7 +76,7 @@ export async function tryLock(
   lockKey: string,
   ttl: number = 30000
 ): Promise<boolean> {
-  const client = RedisService.getClient();
+  const client = getRedis();
   const lockValue = `lock:${Date.now()}:${Math.random()}`;
 
   try {
@@ -94,7 +94,7 @@ export async function tryLock(
  */
 export async function releaseLock(lockKey: string): Promise<void> {
   try {
-    const client = RedisService.getClient();
+    const client = getRedis();
     await client.del(lockKey);
   } catch (error) {
     logger.error('Error releasing lock', { error, lockKey });
@@ -106,7 +106,7 @@ export async function releaseLock(lockKey: string): Promise<void> {
  */
 export async function isLocked(lockKey: string): Promise<boolean> {
   try {
-    const client = RedisService.getClient();
+    const client = getRedis();
     const exists = await client.exists(lockKey);
     return exists === 1;
   } catch (error) {

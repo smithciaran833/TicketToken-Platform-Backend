@@ -1,9 +1,9 @@
 import * as promClient from 'prom-client';
 import twilio from 'twilio';
-import { Queue } from 'bull';
 import { logger } from '../utils/logger';
 import { QueueFactory } from '../queues/factories/queue.factory';
 import { getPool } from '../config/database.config';
+import { BullQueueAdapter } from '../adapters/bull-queue-adapter';
 
 interface AlertThresholds {
   moneyQueueDepth: number;
@@ -274,7 +274,7 @@ export class MonitoringService {
     await this.storeMetrics(queue.name, counts);
   }
   
-  private async getOldestWaitingJob(queue: Queue): Promise<any> {
+  private async getOldestWaitingJob(queue: BullQueueAdapter): Promise<any> {
     const jobs = await queue.getWaiting(0, 1);
     return jobs[0];
   }

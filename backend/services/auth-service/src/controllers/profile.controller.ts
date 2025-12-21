@@ -1,8 +1,8 @@
 import { FastifyReply } from 'fastify';
 import { ValidationError } from '../errors';
-import { db } from '../config/database';
+import { pool } from '../config/database';
 import { AuthenticatedRequest } from '../types';
-
+import { stripHtml } from '../utils/sanitize';
 
 export class ProfileController {
   async getProfile(request: AuthenticatedRequest, reply: FastifyReply) {
@@ -10,26 +10,27 @@ export class ProfileController {
     const tenantId = request.user.tenant_id;
 
     try {
-      const user = await db('users')
-        .where({ id: userId, tenant_id: tenantId })
-        .whereNull('deleted_at')
-        .select(
-          'id',
-          'email',
-          'first_name',
-          'last_name',
-          'phone',
-          'email_verified',
-          'mfa_enabled',
-          'role',
-          'created_at',
-          'updated_at',
-          'last_login_at',
-          'password_changed_at'
-        )
-        .first();
+      const result = await pool.query(
+        `SELECT
+          id,
+          email,
+          first_name,
+          last_name,
+          phone,
+          email_verified,
+          mfa_enabled,
+          role,
+          tenant_id,
+          created_at,
+          updated_at,
+          last_login_at,
+          password_changed_at
+        FROM users
+        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+        [userId, tenantId]
+      );
 
-      if (!user) {
+      if (result.rows.length === 0) {
         return reply.status(404).send({
           success: false,
           error: 'User not found',
@@ -39,11 +40,10 @@ export class ProfileController {
 
       return reply.send({
         success: true,
-        data: user
+        user: result.rows[0]
       });
     } catch (error) {
-      // Optional: add logging if needed
-      // console.error('Failed to get profile', { error, userId });
+      console.error('Failed to get profile', { error, userId });
       return reply.status(500).send({
         success: false,
         error: 'Failed to retrieve profile',
@@ -56,49 +56,71 @@ export class ProfileController {
     const userId = request.user.id;
     const tenantId = request.user.tenant_id;
     const updates = request.body as {
-      first_name?: string;
-      last_name?: string;
+      firstName?: string;
+      lastName?: string;
       phone?: string;
+      email?: string;
     };
 
     try {
-      const allowedFields = ['first_name', 'last_name', 'phone'];
-      const profileUpdates: Record<string, any> = {};
+      const allowedUpdates: any = {};
 
-      for (const field of allowedFields) {
-        if (updates[field as keyof typeof updates] !== undefined) {
-          profileUpdates[field] = updates[field as keyof typeof updates];
-        }
+      if (updates.firstName !== undefined) {
+        // Strip HTML tags to prevent XSS
+        allowedUpdates.first_name = stripHtml(updates.firstName);
+      }
+      if (updates.lastName !== undefined) {
+        // Strip HTML tags to prevent XSS
+        allowedUpdates.last_name = stripHtml(updates.lastName);
+      }
+      if (updates.phone !== undefined) {
+        allowedUpdates.phone = updates.phone;
+      }
+      if (updates.email !== undefined) {
+        // Email change requires re-verification
+        allowedUpdates.email = updates.email.toLowerCase();
+        allowedUpdates.email_verified = false;
       }
 
-      if (Object.keys(profileUpdates).length === 0) {
-        throw new ValidationError([{ message: 'No valid fields to update' }]);
+      if (Object.keys(allowedUpdates).length === 0) {
+        throw new ValidationError(['No valid fields to update']);
       }
 
-      profileUpdates.updated_at = new Date();
+      // Build update query
+      const fields = Object.keys(allowedUpdates);
+      const values = Object.values(allowedUpdates);
+      const setClause = fields.map((field, i) => `${field} = $${i + 3}`).join(', ');
 
-      await db('users')
-        .where({ id: userId, tenant_id: tenantId })
-        .update(profileUpdates);
+      await pool.query(
+        `UPDATE users
+         SET ${setClause}, updated_at = CURRENT_TIMESTAMP
+         WHERE id = $1 AND tenant_id = $2`,
+        [userId, tenantId, ...values]
+      );
 
       // Audit log
-      await db('audit_logs').insert({
-        user_id: userId,
-        action: 'profile_updated',
-        resource_type: 'user',
-        resource_id: userId,
-        ip_address: request.ip,
-        user_agent: request.headers['user-agent'],
-        metadata: {
-          updated_fields: Object.keys(profileUpdates)
-        },
-        status: 'success'
-      });
+      await pool.query(
+        `INSERT INTO audit_logs (
+          user_id, action, resource_type, resource_id,
+          ip_address, user_agent, metadata, success, service, action_type
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [
+          userId,
+          'profile_updated',
+          'user',
+          userId,
+          request.ip,
+          request.headers['user-agent'],
+          JSON.stringify({ updated_fields: fields }),
+          true,
+          'auth-service',
+          'data'
+        ]
+      );
 
       return this.getProfile(request, reply);
     } catch (error) {
-      // Optional: add logging if needed
-      // console.error('Failed to update profile', { error, userId });
+      console.error('Failed to update profile', { error, userId });
 
       if (error instanceof ValidationError) {
         return reply.status(422).send({

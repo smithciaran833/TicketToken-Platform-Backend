@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../../adapters/bull-job-adapter';
 import { BaseWorker } from '../base.worker';
 import { EmailJobData, JobResult } from '../../types/job.types';
 import { IdempotencyService } from '../../services/idempotency.service';
@@ -16,7 +16,7 @@ export class EmailProcessor extends BaseWorker<EmailJobData, JobResult> {
     this.rateLimiter = RateLimiterService.getInstance();
   }
   
-  protected async execute(job: Job<EmailJobData>): Promise<JobResult> {
+  protected async execute(job: BullJobData<EmailJobData>): Promise<JobResult> {
     const { to, template, data } = job.data;
     
     // Generate idempotency key (daily uniqueness for emails)
@@ -39,7 +39,7 @@ export class EmailProcessor extends BaseWorker<EmailJobData, JobResult> {
     
     try {
       // Acquire rate limit for SendGrid
-      await this.rateLimiter.acquire('sendgrid', job.opts.priority || 5);
+      await this.rateLimiter.acquire('sendgrid', (job.opts?.priority as number) || 5);
       
       try {
         // TODO: Implement actual SendGrid email sending
@@ -58,8 +58,8 @@ export class EmailProcessor extends BaseWorker<EmailJobData, JobResult> {
         // Store for 24 hours (daily uniqueness)
         await this.idempotencyService.store(
           idempotencyKey,
-          job.queue.name,
-          job.name,
+          job.queue?.name || 'communication',
+          job.name || 'send-email',
           result,
           24 * 60 * 60
         );

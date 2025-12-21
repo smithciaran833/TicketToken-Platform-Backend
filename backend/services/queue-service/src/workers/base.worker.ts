@@ -1,17 +1,17 @@
-import { Job } from 'bull';
+import { BullJobData } from '../adapters/bull-job-adapter';
 import { logger } from '../utils/logger';
 
 export abstract class BaseWorker<T = any, R = any> {
   protected abstract name: string;
   
-  async process(job: Job<T>): Promise<R> {
+  async process(job: BullJobData<T>): Promise<R> {
     const startTime = Date.now();
     
     try {
       logger.info(`Processing job ${this.name}:`, {
         jobId: job.id,
-        attempt: job.attemptsMade + 1,
-        maxAttempts: job.opts.attempts
+        attempt: (job.attemptsMade || 0) + 1,
+        maxAttempts: job.opts?.attempts || 3
       });
       
       const result = await this.execute(job);
@@ -32,5 +32,5 @@ export abstract class BaseWorker<T = any, R = any> {
     }
   }
   
-  protected abstract execute(job: Job<T>): Promise<R>;
+  protected abstract execute(job: BullJobData<T>): Promise<R>;
 }

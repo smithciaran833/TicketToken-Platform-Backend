@@ -36,8 +36,10 @@ export async function up(knex: Knex): Promise<void> {
     table.jsonb('rate_limit_info').defaultTo('{}');
     
     table.timestamps(true, true);
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001');
   });
 
+  await knex.raw('CREATE INDEX oauth_tokens_tenant_id_idx ON oauth_tokens(tenant_id)');
   await knex.raw('CREATE INDEX oauth_tokens_venue_id_idx ON oauth_tokens(venue_id)');
   await knex.raw('CREATE INDEX oauth_tokens_integration_type_idx ON oauth_tokens(integration_type)');
   await knex.raw('CREATE INDEX oauth_tokens_provider_idx ON oauth_tokens(provider)');
@@ -90,8 +92,10 @@ export async function up(knex: Knex): Promise<void> {
     table.text('notes');
     
     table.timestamps(true, true);
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001');
   });
 
+  await knex.raw('CREATE INDEX venue_api_keys_tenant_id_idx ON venue_api_keys(tenant_id)');
   await knex.raw('CREATE INDEX venue_api_keys_venue_id_idx ON venue_api_keys(venue_id)');
   await knex.raw('CREATE INDEX venue_api_keys_integration_type_idx ON venue_api_keys(integration_type)');
   await knex.raw('CREATE INDEX venue_api_keys_provider_idx ON venue_api_keys(provider)');
@@ -101,6 +105,32 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX venue_api_keys_expires_at_idx ON venue_api_keys(expires_at) WHERE expires_at IS NOT NULL');
   await knex.raw('CREATE INDEX venue_api_keys_last_used_at_idx ON venue_api_keys(last_used_at)');
   await knex.raw('CREATE UNIQUE INDEX venue_api_keys_venue_integration_key_name_unique ON venue_api_keys(venue_id, integration_type, key_name)');
+
+  // 3. FIELD_MAPPING_TEMPLATES - Reusable field mapping templates
+  await knex.schema.createTable('field_mapping_templates', (table) => {
+    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
+    table.string('name', 255).notNullable();
+    table.text('description');
+    table.string('venue_type', 100); // 'comedy_club', 'music_venue', 'theater', 'festival', 'standard'
+    table.string('integration_type', 100).notNullable(); // 'square', 'stripe', 'mailchimp', 'quickbooks'
+    table.jsonb('mappings').notNullable(); // Field mapping configuration
+    table.jsonb('validation_rules'); // Validation rules for the mappings
+    table.boolean('is_active').defaultTo(true);
+    table.boolean('is_default').defaultTo(false);
+    table.integer('usage_count').defaultTo(0);
+    table.timestamp('last_used_at', { useTz: true });
+    table.timestamps(true, true);
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001');
+  });
+
+  await knex.raw('CREATE INDEX field_mapping_templates_tenant_id_idx ON field_mapping_templates(tenant_id)');
+  await knex.raw('CREATE INDEX field_mapping_templates_integration_type_idx ON field_mapping_templates(integration_type)');
+  await knex.raw('CREATE INDEX field_mapping_templates_venue_type_idx ON field_mapping_templates(venue_type)');
+  await knex.raw('CREATE INDEX field_mapping_templates_is_active_idx ON field_mapping_templates(is_active)');
+  await knex.raw('CREATE INDEX field_mapping_templates_is_default_idx ON field_mapping_templates(is_default)');
+  await knex.raw('CREATE INDEX field_mapping_templates_usage_count_idx ON field_mapping_templates(usage_count)');
+  await knex.raw('CREATE INDEX field_mapping_templates_venue_integration_active_idx ON field_mapping_templates(venue_type, integration_type, is_active)');
+  await knex.raw('CREATE INDEX field_mapping_templates_integration_default_active_idx ON field_mapping_templates(integration_type, is_default, is_active)');
 
   // Add foreign key relationships if venues table exists (optional - may be in different schema)
   // These will fail gracefully if the tables don't exist
@@ -116,10 +146,28 @@ export async function up(knex: Knex): Promise<void> {
     END $$;
   `);
 
-  console.log('✅ Integration Service migration 002 complete - oauth_tokens and venue_api_keys tables created');
+  // RLS
+  await knex.raw('ALTER TABLE oauth_tokens ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE venue_api_keys ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE field_mapping_templates ENABLE ROW LEVEL SECURITY');
+
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON oauth_tokens USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON venue_api_keys USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON field_mapping_templates USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+
+  console.log('✅ Integration Service migration 002 complete - oauth_tokens, venue_api_keys, and field_mapping_templates tables created with RLS');
 }
 
 export async function down(knex: Knex): Promise<void> {
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON field_mapping_templates');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON venue_api_keys');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON oauth_tokens');
+  
+  await knex.raw('ALTER TABLE field_mapping_templates DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE venue_api_keys DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE oauth_tokens DISABLE ROW LEVEL SECURITY');
+  
+  await knex.schema.dropTableIfExists('field_mapping_templates');
   await knex.schema.dropTableIfExists('venue_api_keys');
   await knex.schema.dropTableIfExists('oauth_tokens');
 }

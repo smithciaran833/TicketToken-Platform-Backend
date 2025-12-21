@@ -54,7 +54,7 @@ export class DocumentService {
       return documentId;
       
     } catch (error) {
-      logger.error('Error storing document:', error);
+      logger.error({ error }, 'Error storing document:');
       throw error;
     }
   }

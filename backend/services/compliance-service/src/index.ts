@@ -39,7 +39,7 @@ async function startServer() {
     logger.info(`Admin: http://${HOST}:${PORT}/api/v1/compliance/admin/pending`);
     logger.info(`Batch Jobs: http://${HOST}:${PORT}/api/v1/compliance/batch/jobs`);
   } catch (error: any) {
-    logger.error('Failed to start server:', error);
+    logger.error({ error }, 'Failed to start server:');
     process.exit(1);
   }
 }

@@ -2,34 +2,29 @@ import 'dotenv/config';
 import { createApp } from './app';
 import { logger } from './utils/logger';
 import { closeDatabase } from './config/database';
-import { RedisService } from './services/redis.service';
+import { closeRedisConnections } from './config/redis';
 import { closeRabbitMQ } from './config/rabbitmq';
 import { 
   ExpirationJob, 
-  ReminderJob, 
+  // ReminderJob,  // DISABLED - uses notification tables, moved to notification-service
   ReconciliationJob,
-  NotificationSchedulerJob,
-  EventReminderJob,
-  NotificationDigestJob,
-  ReportGenerationJob,
-  CustomerAnalyticsJob,
-  ExportSchedulerJob
+  // NotificationSchedulerJob,  // DISABLED - uses scheduled_notifications, moved to notification-service
+  // EventReminderJob,  // DISABLED - uses scheduled_notifications, moved to notification-service
+  // NotificationDigestJob,  // DISABLED - uses notification tables, moved to notification-service
+  // ReportGenerationJob,  // NOT IMPLEMENTED
+  // CustomerAnalyticsJob,  // DISABLED - uses customer analytics tables (removed)
+  // ExportSchedulerJob  // NOT IMPLEMENTED
 } from './jobs';
 
 const SERVICE_NAME = process.env.SERVICE_NAME || 'order-service';
 const PORT = parseInt(process.env.PORT || '3005', 10);
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Background jobs
+// Background jobs (only order-specific jobs)
 let expirationJob: ExpirationJob;
-let reminderJob: ReminderJob;
 let reconciliationJob: ReconciliationJob;
-let notificationSchedulerJob: NotificationSchedulerJob;
-let eventReminderJob: EventReminderJob;
-let notificationDigestJob: NotificationDigestJob;
-let reportGenerationJob: ReportGenerationJob;
-let customerAnalyticsJob: CustomerAnalyticsJob;
-let exportSchedulerJob: ExportSchedulerJob;
+// let reportGenerationJob: ReportGenerationJob;
+// let exportSchedulerJob: ExportSchedulerJob;
 
 async function startService() {
   try {
@@ -61,39 +56,23 @@ async function startService() {
     logger.info(`   - Info: http://${HOST}:${PORT}/info`);
     logger.info(`   - API: http://${HOST}:${PORT}/api/v1/orders`);
 
-    // Start background jobs
+    // Start background jobs (only order-specific jobs)
     logger.info('Starting background jobs...');
     
     expirationJob = new ExpirationJob();
     expirationJob.start();
     
-    reminderJob = new ReminderJob();
-    reminderJob.start();
-    
     reconciliationJob = new ReconciliationJob();
     reconciliationJob.start();
     
-    // Start notification jobs
-    notificationSchedulerJob = new NotificationSchedulerJob();
-    notificationSchedulerJob.start();
+    // reportGenerationJob = new ReportGenerationJob();
+    // reportGenerationJob.start();
     
-    eventReminderJob = new EventReminderJob();
-    eventReminderJob.start();
-    
-    notificationDigestJob = new NotificationDigestJob();
-    notificationDigestJob.start();
-    
-    // Start reporting jobs
-    reportGenerationJob = new ReportGenerationJob();
-    reportGenerationJob.start();
-    
-    customerAnalyticsJob = new CustomerAnalyticsJob();
-    customerAnalyticsJob.start();
-    
-    exportSchedulerJob = new ExportSchedulerJob();
-    exportSchedulerJob.start();
+    // exportSchedulerJob = new ExportSchedulerJob();
+    // exportSchedulerJob.start();
 
-    logger.info('✅ Background jobs started (6 core + 3 reporting jobs)');
+    logger.info('✅ Background jobs started (2 order-specific jobs)');
+    logger.info('   Note: Notification, analytics, and reporting jobs moved to dedicated services');
 
     // Graceful shutdown
     const shutdown = async (signal: string) => {
@@ -101,14 +80,9 @@ async function startService() {
 
       // Stop background jobs
       if (expirationJob) expirationJob.stop();
-      if (reminderJob) reminderJob.stop();
       if (reconciliationJob) reconciliationJob.stop();
-      if (notificationSchedulerJob) notificationSchedulerJob.stop();
-      if (eventReminderJob) eventReminderJob.stop();
-      if (notificationDigestJob) notificationDigestJob.stop();
-      if (reportGenerationJob) reportGenerationJob.stop();
-      if (customerAnalyticsJob) customerAnalyticsJob.stop();
-      if (exportSchedulerJob) exportSchedulerJob.stop();
+      // if (reportGenerationJob) reportGenerationJob.stop();
+      // if (exportSchedulerJob) exportSchedulerJob.stop();
 
       // Close Fastify
       await app.close();
@@ -117,7 +91,7 @@ async function startService() {
       await closeRabbitMQ();
 
       // Close Redis
-      await RedisService.close();
+      await closeRedisConnections();
 
       // Close database
       await closeDatabase();

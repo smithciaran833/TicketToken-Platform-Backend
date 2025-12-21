@@ -1,10 +1,13 @@
 import { FastifyRequest, FastifyReply, RouteGenericInterface } from 'fastify';
-
 import { ErrorResponseBuilder } from '../utils/error-response';
+import { logger } from '../utils/logger';
+import { UnauthorizedError } from '../utils/errors';
+
 export interface AuthUser {
   id: string;
   email: string;
   permissions: string[];
+  tenant_id?: string;
 }
 
 export interface AuthenticatedRequest<T extends RouteGenericInterface = RouteGenericInterface> extends FastifyRequest<T> {
@@ -25,28 +28,28 @@ export async function authenticate(
     // Check for JWT
     const token = request.headers.authorization?.replace('Bearer ', '');
     if (!token) {
-      return ErrorResponseBuilder.unauthorized(reply, 'Missing authentication');
+      throw new UnauthorizedError('Missing authentication token');
     }
 
     // Cast server to any to access jwt
     const server = request.server as any;
-    
     try {
       const decoded = await server.jwt.verify(token);
-      
+
       // Set user on request
       (request as any).user = {
         id: decoded.sub,
         email: decoded.email || '',
-        permissions: decoded.permissions || []
+        permissions: decoded.permissions || [],
+        tenant_id: decoded.tenant_id
       };
     } catch (error) {
-      console.error('JWT verification failed:', error);
-      return ErrorResponseBuilder.unauthorized(reply, 'Invalid token');
+      logger.warn({ error, requestId: request.id }, 'JWT verification failed');
+      throw new UnauthorizedError('Invalid or expired token');
     }
   } catch (error) {
-    console.error('Authentication error:', error);
-    return ErrorResponseBuilder.unauthorized(reply, 'Authentication failed');
+    logger.error({ error, requestId: request.id }, 'Authentication error');
+    throw error;
   }
 }
 
@@ -111,7 +114,8 @@ async function authenticateWithApiKey(
   const authUser = {
     id: user.id,
     email: user.email,
-    permissions: keyData.permissions || []
+    permissions: keyData.permissions || [],
+    tenant_id: user.tenant_id
   };
 
   // Cache for 5 minutes

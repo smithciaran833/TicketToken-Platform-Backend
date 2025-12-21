@@ -10,15 +10,18 @@ export class EventAuditLogger {
     action: string,
     eventId: string,
     userId: string,
-    metadata: any = {}
+    metadata: any = {},
+    actionType: string = 'UPDATE'
   ): Promise<void> {
     try {
       // Debug logging
       logger.info({ action, eventId, userId, metadata }, 'Audit log entry details');
-      
+
       const auditEntry = {
+        service: 'event-service',
         user_id: userId,
         action: `event_${action}`,
+        action_type: actionType,
         resource_type: 'event',
         resource_id: eventId,
         ip_address: metadata.ip || metadata.ipAddress || null,
@@ -31,7 +34,7 @@ export class EventAuditLogger {
           ipAddress: metadata.ipAddress,
           userAgent: metadata.userAgent
         },
-        status: 'success'
+        success: true
       };
 
       // Debug the actual entry being inserted
@@ -61,7 +64,7 @@ export class EventAuditLogger {
     await this.logEventAction('created', eventId, userId, {
       eventData,
       ...requestInfo
-    });
+    }, 'CREATE');
   }
 
   async logEventUpdate(
@@ -73,7 +76,7 @@ export class EventAuditLogger {
     await this.logEventAction('updated', eventId, userId, {
       updates: changes,
       ...requestInfo
-    });
+    }, 'UPDATE');
   }
 
   async logEventDeletion(
@@ -81,7 +84,7 @@ export class EventAuditLogger {
     eventId: string,
     requestInfo?: any
   ): Promise<void> {
-    await this.logEventAction('deleted', eventId, userId, requestInfo);
+    await this.logEventAction('deleted', eventId, userId, requestInfo, 'DELETE');
   }
 
   async logEventAccess(
@@ -93,8 +96,10 @@ export class EventAuditLogger {
   ): Promise<void> {
     try {
       await this.db('audit_logs').insert({
+        service: 'event-service',
         user_id: userId,
         action: `event_access_${action}`,
+        action_type: 'ACCESS',
         resource_type: 'event',
         resource_id: eventId,
         ip_address: requestInfo?.ip || null,
@@ -103,7 +108,7 @@ export class EventAuditLogger {
           allowed,
           requestId: requestInfo?.requestId
         },
-        status: allowed ? 'success' : 'failure'
+        success: allowed
       });
 
       logger.info({

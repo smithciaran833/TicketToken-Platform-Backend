@@ -5,6 +5,7 @@ import cors from '@fastify/cors';
 import { v4 as uuidv4 } from 'uuid';
 import { Connection } from '@solana/web3.js';
 import { Pool } from 'pg';
+import { setTenantContext } from './middleware/tenant-context';
 import healthRoutes from './routes/health.routes';
 import metricsRoutes from './routes/metrics.routes';
 import internalMintRoutes from './routes/internal-mint.routes';
@@ -44,6 +45,15 @@ export async function createApp(): Promise<FastifyInstance> {
     timeWindow: '1 minute'
   });
 
+  // Tenant isolation middleware
+  app.addHook('onRequest', async (request, reply) => {
+    try {
+      await setTenantContext(request, reply);
+    } catch (error) {
+      logger.error('Failed to set tenant context', error);
+    }
+  });
+
   // Initialize infrastructure components
   logger.info('Initializing blockchain service infrastructure...');
 
@@ -57,6 +67,9 @@ export async function createApp(): Promise<FastifyInstance> {
 
     // Initialize database connection pool
     db = new Pool(config.database);
+    
+    // Decorate app with db for middleware
+    app.decorate('db', db);
     
     // Test database connection
     await db.query('SELECT 1');

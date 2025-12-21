@@ -238,15 +238,85 @@
       ]
     },
     {
-      "name": "verifyTicket",
+      "name": "registerTicket",
       "accounts": [
         {
-          "name": "validator",
+          "name": "authority",
           "isMut": true,
           "isSigner": true
         },
         {
           "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
+          "isMut": true,
+          "isSigner": false
+        },
+        {
+          "name": "systemProgram",
+          "isMut": false,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "ticketId",
+          "type": "u64"
+        },
+        {
+          "name": "nftAssetId",
+          "type": "publicKey"
+        },
+        {
+          "name": "ownerId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "transferTicket",
+      "accounts": [
+        {
+          "name": "authority",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
+          "isMut": true,
+          "isSigner": false
+        }
+      ],
+      "args": [
+        {
+          "name": "newOwnerId",
+          "type": "string"
+        }
+      ]
+    },
+    {
+      "name": "verifyTicket",
+      "accounts": [
+        {
+          "name": "validator",
+          "isMut": false,
+          "isSigner": true
+        },
+        {
+          "name": "event",
+          "isMut": false,
+          "isSigner": false
+        },
+        {
+          "name": "ticket",
           "isMut": true,
           "isSigner": false
         }
@@ -271,7 +341,10 @@
           {
             "name": "name",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
@@ -305,7 +378,10 @@
           {
             "name": "metadataUri",
             "type": {
-              "array": ["u8", 64]
+              "array": [
+                "u8",
+                64
+              ]
             }
           },
           {
@@ -315,7 +391,10 @@
           {
             "name": "description",
             "type": {
-              "array": ["u8", 200]
+              "array": [
+                "u8",
+                200
+              ]
             }
           },
           {
@@ -329,6 +408,18 @@
           {
             "name": "merkleTree",
             "type": "publicKey"
+          },
+          {
+            "name": "artistWallet",
+            "type": "publicKey"
+          },
+          {
+            "name": "artistPercentage",
+            "type": "u16"
+          },
+          {
+            "name": "venuePercentage",
+            "type": "u16"
           },
           {
             "name": "bump",
@@ -382,6 +473,48 @@
       }
     },
     {
+      "name": "Ticket",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "event",
+            "type": "publicKey"
+          },
+          {
+            "name": "ticketId",
+            "type": "u64"
+          },
+          {
+            "name": "nftAssetId",
+            "type": "publicKey"
+          },
+          {
+            "name": "currentOwnerId",
+            "type": "string"
+          },
+          {
+            "name": "used",
+            "type": "bool"
+          },
+          {
+            "name": "verifiedAt",
+            "type": {
+              "option": "i64"
+            }
+          },
+          {
+            "name": "transferCount",
+            "type": "u32"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "Venue",
       "type": {
         "kind": "struct",
@@ -389,7 +522,10 @@
           {
             "name": "venueId",
             "type": {
-              "array": ["u8", 32]
+              "array": [
+                "u8",
+                32
+              ]
             }
           },
           {
@@ -399,13 +535,19 @@
           {
             "name": "name",
             "type": {
-              "array": ["u8", 64]
+              "array": [
+                "u8",
+                64
+              ]
             }
           },
           {
             "name": "metadataUri",
             "type": {
-              "array": ["u8", 64]
+              "array": [
+                "u8",
+                64
+              ]
             }
           },
           {
@@ -469,19 +611,28 @@
           {
             "name": "section",
             "type": {
-              "array": ["u8", 20]
+              "array": [
+                "u8",
+                20
+              ]
             }
           },
           {
             "name": "row",
             "type": {
-              "array": ["u8", 10]
+              "array": [
+                "u8",
+                10
+              ]
             }
           },
           {
             "name": "seat",
             "type": {
-              "array": ["u8", 10]
+              "array": [
+                "u8",
+                10
+              ]
             }
           },
           {
@@ -525,7 +676,9 @@
     },
     {
       "name": "TreeConfig",
-      "docs": ["Optimal tree configuration based on research"],
+      "docs": [
+        "Optimal tree configuration based on research"
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -596,6 +749,18 @@
           {
             "name": "resaleable",
             "type": "bool"
+          },
+          {
+            "name": "artistWallet",
+            "type": "publicKey"
+          },
+          {
+            "name": "artistPercentage",
+            "type": "u16"
+          },
+          {
+            "name": "venuePercentage",
+            "type": "u16"
           }
         ]
       }
@@ -781,6 +946,21 @@
           "index": false
         },
         {
+          "name": "ticket",
+          "type": "publicKey",
+          "index": false
+        },
+        {
+          "name": "ticketId",
+          "type": "u64",
+          "index": false
+        },
+        {
+          "name": "owner",
+          "type": "string",
+          "index": false
+        },
+        {
           "name": "validator",
           "type": "publicKey",
           "index": false
@@ -816,173 +996,201 @@
   "errors": [
     {
       "code": 6000,
-      "name": "FeeTooHigh",
-      "msg": "Fee cannot exceed 10%"
-    },
-    {
-      "code": 6001,
-      "name": "InvalidTreasury",
-      "msg": "Invalid treasury address"
-    },
-    {
-      "code": 6002,
-      "name": "Unauthorized",
-      "msg": "Unauthorized access"
-    },
-    {
-      "code": 6003,
-      "name": "PlatformPaused",
-      "msg": "Platform is paused"
-    },
-    {
-      "code": 6004,
-      "name": "VenueIdTooLong",
-      "msg": "Venue ID too long (max 32 chars)"
-    },
-    {
-      "code": 6005,
-      "name": "VenueNameTooLong",
-      "msg": "Venue name too long (max 64 chars)"
-    },
-    {
-      "code": 6006,
-      "name": "InvalidCharacters",
-      "msg": "Invalid characters in string"
-    },
-    {
-      "code": 6007,
-      "name": "AlreadyVerified",
-      "msg": "Venue already verified"
-    },
-    {
-      "code": 6008,
-      "name": "VenueInactive",
-      "msg": "Venue is inactive"
-    },
-    {
-      "code": 6009,
-      "name": "UnauthorizedVenue",
-      "msg": "Unauthorized venue access"
-    },
-    {
-      "code": 6010,
-      "name": "VenueNotVerified",
-      "msg": "Venue is not verified"
-    },
-    {
-      "code": 6011,
-      "name": "UriTooLong",
-      "msg": "URI too long (max 64 chars)"
-    },
-    {
-      "code": 6012,
-      "name": "InvalidEventName",
-      "msg": "Invalid event name"
-    },
-    {
-      "code": 6013,
-      "name": "StartTimeTooSoon",
-      "msg": "Start time must be at least 1 hour in future"
-    },
-    {
-      "code": 6014,
-      "name": "EndBeforeStart",
-      "msg": "End time must be after start time"
-    },
-    {
-      "code": 6015,
-      "name": "EventTooLong",
-      "msg": "Event duration too long"
-    },
-    {
-      "code": 6016,
-      "name": "InvalidCapacity",
-      "msg": "Invalid capacity"
-    },
-    {
-      "code": 6017,
-      "name": "PriceTooLow",
-      "msg": "Price too low (min 0.0001 SOL)"
-    },
-    {
-      "code": 6018,
-      "name": "PriceTooHigh",
-      "msg": "Price too high (max 1000 SOL)"
-    },
-    {
-      "code": 6019,
-      "name": "RefundWindowTooLong",
-      "msg": "Refund window too long (max 48 hours)"
-    },
-    {
-      "code": 6020,
-      "name": "DescriptionTooLong",
-      "msg": "Description too long"
-    },
-    {
-      "code": 6021,
-      "name": "InvalidEventVenue",
-      "msg": "Event venue does not match"
-    },
-    {
-      "code": 6022,
-      "name": "EventAlreadyStarted",
-      "msg": "Event has already started"
-    },
-    {
-      "code": 6023,
-      "name": "InvalidQuantity",
-      "msg": "Invalid quantity specified"
-    },
-    {
-      "code": 6024,
-      "name": "InsufficientTickets",
-      "msg": "Insufficient tickets available"
-    },
-    {
-      "code": 6025,
-      "name": "PriceExceedsMax",
-      "msg": "Price exceeds maximum"
-    },
-    {
-      "code": 6026,
-      "name": "MathOverflow",
-      "msg": "Math overflow"
-    },
-    {
-      "code": 6027,
       "name": "InvalidTreeDepth",
       "msg": "Invalid tree depth"
     },
     {
-      "code": 6028,
+      "code": 6001,
       "name": "InvalidBufferSize",
       "msg": "Invalid buffer size"
     },
     {
-      "code": 6029,
+      "code": 6002,
       "name": "InvalidCanopyDepth",
       "msg": "Invalid canopy depth"
     },
     {
+      "code": 6003,
+      "name": "ClockError",
+      "msg": "Clock error"
+    },
+    {
+      "code": 6004,
+      "name": "FeeTooHigh",
+      "msg": "Fee too high"
+    },
+    {
+      "code": 6005,
+      "name": "InvalidTreasury",
+      "msg": "Invalid treasury address"
+    },
+    {
+      "code": 6006,
+      "name": "Unauthorized",
+      "msg": "Unauthorized"
+    },
+    {
+      "code": 6007,
+      "name": "VenueIdTooLong",
+      "msg": "Venue ID too long"
+    },
+    {
+      "code": 6008,
+      "name": "VenueNameTooLong",
+      "msg": "Venue name too long"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidVenueId",
+      "msg": "Invalid venue ID"
+    },
+    {
+      "code": 6010,
+      "name": "VenueNotVerified",
+      "msg": "Venue not verified"
+    },
+    {
+      "code": 6011,
+      "name": "VenueInactive",
+      "msg": "Venue inactive"
+    },
+    {
+      "code": 6012,
+      "name": "AlreadyVerified",
+      "msg": "Already verified"
+    },
+    {
+      "code": 6013,
+      "name": "UnauthorizedVenue",
+      "msg": "Unauthorized venue"
+    },
+    {
+      "code": 6014,
+      "name": "InvalidEventVenue",
+      "msg": "Invalid event venue"
+    },
+    {
+      "code": 6015,
+      "name": "InvalidCapacity",
+      "msg": "Invalid capacity"
+    },
+    {
+      "code": 6016,
+      "name": "InvalidEventName",
+      "msg": "Invalid event name"
+    },
+    {
+      "code": 6017,
+      "name": "DescriptionTooLong",
+      "msg": "Description too long"
+    },
+    {
+      "code": 6018,
+      "name": "EventAlreadyStarted",
+      "msg": "Event already started"
+    },
+    {
+      "code": 6019,
+      "name": "StartTimeTooSoon",
+      "msg": "Start time too soon"
+    },
+    {
+      "code": 6020,
+      "name": "EndBeforeStart",
+      "msg": "End before start"
+    },
+    {
+      "code": 6021,
+      "name": "EventTooLong",
+      "msg": "Event too long"
+    },
+    {
+      "code": 6022,
+      "name": "InvalidQuantity",
+      "msg": "Invalid quantity"
+    },
+    {
+      "code": 6023,
+      "name": "InsufficientTickets",
+      "msg": "Insufficient tickets"
+    },
+    {
+      "code": 6024,
+      "name": "UriTooLong",
+      "msg": "URI too long"
+    },
+    {
+      "code": 6025,
+      "name": "PriceTooLow",
+      "msg": "Price too low"
+    },
+    {
+      "code": 6026,
+      "name": "PriceTooHigh",
+      "msg": "Price too high"
+    },
+    {
+      "code": 6027,
+      "name": "PriceExceedsMax",
+      "msg": "Price exceeds maximum"
+    },
+    {
+      "code": 6028,
+      "name": "ResaleNotAllowed",
+      "msg": "Resale not allowed"
+    },
+    {
+      "code": 6029,
+      "name": "InvalidExpiry",
+      "msg": "Invalid expiry"
+    },
+    {
       "code": 6030,
-      "name": "TreeInitializationFailed",
-      "msg": "Tree initialization failed"
+      "name": "MathOverflow",
+      "msg": "Math overflow"
     },
     {
       "code": 6031,
-      "name": "ReentrancyLocked",
-      "msg": "Operation locked due to reentrancy"
+      "name": "InvalidCharacters",
+      "msg": "Invalid characters"
     },
     {
       "code": 6032,
-      "name": "ResaleNotAllowed",
-      "msg": "Resale not allowed for this event"
+      "name": "RefundWindowTooLong",
+      "msg": "Refund window too long"
     },
     {
       "code": 6033,
-      "name": "InvalidExpiry",
-      "msg": "Invalid expiry time"
+      "name": "ReentrancyLocked",
+      "msg": "Reentrancy locked"
+    },
+    {
+      "code": 6034,
+      "name": "InvalidRoyaltyPercentage",
+      "msg": "Invalid royalty percentage - total must not exceed 100%"
+    },
+    {
+      "code": 6035,
+      "name": "TicketAlreadyUsed",
+      "msg": "Ticket has already been used"
+    },
+    {
+      "code": 6036,
+      "name": "InvalidTicket",
+      "msg": "Invalid ticket for this event"
+    },
+    {
+      "code": 6037,
+      "name": "TransferNotAllowed",
+      "msg": "Ticket transfer not allowed for this event"
+    },
+    {
+      "code": 6038,
+      "name": "OwnerIdTooLong",
+      "msg": "Owner ID exceeds maximum length"
     }
-  ]
+  ],
+  "metadata": {
+    "address": "BnYanHjkV6bBDFYfC7F76TyYk6NA9p3wvcAfY1XZCXYS"
+  }
 }

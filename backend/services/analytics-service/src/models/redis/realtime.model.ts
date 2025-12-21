@@ -1,18 +1,22 @@
-import { getRedis, getPubClient, getSubClient } from '../../config/redis';
+/**
+ * Realtime Model - Migrated to @tickettoken/shared
+ * 
+ * Uses shared library pub/sub manager for realtime metrics
+ */
+
+import { getRedisClient, getRedisPubClient, getRedisSubClient, getPubSubManager } from '@tickettoken/shared';
 import { RealTimeMetric } from '../../types';
 import { logger } from '../../utils/logger';
 
 export class RealtimeModel {
-  private static redis = getRedis;
-  private static pub = getPubClient;
-  private static sub = getSubClient;
+  private static pubSubManager = getPubSubManager();
   
   static async updateRealTimeMetric(
     venueId: string,
     metricType: string,
     value: number
   ): Promise<void> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `realtime:${venueId}:${metricType}`;
     
     // Get previous value
@@ -46,7 +50,7 @@ export class RealtimeModel {
     venueId: string,
     metricType: string
   ): Promise<RealTimeMetric | null> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `realtime:${venueId}:${metricType}`;
     const dataKey = `realtime:data:${venueId}:${metricType}`;
     
@@ -65,7 +69,7 @@ export class RealtimeModel {
     counterType: string,
     by: number = 1
   ): Promise<number> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `counter:${venueId}:${counterType}`;
     const value = await redis.incrby(key, by);
     
@@ -79,7 +83,7 @@ export class RealtimeModel {
     venueId: string,
     counterType: string
   ): Promise<number> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `counter:${venueId}:${counterType}`;
     const value = await redis.get(key);
     
@@ -90,7 +94,7 @@ export class RealtimeModel {
     venueId: string,
     counterType: string
   ): Promise<void> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `counter:${venueId}:${counterType}`;
     await redis.set(key, '0');
   }
@@ -100,17 +104,16 @@ export class RealtimeModel {
     metricType: string,
     data: any
   ): Promise<void> {
-    const pub = this.pub();
     const channel = `metrics:${venueId}:${metricType}`;
     const dataKey = `realtime:data:${venueId}:${metricType}`;
     
     // Store data for future requests
-    const redis = this.redis();
+    const redis = await getRedisClient();
     await redis.set(dataKey, JSON.stringify(data));
     await redis.expire(dataKey, 300);
     
-    // Publish to subscribers
-    await pub.publish(channel, JSON.stringify(data));
+    // Publish to subscribers using shared pub/sub manager
+    await this.pubSubManager.publish(channel, data);
   }
   
   static async subscribeToMetric(
@@ -118,19 +121,14 @@ export class RealtimeModel {
     metricType: string,
     callback: (data: any) => void
   ): Promise<void> {
-    const sub = this.sub();
     const channel = `metrics:${venueId}:${metricType}`;
     
-    await sub.subscribe(channel);
-    
-    sub.on('message', (receivedChannel, message) => {
-      if (receivedChannel === channel) {
-        try {
-          const data = JSON.parse(message);
-          callback(data);
-        } catch (error) {
-          logger.error('Error parsing metric update:', error);
-        }
+    // Use shared pub/sub manager for subscription
+    await this.pubSubManager.subscribe(channel, (message) => {
+      try {
+        callback(message);
+      } catch (error) {
+        logger.error('Error processing metric update:', error);
       }
     });
   }
@@ -139,9 +137,8 @@ export class RealtimeModel {
     venueId: string,
     metricType: string
   ): Promise<void> {
-    const sub = this.sub();
     const channel = `metrics:${venueId}:${metricType}`;
-    await sub.unsubscribe(channel);
+    await this.pubSubManager.unsubscribe(channel);
   }
   
   static async setGauge(
@@ -150,7 +147,7 @@ export class RealtimeModel {
     value: number,
     max: number
   ): Promise<void> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `gauge:${venueId}:${gaugeName}`;
     
     const data = {
@@ -171,7 +168,7 @@ export class RealtimeModel {
     venueId: string,
     gaugeName: string
   ): Promise<any | null> {
-    const redis = this.redis();
+    const redis = await getRedisClient();
     const key = `gauge:${venueId}:${gaugeName}`;
     const value = await redis.get(key);
     

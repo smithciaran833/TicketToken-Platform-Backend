@@ -1,13 +1,13 @@
 import { JWTService } from '../services/jwt.service';
 import { RBACService } from '../services/rbac.service';
 import { AuthenticationError, AuthorizationError } from '../errors';
+import { auditLogger } from '../config/logger';
 
 export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACService) {
   return {
     authenticate: async (request: any, _reply: any) => {
       try {
         const authHeader = request.headers.authorization;
-        
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
           throw new AuthenticationError('Missing or invalid authorization header');
         }
@@ -20,6 +20,9 @@ export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACSe
 
         request.user = {
           id: payload.sub,
+          tenant_id: payload.tenant_id,
+          email: payload.email,
+          role: payload.role,
           permissions,
         };
       } catch (error) {
@@ -44,6 +47,19 @@ export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACSe
         );
 
         if (!hasPermission) {
+          // Log authorization failure for security auditing
+          auditLogger.warn({
+            userId: request.user.id,
+            tenantId: request.user.tenant_id,
+            email: request.user.email,
+            permission,
+            resource: venueId,
+            url: request.url,
+            method: request.method,
+            ip: request.ip,
+            userAgent: request.headers['user-agent']
+          }, 'Authorization denied: Missing required permission');
+          
           throw new AuthorizationError(`Missing required permission: ${permission}`);
         }
       };
@@ -63,6 +79,18 @@ export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACSe
       const hasAccess = venueRoles.some((role: any) => role.venue_id === venueId);
 
       if (!hasAccess) {
+        // Log venue access denial for security auditing
+        auditLogger.warn({
+          userId: request.user.id,
+          tenantId: request.user.tenant_id,
+          email: request.user.email,
+          venueId,
+          url: request.url,
+          method: request.method,
+          ip: request.ip,
+          userAgent: request.headers['user-agent']
+        }, 'Authorization denied: No access to venue');
+        
         throw new AuthorizationError('No access to this venue');
       }
     },

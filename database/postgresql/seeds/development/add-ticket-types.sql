@@ -8,8 +8,7 @@ BEGIN TRANSACTION;
 WITH event_ids AS (
     SELECT 
         e.id,
-        e.name as event_name,
-        e.capacity
+        e.name as event_name
     FROM events e
 )
 

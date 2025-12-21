@@ -48,8 +48,7 @@ LIMIT 2;
 -- Update ticket type quantities after purchases
 UPDATE ticket_types tt
 SET 
-    available_quantity = available_quantity - purchased.count,
-    sold_count = COALESCE(sold_count, 0) + purchased.count
+    available = available - purchased.count
 FROM (
     SELECT ticket_type_id, COUNT(*) as count
     FROM tickets
@@ -78,9 +77,9 @@ SELECT
     e.name as event,
     tt.name as ticket_type,
     tt.quantity as total_seats,
-    tt.sold_count as sold,
-    tt.available_quantity as available
+    (tt.quantity - tt.available) as sold,
+    tt.available as available
 FROM ticket_types tt
 JOIN events e ON tt.event_id = e.id
-WHERE tt.sold_count > 0
+WHERE (tt.quantity - tt.available) > 0
 ORDER BY e.name, tt.name;

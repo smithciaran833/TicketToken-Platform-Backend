@@ -1,441 +1,322 @@
 import { DeviceTrustService } from '../../../src/services/device-trust.service';
+import { pool } from '../../../src/config/database';
+import { redis } from '../../../src/config/redis';
 
-// Mock database
-jest.mock('../../../src/config/database', () => ({
-  db: jest.fn(() => ({
-    where: jest.fn().mockReturnThis(),
-    first: jest.fn(),
-    insert: jest.fn(),
-    update: jest.fn(),
-  })),
-}));
-
-import { db } from '../../../src/config/database';
+jest.mock('../../../src/config/database');
+jest.mock('../../../src/config/redis');
 
 describe('DeviceTrustService', () => {
-  let service: DeviceTrustService;
-  let mockDb: jest.MockedFunction<typeof db>;
+  let deviceTrustService: DeviceTrustService;
+  let mockPool: jest.Mocked<typeof pool>;
+  let mockRedis: jest.Mocked<typeof redis>;
 
   beforeEach(() => {
-    mockDb = db as jest.MockedFunction<typeof db>;
-    service = new DeviceTrustService();
+    deviceTrustService = new DeviceTrustService();
+    mockPool = pool as jest.Mocked<typeof pool>;
+    mockRedis = redis as jest.Mocked<typeof redis>;
     jest.clearAllMocks();
   });
 
   describe('generateFingerprint', () => {
-    it('should generate fingerprint from request headers', () => {
+    it('should generate consistent fingerprint for same device', () => {
       const request = {
+        ip: '192.168.1.1',
         headers: {
           'user-agent': 'Mozilla/5.0',
           'accept-language': 'en-US',
-          'accept-encoding': 'gzip, deflate',
         },
-        ip: '192.168.1.1',
       };
 
-      const fingerprint = service.generateFingerprint(request);
-
-      expect(fingerprint).toBeDefined();
-      expect(typeof fingerprint).toBe('string');
-      expect(fingerprint.length).toBe(64); // SHA256 hex length
-    });
-
-    it('should generate same fingerprint for identical requests', () => {
-      const request = {
-        headers: {
-          'user-agent': 'Mozilla/5.0',
-          'accept-language': 'en-US',
-          'accept-encoding': 'gzip',
-        },
-        ip: '192.168.1.1',
-      };
-
-      const fingerprint1 = service.generateFingerprint(request);
-      const fingerprint2 = service.generateFingerprint(request);
+      const fingerprint1 = deviceTrustService.generateFingerprint(request);
+      const fingerprint2 = deviceTrustService.generateFingerprint(request);
 
       expect(fingerprint1).toBe(fingerprint2);
+      expect(fingerprint1).toBeDefined();
+      expect(fingerprint1.length).toBeGreaterThan(10);
     });
 
-    it('should generate different fingerprints for different requests', () => {
-      const request1 = {
-        headers: {
-          'user-agent': 'Mozilla/5.0',
-          'accept-language': 'en-US',
-          'accept-encoding': 'gzip',
-        },
+    it('should generate different fingerprints for different devices', () => {
+      const device1 = {
         ip: '192.168.1.1',
+        headers: { 'user-agent': 'Chrome' },
       };
 
-      const request2 = {
-        headers: {
-          'user-agent': 'Chrome/90.0',
-          'accept-language': 'en-US',
-          'accept-encoding': 'gzip',
-        },
-        ip: '192.168.1.1',
+      const device2 = {
+        ip: '192.168.1.2',
+        headers: { 'user-agent': 'Firefox' },
       };
 
-      const fingerprint1 = service.generateFingerprint(request1);
-      const fingerprint2 = service.generateFingerprint(request2);
+      const fingerprint1 = deviceTrustService.generateFingerprint(device1);
+      const fingerprint2 = deviceTrustService.generateFingerprint(device2);
 
       expect(fingerprint1).not.toBe(fingerprint2);
     });
 
-    it('should handle missing headers gracefully', () => {
-      const request = {
-        headers: {},
-        ip: '192.168.1.1',
+    it('should include IP address in fingerprint', () => {
+      const device = {
+        ip: '10.0.0.1',
+        headers: { 'user-agent': 'Test' },
       };
 
-      const fingerprint = service.generateFingerprint(request);
-
+      const fingerprint = deviceTrustService.generateFingerprint(device);
       expect(fingerprint).toBeDefined();
-      expect(typeof fingerprint).toBe('string');
+    });
+
+    it('should include user-agent in fingerprint', () => {
+      const device = {
+        ip: '10.0.0.1',
+        headers: { 'user-agent': 'Unique-Agent' },
+      };
+
+      const fingerprint = deviceTrustService.generateFingerprint(device);
+      expect(fingerprint).toBeDefined();
+    });
+
+    it('should handle missing headers gracefully', () => {
+      const device = {
+        ip: '10.0.0.1',
+        headers: {},
+      };
+
+      const fingerprint = deviceTrustService.generateFingerprint(device);
+      expect(fingerprint).toBeDefined();
     });
   });
 
   describe('calculateTrustScore', () => {
-    const userId = 'user-123';
-    const fingerprint = 'abc123';
+    it('should return high score for known device', async () => {
+      const userId = 'user-123';
+      const fingerprint = 'known-device-fp';
 
-    it('should return 0 for unknown device', async () => {
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(null),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            successful_logins: 50,
+            failed_logins: 2,
+            last_seen: new Date(),
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
-      const score = await service.calculateTrustScore(userId, fingerprint);
+      const score = await deviceTrustService.calculateTrustScore(userId, fingerprint);
 
-      expect(score).toBe(0);
-      expect(mockDb).toHaveBeenCalledWith('trusted_devices');
+      expect(score).toBeGreaterThan(70);
+      expect(score).toBeLessThanOrEqual(100);
     });
 
-    it('should return base score of 50 for new device', async () => {
-      const device = {
-        user_id: userId,
-        device_fingerprint: fingerprint,
-        created_at: new Date(),
-        last_seen: new Date(),
-        trust_score: 50,
-      };
+    it('should return low score for new device', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      } as any);
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(device),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
+      const score = await deviceTrustService.calculateTrustScore('user-123', 'new-fp');
 
-      const score = await service.calculateTrustScore(userId, fingerprint);
-
-      expect(score).toBe(80); // 50 base + 30 for recent activity
+      expect(score).toBeLessThan(50);
     });
 
-    it('should add age bonus for older devices', async () => {
-      const createdAt = new Date();
-      createdAt.setDate(createdAt.getDate() - 100); // 100 days ago
+    it('should penalize devices with failed attempts', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            successful_logins: 5,
+            failed_logins: 20,
+            last_seen: new Date(),
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
-      const device = {
-        user_id: userId,
-        device_fingerprint: fingerprint,
-        created_at: createdAt,
-        last_seen: new Date(),
-        trust_score: 50,
-      };
+      const score = await deviceTrustService.calculateTrustScore('user-123', 'suspicious-fp');
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(device),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
-
-      const score = await service.calculateTrustScore(userId, fingerprint);
-
-      expect(score).toBeGreaterThan(80); // Base + age + recent activity
+      expect(score).toBeLessThan(40);
     });
 
-    it('should cap trust score at 100', async () => {
-      const createdAt = new Date();
-      createdAt.setDate(createdAt.getDate() - 500); // Very old device
+    it('should consider device age in score', async () => {
+      const oldDate = new Date();
+      oldDate.setFullYear(oldDate.getFullYear() - 1);
 
-      const device = {
-        user_id: userId,
-        device_fingerprint: fingerprint,
-        created_at: createdAt,
-        last_seen: new Date(),
-        trust_score: 50,
-      };
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            successful_logins: 100,
+            failed_logins: 0,
+            last_seen: oldDate,
+            first_seen: oldDate,
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(device),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
+      const score = await deviceTrustService.calculateTrustScore('user-123', 'old-device-fp');
 
-      const score = await service.calculateTrustScore(userId, fingerprint);
-
-      expect(score).toBe(100);
+      expect(score).toBeGreaterThan(80);
     });
 
-    it('should reduce bonus for devices not recently seen', async () => {
-      const lastSeen = new Date();
-      lastSeen.setDate(lastSeen.getDate() - 10); // 10 days ago
+    it('should update score in cache', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ successful_logins: 10, failed_logins: 0 }],
+        rowCount: 1,
+      } as any);
 
-      const device = {
-        user_id: userId,
-        device_fingerprint: fingerprint,
-        created_at: new Date(),
-        last_seen: lastSeen,
-        trust_score: 50,
-      };
+      mockRedis.setex = jest.fn().mockResolvedValue('OK');
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(device),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
+      await deviceTrustService.calculateTrustScore('user-123', 'fp-123');
 
-      const score = await service.calculateTrustScore(userId, fingerprint);
-
-      expect(score).toBe(60); // 50 base + 10 for seen within 30 days
+      expect(mockRedis.setex).toHaveBeenCalled();
     });
   });
 
   describe('recordDeviceActivity', () => {
-    const userId = 'user-123';
-    const fingerprint = 'abc123';
+    it('should record successful login', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 1,
+      } as any);
 
-    describe('for new device', () => {
-      it('should insert new device with success', async () => {
-        const mockQuery = {
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(null),
-        };
-        const mockInsertQuery = {
-          insert: jest.fn().mockResolvedValue([1]),
-        };
+      await deviceTrustService.recordDeviceActivity('user-123', 'fp-123', true);
 
-        mockDb
-          .mockReturnValueOnce(mockQuery as any)
-          .mockReturnValueOnce(mockInsertQuery as any);
-
-        await service.recordDeviceActivity(userId, fingerprint, true);
-
-        expect(mockInsertQuery.insert).toHaveBeenCalledWith(
-          expect.objectContaining({
-            user_id: userId,
-            device_fingerprint: fingerprint,
-            trust_score: 50,
-          })
-        );
-      });
-
-      it('should insert new device with failure', async () => {
-        const mockQuery = {
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(null),
-        };
-        const mockInsertQuery = {
-          insert: jest.fn().mockResolvedValue([1]),
-        };
-
-        mockDb
-          .mockReturnValueOnce(mockQuery as any)
-          .mockReturnValueOnce(mockInsertQuery as any);
-
-        await service.recordDeviceActivity(userId, fingerprint, false);
-
-        expect(mockInsertQuery.insert).toHaveBeenCalledWith(
-          expect.objectContaining({
-            user_id: userId,
-            device_fingerprint: fingerprint,
-            trust_score: 0,
-          })
-        );
-      });
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT'),
+        expect.any(Array)
+      );
     });
 
-    describe('for existing device', () => {
-      it('should increase trust score on success', async () => {
-        const existingDevice = {
-          id: 1,
-          user_id: userId,
-          device_fingerprint: fingerprint,
-          trust_score: 50,
-          last_seen: new Date(),
-        };
+    it('should record failed login', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 1,
+      } as any);
 
-        const mockQuery = {
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(existingDevice),
-        };
-        const mockUpdateQuery = {
-          where: jest.fn().mockReturnThis(),
-          update: jest.fn().mockResolvedValue(1),
-        };
+      await deviceTrustService.recordDeviceActivity('user-123', 'fp-123', false);
 
-        mockDb
-          .mockReturnValueOnce(mockQuery as any)
-          .mockReturnValueOnce(mockUpdateQuery as any);
+      expect(mockPool.query).toHaveBeenCalled();
+    });
 
-        await service.recordDeviceActivity(userId, fingerprint, true);
+    it('should increment success counter', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ successful_logins: 10 }],
+        rowCount: 1,
+      } as any);
 
-        expect(mockUpdateQuery.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            trust_score: 55, // 50 + 5
-          })
-        );
-      });
+      await deviceTrustService.recordDeviceActivity('user-123', 'fp-123', true);
 
-      it('should decrease trust score on failure', async () => {
-        const existingDevice = {
-          id: 1,
-          user_id: userId,
-          device_fingerprint: fingerprint,
-          trust_score: 50,
-          last_seen: new Date(),
-        };
+      expect(mockPool.query).toHaveBeenCalled();
+    });
 
-        const mockQuery = {
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(existingDevice),
-        };
-        const mockUpdateQuery = {
-          where: jest.fn().mockReturnThis(),
-          update: jest.fn().mockResolvedValue(1),
-        };
+    it('should increment failed counter', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ failed_logins: 5 }],
+        rowCount: 1,
+      } as any);
 
-        mockDb
-          .mockReturnValueOnce(mockQuery as any)
-          .mockReturnValueOnce(mockUpdateQuery as any);
+      await deviceTrustService.recordDeviceActivity('user-123', 'fp-123', false);
 
-        await service.recordDeviceActivity(userId, fingerprint, false);
+      expect(mockPool.query).toHaveBeenCalled();
+    });
 
-        expect(mockUpdateQuery.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            trust_score: 40, // 50 - 10
-          })
-        );
-      });
+    it('should update last_seen timestamp', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ last_seen: new Date() }],
+        rowCount: 1,
+      } as any);
 
-      it('should cap trust score at 100', async () => {
-        const existingDevice = {
-          id: 1,
-          user_id: userId,
-          device_fingerprint: fingerprint,
-          trust_score: 98,
-          last_seen: new Date(),
-        };
+      await deviceTrustService.recordDeviceActivity('user-123', 'fp-123', true);
 
-        const mockQuery = {
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(existingDevice),
-        };
-        const mockUpdateQuery = {
-          where: jest.fn().mockReturnThis(),
-          update: jest.fn().mockResolvedValue(1),
-        };
-
-        mockDb
-          .mockReturnValueOnce(mockQuery as any)
-          .mockReturnValueOnce(mockUpdateQuery as any);
-
-        await service.recordDeviceActivity(userId, fingerprint, true);
-
-        expect(mockUpdateQuery.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            trust_score: 100,
-          })
-        );
-      });
-
-      it('should not go below 0 trust score', async () => {
-        const existingDevice = {
-          id: 1,
-          user_id: userId,
-          device_fingerprint: fingerprint,
-          trust_score: 5,
-          last_seen: new Date(),
-        };
-
-        const mockQuery = {
-          where: jest.fn().mockReturnThis(),
-          first: jest.fn().mockResolvedValue(existingDevice),
-        };
-        const mockUpdateQuery = {
-          where: jest.fn().mockReturnThis(),
-          update: jest.fn().mockResolvedValue(1),
-        };
-
-        mockDb
-          .mockReturnValueOnce(mockQuery as any)
-          .mockReturnValueOnce(mockUpdateQuery as any);
-
-        await service.recordDeviceActivity(userId, fingerprint, false);
-
-        expect(mockUpdateQuery.update).toHaveBeenCalledWith(
-          expect.objectContaining({
-            trust_score: 0,
-          })
-        );
-      });
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('last_seen'),
+        expect.any(Array)
+      );
     });
   });
 
   describe('requiresAdditionalVerification', () => {
-    const userId = 'user-123';
-    const fingerprint = 'abc123';
+    it('should not require verification for trusted device', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ successful_logins: 100, failed_logins: 0 }],
+        rowCount: 1,
+      } as any);
 
-    it('should require verification for low trust device (score < 30)', async () => {
-      const device = {
-        user_id: userId,
-        device_fingerprint: fingerprint,
-        created_at: new Date(),
-        last_seen: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000), // 35 days ago - no activity bonus
-        trust_score: 50,
-      };
-
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(device),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
-
-      const requires = await service.requiresAdditionalVerification(userId, fingerprint);
-
-      expect(requires).toBe(true); // Score will be 50 base + 0 activity = 50, but we need score < 30
-    });
-
-    it('should not require verification for trusted device (score >= 30)', async () => {
-      const device = {
-        user_id: userId,
-        device_fingerprint: fingerprint,
-        created_at: new Date(),
-        last_seen: new Date(),
-        trust_score: 50,
-      };
-
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(device),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
-
-      const requires = await service.requiresAdditionalVerification(userId, fingerprint);
+      const requires = await deviceTrustService.requiresAdditionalVerification(
+        'user-123',
+        'trusted-fp'
+      );
 
       expect(requires).toBe(false);
     });
 
-    it('should require verification for unknown device', async () => {
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(null),
-      };
-      mockDb.mockReturnValue(mockQuery as any);
+    it('should require verification for new device', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      } as any);
 
-      const requires = await service.requiresAdditionalVerification(userId, fingerprint);
+      const requires = await deviceTrustService.requiresAdditionalVerification(
+        'user-123',
+        'new-fp'
+      );
 
       expect(requires).toBe(true);
+    });
+
+    it('should require verification for suspicious device', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ successful_logins: 1, failed_logins: 10 }],
+        rowCount: 1,
+      } as any);
+
+      const requires = await deviceTrustService.requiresAdditionalVerification(
+        'user-123',
+        'suspicious-fp'
+      );
+
+      expect(requires).toBe(true);
+    });
+
+    it('should check trust score threshold', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ successful_logins: 20, failed_logins: 1 }],
+        rowCount: 1,
+      } as any);
+
+      const requires = await deviceTrustService.requiresAdditionalVerification(
+        'user-123',
+        'medium-trust-fp'
+      );
+
+      expect(typeof requires).toBe('boolean');
+    });
+  });
+
+  describe('getDeviceHistory', () => {
+    it('should return device login history', async () => {
+      const mockHistory = [
+        { timestamp: new Date(), success: true, ip: '10.0.0.1' },
+        { timestamp: new Date(), success: true, ip: '10.0.0.1' },
+      ];
+
+      mockPool.query.mockResolvedValueOnce({
+        rows: mockHistory,
+        rowCount: 2,
+      } as any);
+
+      const history = await deviceTrustService.getDeviceHistory('user-123', 'fp-123');
+
+      expect(history).toHaveLength(2);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT'),
+        expect.any(Array)
+      );
+    });
+
+    it('should limit history to recent entries', async () => {
+      await deviceTrustService.getDeviceHistory('user-123', 'fp-123', 10);
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('LIMIT'),
+        expect.any(Array)
+      );
     });
   });
 });

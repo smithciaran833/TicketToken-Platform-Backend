@@ -1,5 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { createLogger } from './logger';
+import { closeRedisConnections } from '../config/redis';
 
 const logger = createLogger('graceful-shutdown');
 
@@ -26,11 +27,9 @@ export function gracefulShutdown(server: FastifyInstance) {
       await server.close();
       logger.info('Server closed, no longer accepting connections');
 
-      // Close Redis connections
-      if (server.redis) {
-        await server.redis.quit();
-        logger.info('Redis connection closed');
-      }
+      // Close Redis connections via shared connection manager
+      await closeRedisConnections();
+      logger.info('Redis connections closed');
 
       // Close HTTP client connections (service clients use undici)
       // The HTTP clients in AuthServiceClient and VenueServiceClient

@@ -29,26 +29,26 @@ export class QueueController {
       const queue = QueueFactory.getQueue(name as any);
       const metrics = await QueueFactory.getQueueMetrics(name as any);
 
-      // Get sample of waiting jobs
-      const waitingJobs = await queue.getWaiting(0, 10);
-      const activeJobs = await queue.getActive(0, 10);
-      const failedJobs = await queue.getFailed(0, 10);
+      // Get sample of waiting jobs (adapter returns empty arrays - OK for now)
+      const waitingJobs = await queue.getJobs(['waiting'], 0, 10);
+      const activeJobs = await queue.getJobs(['active'], 0, 10);
+      const failedJobs = await queue.getJobs(['failed'], 0, 10);
 
       return reply.send({
         name: queue.name,
         metrics,
         samples: {
-          waiting: waitingJobs.map(j => ({
+          waiting: waitingJobs.map((j: any) => ({
             id: j.id,
             type: j.name,
             createdAt: new Date(j.timestamp)
           })),
-          active: activeJobs.map(j => ({
+          active: activeJobs.map((j: any) => ({
             id: j.id,
             type: j.name,
             startedAt: new Date(j.processedOn || j.timestamp)
           })),
-          failed: failedJobs.map(j => ({
+          failed: failedJobs.map((j: any) => ({
             id: j.id,
             type: j.name,
             failedAt: new Date(j.finishedOn || j.timestamp),
@@ -69,7 +69,7 @@ export class QueueController {
       const queue = QueueFactory.getQueue(name as any);
       await queue.pause();
 
-      logger.warn(`Queue ${name} paused by user ${request.user?.id}`);
+      logger.warn(`Queue ${name} paused by user ${request.user?.userId}`);
 
       return reply.send({
         queue: name,
@@ -89,7 +89,7 @@ export class QueueController {
       const queue = QueueFactory.getQueue(name as any);
       await queue.resume();
 
-      logger.info(`Queue ${name} resumed by user ${request.user?.id}`);
+      logger.info(`Queue ${name} resumed by user ${request.user?.userId}`);
 
       return reply.send({
         queue: name,
@@ -111,10 +111,10 @@ export class QueueController {
 
       if (type) {
         await queue.clean(0, type);
-        logger.warn(`Queue ${name} cleared (${type}) by user ${request.user?.id}`);
+        logger.warn(`Queue ${name} cleared (${type}) by user ${request.user?.userId}`);
       } else {
         await queue.empty();
-        logger.warn(`Queue ${name} emptied by user ${request.user?.id}`);
+        logger.warn(`Queue ${name} emptied by user ${request.user?.userId}`);
       }
 
       return reply.send({
@@ -153,12 +153,12 @@ export class QueueController {
           return reply.code(400).send({ error: 'Invalid status parameter' });
       }
 
-      const jobList = jobs.map(job => ({
+      const jobList = jobs.map((job: any) => ({
         id: job.id,
         type: job.name,
         data: job.data,
         attempts: job.attemptsMade,
-        progress: job.progress(),
+        progress: job.progress ? job.progress() : 0,
         createdAt: new Date(job.timestamp),
         processedAt: job.processedOn ? new Date(job.processedOn) : null,
         finishedAt: job.finishedOn ? new Date(job.finishedOn) : null,

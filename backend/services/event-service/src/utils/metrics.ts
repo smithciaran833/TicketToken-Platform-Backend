@@ -155,3 +155,93 @@ export const reservationCleanupDuration = new Histogram({
   buckets: [0.1, 0.5, 1, 5, 10, 30],
   registers: [register]
 });
+
+// Cache operations metrics
+export const cacheHitsTotal = new Counter({
+  name: 'cache_hits_total',
+  help: 'Total cache hits',
+  labelNames: ['cache_key'],
+  registers: [register]
+});
+
+export const cacheMissesTotal = new Counter({
+  name: 'cache_misses_total',
+  help: 'Total cache misses',
+  labelNames: ['cache_key'],
+  registers: [register]
+});
+
+export const cacheInvalidationTotal = new Counter({
+  name: 'cache_invalidation_total',
+  help: 'Total cache invalidations',
+  labelNames: ['status', 'cache_key'],
+  registers: [register]
+});
+
+export const cacheInvalidationFailuresTotal = new Counter({
+  name: 'cache_invalidation_failures_total',
+  help: 'Total cache invalidation failures',
+  labelNames: ['cache_key', 'error_type'],
+  registers: [register]
+});
+
+// Rate limiting metrics
+export const rateLimitHitsTotal = new Counter({
+  name: 'rate_limit_hits_total',
+  help: 'Total requests that hit rate limit',
+  labelNames: ['endpoint'],
+  registers: [register]
+});
+
+export const rateLimitFailOpenTotal = new Counter({
+  name: 'rate_limit_fail_open_total',
+  help: 'Total times rate limiting failed open due to errors',
+  labelNames: ['error_type'],
+  registers: [register]
+});
+
+// External service call metrics
+export const externalServiceCallsTotal = new Counter({
+  name: 'external_service_calls_total',
+  help: 'Total external service calls',
+  labelNames: ['service', 'operation', 'status'],
+  registers: [register]
+});
+
+export const externalServiceDuration = new Histogram({
+  name: 'external_service_duration_seconds',
+  help: 'Duration of external service calls in seconds',
+  labelNames: ['service', 'operation'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10],
+  registers: [register]
+});
+
+// Circuit breaker metrics
+export const circuitBreakerStateChanges = new Counter({
+  name: 'circuit_breaker_state_changes_total',
+  help: 'Total circuit breaker state changes',
+  labelNames: ['service', 'from_state', 'to_state'],
+  registers: [register]
+});
+
+export const circuitBreakerCallsTotal = new Counter({
+  name: 'circuit_breaker_calls_total',
+  help: 'Total circuit breaker calls',
+  labelNames: ['service', 'status'],
+  registers: [register]
+});
+
+// Search sync metrics
+export const searchSyncPublishedTotal = new Counter({
+  name: 'search_sync_published_total',
+  help: 'Total search sync events published',
+  labelNames: ['event_type', 'status'],
+  registers: [register]
+});
+
+export const searchSyncFailuresTotal = new Counter({
+  name: 'search_sync_failures_total',
+  help: 'Total search sync failures',
+  labelNames: ['event_type', 'error_type'],
+  registers: [register]
+});

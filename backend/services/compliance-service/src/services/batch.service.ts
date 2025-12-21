@@ -90,7 +90,7 @@ export class BatchService {
           logger.info(`✅ Generated 1099-K for ${venue.business_name}: $${venue.total_sales}`);
           
         } catch (error) {
-          logger.error(`❌ Failed to generate 1099 for ${venue.venue_id}:`, error);
+          logger.error({ error }, `❌ Failed to generate 1099 for ${venue.venue_id}:`);
           errors++;
         }
         
@@ -119,7 +119,7 @@ export class BatchService {
       return { generated, errors, venues };
       
     } catch (error) {
-      logger.error('Batch 1099 generation failed:', error);
+      logger.error({ error }, 'Batch 1099 generation failed:');
       throw error;
     }
   }

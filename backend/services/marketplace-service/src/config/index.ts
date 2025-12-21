@@ -1,5 +1,5 @@
 import { db } from './database';
-import { redis, cache } from './redis';
+import { getRedis, cache, initRedis, closeRedisConnections } from './redis';
 import blockchain from './blockchain';
 import constants from './constants';
 import { logger } from '../utils/logger';
@@ -52,7 +52,7 @@ export const config = {
 };
 
 // Export everything
-export { db, redis, cache, blockchain, constants };
+export { db, getRedis, cache, blockchain, constants, initRedis, closeRedisConnections };
 export default config;
 
 // Additional service URLs

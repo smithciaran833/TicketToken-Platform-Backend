@@ -10,7 +10,7 @@ use instructions::*;
 use state::MintTicketArgs;
 use state::CreateEventParams;
 
-declare_id!("2Pt5c9QcKSxMe9cBpfhdmfWHUwq8NUk7kFmJREJsNm2b");
+declare_id!("BnYanHjkV6bBDFYfC7F76TyYk6NA9p3wvcAfY1XZCXYS");
 
 #[program]
 pub mod tickettoken {
@@ -58,6 +58,22 @@ pub mod tickettoken {
         expires_at: i64,
     ) -> Result<()> {
         instructions::list_ticket_on_marketplace(ctx, ticket_asset_id, price, expires_at)
+    }
+
+    pub fn register_ticket(
+        ctx: Context<RegisterTicket>,
+        ticket_id: u64,
+        nft_asset_id: Pubkey,
+        owner_id: String,
+    ) -> Result<()> {
+        instructions::register_ticket::register_ticket(ctx, ticket_id, nft_asset_id, owner_id)
+    }
+
+    pub fn transfer_ticket(
+        ctx: Context<TransferTicket>,
+        new_owner_id: String,
+    ) -> Result<()> {
+        instructions::transfer_ticket::transfer_ticket(ctx, new_owner_id)
     }
 
     pub fn verify_ticket(ctx: Context<VerifyTicket>) -> Result<()> {

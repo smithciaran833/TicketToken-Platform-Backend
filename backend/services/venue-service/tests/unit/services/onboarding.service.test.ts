@@ -206,7 +206,6 @@ describe('OnboardingService', () => {
     it('should complete layout step', async () => {
       const data = {
         name: 'Main Layout',
-        venue_type: 'arena',
         sections: [],
         max_capacity: 10000,
       };
@@ -218,13 +217,14 @@ describe('OnboardingService', () => {
         expect.objectContaining({
           venue_id: venueId,
           name: data.name,
+          max_capacity: data.max_capacity,
         })
       );
     });
 
     it('should complete payment step', async () => {
       const data = {
-        venue_type: 'stripe',
+        type: 'stripe',
         config: { apiKey: 'test-key' },
       };
       mockIntegrationModel.create.mockResolvedValue({ id: 'int-1' } as any);
@@ -234,7 +234,7 @@ describe('OnboardingService', () => {
       expect(mockIntegrationModel.create).toHaveBeenCalledWith(
         expect.objectContaining({
           venue_id: venueId,
-          type: data.venue_type,
+          type: data.type,
         })
       );
     });

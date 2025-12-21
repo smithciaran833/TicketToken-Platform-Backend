@@ -26,11 +26,11 @@ export class PaymentEventProcessor {
   }
 
   async processPaymentEvent(event: PaymentEvent): Promise<void> {
-    // Log event
+    // Log event to payment_state_transitions table
     await this.db.query(
-      `INSERT INTO payment_events (event_id, event_type, payment_id, order_id, provider, payload, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [event.id, event.type, event.paymentId, event.orderId, event.provider, JSON.stringify(event), event.timestamp]
+      `INSERT INTO payment_state_transitions (payment_id, order_id, from_state, to_state, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [event.paymentId, event.orderId, null, event.type, JSON.stringify(event), event.timestamp]
     );
 
     // Handle different event types
@@ -65,16 +65,19 @@ export class PaymentEventProcessor {
   }
 
   private async handlePaymentFailed(event: PaymentEvent): Promise<void> {
-    // Queue retry if applicable
-    const payment = await this.db.query(
-      'SELECT retry_count FROM payments WHERE id = $1',
-      [event.paymentId]
+    // Query payment_attempts for retry count
+    const attempts = await this.db.query(
+      'SELECT attempt_number FROM payment_attempts WHERE order_id = $1 ORDER BY attempt_number DESC LIMIT 1',
+      [event.orderId]
     );
 
-    if (payment.rows[0]?.retry_count < 3) {
+    const currentAttempt = attempts.rows[0]?.attempt_number || 0;
+
+    if (currentAttempt < 3) {
       await this.queue.add('payment.retry', {
         paymentId: event.paymentId,
-        attemptNumber: payment.rows[0].retry_count + 1
+        orderId: event.orderId,
+        attemptNumber: currentAttempt + 1
       }, {
         delay: 3600000 // Retry in 1 hour
       });

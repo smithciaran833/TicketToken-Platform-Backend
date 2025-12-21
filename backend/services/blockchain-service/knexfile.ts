@@ -1,5 +1,10 @@
 import { config as dotenvConfig } from 'dotenv';
+import pg from 'pg';
 dotenvConfig();
+
+// Configure pg to parse NUMERIC and DECIMAL types as numbers instead of strings
+// Type IDs: 1700 = NUMERIC/DECIMAL
+pg.types.setTypeParser(1700, (val: string) => parseFloat(val));
 
 const config = {
   development: {

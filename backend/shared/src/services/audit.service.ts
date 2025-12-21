@@ -28,7 +28,9 @@ export class AuditService {
     this.pool = new Pool({
       connectionString: databaseUrl || process.env.DATABASE_URL,
     });
-    this.initializeTable();
+    // Table initialization is now handled by migration:
+    // database/postgresql/migrations/shared/001_create_canonical_audit_logs.sql
+    // this.initializeTable(); // REMOVED - use migration instead
   }
 
   static getInstance(databaseUrl?: string): AuditService {

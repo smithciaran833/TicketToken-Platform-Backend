@@ -57,6 +57,12 @@ pub fn create_event(ctx: Context<CreateEvent>, params: CreateEventParams) -> Res
     validate_capacity(params.total_tickets)?;
     validate_refund_window(params.refund_window)?;
     
+    // Validate royalty percentages (basis points - 10000 = 100%)
+    require!(
+        params.artist_percentage + params.venue_percentage <= 10000,
+        TicketTokenError::InvalidRoyaltyPercentage
+    );
+    
     // Validate tree capacity
     let tree_config = TreeConfig::optimal();
     require!(
@@ -91,6 +97,12 @@ pub fn create_event(ctx: Context<CreateEvent>, params: CreateEventParams) -> Res
     // For now, we'll store a placeholder merkle tree pubkey
     // Real merkle tree initialization will be added in the next step
     event.merkle_tree = Pubkey::default();
+    
+    // Store royalty information (immutable)
+    event.artist_wallet = params.artist_wallet;
+    event.artist_percentage = params.artist_percentage;
+    event.venue_percentage = params.venue_percentage;
+    
     event.bump = ctx.bumps.event;
     
     // Update venue event counter

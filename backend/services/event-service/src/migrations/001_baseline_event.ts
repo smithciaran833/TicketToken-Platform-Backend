@@ -4,6 +4,20 @@ export async function up(knex: Knex): Promise<void> {
   // Enable UUID extension
   await knex.raw('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
 
+  // Create the update_updated_at_column function if it doesn't exist
+  await knex.raw(`
+    CREATE OR REPLACE FUNCTION update_updated_at_column()
+    RETURNS TRIGGER AS $$
+    BEGIN
+      NEW.updated_at = NOW();
+      RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+  `);
+
+  // NOTE: Tenants table is created by auth-service
+  // This service only references it via FK constraints
+
   // 1. EVENT_CATEGORIES TABLE (hierarchical categories)
   await knex.schema.createTableIfNotExists('event_categories', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
@@ -98,6 +112,14 @@ export async function up(knex: Knex): Promise<void> {
     table.text('refund_policy');
     table.integer('cancellation_deadline_hours').defaultTo(24);
 
+    // Transfer Settings (for ticket transfer service)
+    table.timestamp('start_date', { useTz: true });
+    table.boolean('allow_transfers').defaultTo(true);
+    table.integer('max_transfers_per_ticket');
+    table.timestamp('transfer_blackout_start', { useTz: true });
+    table.timestamp('transfer_blackout_end', { useTz: true });
+    table.boolean('require_identity_verification').defaultTo(false);
+
     // SEO
     table.string('meta_title', 70);
     table.string('meta_description', 160);
@@ -156,7 +178,7 @@ export async function up(knex: Knex): Promise<void> {
       WHEN duplicate_object THEN NULL;
     END $$;
   `);
-  
+
   await knex.raw(`
     DO $$ BEGIN
       ALTER TABLE events ADD CONSTRAINT events_visibility_check CHECK (visibility IN ('PUBLIC', 'PRIVATE', 'UNLISTED'));
@@ -164,7 +186,7 @@ export async function up(knex: Knex): Promise<void> {
       WHEN duplicate_object THEN NULL;
     END $$;
   `);
-  
+
   await knex.raw(`
     DO $$ BEGIN
       ALTER TABLE events ADD CONSTRAINT events_event_type_check CHECK (event_type IN ('single', 'recurring', 'series'));
@@ -196,6 +218,7 @@ export async function up(knex: Knex): Promise<void> {
     table.jsonb('metadata').defaultTo('{}');
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true });
   });
 
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_schedules_tenant_id ON event_schedules(tenant_id)');
@@ -238,6 +261,7 @@ export async function up(knex: Knex): Promise<void> {
     table.integer('maximum_purchase');
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true });
   });
 
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_capacity_tenant_id ON event_capacity(tenant_id)');
@@ -246,6 +270,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_capacity_available ON event_capacity(available_capacity)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_capacity_reserved_expires ON event_capacity(reserved_expires_at)');
   await knex.raw("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_capacity_unique ON event_capacity(event_id, section_name, COALESCE(schedule_id, '00000000-0000-0000-0000-000000000000'::uuid))");
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_capacity_deleted_at ON event_capacity(deleted_at)');
 
   // 5. EVENT_PRICING TABLE
   await knex.schema.createTableIfNotExists('event_pricing', (table) => {
@@ -282,6 +307,7 @@ export async function up(knex: Knex): Promise<void> {
     table.integer('display_order').defaultTo(0);
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true });
   });
 
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_pricing_tenant_id ON event_pricing(tenant_id)');
@@ -289,6 +315,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_pricing_schedule_id ON event_pricing(schedule_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_pricing_capacity_id ON event_pricing(capacity_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_pricing_active_sales ON event_pricing(is_active, sales_start_at, sales_end_at)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_pricing_deleted_at ON event_pricing(deleted_at)');
 
   // 6. EVENT_METADATA TABLE
   await knex.schema.createTableIfNotExists('event_metadata', (table) => {
@@ -322,29 +349,11 @@ export async function up(knex: Knex): Promise<void> {
     table.jsonb('custom_fields');
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true });
   });
 
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_metadata_event_id ON event_metadata(event_id)');
-
-  // 7. AUDIT_LOGS TABLE (IF NOT EXISTS - may already exist from auth-service)
-  await knex.schema.createTableIfNotExists('audit_logs', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
-    table.uuid('user_id');
-    table.string('action', 100).notNullable();
-    table.string('resource_type', 50);
-    table.uuid('resource_id');
-    table.string('ip_address', 45);
-    table.text('user_agent');
-    table.jsonb('metadata').defaultTo('{}');
-    table.string('status', 20).defaultTo('success');
-    table.text('error_message');
-    table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
-  });
-
-  await knex.raw('CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs(user_id)');
-  await knex.raw('CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs(action)');
-  await knex.raw('CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at)');
-  await knex.raw('CREATE INDEX IF NOT EXISTS idx_audit_logs_resource ON audit_logs(resource_type, resource_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_metadata_deleted_at ON event_metadata(deleted_at)');
 
   // ==========================================
   // TRIGGERS
@@ -404,11 +413,126 @@ export async function up(knex: Knex): Promise<void> {
     EXECUTE FUNCTION update_updated_at_column();
   `);
 
-  console.log('✅ Event Service baseline migration complete - 7 tables + 6 triggers created');
+  // Audit trigger for events table (compliance)
+  const functionExists = await knex.raw(`
+    SELECT EXISTS (
+      SELECT 1 FROM pg_proc WHERE proname = 'audit_trigger_function'
+    );
+  `);
+
+  if (!functionExists.rows[0].exists) {
+    console.warn('⚠️  audit_trigger_function not found - run auth-service migrations first');
+  } else {
+    await knex.raw(`
+      DROP TRIGGER IF EXISTS audit_events_changes ON events;
+      CREATE TRIGGER audit_events_changes
+        AFTER INSERT OR UPDATE OR DELETE ON events
+        FOR EACH ROW 
+        EXECUTE FUNCTION audit_trigger_function();
+    `);
+    console.log('✅ Audit trigger attached to events table');
+  }
+
+  // ==========================================
+  // TENANT ISOLATION: FOREIGN KEY CONSTRAINTS
+  // ==========================================
+
+  // Add FK constraints to enforce tenant isolation at database level
+  await knex.raw(`
+    DO $$ BEGIN
+      ALTER TABLE events
+        ADD CONSTRAINT fk_events_tenant_id
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE RESTRICT;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+
+  await knex.raw(`
+    DO $$ BEGIN
+      ALTER TABLE event_schedules
+        ADD CONSTRAINT fk_event_schedules_tenant_id
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE RESTRICT;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+
+  await knex.raw(`
+    DO $$ BEGIN
+      ALTER TABLE event_capacity
+        ADD CONSTRAINT fk_event_capacity_tenant_id
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE RESTRICT;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+
+  await knex.raw(`
+    DO $$ BEGIN
+      ALTER TABLE event_pricing
+        ADD CONSTRAINT fk_event_pricing_tenant_id
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE RESTRICT;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+
+  await knex.raw(`
+    DO $$ BEGIN
+      ALTER TABLE event_metadata
+        ADD CONSTRAINT fk_event_metadata_tenant_id
+        FOREIGN KEY (tenant_id)
+        REFERENCES tenants(id)
+        ON DELETE RESTRICT;
+    EXCEPTION
+      WHEN duplicate_object THEN NULL;
+    END $$;
+  `);
+
+  // ==========================================
+  // COMPOSITE INDEXES FOR TENANT-SCOPED QUERIES
+  // ==========================================
+
+  // Optimize queries that filter by tenant_id (10-100x performance improvement)
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_events_tenant_venue ON events(tenant_id, venue_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_events_tenant_created ON events(tenant_id, created_at DESC)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_events_tenant_category ON events(tenant_id, primary_category_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_schedules_tenant_event ON event_schedules(tenant_id, event_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_capacity_tenant_event ON event_capacity(tenant_id, event_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_event_pricing_tenant_event ON event_pricing(tenant_id, event_id)');
+
+  // ==========================================
+  // FOREIGN KEY CONSTRAINTS (CROSS-SERVICE)
+  // ==========================================
+  console.log('');
+  console.log('🔗 Adding cross-service foreign key constraints...');
+
+  // events table FKs
+  await knex.schema.alterTable('events', (table) => {
+    table.foreign('venue_id').references('id').inTable('venues').onDelete('RESTRICT');
+    table.foreign('venue_layout_id').references('id').inTable('venue_layouts').onDelete('SET NULL');
+    table.foreign('created_by').references('id').inTable('users').onDelete('SET NULL');
+    table.foreign('updated_by').references('id').inTable('users').onDelete('SET NULL');
+  });
+  console.log('✅ events → venues, venue_layouts, users (created_by, updated_by)');
+
+  console.log('✅ All cross-service FK constraints added (4 total)');
+
+  console.log('✅ Event Service migration complete - Tenant isolation enforced with FK constraints');
 }
 
 export async function down(knex: Knex): Promise<void> {
   // Drop triggers first
+  await knex.raw('DROP TRIGGER IF EXISTS audit_events_changes ON events');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_update_event_categories_timestamp ON event_categories');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_update_event_metadata_timestamp ON event_metadata');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_update_event_pricing_timestamp ON event_pricing');

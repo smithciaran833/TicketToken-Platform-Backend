@@ -87,4 +87,20 @@ pub enum TicketTokenError {
     // Reentrancy
     #[msg("Reentrancy locked")]
     ReentrancyLocked,
+    
+    // Royalty/Ticket errors (Week 1 additions)
+    #[msg("Invalid royalty percentage - total must not exceed 100%")]
+    InvalidRoyaltyPercentage,
+    
+    #[msg("Ticket has already been used")]
+    TicketAlreadyUsed,
+    
+    #[msg("Invalid ticket for this event")]
+    InvalidTicket,
+    
+    #[msg("Ticket transfer not allowed for this event")]
+    TransferNotAllowed,
+    
+    #[msg("Owner ID exceeds maximum length")]
+    OwnerIdTooLong,
 }

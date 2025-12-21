@@ -1,8 +1,30 @@
 {
-  "extends": "../../shared/config/tsconfig.base.json",
   "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
     "outDir": "./dist",
+    "strict": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "sourceMap": true,
+    "declaration": true,
+    "declarationMap": true,
+    "baseUrl": "./",
+    "paths": {
+      "@tickettoken/shared": ["../../shared/dist/index"],
+      "@tickettoken/shared/*": ["../../shared/dist/*"]
+    }
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist", "tests"]
+  "exclude": [
+    "node_modules",
+    "dist",
+    "test",
+    "tests",
+    "**/*.test.ts",
+    "**/*.spec.ts"
+  ]
 }

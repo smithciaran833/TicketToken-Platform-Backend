@@ -26,7 +26,7 @@ export class RateLimitController {
       const { service } = request.params as { service: string };
 
       const isLimited = await this.rateLimiter.isRateLimited(service);
-      const waitTime = this.rateLimiter.getWaitTime(service);
+      const waitTime = await this.rateLimiter.getWaitTime(service);
 
       return reply.send({
         service,
@@ -46,7 +46,7 @@ export class RateLimitController {
 
       this.rateLimiter.reset(service);
 
-      logger.warn(`Rate limiter reset for ${service} by user ${request.user?.id}`);
+      logger.warn(`Rate limiter reset for ${service} by user ${request.user?.userId}`);
 
       return reply.send({
         service,
@@ -63,7 +63,7 @@ export class RateLimitController {
     try {
       this.rateLimiter.emergencyStop();
 
-      logger.error(`EMERGENCY STOP activated by user ${request.user?.id}`);
+      logger.error(`EMERGENCY STOP activated by user ${request.user?.userId}`);
 
       return reply.send({
         status: 'stopped',
@@ -79,7 +79,7 @@ export class RateLimitController {
     try {
       this.rateLimiter.resume();
 
-      logger.info(`Rate limiters resumed by user ${request.user?.id}`);
+      logger.info(`Rate limiters resumed by user ${request.user?.userId}`);
 
       return reply.send({
         status: 'resumed',

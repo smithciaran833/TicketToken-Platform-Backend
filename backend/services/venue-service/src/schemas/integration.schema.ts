@@ -2,7 +2,9 @@ import * as Joi from 'joi';
 
 export const createIntegrationSchema = {
   body: Joi.object({
-    type: Joi.string().valid('square', 'stripe', 'toast', 'mailchimp', 'twilio').required(),
+    // Accept both 'provider' and 'type' for flexibility
+    provider: Joi.string().valid('square', 'stripe', 'toast', 'mailchimp', 'twilio'),
+    type: Joi.string().valid('square', 'stripe', 'toast', 'mailchimp', 'twilio'),
     config: Joi.object({
       webhookUrl: Joi.string().uri(),
       apiVersion: Joi.string(),
@@ -10,6 +12,10 @@ export const createIntegrationSchema = {
       features: Joi.array().items(Joi.string())
     }).unknown(true), // Allow provider-specific config
     credentials: Joi.object().unknown(true).required()
+  })
+  .or('provider', 'type') // At least one must be present
+  .messages({
+    'object.missing': 'Either "provider" or "type" is required'
   })
 };
 

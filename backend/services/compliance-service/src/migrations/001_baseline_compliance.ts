@@ -71,6 +71,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.schema.createTable('risk_flags', (table) => {
     table.increments('id').primary();
     table.string('venue_id', 255);
+    table.integer('risk_assessment_id').unsigned().nullable();
     table.text('reason');
     table.string('severity', 20).defaultTo('medium');
     table.boolean('resolved').defaultTo(false);
@@ -207,19 +208,29 @@ export async function up(knex: Knex): Promise<void> {
     table.index('full_name');
   });
 
-  // 15. COMPLIANCE_AUDIT_LOG
+  // 15. COMPLIANCE_AUDIT_LOG (Enhanced version with all Phase 5/6 columns)
   await knex.schema.createTable('compliance_audit_log', (table) => {
-    table.increments('id').primary();
-    table.string('action', 100).notNullable();
-    table.string('entity_type', 50);
-    table.string('entity_id', 255);
-    table.string('user_id', 255);
-    table.string('ip_address', 45);
+    table.bigIncrements('id').primary();
+    table.string('tenant_id').notNullable();
+    table.string('venue_id');
+    table.string('user_id');
+    table.string('action').notNullable();
+    table.string('resource').notNullable();
+    table.string('resource_id');
+    table.jsonb('changes').defaultTo('{}');
+    table.jsonb('metadata').defaultTo('{}');
+    table.string('ip_address');
     table.text('user_agent');
-    table.jsonb('metadata');
+    table.enum('severity', ['low', 'medium', 'high', 'critical']).defaultTo('low');
     table.timestamp('created_at').defaultTo(knex.fn.now());
 
-    table.index(['entity_type', 'entity_id']);
+    // Indexes
+    table.index(['tenant_id', 'created_at']);
+    table.index(['resource', 'resource_id']);
+    table.index(['user_id', 'created_at']);
+    table.index(['venue_id', 'created_at']);
+    table.index(['severity', 'created_at']);
+    table.index('action');
   });
 
   // Insert default settings

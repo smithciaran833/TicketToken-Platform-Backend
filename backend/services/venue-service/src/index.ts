@@ -3,6 +3,7 @@ import { initializeTracing } from './utils/tracing';
 const sdk = initializeTracing('venue-service');
 import { buildApp } from './app';
 import { logger } from './utils/logger';
+import { initializeMongoDB, closeMongoDB } from './config/mongodb';
 
 /**
  * Validate required environment variables at startup
@@ -106,23 +107,19 @@ async function gracefulShutdown(signal: string): Promise<void> {
       logger.warn({ error: queueError }, 'Error closing RabbitMQ connection');
     }
 
-    // Step 3: Close Redis connection
+    // Step 3: Redis connection is closed via Fastify onClose hook in app.ts
+    logger.info('Redis connections will be closed via Fastify shutdown hooks');
+
+    // Step 4: Close MongoDB connection
     try {
-      const container = (fastifyApp as any)?.container;
-      const cache = container?.cradle?.cache;
-      
-      if (cache && typeof cache.disconnect === 'function') {
-        logger.info('Closing Redis connection...');
-        await cache.disconnect();
-        logger.info('Redis connection closed successfully');
-      } else {
-        logger.info('Redis not active or already closed');
-      }
-    } catch (redisError) {
-      logger.warn({ error: redisError }, 'Error closing Redis connection');
+      logger.info('Closing MongoDB connection...');
+      await closeMongoDB();
+      logger.info('MongoDB connection closed successfully');
+    } catch (mongoError) {
+      logger.warn({ error: mongoError }, 'Error closing MongoDB connection');
     }
 
-    // Step 4: Close database connection pool
+    // Step 5: Close database connection pool
     try {
       const { db } = await import('./config/database');
       if (db && typeof db.destroy === 'function') {
@@ -134,7 +131,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
       logger.warn({ error: dbError }, 'Error closing database connection');
     }
 
-    // Step 5: Shutdown OpenTelemetry SDK
+    // Step 6: Shutdown OpenTelemetry SDK
     logger.info('Shutting down OpenTelemetry SDK...');
     await sdk.shutdown();
     logger.info('OpenTelemetry SDK shut down successfully');

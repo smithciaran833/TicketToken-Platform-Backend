@@ -11,6 +11,7 @@ import grafanaRoutes from './routes/grafana.routes';
 import analyticsRoutes from './routes/analytics.routes';
 import { metricsAuth } from './middleware/metrics-auth.middleware';
 import { authenticate, authorize } from './middleware/auth.middleware';
+import { setTenantContext } from './middleware/tenant-context';
 
 export async function createServer() {
   const app = Fastify({
@@ -21,6 +22,15 @@ export async function createServer() {
   // Register plugins
   await app.register(cors);
   await app.register(helmet);
+
+  // Tenant isolation middleware
+  app.addHook('onRequest', async (request, reply) => {
+    try {
+      await setTenantContext(request, reply);
+    } catch (error) {
+      logger.error('Failed to set tenant context', error);
+    }
+  });
   
   // Configure rate limiting
   await app.register(rateLimit, {

@@ -11,9 +11,9 @@ SELECT
     u.last_name,
     u.created_at,
     u.status,
-    u.total_purchases,
+    (SELECT COUNT(*) FROM tickets WHERE user_id = u.id AND status IN ('active', 'used', 'transferred')) as total_purchases,
     u.total_spent,
-    u.last_purchase_at
+    (SELECT MAX(purchased_at) FROM tickets WHERE user_id = u.id) as last_purchase_at
 FROM users u;
 
 -- Test with: SELECT COUNT(*) FROM customer_360_basic;
@@ -73,7 +73,7 @@ SELECT
         ELSE 0
     END as purchases_per_month
 FROM customer_360_with_preferences cwp
-LEFT JOIN transactions t ON cwp.customer_id = t.user_id
+LEFT JOIN payment_transactions t ON cwp.customer_id = t.user_id
 GROUP BY 
     cwp.customer_id, cwp.email, cwp.username, cwp.first_name, cwp.last_name,
     cwp.created_at, cwp.status, cwp.total_purchases, cwp.total_spent, cwp.last_purchase_at,

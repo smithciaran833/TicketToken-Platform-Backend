@@ -134,8 +134,26 @@ export class OrderModel {
     return result.rows.map((row) => this.mapToOrder(row));
   }
 
+  async getTenantsWithReservedOrders(limit = 1000): Promise<string[]> {
+    const query = `
+      SELECT DISTINCT tenant_id
+      FROM orders
+      WHERE status = $1
+      LIMIT $2
+    `;
+    
+    try {
+      const result = await this.pool.query(query, [OrderStatus.RESERVED, limit]);
+      return result.rows.map((row) => row.tenant_id);
+    } catch (error) {
+      logger.error('Error getting tenants with reserved orders', { error });
+      throw error;
+    }
+  }
+
   async update(
     id: string,
+    tenantId: string,
     data: Partial<{
       status: OrderStatus;
       paymentIntentId: string;
@@ -148,7 +166,7 @@ export class OrderModel {
   ): Promise<Order | null> {
     const fields: string[] = [];
     const values: any[] = [];
-    let paramIndex = 2;
+    let paramIndex = 3;
 
     if (data.status !== undefined) {
       fields.push(`status = $${paramIndex++}`);
@@ -180,22 +198,22 @@ export class OrderModel {
     }
 
     if (fields.length === 0) {
-      const existing = await this.findById(id);
+      const existing = await this.findById(id, tenantId);
       return existing;
     }
 
     const query = `
       UPDATE orders
       SET ${fields.join(', ')}, updated_at = NOW()
-      WHERE id = $1
+      WHERE id = $1 AND tenant_id = $2
       RETURNING *
     `;
 
     try {
-      const result = await this.pool.query(query, [id, ...values]);
+      const result = await this.pool.query(query, [id, tenantId, ...values]);
       return result.rows[0] ? this.mapToOrder(result.rows[0]) : null;
     } catch (error) {
-      logger.error('Error updating order', { error, id, data });
+      logger.error('Error updating order', { error, id, tenantId, data });
       throw error;
     }
   }
@@ -219,7 +237,7 @@ export class OrderModel {
       processingFeeCents: parseInt(row.processing_fee_cents),
       taxCents: parseInt(row.tax_cents),
       discountCents: parseInt(row.discount_cents),
-      totalCents: parseInt(row.totalCents),
+      totalCents: parseInt(row.total_cents),
       currency: row.currency,
       paymentIntentId: row.payment_intent_id,
       idempotencyKey: row.idempotency_key,

@@ -200,7 +200,8 @@ export class PurchaseController {
           throw new Error(`Ticket type ${ticketTypeId} not found or does not belong to this tenant`);
         }
 
-        const priceInCents = ticketType.price_cents;
+        // price is in dollars, convert to cents
+        const priceInCents = Math.round(Number(ticketType.price) * 100);
         const itemTotalCents = priceInCents * item.quantity;
         totalAmountCents += itemTotalCents;
         totalQuantity += item.quantity;
@@ -255,7 +256,7 @@ export class PurchaseController {
         currency: 'USD',
         created_at: new Date(),
         updated_at: new Date(),
-        expires_at: expiresAt
+        reservation_expires_at: expiresAt
       });
 
       // Insert order items and update inventory atomically
@@ -279,6 +280,7 @@ export class PurchaseController {
 
         await trx('order_items').insert({
           id: uuidv4(),
+          tenant_id: tenantId,
           order_id: orderId,
           ticket_type_id: item.ticketTypeId,
           quantity: item.quantity,
@@ -287,13 +289,15 @@ export class PurchaseController {
         });
       }
 
-      // Insert discount records
+      // Insert discount records with tenant_id and discount_type
       for (const discount of discountsApplied) {
         await trx('order_discounts').insert({
           id: uuidv4(),
+          tenant_id: tenantId,
           order_id: orderId,
           discount_id: discount.discountId,
           discount_code: discount.code,
+          discount_type: discount.type,
           amount_cents: discount.amountInCents,
           applied_at: new Date()
         });

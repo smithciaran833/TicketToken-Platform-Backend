@@ -57,7 +57,7 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       // Use the imported db directly instead of container.resolve
       const result = await db.raw(`
-        SELECT t.*, e.venue_id, e.event_date
+        SELECT t.*, e.venue_id, e.start_date
         FROM tickets t
         JOIN events e ON t.event_id = e.id
         WHERE t.id = ? AND e.venue_id = ?
@@ -68,7 +68,7 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       // Check if already scanned
-      const scanCheck = await db('ticket_scans')
+      const scanCheck = await db('ticket_validations')
         .where('ticket_id', ticketId)
         .first();
 

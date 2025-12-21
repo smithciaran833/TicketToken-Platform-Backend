@@ -70,7 +70,7 @@ export async function getCapacityById(
 
     return reply.send({ capacity });
   } catch (error: any) {
-    if (error.message === 'Capacity not found') {
+    if (error.name === 'NotFoundError' || error.message?.includes('not found')) {
       return reply.status(404).send({ error: 'Capacity not found' });
     }
     request.log.error({ error: error.message }, 'Error getting capacity');
@@ -110,10 +110,10 @@ export async function createCapacity(
   } catch (error: any) {
     if (error.details || (error.errors && Array.isArray(error.errors))) {
       const details = error.details || error.errors;
-      const errorMessage = details.length > 0 && details[0].message 
-        ? details[0].message 
+      const errorMessage = details.length > 0 && details[0].message
+        ? details[0].message
         : 'Validation failed';
-      
+
       return reply.status(422).send({
         error: errorMessage,
         details: details
@@ -148,7 +148,7 @@ export async function updateCapacity(
 
     return reply.send({ capacity });
   } catch (error: any) {
-    if (error.message === 'Capacity not found') {
+    if (error.name === 'NotFoundError' || error.message?.includes('not found')) {
       return reply.status(404).send({ error: 'Capacity not found' });
     }
     request.log.error({ error: error.message }, 'Error updating capacity');
@@ -176,6 +176,9 @@ export async function checkAvailability(
 
     return reply.send({ available, quantity });
   } catch (error: any) {
+    if (error.name === 'NotFoundError' || error.message?.includes('not found')) {
+      return reply.status(404).send({ error: 'Capacity not found' });
+    }
     request.log.error({ error: error.message }, 'Error checking availability');
     return reply.status(500).send({
       error: 'Failed to check availability',
@@ -217,25 +220,30 @@ export async function reserveCapacity(
       lockedPrice = await capacityService.getLockedPrice(id, tenantId);
     }
 
-    return reply.send({ 
+    return reply.send({
       message: 'Capacity reserved successfully',
       capacity,
       locked_price: lockedPrice
     });
   } catch (error: any) {
+    // Handle NotFoundError
+    if (error.name === 'NotFoundError' || error.message?.includes('not found')) {
+      return reply.status(404).send({ error: 'Capacity not found' });
+    }
+
     // Handle ValidationError with details (like insufficient capacity)
     if (error.details || (error.errors && Array.isArray(error.errors))) {
       const details = error.details || error.errors;
-      const errorMessage = details.length > 0 && details[0].message 
-        ? details[0].message 
+      const errorMessage = details.length > 0 && details[0].message
+        ? details[0].message
         : 'Validation failed';
-      
+
       return reply.status(400).send({
         error: errorMessage,
         details: details
       });
     }
-    
+
     request.log.error({ error: error.message }, 'Error reserving capacity');
     return reply.status(500).send({
       error: 'Failed to reserve capacity',

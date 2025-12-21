@@ -179,9 +179,19 @@ export class RateLimiter {
   // Method to reset rate limit for a specific key
   async resetLimit(type: string, identifier: string) {
     const pattern = `rate_limit:${type}:${identifier}:*`;
-    const keys = await this.redis.keys(pattern);
-    if (keys.length > 0) {
-      await this.redis.del(...keys);
+    
+    // Use SCAN instead of KEYS for production safety
+    let cursor = '0';
+    const keysToDelete: string[] = [];
+
+    do {
+      const [nextCursor, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      keysToDelete.push(...keys);
+    } while (cursor !== '0');
+
+    if (keysToDelete.length > 0) {
+      await this.redis.del(...keysToDelete);
     }
   }
 }

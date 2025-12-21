@@ -69,12 +69,19 @@ export class NFTService {
 
       // Upload metadata to Arweave/IPFS via Metaplex
       logger.info('Uploading NFT metadata');
+      
+      // Convert attributes to the correct format
+      const attributes = request.metadata.attributes?.map(attr => ({
+        trait_type: attr.trait_type,
+        value: String(attr.value) // Convert to string
+      })) || [];
+
       const { uri: metadataUri } = await metaplex.nfts().uploadMetadata({
         name: request.metadata.name,
         symbol: request.metadata.symbol,
         description: request.metadata.description,
         image: request.metadata.image,
-        attributes: request.metadata.attributes || [],
+        attributes,
         external_url: request.metadata.externalUrl,
         animation_url: request.metadata.animationUrl,
         properties: request.metadata.properties,
@@ -105,7 +112,7 @@ export class NFTService {
       return {
         success: true,
         mintAddress: nft.address.toBase58(),
-        tokenAddress: nft.token?.address?.toBase58(),
+        tokenAddress: (nft as any).token?.address?.toBase58(),
         metadataUri,
         explorerUrl,
       };
@@ -193,7 +200,7 @@ export class NFTService {
       const nft = await this.getNFTMetadata(mintAddress);
       if (!nft) return false;
 
-      const currentOwner = nft.token?.ownerAddress?.toBase58();
+      const currentOwner = (nft as any).token?.ownerAddress?.toBase58();
       return currentOwner === ownerAddress;
     } catch (error: any) {
       logger.error('Ownership verification failed', {

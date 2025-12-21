@@ -67,7 +67,7 @@ export function encrypt(plaintext: string): string {
     
     return combined.toString('base64');
   } catch (error: any) {
-    logger.error('Encryption failed:', error);
+    logger.error({ error }, 'Encryption failed:');
     throw new Error('Failed to encrypt data');
   }
 }
@@ -107,7 +107,7 @@ export function decrypt(ciphertext: string): string {
     
     return decrypted;
   } catch (error: any) {
-    logger.error('Decryption failed:', error);
+    logger.error({ error }, 'Decryption failed:');
     throw new Error('Failed to decrypt data');
   }
 }

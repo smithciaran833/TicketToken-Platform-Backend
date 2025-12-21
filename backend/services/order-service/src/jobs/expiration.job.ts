@@ -8,7 +8,7 @@ import { orderConfig } from '../config';
  * Checks for and expires reserved orders that have timed out
  */
 export class ExpirationJob extends JobExecutor {
-  private orderService: OrderService;
+  private _orderService?: OrderService;
 
   constructor() {
     const config: JobConfig = {
@@ -34,18 +34,25 @@ export class ExpirationJob extends JobExecutor {
     };
 
     super(config);
+  }
 
-    const pool = getDatabase();
-    this.orderService = new OrderService(pool);
+  private get db() {
+    return getDatabase();
+  }
+
+  private get orderService() {
+    if (!this._orderService) {
+      this._orderService = new OrderService(this.db);
+    }
+    return this._orderService;
   }
 
   protected async executeCore(): Promise<void> {
     let expiredCount = 0;
     let errorCount = 0;
 
-    // TODO: Get list of all tenants - for now using a placeholder approach
-    // In production, this should query the database for all active tenants
-    const tenantIds = await this.getTenants();
+    // Get list of tenants with reserved orders
+    const tenantIds = await this.orderService.getTenantsWithReservedOrders(1000);
 
     for (const tenantId of tenantIds) {
       try {
@@ -89,22 +96,4 @@ export class ExpirationJob extends JobExecutor {
       throw new Error(`Failed to expire any orders (${errorCount} errors)`);
     }
   }
-
-  /**
-   * Get list of tenant IDs
-   * TODO: This should query a tenants table or orders table for distinct tenant_ids
-   */
-  private async getTenants(): Promise<string[]> {
-    const db = getDatabase();
-    try {
-      const result = await db.query('SELECT DISTINCT tenant_id FROM orders WHERE status = $1 LIMIT 1000', ['RESERVED']);
-      return result.rows.map(row => row.tenant_id);
-    } catch (error) {
-      this.jobLogger.error('Failed to get tenants', { error });
-      return [];
-    }
-  }
 }
-
-// Export singleton instance
-export const expirationJob = new ExpirationJob();

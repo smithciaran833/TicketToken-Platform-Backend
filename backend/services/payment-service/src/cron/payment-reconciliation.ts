@@ -1,9 +1,11 @@
 import { Pool } from 'pg';
 import Stripe from 'stripe';
-import { PaymentState } from '../services/state-machine/payment-state-machine';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'PaymentReconciliation' });
+
+// Map to internal status values
+type PaymentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export class PaymentReconciliation {
   private db: Pool;
@@ -16,13 +18,13 @@ export class PaymentReconciliation {
 
   async run(): Promise<void> {
     log.info('Starting payment reconciliation');
-    
+
     // Get payments in processing state for more than 10 minutes
     const stuckPayments = await this.db.query(
-      `SELECT * FROM payment_transactions 
-       WHERE state = $1 
+      `SELECT * FROM payment_transactions
+       WHERE status = $1
        AND updated_at < NOW() - INTERVAL '10 minutes'`,
-      [PaymentState.PROCESSING]
+      ['processing']
     );
 
     for (const payment of stuckPayments.rows) {
@@ -35,19 +37,19 @@ export class PaymentReconciliation {
 
   private async reconcilePayment(payment: any): Promise<void> {
     try {
-      if (payment.provider === 'stripe') {
+      if (payment.stripe_payment_intent_id) {
         const intent = await this.stripe.paymentIntents.retrieve(
-          payment.provider_payment_id
+          payment.stripe_payment_intent_id
         );
 
         // Update local state based on Stripe's truth
-        const newState = this.mapStripeStatus(intent.status);
-        if (newState !== payment.state) {
+        const newStatus = this.mapStripeStatus(intent.status);
+        if (newStatus !== payment.status) {
           await this.db.query(
-            'UPDATE payment_transactions SET state = $1, updated_at = NOW() WHERE id = $2',
-            [newState, payment.id]
+            'UPDATE payment_transactions SET status = $1, updated_at = NOW() WHERE id = $2',
+            [newStatus, payment.id]
           );
-          log.info('Reconciled payment', { paymentId: payment.id, oldState: payment.state, newState });
+          log.info('Reconciled payment', { paymentId: payment.id, oldStatus: payment.status, newStatus });
         }
       }
     } catch (error) {
@@ -55,14 +57,17 @@ export class PaymentReconciliation {
     }
   }
 
-  private mapStripeStatus(status: string): PaymentState {
-    const statusMap: Record<string, PaymentState> = {
-      'requires_payment_method': PaymentState.PENDING,
-      'processing': PaymentState.PROCESSING,
-      'succeeded': PaymentState.COMPLETED,
-      'canceled': PaymentState.CANCELLED
+  private mapStripeStatus(status: string): PaymentStatus {
+    const statusMap: Record<string, PaymentStatus> = {
+      'requires_payment_method': 'pending',
+      'requires_confirmation': 'pending',
+      'requires_action': 'pending',
+      'processing': 'processing',
+      'succeeded': 'completed',
+      'canceled': 'cancelled',
+      'requires_capture': 'processing'
     };
-    return statusMap[status] || PaymentState.FAILED;
+    return statusMap[status] || 'failed';
   }
 
   private async checkMissingWebhooks(): Promise<void> {
@@ -82,10 +87,10 @@ export class PaymentReconciliation {
         log.warn('Missing webhook event detected', { eventId: event.id, eventType: event.type });
         // Queue it for processing
         await this.db.query(
-          `INSERT INTO webhook_inbox (webhook_id, provider, event_type, payload, processed)
-           VALUES ($1, $2, $3, $4, false)
+          `INSERT INTO webhook_inbox (webhook_id, event_id, provider, event_type, payload, status)
+           VALUES ($1, $2, $3, $4, $5, 'pending')
            ON CONFLICT (webhook_id) DO NOTHING`,
-          [event.id, 'stripe', event.type, JSON.stringify(event)]
+          [event.id, event.id, 'stripe', event.type, JSON.stringify(event)]
         );
       }
     }

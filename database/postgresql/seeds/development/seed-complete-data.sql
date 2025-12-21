@@ -108,53 +108,51 @@ LIMIT 20;
 -- 4. EVENTS (Multiple events per venue)
 -- ============================================
 INSERT INTO events (
-    venue_id, name, description, event_date, 
-    total_tickets, available_tickets, 
-    min_price, max_price, 
+    venue_id, name, description, starts_at, 
     status, created_by, event_type, tags
 ) VALUES
 -- Madison Square Garden Events
 ((SELECT id FROM venues WHERE name = 'Madison Square Garden'), 
  'Taylor Swift - The Eras Tour', 'Pop sensation returns to MSG', '2024-06-15 20:00:00',
- 20000, 18500, 125.00, 450.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'msg@madisonsquare.com'),
  'concert', ARRAY['music', 'pop', 'taylor-swift']),
 
 ((SELECT id FROM venues WHERE name = 'Madison Square Garden'),
  'NY Knicks vs Boston Celtics', 'Eastern Conference Rivalry', '2024-05-20 19:30:00',
- 19812, 15000, 75.00, 850.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'msg@madisonsquare.com'),
  'sports', ARRAY['basketball', 'nba', 'knicks']),
 
 ((SELECT id FROM venues WHERE name = 'Madison Square Garden'),
  'Billy Joel - Monthly Residency', 'The Piano Man Returns', '2024-05-28 20:00:00',
- 20000, 5000, 85.00, 350.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'msg@madisonsquare.com'),
  'concert', ARRAY['music', 'rock', 'billy-joel']),
 
 -- Red Rocks Events
 ((SELECT id FROM venues WHERE name = 'Red Rocks Amphitheatre'),
  'Dave Matthews Band', 'Summer Tour 2024', '2024-07-20 19:00:00',
- 9525, 9525, 65.00, 125.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'redrocks@denver.gov'),
  'concert', ARRAY['music', 'rock', 'dmb']),
 
 ((SELECT id FROM venues WHERE name = 'Red Rocks Amphitheatre'),
  'Yoga on the Rocks', 'Morning Wellness Session', '2024-06-01 07:00:00',
- 2000, 1800, 35.00, 35.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'redrocks@denver.gov'),
  'wellness', ARRAY['yoga', 'fitness', 'morning']),
 
 -- The Fillmore Events  
 ((SELECT id FROM venues WHERE name = 'The Fillmore'),
  'Local Jazz Night', 'SF Jazz Collective', '2024-05-10 21:00:00',
- 2700, 2500, 45.00, 65.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'fillmore@livenation.com'),
  'concert', ARRAY['music', 'jazz', 'local']),
 
 ((SELECT id FROM venues WHERE name = 'The Fillmore'),
  'Comedy Night - Dave Chappelle', 'Surprise Set', '2024-05-18 20:00:00',
- 2700, 0, 85.00, 150.00, 'sold_out',
+ 'sold_out',
  (SELECT id FROM users WHERE email = 'fillmore@livenation.com'),
  'comedy', ARRAY['comedy', 'standup', 'chappelle']),
 
@@ -164,14 +162,14 @@ INSERT INTO events (
 -- Hollywood Bowl Events
 ((SELECT id FROM venues WHERE name = 'Hollywood Bowl'),
  'LA Philharmonic - Star Wars Night', 'John Williams Conducting', '2024-07-04 20:00:00',
- 17500, 12000, 25.00, 185.00, 'on_sale',
+ 'published',
  (SELECT id FROM users WHERE email = 'hollywood@bowl.com'),
  'concert', ARRAY['music', 'classical', 'star-wars']);
 
 -- ============================================
 -- 5. TICKET TYPES (Different tiers per event)
 -- ============================================
-INSERT INTO ticket_types (event_id, name, description, price, quantity, available_quantity)
+INSERT INTO ticket_types (event_id, name, description, price, quantity, available)
 SELECT 
     e.id,
     tier.name,
@@ -187,7 +185,6 @@ CROSS JOIN (
     ('Platinum', 'Best seats with meet & greet', 500.00, 100),
     ('Student', 'Discounted with valid ID', 35.00, 500)
 ) AS tier(name, description, price, quantity)
-WHERE e.total_tickets > 5000
 LIMIT 100;
 
 -- ============================================

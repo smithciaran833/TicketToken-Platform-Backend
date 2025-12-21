@@ -17,7 +17,7 @@ export async function metricsRoutes(fastify: FastifyInstance) {
       reply.header('Content-Type', 'text/plain; version=0.0.4');
       return reply.send(metrics);
     } catch (error) {
-      logger.error('Failed to generate metrics:', error);
+      logger.error({ error }, 'Failed to generate metrics:');
       return reply.code(500).send({ error: 'Failed to generate metrics' });
     }
   });
@@ -31,7 +31,7 @@ export async function metricsRoutes(fastify: FastifyInstance) {
         metrics,
       });
     } catch (error) {
-      logger.error('Failed to generate metrics JSON:', error);
+      logger.error({ error }, 'Failed to generate metrics JSON:');
       return reply.code(500).send({ error: 'Failed to generate metrics JSON' });
     }
   });

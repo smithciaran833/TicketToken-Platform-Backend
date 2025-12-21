@@ -2,7 +2,7 @@ import { FastifyInstance } from 'fastify';
 import { register } from '../utils/metrics';
 import { HealthCheckService } from '../services/healthCheck.service';
 import { DatabaseService } from '../services/databaseService';
-import { RedisService } from '../services/redisService';
+import { getRedis } from '../config/redis';
 
 const healthCheckService = new HealthCheckService();
 
@@ -11,7 +11,7 @@ export default async function healthRoutes(app: FastifyInstance) {
   app.get('/health', async (request, reply) => {
     try {
       const db = DatabaseService.getPool();
-      const redis = RedisService.getClient();
+      const redis = getRedis();
 
       const healthCheck = await healthCheckService.performHealthCheck(db, redis);
 

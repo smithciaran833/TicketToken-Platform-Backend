@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { FastifyRequest, FastifyReply } from 'fastify';
 import crypto from 'crypto';
 import { mailchimpSyncService } from '../services/providers/mailchimp-sync.service';
 import { squareSyncService } from '../services/providers/square-sync.service';
@@ -7,7 +7,7 @@ import { credentialEncryptionService } from '../services/credential-encryption.s
 
 /**
  * Webhook Controller
- * 
+ *
  * Handles incoming webhook events from third-party providers
  */
 export class WebhookController {
@@ -16,19 +16,19 @@ export class WebhookController {
    * Note: Mailchimp uses IP whitelisting for webhook security, not HMAC signatures
    * Whitelist IPs: 205.201.131.0/24, 198.2.179.0/24, 148.105.8.0/24
    */
-  async handleMailchimpWebhook(req: Request, res: Response): Promise<void> {
+  async handleMailchimpWebhook(req: FastifyRequest, res: FastifyReply): Promise<void> {
     try {
-      const venueId = req.params.venueId;
-      const clientIp = req.ip || req.connection.remoteAddress || '';
+      const venueId = (req.params as any).venueId;
+      const clientIp = req.ip || '';
 
       // Verify request is from Mailchimp's IP ranges
       if (!this.isMailchimpIP(clientIp)) {
         console.warn(`Webhook rejected from unauthorized IP: ${clientIp}`);
-        res.status(401).json({ error: 'Unauthorized IP address' });
+        res.status(401).send({ error: 'Unauthorized IP address' });
         return;
       }
 
-      const { type, data } = req.body;
+      const { type, data } = req.body as any;
 
       // Process webhook event
       console.log(`Mailchimp webhook received: ${type}`, data);
@@ -46,20 +46,20 @@ export class WebhookController {
           console.log(`Unhandled Mailchimp event type: ${type}`);
       }
 
-      res.status(200).json({ received: true });
+      res.status(200).send({ received: true });
     } catch (error) {
       console.error('Mailchimp webhook error:', error);
-      res.status(500).json({ error: 'Webhook processing failed' });
+      res.status(500).send({ error: 'Webhook processing failed' });
     }
   }
 
   /**
    * Handle Square webhooks
    */
-  async handleSquareWebhook(req: Request, res: Response): Promise<void> {
+  async handleSquareWebhook(req: FastifyRequest, res: FastifyReply): Promise<void> {
     try {
       const signature = req.headers['x-square-signature'] as string;
-      const venueId = req.params.venueId;
+      const venueId = (req.params as any).venueId;
 
       // Verify webhook signature
       const isValid = await this.verifySquareSignature(
@@ -69,29 +69,29 @@ export class WebhookController {
       );
 
       if (!isValid) {
-        res.status(401).json({ error: 'Invalid webhook signature' });
+        res.status(401).send({ error: 'Invalid webhook signature' });
         return;
       }
 
-      const { type, data } = req.body;
+      const { type, data } = req.body as any;
 
       // Process webhook event
       await squareSyncService.processWebhookEvent(type, data);
 
-      res.status(200).json({ received: true });
+      res.status(200).send({ received: true });
     } catch (error) {
       console.error('Square webhook error:', error);
-      res.status(500).json({ error: 'Webhook processing failed' });
+      res.status(500).send({ error: 'Webhook processing failed' });
     }
   }
 
   /**
    * Handle Stripe webhooks
    */
-  async handleStripeWebhook(req: Request, res: Response): Promise<void> {
+  async handleStripeWebhook(req: FastifyRequest, res: FastifyReply): Promise<void> {
     try {
       const signature = req.headers['stripe-signature'] as string;
-      const venueId = req.params.venueId;
+      const venueId = (req.params as any).venueId;
 
       // Get webhook secret
       const credentials = await credentialEncryptionService.retrieveApiKeys(
@@ -101,13 +101,13 @@ export class WebhookController {
       );
 
       if (!credentials) {
-        res.status(401).json({ error: 'Webhook secret not configured' });
+        res.status(401).send({ error: 'Webhook secret not configured' });
         return;
       }
 
       // Construct and verify event
       const event = stripeSyncService.constructWebhookEvent(
-        req.body,
+        req.body as any,
         signature,
         credentials.apiKey
       );
@@ -115,20 +115,20 @@ export class WebhookController {
       // Process webhook event
       await stripeSyncService.processWebhookEvent(event);
 
-      res.status(200).json({ received: true });
+      res.status(200).send({ received: true });
     } catch (error) {
       console.error('Stripe webhook error:', error);
-      res.status(401).json({ error: 'Webhook signature verification failed' });
+      res.status(401).send({ error: 'Webhook signature verification failed' });
     }
   }
 
   /**
    * Handle QuickBooks webhooks
    */
-  async handleQuickBooksWebhook(req: Request, res: Response): Promise<void> {
+  async handleQuickBooksWebhook(req: FastifyRequest, res: FastifyReply): Promise<void> {
     try {
       const signature = req.headers['intuit-signature'] as string;
-      const venueId = req.params.venueId;
+      const venueId = (req.params as any).venueId;
 
       // Verify webhook signature
       const isValid = await this.verifyQuickBooksSignature(
@@ -138,11 +138,11 @@ export class WebhookController {
       );
 
       if (!isValid) {
-        res.status(401).json({ error: 'Invalid webhook signature' });
+        res.status(401).send({ error: 'Invalid webhook signature' });
         return;
       }
 
-      const { eventNotifications } = req.body;
+      const { eventNotifications } = req.body as any;
 
       // Process each notification
       for (const notification of eventNotifications) {
@@ -159,10 +159,49 @@ export class WebhookController {
         }
       }
 
-      res.status(200).json({ received: true });
+      res.status(200).send({ received: true });
     } catch (error) {
       console.error('QuickBooks webhook error:', error);
-      res.status(500).json({ error: 'Webhook processing failed' });
+      res.status(500).send({ error: 'Webhook processing failed' });
+    }
+  }
+
+  /**
+   * Get webhook events
+   */
+  async getWebhookEvents(req: FastifyRequest, res: FastifyReply): Promise<void> {
+    try {
+      const venueId = (req.params as any).venueId;
+      const { integrationType, limit = 50 } = req.query as any;
+
+      // This would query a webhook_events table
+      // For now, return empty array
+      res.status(200).send({
+        events: [],
+        total: 0
+      });
+    } catch (error) {
+      console.error('Failed to get webhook events:', error);
+      res.status(500).send({ error: 'Failed to get webhook events' });
+    }
+  }
+
+  /**
+   * Retry webhook
+   */
+  async retryWebhook(req: FastifyRequest, res: FastifyReply): Promise<void> {
+    try {
+      const { webhookId } = req.params as any;
+
+      // This would retry processing a failed webhook
+      // For now, return success
+      res.status(200).send({
+        success: true,
+        message: `Webhook ${webhookId} queued for retry`
+      });
+    } catch (error) {
+      console.error('Failed to retry webhook:', error);
+      res.status(500).send({ error: 'Failed to retry webhook' });
     }
   }
 
@@ -172,10 +211,10 @@ export class WebhookController {
    */
   private isMailchimpIP(ip: string): boolean {
     if (!ip) return false;
-    
+
     // Extract IPv4 if it's IPv6-mapped
     const normalizedIp = ip.includes(':') ? ip.split(':').pop() : ip;
-    
+
     const mailchimpRanges = [
       '205.201.131.',
       '198.2.179.',

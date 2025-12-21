@@ -4,6 +4,7 @@ import { auditLogger } from '../config/logger';
 export interface AuditEvent {
   userId?: string;
   action: string;
+  actionType: 'authentication' | 'authorization' | 'security' | 'data_access';
   resourceType?: string;
   resourceId?: string;
   ipAddress?: string;
@@ -18,9 +19,11 @@ export class AuditService {
     try {
       // Log to database
       await db('audit_logs').insert({
+        service: 'auth-service',
+        action_type: event.actionType,
+        resource_type: event.resourceType || 'unknown',
         user_id: event.userId,
         action: event.action,
-        resource_type: event.resourceType,
         resource_id: event.resourceId,
         ip_address: event.ipAddress,
         user_agent: event.userAgent,
@@ -46,6 +49,8 @@ export class AuditService {
     await this.log({
       userId,
       action: 'user.login',
+      actionType: 'authentication',
+      resourceType: 'user',
       ipAddress,
       userAgent,
       status: success ? 'success' : 'failure',
@@ -57,6 +62,8 @@ export class AuditService {
     await this.log({
       userId,
       action: 'user.registration',
+      actionType: 'authentication',
+      resourceType: 'user',
       ipAddress,
       metadata: { email },
       status: 'success'
@@ -67,6 +74,8 @@ export class AuditService {
     await this.log({
       userId,
       action: 'user.password_changed',
+      actionType: 'security',
+      resourceType: 'user',
       ipAddress,
       status: 'success'
     });
@@ -76,6 +85,8 @@ export class AuditService {
     await this.log({
       userId,
       action: 'user.mfa_enabled',
+      actionType: 'security',
+      resourceType: 'user',
       status: 'success'
     });
   }
@@ -84,6 +95,8 @@ export class AuditService {
     await this.log({
       userId,
       action: 'token.refreshed',
+      actionType: 'authentication',
+      resourceType: 'token',
       ipAddress,
       status: 'success'
     });
@@ -93,6 +106,7 @@ export class AuditService {
     await this.log({
       userId: grantedBy,
       action: 'role.granted',
+      actionType: 'authorization',
       resourceType: 'venue',
       resourceId: venueId,
       metadata: { targetUserId: userId, role },

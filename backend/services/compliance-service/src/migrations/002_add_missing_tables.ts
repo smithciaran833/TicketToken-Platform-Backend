@@ -19,6 +19,36 @@ export async function up(knex: Knex): Promise<void> {
     table.index('requested_at');
   });
 
+  // 1b. PRIVACY_EXPORT_REQUESTS - Track GDPR data export requests
+  await knex.schema.createTable('privacy_export_requests', (table) => {
+    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
+    table.uuid('user_id').notNullable();
+    table.uuid('tenant_id').notNullable();
+    table.text('reason');
+    table.string('status', 50).notNullable().defaultTo('pending'); // pending, processing, completed, failed
+    table.timestamp('requested_at').defaultTo(knex.fn.now());
+    table.timestamp('completed_at');
+    table.string('download_url', 500);
+    table.timestamp('expires_at');
+    table.text('error_message');
+    table.timestamp('created_at').defaultTo(knex.fn.now());
+    table.timestamp('updated_at').defaultTo(knex.fn.now());
+
+    // Indexes
+    table.index('user_id');
+    table.index('tenant_id');
+    table.index('status');
+    table.index('requested_at');
+    table.index(['status', 'requested_at']); // For queue processing
+  });
+
+  // Enable RLS on privacy_export_requests
+  await knex.raw('ALTER TABLE privacy_export_requests ENABLE ROW LEVEL SECURITY');
+  await knex.raw(`
+    CREATE POLICY tenant_isolation_policy ON privacy_export_requests
+    USING (tenant_id::text = current_setting('app.current_tenant', true))
+  `);
+
   // 2. PCI_ACCESS_LOGS - PCI compliance audit trail for card data access
   await knex.schema.createTable('pci_access_logs', (table) => {
     table.increments('id').primary();
@@ -181,5 +211,6 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('customer_profiles');
   await knex.schema.dropTableIfExists('state_compliance_rules');
   await knex.schema.dropTableIfExists('pci_access_logs');
+  await knex.schema.dropTableIfExists('privacy_export_requests');
   await knex.schema.dropTableIfExists('gdpr_deletion_requests');
 }

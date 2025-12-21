@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../adapters/bull-job-adapter';
 import { stripeService, PaymentIntentData, PaymentResult } from '../services/stripe.service';
 import { emailService } from '../services/email.service';
 import { webhookService } from '../services/webhook.service';
@@ -26,7 +26,7 @@ export interface PaymentJobResult extends PaymentResult {
  * Process payment job
  * Creates a Stripe payment intent and handles the result
  */
-export async function processPayment(job: Job<PaymentJobData>): Promise<PaymentJobResult> {
+export async function processPayment(job: BullJobData<PaymentJobData>): Promise<PaymentJobResult> {
   const startTime = Date.now();
   const { orderId, userId, tenantId, retryCount = 0, ...paymentData } = job.data;
 
@@ -36,7 +36,7 @@ export async function processPayment(job: Job<PaymentJobData>): Promise<PaymentJ
     userId,
     tenantId,
     amount: paymentData.amount,
-    attempt: job.attemptsMade + 1,
+    attempt: (job.attemptsMade || 0) + 1,
   });
 
   try {
@@ -55,7 +55,7 @@ export async function processPayment(job: Job<PaymentJobData>): Promise<PaymentJ
       });
 
       // Update job progress
-      await job.progress(100);
+      await job.progress?.(100);
 
       return {
         ...result,
@@ -82,7 +82,7 @@ export async function processPayment(job: Job<PaymentJobData>): Promise<PaymentJ
       orderId,
       userId,
       error: error.message,
-      attempt: job.attemptsMade + 1,
+      attempt: (job.attemptsMade || 0) + 1,
       processingTime,
     });
 
@@ -95,7 +95,7 @@ export async function processPayment(job: Job<PaymentJobData>): Promise<PaymentJ
  * Handle payment job failure
  * Called when all retry attempts have been exhausted
  */
-export async function onPaymentFailed(job: Job<PaymentJobData>, error: Error): Promise<void> {
+export async function onPaymentFailed(job: BullJobData<PaymentJobData>, error: Error): Promise<void> {
   const { orderId, userId, tenantId } = job.data;
 
   logger.error('Payment job failed permanently', {
@@ -133,7 +133,7 @@ export async function onPaymentFailed(job: Job<PaymentJobData>, error: Error): P
 /**
  * Handle payment job completion
  */
-export async function onPaymentCompleted(job: Job<PaymentJobData>, result: PaymentJobResult): Promise<void> {
+export async function onPaymentCompleted(job: BullJobData<PaymentJobData>, result: PaymentJobResult): Promise<void> {
   const { orderId, userId, tenantId } = job.data;
 
   logger.info('Payment job completed', {
@@ -173,7 +173,7 @@ export async function onPaymentCompleted(job: Job<PaymentJobData>, result: Payme
 /**
  * Handle payment job progress
  */
-export async function onPaymentProgress(job: Job<PaymentJobData>, progress: number): Promise<void> {
+export async function onPaymentProgress(job: BullJobData<PaymentJobData>, progress: number): Promise<void> {
   logger.debug('Payment job progress', {
     jobId: job.id,
     orderId: job.data.orderId,

@@ -21,7 +21,7 @@ export function validateEventPayload<T = any>(
   payload: T
 ): { valid: true; value: T } | { valid: false; error: Joi.ValidationError } {
   const schema = EventSchemaMap[eventType];
-  
+
   if (!schema) {
     logger.warn('No schema found for event type', { eventType });
     return { valid: true, value: payload };
@@ -56,10 +56,10 @@ export function validateEventPayloadOrThrow<T = any>(
   payload: T
 ): T {
   const result = validateEventPayload(eventType, payload);
-  
-  if (!result.valid) {
+
+  if (result.valid === false) {
     throw new EventValidationError(eventType, result.error);
   }
-  
+
   return result.value;
 }

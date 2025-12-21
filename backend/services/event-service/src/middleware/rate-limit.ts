@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { RedisService } from '../services/redisService';
+import { getRedis } from '../config/redis';
 import { logger } from '../utils/logger';
 
 export async function registerRateLimiting(app: FastifyInstance) {
@@ -21,7 +21,7 @@ export async function registerRateLimiting(app: FastifyInstance) {
       timeWindow: windowMs,
       cache: 10000,
       allowList: ['127.0.0.1', '::1'], // Allow localhost
-      redis: RedisService.getClient(),
+      redis: getRedis(),
       nameSpace: 'event-service-rate-limit:',
       continueExceeding: true,
       skipOnError: true, // Fail open - keep service available if Redis fails

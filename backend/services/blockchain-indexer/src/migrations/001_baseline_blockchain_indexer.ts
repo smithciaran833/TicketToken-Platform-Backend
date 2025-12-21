@@ -14,7 +14,10 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('started_at', { useTz: true });
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
+
+  await knex.raw('CREATE INDEX indexer_state_tenant_id_idx ON indexer_state(tenant_id)');
 
   logger.info('✅ indexer_state table created');
 
@@ -32,6 +35,9 @@ export async function up(knex: Knex): Promise<void> {
     table.index('slot');
     table.index('instruction_type');
     table.index('processed_at');
+    
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
+    table.index('tenant_id');
   });
 
   logger.info('✅ indexed_transactions table created');
@@ -57,6 +63,9 @@ export async function up(knex: Knex): Promise<void> {
     table.index('activity_type');
     table.index('transaction_signature');
     table.index('block_time');
+    
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
+    table.index('tenant_id');
   });
 
   logger.info('✅ marketplace_activity table created');
@@ -76,6 +85,9 @@ export async function up(knex: Knex): Promise<void> {
     // Indexes
     table.index('started_at');
     table.index('status');
+    
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
+    table.index('tenant_id');
   });
 
   logger.info('✅ reconciliation_runs table created');
@@ -97,6 +109,9 @@ export async function up(knex: Knex): Promise<void> {
     table.index('discrepancy_type');
     table.index('resolved');
     table.index('detected_at');
+    
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
+    table.index('tenant_id');
   });
 
   logger.info('✅ ownership_discrepancies table created');
@@ -120,13 +135,59 @@ export async function up(knex: Knex): Promise<void> {
     table.index('ticket_id');
     table.index('field_name');
     table.index('changed_at');
+    
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
+    table.index('tenant_id');
   });
 
   logger.info('✅ reconciliation_log table created');
 
+  // RLS
+  await knex.raw('ALTER TABLE indexer_state ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE indexed_transactions ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_activity ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE reconciliation_runs ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE ownership_discrepancies ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE reconciliation_log ENABLE ROW LEVEL SECURITY');
+
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON indexer_state USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON indexed_transactions USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON marketplace_activity USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON reconciliation_runs USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON ownership_discrepancies USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON reconciliation_log USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+
+  logger.info('✅ RLS enabled on all tables');
+
+  // ==========================================
+  // FOREIGN KEY CONSTRAINTS
+  // ==========================================
+  logger.info('');
+  logger.info('🔗 Adding foreign key constraints...');
+
+  // marketplace_activity FKs
+  await knex.schema.alterTable('marketplace_activity', (table) => {
+    table.foreign('ticket_id').references('id').inTable('tickets').onDelete('SET NULL');
+  });
+  logger.info('✅ marketplace_activity → tickets');
+
+  // ownership_discrepancies FKs
+  await knex.schema.alterTable('ownership_discrepancies', (table) => {
+    table.foreign('ticket_id').references('id').inTable('tickets').onDelete('CASCADE');
+  });
+  logger.info('✅ ownership_discrepancies → tickets');
+
+  // reconciliation_log FKs
+  await knex.schema.alterTable('reconciliation_log', (table) => {
+    table.foreign('ticket_id').references('id').inTable('tickets').onDelete('CASCADE');
+  });
+  logger.info('✅ reconciliation_log → tickets');
+
+  logger.info('✅ All FK constraints added (3 total)');
+
   logger.info('');
   logger.info('🎉 Blockchain Indexer baseline migration complete!');
-  logger.info('📊 Tables created: 6 tables');
+  logger.info('📊 Tables created: 7 tables (1 tenants + 6 indexer)');
   logger.info('');
   logger.info('Created Tables:');
   logger.info('  ✅ indexer_state (singleton state tracking)');
@@ -138,6 +199,20 @@ export async function up(knex: Knex): Promise<void> {
 }
 
 export async function down(knex: Knex): Promise<void> {
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON reconciliation_log');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON ownership_discrepancies');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON reconciliation_runs');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON marketplace_activity');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON indexed_transactions');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON indexer_state');
+
+  await knex.raw('ALTER TABLE reconciliation_log DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE ownership_discrepancies DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE reconciliation_runs DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_activity DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE indexed_transactions DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE indexer_state DISABLE ROW LEVEL SECURITY');
+
   await knex.schema.dropTableIfExists('reconciliation_log');
   await knex.schema.dropTableIfExists('ownership_discrepancies');
   await knex.schema.dropTableIfExists('reconciliation_runs');
@@ -145,5 +220,4 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('indexed_transactions');
   await knex.schema.dropTableIfExists('indexer_state');
 
-  logger.info('✅ Blockchain Indexer migration rolled back');
 }

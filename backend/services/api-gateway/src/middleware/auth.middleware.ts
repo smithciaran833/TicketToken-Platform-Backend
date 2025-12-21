@@ -168,7 +168,7 @@ export async function setupAuthMiddleware(server: FastifyInstance) {
       // First authenticate
       await server.authenticate(request);
 
-      const user = request.user!;
+      const user = request.user as AuthUser;
 
       // Check if user has the required permission
       if (!hasPermission(user, permission, request)) {

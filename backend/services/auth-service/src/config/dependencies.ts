@@ -14,7 +14,6 @@ import { MonitoringService } from '../services/monitoring.service';
 import { WalletService } from '../services/wallet.service';
 import { OAuthService } from '../services/oauth.service';
 import { db } from './database';
-import { redis } from './redis';
 import { env } from './env';
 
 export function createDependencyContainer() {
@@ -28,7 +27,6 @@ export function createDependencyContainer() {
     
     // Database
     db: asValue(db),
-    redis: asValue(redis),
     
     // Core Services
     jwtService: asClass(JWTService).singleton(),

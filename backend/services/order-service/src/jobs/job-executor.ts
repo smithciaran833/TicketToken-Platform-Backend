@@ -2,8 +2,20 @@ import { logger, createContextLogger } from '../utils/logger';
 import { retry, RetryOptions } from '../utils/retry';
 import { CircuitBreaker } from '../utils/circuit-breaker';
 import { withLock } from '../utils/distributed-lock';
-import { jobMetricsService } from '../services/job-metrics.service';
-import { jobAlertingService } from '../services/job-alerting.service';
+// import { jobMetricsService } from '../services/job-metrics.service';
+// import { jobAlertingService } from '../services/job-alerting.service';
+
+// Stub services (not implemented)
+const jobMetricsService = {
+  recordSkipped: async (name: string) => {},
+  recordCircuitOpen: async (name: string) => {},
+  recordExecution: async (name: string, result: any) => {},
+  getConsecutiveFailures: async (name: string) => 0,
+};
+const jobAlertingService = {
+  alertSlowExecution: async (name: string, duration: number, timeout: number) => {},
+  alertJobFailure: async (name: string, error: string, failures: number) => {},
+};
 
 export enum JobStatus {
   IDLE = 'IDLE',

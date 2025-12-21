@@ -31,7 +31,12 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'set -e' >> /app/entrypoint.sh && \
     echo 'echo "Running migrations for event-service..."' >> /app/entrypoint.sh && \
     echo 'cd /app/backend/services/event-service' >> /app/entrypoint.sh && \
-    echo 'npm run migrate || echo "Migration failed, continuing..."' >> /app/entrypoint.sh && \
+    echo 'npm run migrate' >> /app/entrypoint.sh && \
+    echo 'if [ $? -ne 0 ]; then' >> /app/entrypoint.sh && \
+    echo '  echo "ERROR: Migration failed! Container will not start."' >> /app/entrypoint.sh && \
+    echo '  exit 1' >> /app/entrypoint.sh && \
+    echo 'fi' >> /app/entrypoint.sh && \
+    echo 'echo "Migrations completed successfully"' >> /app/entrypoint.sh && \
     echo 'exec "$@"' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 

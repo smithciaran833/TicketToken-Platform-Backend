@@ -2,7 +2,6 @@ import { Pool } from 'pg';
 import { promisify } from 'util';
 import { resolve4 } from 'dns';
 import { logger } from '../utils/logger';
-import { initializeDatabaseMonitoring } from '../utils/database-monitor';
 
 const resolveDns = promisify(resolve4);
 
@@ -36,10 +35,6 @@ export async function initializeDatabase(): Promise<Pool> {
         max: parseInt(process.env.DB_POOL_MAX || '10', 10),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
-        // Query timeout settings for production stability
-        statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000', 10), // Kill queries after 30s
-        query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT || '30000', 10), // Alternative timeout setting
-        idle_in_transaction_session_timeout: parseInt(process.env.DB_IDLE_TRANSACTION_TIMEOUT || '60000', 10), // Kill idle transactions after 60s
       });
 
       pool.on('error', (err) => {
@@ -52,14 +47,9 @@ export async function initializeDatabase(): Promise<Pool> {
 
       // Test connection
       await pool.query('SELECT 1');
-
       logger.info('Database connection pool initialized successfully');
-      
-      // Initialize database query monitoring
-      initializeDatabaseMonitoring(pool);
-      
-      return pool; // Success! Exit the retry loop
 
+      return pool; // Success! Exit the retry loop
     } catch (error) {
       logger.error(`Connection attempt ${attempt} failed:`, { error });
 

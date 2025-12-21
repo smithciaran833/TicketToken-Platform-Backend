@@ -75,7 +75,7 @@ class DataRetentionService {
     const cutoffDate = this.getCutoffDate(this.retentionDays);
 
     try {
-      const result = await db('notifications')
+      const result = await db('notification_history')
         .where('created_at', '<', cutoffDate)
         .where('status', 'in', ['sent', 'delivered', 'failed'])
         .delete();
@@ -173,16 +173,16 @@ class DataRetentionService {
           anonymized_at: new Date(),
         });
 
-      // Anonymize notifications
-      await db('notifications')
-        .where('recipient_id', userId)
-        .update({
-          data: db.raw("jsonb_set(data, '{recipient}', '\"ANONYMIZED\"'::jsonb)"),
-          anonymized_at: new Date(),
-        });
+      // Anonymize notifications (notification_history already updated above, skip duplicate)
+      // await db('notification_history')
+      //   .where('recipient_id', userId)
+      //   .update({
+      //     metadata: db.raw("jsonb_set(metadata, '{recipient}', '\"ANONYMIZED\"'::jsonb)"),
+      //     anonymized_at: new Date(),
+      //   });
 
       // Delete consent records
-      await db('consent')
+      await db('consent_records')
         .where('customer_id', userId)
         .delete();
 
@@ -228,11 +228,12 @@ class DataRetentionService {
         .where('recipient_id', userId)
         .delete();
 
-      await db('notifications')
-        .where('recipient_id', userId)
-        .delete();
+      // notification_history already deleted above, no separate notifications table
+      // await db('notification_history')
+      //   .where('recipient_id', userId)
+      //   .delete();
 
-      await db('consent')
+      await db('consent_records')
         .where('customer_id', userId)
         .delete();
 
@@ -263,7 +264,7 @@ class DataRetentionService {
     const auditCutoffDate = this.getCutoffDate(this.auditRetentionDays);
 
     const [notifications, history, webhooks, auditLogs] = await Promise.all([
-      db('notifications')
+      db('notification_history')
         .where('created_at', '<', cutoffDate)
         .count('* as count')
         .first(),
@@ -312,7 +313,7 @@ class DataRetentionService {
     total: number;
   }> {
     const [notifications, history, consent, preferences] = await Promise.all([
-      db('notifications')
+      db('notification_history')
         .where('recipient_id', userId)
         .count('* as count')
         .first(),
@@ -320,7 +321,7 @@ class DataRetentionService {
         .where('recipient_id', userId)
         .count('* as count')
         .first(),
-      db('consent')
+      db('consent_records')
         .where('customer_id', userId)
         .count('* as count')
         .first(),

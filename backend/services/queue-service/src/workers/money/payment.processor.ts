@@ -1,4 +1,5 @@
-import { Job } from 'bull';
+import { BullJobData } from '../../adapters/bull-job-adapter';
+import axios from 'axios';
 import { BaseWorker } from '../base.worker';
 import { PaymentJobData, JobResult } from '../../types/job.types';
 import { IdempotencyService } from '../../services/idempotency.service';
@@ -16,7 +17,7 @@ export class PaymentProcessor extends BaseWorker<PaymentJobData, JobResult> {
     this.rateLimiter = RateLimiterService.getInstance();
   }
   
-  protected async execute(job: Job<PaymentJobData>): Promise<JobResult> {
+  protected async execute(job: BullJobData<PaymentJobData>): Promise<JobResult> {
     const { userId, venueId, eventId, amount, paymentMethod } = job.data;
     
     // Generate idempotency key
@@ -42,28 +43,22 @@ export class PaymentProcessor extends BaseWorker<PaymentJobData, JobResult> {
     
     try {
       // Acquire rate limit for Stripe
-      await this.rateLimiter.acquire('stripe', job.opts.priority || 5);
+      await this.rateLimiter.acquire('stripe', (job.opts?.priority as number) || 5);
       
       try {
-        // TODO: Implement actual Stripe payment processing
-        await this.simulatePaymentProcessing();
+        // Call payment-service to process actual payment via Stripe
+        const paymentResponse = await this.processPaymentViaService(job.data, idempotencyKey);
         
         const result: JobResult = {
           success: true,
-          data: {
-            transactionId: `txn_${Date.now()}`,
-            chargeId: `ch_${Date.now()}`,
-            amount,
-            status: 'completed',
-            processedAt: new Date().toISOString()
-          }
+          data: paymentResponse
         };
         
         // Store result for idempotency (90 days for payments)
         await this.idempotencyService.store(
           idempotencyKey,
-          job.queue.name,
-          job.name,
+          job.queue?.name || 'money',
+          job.name || 'payment-process',
           result,
           90 * 24 * 60 * 60 // 90 days in seconds
         );
@@ -95,13 +90,47 @@ export class PaymentProcessor extends BaseWorker<PaymentJobData, JobResult> {
     }
   }
   
-  private async simulatePaymentProcessing(): Promise<void> {
-    // Simulate Stripe API call delay
-    await new Promise(resolve => setTimeout(resolve, 1000));
+  private async processPaymentViaService(data: PaymentJobData, idempotencyKey: string): Promise<any> {
+    const paymentServiceUrl = process.env.PAYMENT_SERVICE_URL || 'http://localhost:3005';
     
-    // Simulate random failure for testing (5% chance)
-    if (Math.random() < 0.05) {
-      throw new Error('Simulated payment failure');
+    try {
+      const response = await axios.post(
+        `${paymentServiceUrl}/api/v1/payments/process`,
+        {
+          userId: data.userId,
+          venueId: data.venueId,
+          eventId: data.eventId,
+          amount: data.amount,
+          currency: data.currency || 'USD',
+          paymentMethod: data.paymentMethod,
+          idempotencyKey
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Idempotency-Key': idempotencyKey
+          },
+          timeout: 30000 // 30 second timeout
+        }
+      );
+      
+      return response.data;
+    } catch (error: any) {
+      logger.error('Payment service call failed:', {
+        error: error.message,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      
+      // Re-throw with more context
+      if (error.response) {
+        const serviceError = new Error(error.response.data?.message || 'Payment service error');
+        (serviceError as any).statusCode = error.response.status;
+        (serviceError as any).details = error.response.data;
+        throw serviceError;
+      }
+      
+      throw error;
     }
   }
   

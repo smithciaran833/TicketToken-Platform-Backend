@@ -1,11 +1,4 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { db } from '../config/database';
-import { createRedisConnection } from '../config/redis';
-import { EventService } from '../services/event.service';
-import { VenueServiceClient } from '../services/venue-service.client';
-
-// Create a singleton Redis connection for the controller
-const redis = createRedisConnection();
 
 interface CreateEventBody {
   name: string;
@@ -44,9 +37,9 @@ export async function createEvent(
 
     const eventData = request.body;
 
-    // Initialize EventService
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    // Use EventService from dependency container
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     // Create event with tenant context
     const event = await eventService.createEvent(
@@ -99,11 +92,10 @@ export async function createEvent(
       });
     }
 
-    // Log and return 500 for unexpected errors
+    // Log and return 500 for unexpected errors (don't leak error message in production)
     request.log.error('Error creating event:', error);
     return reply.status(500).send({
-      error: 'Failed to create event',
-      message: error.message
+      error: 'Failed to create event'
     });
   }
 }
@@ -116,8 +108,8 @@ export async function getEvent(
     const { id } = request.params;
     const tenantId = (request as any).tenantId;
 
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     const event = await eventService.getEvent(id, tenantId);
     return reply.send({ event });
@@ -146,8 +138,8 @@ export async function listEvents(
     const tenantId = (request as any).tenantId;
     const { status, limit = 20, offset = 0 } = request.query;
 
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     const result = await eventService.listEvents(tenantId, { status, limit, offset });
     return reply.send(result);
@@ -167,8 +159,8 @@ export async function updateEvent(
     const userId = (request as any).user?.id;
     const tenantId = (request as any).tenantId;
 
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     const event = await eventService.updateEvent(
       id,
@@ -216,8 +208,8 @@ export async function deleteEvent(
     const userId = (request as any).user?.id;
     const tenantId = (request as any).tenantId;
 
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     await eventService.deleteEvent(id, authToken, userId, tenantId, {
       ip: request.ip,
@@ -257,8 +249,8 @@ export async function publishEvent(
     const userId = (request as any).user?.id;
     const tenantId = (request as any).tenantId;
 
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     const event = await eventService.publishEvent(id, userId, tenantId);
     return reply.send({ event });
@@ -287,8 +279,8 @@ export async function getVenueEvents(
     const { venueId } = request.params;
     const tenantId = (request as any).tenantId;
 
-    const venueClient = new VenueServiceClient();
-    const eventService = new EventService(db, venueClient, redis);
+    const container = (request as any).container;
+    const eventService = container.resolve('eventService');
 
     const events = await eventService.getVenueEvents(venueId, tenantId);
     return reply.send({ events });

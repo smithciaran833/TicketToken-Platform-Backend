@@ -25,6 +25,41 @@ export interface BrandingConfig {
   ogDescription?: string;
 }
 
+// Map camelCase to snake_case for database columns
+function toSnakeCase(obj: Record<string, any>): Record<string, any> {
+  const snakeCaseMap: Record<string, string> = {
+    primaryColor: 'primary_color',
+    secondaryColor: 'secondary_color',
+    accentColor: 'accent_color',
+    textColor: 'text_color',
+    backgroundColor: 'background_color',
+    fontFamily: 'font_family',
+    headingFont: 'heading_font',
+    logoUrl: 'logo_url',
+    logoDarkUrl: 'logo_dark_url',
+    faviconUrl: 'favicon_url',
+    emailHeaderImage: 'email_header_image',
+    ticketBackgroundImage: 'ticket_background_image',
+    customCss: 'custom_css',
+    emailFromName: 'email_from_name',
+    emailReplyTo: 'email_reply_to',
+    emailFooterText: 'email_footer_text',
+    ticketHeaderText: 'ticket_header_text',
+    ticketFooterText: 'ticket_footer_text',
+    ogImageUrl: 'og_image_url',
+    ogDescription: 'og_description',
+  };
+
+  const result: Record<string, any> = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      const snakeKey = snakeCaseMap[key] || key;
+      result[snakeKey] = value;
+    }
+  }
+  return result;
+}
+
 export class BrandingService {
   /**
    * Get branding configuration for a venue
@@ -100,6 +135,18 @@ export class BrandingService {
       if (brandingData.secondaryColor) {
         this.validateHexColor(brandingData.secondaryColor);
       }
+      if (brandingData.accentColor) {
+        this.validateHexColor(brandingData.accentColor);
+      }
+      if (brandingData.textColor) {
+        this.validateHexColor(brandingData.textColor);
+      }
+      if (brandingData.backgroundColor) {
+        this.validateHexColor(brandingData.backgroundColor);
+      }
+
+      // Convert camelCase to snake_case for database
+      const dbData = toSnakeCase(brandingData);
 
       // Check if branding exists
       const existing = await db('venue_branding')
@@ -112,7 +159,7 @@ export class BrandingService {
         result = await db('venue_branding')
           .where('venue_id', venueId)
           .update({
-            ...brandingData,
+            ...dbData,
             updated_at: new Date()
           })
           .returning('*');
@@ -121,7 +168,7 @@ export class BrandingService {
         result = await db('venue_branding')
           .insert({
             venue_id: venueId,
-            ...brandingData
+            ...dbData
           })
           .returning('*');
       }

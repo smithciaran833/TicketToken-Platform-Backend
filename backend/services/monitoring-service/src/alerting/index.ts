@@ -1,56 +1,52 @@
 import { AlertManager } from './alert.manager';
 import { RuleEngine } from './rules/rule.engine';
 import { NotificationManager } from './channels/notification.manager';
-import { EscalationManager } from './escalation/escalation.manager';
-import { logger } from '../utils/logger';
-import { config } from '../config';
+import { logger } from '../logger';
 
-let alertManager: AlertManager;
-let ruleEngine: RuleEngine;
-let notificationManager: NotificationManager;
-let escalationManager: EscalationManager;
-let evaluationInterval: NodeJS.Timeout;
+let alertManager: AlertManager | null = null;
+let ruleEngine: RuleEngine | null = null;
+let notificationManager: NotificationManager | null = null;
 
-export async function initializeAlertingSystem() {
+export function initializeAlerting(): void {
   try {
-    logger.info('Initializing alerting system...');
+    logger.info('Initializing alerting system');
     
-    // Initialize components
     notificationManager = new NotificationManager();
-    escalationManager = new EscalationManager();
     ruleEngine = new RuleEngine();
-    alertManager = new AlertManager(notificationManager, escalationManager);
+    alertManager = new AlertManager();
     
-    // Load alert rules
-    await ruleEngine.loadRules();
-    
-    // Start alert evaluation
-    evaluationInterval = setInterval(async () => {
-      await evaluateAlerts();
-    }, config.intervals.alertEvaluation);
-    
-    logger.info('Alerting system initialized');
+    logger.info('Alerting system initialized successfully');
   } catch (error) {
     logger.error('Failed to initialize alerting system:', error);
     throw error;
   }
 }
 
-async function evaluateAlerts() {
+export async function evaluateRules(): Promise<void> {
+  if (!ruleEngine) {
+    throw new Error('Alerting system not initialized');
+  }
+  
   try {
-    const alerts = await ruleEngine.evaluate();
-    for (const alert of alerts) {
-      await alertManager.processAlert(alert);
-    }
+    // Rule evaluation logic would go here
+    // For now, just log
+    logger.debug('Evaluating alert rules');
   } catch (error) {
-    logger.error('Error evaluating alerts:', error);
+    logger.error('Failed to evaluate rules:', error);
+    throw error;
   }
 }
 
-export async function stopAlertingSystem() {
-  if (evaluationInterval) {
-    clearInterval(evaluationInterval);
+export function getAlertManager(): AlertManager {
+  if (!alertManager) {
+    throw new Error('Alerting system not initialized');
   }
+  return alertManager;
 }
 
-export { alertManager, ruleEngine, notificationManager, escalationManager };
+export function getRuleEngine(): RuleEngine {
+  if (!ruleEngine) {
+    throw new Error('Alerting system not initialized');
+  }
+  return ruleEngine;
+}

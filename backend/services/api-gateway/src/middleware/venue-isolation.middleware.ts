@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../config';
 import { createRequestLogger, logSecurityEvent } from '../utils/logger';
-import { AuthorizationError, NotFoundError } from '../types';
+import { AuthorizationError, NotFoundError, AuthUser } from '../types';
 import { REDIS_KEYS, REDIS_TTL } from '../config/redis';
 
 export async function setupVenueIsolationMiddleware(server: FastifyInstance) {
@@ -19,7 +19,7 @@ export async function setupVenueIsolationMiddleware(server: FastifyInstance) {
     }
 
     // Get user's venue access
-    const user = request.user;
+    const user = request.user as AuthUser | undefined;
     if (!user) {
       return; // Auth middleware will handle this
     }
@@ -124,8 +124,9 @@ function extractVenueId(request: FastifyRequest): string | null {
   if (headerVenueId && typeof headerVenueId === 'string') return headerVenueId;
 
   // 5. User's default venue
-  if (request.user?.venueId) {
-    return request.user.venueId;
+  const user = request.user as AuthUser | undefined;
+  if (user?.venueId) {
+    return user.venueId;
   }
 
   return null;

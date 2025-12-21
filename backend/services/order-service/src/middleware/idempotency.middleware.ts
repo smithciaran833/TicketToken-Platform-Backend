@@ -1,5 +1,5 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { RedisService } from '../services/redis.service';
+import { get, set, del } from '../config/redis';
 import { validate as isUUID } from 'uuid';
 import { logger } from '../utils/logger';
 
@@ -45,7 +45,7 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
 
     try {
       // 4. Check if request already processed
-      const cached = await RedisService.get(redisKey);
+      const cached = await get(redisKey);
 
       if (cached) {
         const cachedResponse = JSON.parse(cached);
@@ -76,7 +76,7 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
       }
 
       // 5. Mark as in-progress to prevent concurrent duplicates
-      await RedisService.set(
+      await set(
         redisKey,
         JSON.stringify({
           statusCode: 102,
@@ -123,7 +123,7 @@ export async function idempotencyCacheHook(
 
   // Cache successful responses (2xx) for 24 hours
   if (statusCode >= 200 && statusCode < 300) {
-    await RedisService.set(
+    await set(
       redisKey,
       JSON.stringify({
         statusCode,
@@ -137,13 +137,13 @@ export async function idempotencyCacheHook(
   }
   // Delete key on server errors (5xx) to allow retry
   else if (statusCode >= 500) {
-    await RedisService.del(redisKey).catch((err) => {
+    await del(redisKey).catch((err) => {
       logger.error('Failed to delete key after server error', { err });
     });
   }
   // Keep key for client errors (4xx) to prevent retry
   else if (statusCode >= 400 && statusCode < 500) {
-    await RedisService.set(
+    await set(
       redisKey,
       JSON.stringify({
         statusCode,

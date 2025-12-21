@@ -1,14 +1,11 @@
-import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
-import { createCache } from '@tickettoken/shared';
+/**
+ * Response Cache Middleware - Updated to use @tickettoken/shared Redis cache
+ */
 
-const cache = createCache({
-  redis: {
-    host: process.env.REDIS_HOST || 'redis',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD,
-    keyPrefix: 'gateway:',
-  }
-});
+import { FastifyRequest, FastifyReply, FastifyInstance } from 'fastify';
+import { getCacheManager } from '@tickettoken/shared';
+
+const cacheManager = getCacheManager();
 
 interface CacheConfig {
   ttl?: number;
@@ -43,15 +40,15 @@ export function responseCachePlugin(fastify: FastifyInstance) {
     }
 
     // Generate cache key
-    let cacheKey = `response:${path}`;
+    let cacheKey = `gateway:response:${path}`;
     if (config.varyBy) {
       const query = request.query as any;
       const varies = config.varyBy.map(param => `${param}:${query[param] || ''}`).join(':');
       cacheKey += `:${varies}`;
     }
 
-    // Try to get from cache
-    const cached = await cache.service.get(cacheKey);
+    // Try to get from cache using new cache manager
+    const cached = await cacheManager.get(cacheKey);
     if (cached) {
       reply.header('X-Cache', 'HIT');
       reply.header('X-Cache-TTL', String(config.ttl || '300'));
@@ -71,10 +68,8 @@ export function responseCachePlugin(fastify: FastifyInstance) {
     if (cacheConfig && reply.statusCode === 200 && payload) {
       try {
         const data = typeof payload === 'string' ? JSON.parse(payload) : payload;
-        await cache.service.set(cacheConfig.cacheKey, data, {
-          ttl: cacheConfig.ttl,
-          level: 'BOTH'
-        });
+        // Use new cache manager
+        await cacheManager.set(cacheConfig.cacheKey, data, cacheConfig.ttl);
       } catch (err) {
         console.error('Cache set error:', err);
       }
@@ -95,7 +90,8 @@ export function cacheInvalidationRoutes(app: FastifyInstance) {
     
     if (patterns && Array.isArray(patterns)) {
       for (const pattern of patterns) {
-        await cache.service.delete(pattern);
+        // Use cache manager's safe invalidate (uses SCAN not KEYS)
+        await cacheManager.invalidate(pattern);
       }
       return reply.send({ success: true, invalidated: patterns.length });
     } else {
@@ -104,7 +100,10 @@ export function cacheInvalidationRoutes(app: FastifyInstance) {
   });
 
   app.get('/admin/cache/stats', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const stats = cache.service.getStats();
-    return reply.send(stats);
+    // Basic stats - can be enhanced
+    return reply.send({ 
+      message: 'Cache stats available via Redis monitoring',
+      backend: 'Redis via @tickettoken/shared'
+    });
   });
 }

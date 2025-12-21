@@ -1,7 +1,6 @@
 import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { getPool } from '../config/database.config';
-import { getRedisClient } from '../config/redis.config';
 import { QueueFactory } from '../queues/factories/queue.factory';
 import { logger } from '../utils/logger';
 
@@ -11,7 +10,6 @@ export class HealthController {
       const checks = {
         service: 'healthy',
         database: 'unknown',
-        redis: 'unknown',
         queues: 'unknown'
       };
 
@@ -25,17 +23,7 @@ export class HealthController {
         logger.error('Database health check failed:', error);
       }
 
-      // Check Redis
-      try {
-        const redis = getRedisClient();
-        await redis.ping();
-        checks.redis = 'healthy';
-      } catch (error) {
-        checks.redis = 'unhealthy';
-        logger.error('Redis health check failed:', error);
-      }
-
-      // Check queues
+      // Check queues (pg-boss)
       try {
         await QueueFactory.getQueueMetrics('money');
         checks.queues = 'healthy';
@@ -65,9 +53,6 @@ export class HealthController {
       // Check if service is ready to accept traffic
       const pool = getPool();
       await pool.query('SELECT 1');
-
-      const redis = getRedisClient();
-      await redis.ping();
 
       return reply.send({
         status: 'ready',

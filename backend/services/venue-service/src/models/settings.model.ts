@@ -1,5 +1,4 @@
 import { Knex } from "knex";
-import { BaseModel } from './base.model';
 
 export interface IVenueSettings {
   general?: {
@@ -11,11 +10,11 @@ export interface IVenueSettings {
   };
   ticketing?: {
     allowRefunds?: boolean;
-    refundWindow?: number; // hours
+    refundWindow?: number;
     maxTicketsPerOrder?: number;
     requirePhoneNumber?: boolean;
     enableWaitlist?: boolean;
-    transferDeadline?: number; // hours before event
+    transferDeadline?: number;
   };
   notifications?: {
     emailEnabled?: boolean;
@@ -46,58 +45,66 @@ export interface IVenueSettings {
   };
 }
 
+/**
+ * SettingsModel - uses venue_settings table (not venues.settings column)
+ */
 export class SettingsModel {
-  private db: any;
+  private db: Knex;
 
-  constructor(db: any) {
+  constructor(db: Knex) {
     this.db = db;
   }
 
   async getVenueSettings(venueId: string): Promise<IVenueSettings> {
-    const venue = await this.db('venues')
-      .where({ id: venueId })
-      .whereNull('deleted_at')
-      .select('settings')
+    const row = await this.db('venue_settings')
+      .where({ venue_id: venueId })
       .first();
 
-    return venue?.settings || this.getDefaultSettings();
+    if (!row) {
+      return this.getDefaultSettings();
+    }
+
+    return this.rowToSettings(row);
   }
 
   async updateVenueSettings(venueId: string, settings: Partial<IVenueSettings>): Promise<IVenueSettings> {
-    const currentSettings = await this.getVenueSettings(venueId);
-    
-    const newSettings = this.mergeSettings(currentSettings, settings);
+    const existing = await this.db('venue_settings')
+      .where({ venue_id: venueId })
+      .first();
 
-    await this.db('venues')
-      .where({ id: venueId })
-      .update({
-        settings: newSettings,
-        updated_at: new Date(),
-      });
+    const rowData = this.settingsToRow(settings);
 
-    return newSettings;
+    if (existing) {
+      await this.db('venue_settings')
+        .where({ venue_id: venueId })
+        .update({
+          ...rowData,
+          updated_at: new Date()
+        });
+    } else {
+      await this.db('venue_settings')
+        .insert({
+          venue_id: venueId,
+          ...rowData
+        });
+    }
+
+    return this.getVenueSettings(venueId);
   }
 
   async updateSettingSection(
-    venueId: string, 
-    section: keyof IVenueSettings, 
+    venueId: string,
+    section: keyof IVenueSettings,
     sectionSettings: any
   ): Promise<IVenueSettings> {
     const currentSettings = await this.getVenueSettings(venueId);
-    
+
     currentSettings[section] = {
       ...currentSettings[section],
       ...sectionSettings,
     };
 
-    await this.db('venues')
-      .where({ id: venueId })
-      .update({
-        settings: currentSettings,
-        updated_at: new Date(),
-      });
-
-    return currentSettings;
+    return this.updateVenueSettings(venueId, currentSettings);
   }
 
   getDefaultSettings(): IVenueSettings {
@@ -147,30 +154,9 @@ export class SettingsModel {
     };
   }
 
-  private mergeSettings(current: IVenueSettings, updates: Partial<IVenueSettings>): IVenueSettings {
-    const merged = { ...current };
-
-    for (const [section, sectionUpdates] of Object.entries(updates)) {
-      if (sectionUpdates && typeof sectionUpdates === 'object') {
-        merged[section as keyof IVenueSettings] = {
-          ...current[section as keyof IVenueSettings],
-          ...sectionUpdates,
-        };
-      }
-    }
-
-    return merged;
-  }
-
   async validateSettings(settings: IVenueSettings): Promise<{ valid: boolean; errors: string[] }> {
     const errors: string[] = [];
 
-    // Validate timezone
-    if (settings.general?.timezone) {
-      // TODO: Validate against timezone list
-    }
-
-    // Validate currency
     if (settings.general?.currency) {
       const validCurrencies = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
       if (!validCurrencies.includes(settings.general.currency)) {
@@ -178,7 +164,6 @@ export class SettingsModel {
       }
     }
 
-    // Validate colors
     if (settings.branding?.primaryColor) {
       const hexRegex = /^#[0-9A-F]{6}$/i;
       if (!hexRegex.test(settings.branding.primaryColor)) {
@@ -186,7 +171,6 @@ export class SettingsModel {
       }
     }
 
-    // Validate webhook URL
     if (settings.notifications?.webhookUrl) {
       try {
         new URL(settings.notifications.webhookUrl);
@@ -199,5 +183,56 @@ export class SettingsModel {
       valid: errors.length === 0,
       errors,
     };
+  }
+
+  /**
+   * Convert DB row to IVenueSettings interface
+   */
+  private rowToSettings(row: any): IVenueSettings {
+    const defaults = this.getDefaultSettings();
+
+    return {
+      general: {
+        ...defaults.general,
+        currency: row.accepted_currencies?.[0] || defaults.general!.currency,
+      },
+      ticketing: {
+        ...defaults.ticketing,
+        maxTicketsPerOrder: row.max_tickets_per_order ?? defaults.ticketing!.maxTicketsPerOrder,
+      },
+      notifications: defaults.notifications,
+      branding: defaults.branding,
+      payment: {
+        ...defaults.payment,
+        currency: row.accepted_currencies?.[0] || defaults.payment!.currency,
+        paymentMethods: row.payment_methods || defaults.payment!.paymentMethods,
+      },
+      features: defaults.features,
+    };
+  }
+
+  /**
+   * Convert IVenueSettings to DB row format
+   */
+  private settingsToRow(settings: Partial<IVenueSettings>): any {
+    const row: any = {};
+
+    if (settings.ticketing?.maxTicketsPerOrder !== undefined) {
+      row.max_tickets_per_order = settings.ticketing.maxTicketsPerOrder;
+    }
+
+    if (settings.payment?.paymentMethods !== undefined) {
+      row.payment_methods = settings.payment.paymentMethods;
+    }
+
+    if (settings.payment?.currency !== undefined) {
+      row.accepted_currencies = [settings.payment.currency];
+    }
+
+    if (settings.general?.currency !== undefined) {
+      row.accepted_currencies = [settings.general.currency];
+    }
+
+    return row;
   }
 }

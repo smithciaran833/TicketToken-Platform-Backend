@@ -214,7 +214,7 @@ export class ReconciliationService {
     summary: ReconciliationSummary
   ): Promise<void> {
     try {
-      await db('reconciliation_reports').insert({
+      await db('minting_reconciliation_reports').insert({
         venue_id: venueId,
         report_date: new Date(),
         total_checked: summary.totalChecked,
@@ -248,7 +248,7 @@ export class ReconciliationService {
     venueId: string,
     limit: number = 10
   ): Promise<any[]> {
-    return db('reconciliation_reports')
+    return db('minting_reconciliation_reports')
       .where({ venue_id: venueId })
       .orderBy('report_date', 'desc')
       .limit(limit)
@@ -263,12 +263,12 @@ export class ReconciliationService {
     avgDiscrepancyRate: number;
     totalDiscrepanciesFixed: number;
   }> {
-    const lastReport = await db('reconciliation_reports')
+    const lastReport = await db('minting_reconciliation_reports')
       .where({ venue_id: venueId })
       .orderBy('report_date', 'desc')
       .first();
 
-    const avgRate = await db('reconciliation_reports')
+    const avgRate = await db('minting_reconciliation_reports')
       .where({ venue_id: venueId })
       .avg('discrepancy_rate as rate')
       .first();

@@ -46,8 +46,7 @@ export class JobController {
       // Add user context to job data
       const jobData = {
         ...data,
-        userId: request.user?.id,
-        venueId: request.user?.venueId,
+        userId: request.user?.userId,
         addedAt: new Date().toISOString()
       };
 
@@ -69,7 +68,7 @@ export class JobController {
       logger.info(`Job added to ${queue} queue`, {
         jobId: job.id,
         type,
-        userId: request.user?.id
+        userId: request.user?.userId
       });
 
       return reply.code(201).send({
@@ -135,7 +134,7 @@ export class JobController {
 
       await job.retry();
 
-      logger.info(`Job ${id} retried by user ${request.user?.id}`);
+      logger.info(`Job ${id} retried by user ${request.user?.userId}`);
 
       return reply.send({
         jobId: job.id,
@@ -166,7 +165,7 @@ export class JobController {
 
       await job.remove();
 
-      logger.info(`Job ${id} cancelled by user ${request.user?.id}`);
+      logger.info(`Job ${id} cancelled by user ${request.user?.userId}`);
 
       return reply.send({
         jobId: id,
@@ -256,8 +255,7 @@ export class JobController {
 
           const enrichedJobData = {
             ...sanitizedData,
-            userId: request.user?.id,
-            venueId: request.user?.venueId,
+            userId: request.user?.userId,
             batchId: request.headers['x-batch-id'] || null,
             batchIndex: index,
             addedAt: new Date().toISOString()
@@ -318,7 +316,7 @@ export class JobController {
       }
 
       logger.info(`Batch of ${results.length} jobs added to ${queue} queue`, {
-        userId: request.user?.id,
+        userId: request.user?.userId,
         successful: results.length,
         failed: errors.length
       });

@@ -59,7 +59,7 @@ export class S3StorageService {
         url: `https://${this.bucketName}.s3.${this.region}.amazonaws.com/${key}`,
       };
     } catch (error) {
-      logger.error('S3 upload failed:', error);
+      logger.error({ error }, 'S3 upload failed:');
       throw new Error(`Failed to upload file to S3: ${error}`);
     }
   }
@@ -79,7 +79,7 @@ export class S3StorageService {
       logger.debug(`Generated presigned URL for: ${key}`);
       return url;
     } catch (error) {
-      logger.error('Failed to generate presigned URL:', error);
+      logger.error({ error }, 'Failed to generate presigned URL:');
       throw new Error(`Failed to generate presigned URL: ${error}`);
     }
   }
@@ -113,7 +113,7 @@ export class S3StorageService {
         },
       };
     } catch (error) {
-      logger.error('Failed to generate upload URL:', error);
+      logger.error({ error }, 'Failed to generate upload URL:');
       throw new Error(`Failed to generate upload URL: ${error}`);
     }
   }
@@ -132,7 +132,7 @@ export class S3StorageService {
       logger.debug(`Downloaded file from S3: ${key}`);
       return result.Body as Buffer;
     } catch (error) {
-      logger.error('S3 download failed:', error);
+      logger.error({ error }, 'S3 download failed:');
       throw new Error(`Failed to download file from S3: ${error}`);
     }
   }
@@ -150,7 +150,7 @@ export class S3StorageService {
       await this.s3.deleteObject(params).promise();
       logger.info(`Deleted file from S3: ${key}`);
     } catch (error) {
-      logger.error('S3 deletion failed:', error);
+      logger.error({ error }, 'S3 deletion failed:');
       throw new Error(`Failed to delete file from S3: ${error}`);
     }
   }
@@ -199,7 +199,7 @@ export class S3StorageService {
         metadata: result.Metadata || {},
       };
     } catch (error) {
-      logger.error('Failed to get file metadata:', error);
+      logger.error({ error }, 'Failed to get file metadata:');
       throw new Error(`Failed to get file metadata: ${error}`);
     }
   }
@@ -228,7 +228,7 @@ export class S3StorageService {
       await this.s3.putBucketLifecycleConfiguration(params).promise();
       logger.info(`Set S3 expiration policy: ${days} days`);
     } catch (error) {
-      logger.error('Failed to set expiration policy:', error);
+      logger.error({ error }, 'Failed to set expiration policy:');
       throw new Error(`Failed to set expiration policy: ${error}`);
     }
   }
@@ -247,7 +247,7 @@ export class S3StorageService {
       const result = await this.s3.listObjectsV2(params).promise();
       return (result.Contents || []).map(obj => obj.Key || '');
     } catch (error) {
-      logger.error('Failed to list files:', error);
+      logger.error({ error }, 'Failed to list files:');
       throw new Error(`Failed to list files: ${error}`);
     }
   }
@@ -267,7 +267,7 @@ export class S3StorageService {
       await this.s3.copyObject(params).promise();
       logger.info(`Copied file in S3: ${sourceKey} -> ${destinationKey}`);
     } catch (error) {
-      logger.error('S3 copy failed:', error);
+      logger.error({ error }, 'S3 copy failed:');
       throw new Error(`Failed to copy file in S3: ${error}`);
     }
   }
@@ -302,7 +302,7 @@ export class S3StorageService {
         count: totalCount,
       };
     } catch (error) {
-      logger.error('Failed to get bucket stats:', error);
+      logger.error({ error }, 'Failed to get bucket stats:');
       throw new Error(`Failed to get bucket stats: ${error}`);
     }
   }

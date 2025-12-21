@@ -1,5 +1,13 @@
-import { getRedis } from '../../config/redis';
+/**
+ * Session Model - Migrated to @tickettoken/shared
+ * 
+ * 🚨 CRITICAL FIX: Replaced blocking redis.keys() with SCAN-based operations
+ * Uses Hash storage for better memory efficiency (3-5x improvement)
+ */
+
+import { getSessionManager, getScanner } from '@tickettoken/shared';
 import { v4 as uuidv4 } from 'uuid';
+import { getRedis } from '../../config/redis';
 
 export interface AnalyticsSession {
   sessionId: string;
@@ -17,7 +25,8 @@ export interface AnalyticsSession {
 }
 
 export class SessionModel {
-  private static redis = getRedis;
+  private static sessionManager = getSessionManager();
+  private static scanner = getScanner();
   private static SESSION_TTL = 1800; // 30 minutes
   
   static async createSession(
@@ -25,9 +34,7 @@ export class SessionModel {
     venueId: string,
     metadata?: Record<string, any>
   ): Promise<AnalyticsSession> {
-    const redis = this.redis();
     const sessionId = uuidv4();
-    const key = `session:${sessionId}`;
     
     const session: AnalyticsSession = {
       sessionId,
@@ -40,10 +47,16 @@ export class SessionModel {
       metadata
     };
     
-    await redis.set(key, JSON.stringify(session));
-    await redis.expire(key, this.SESSION_TTL);
+    // Use shared session manager with hash storage
+    await this.sessionManager.createSession(
+      sessionId,
+      userId,
+      { venueId, metadata },
+      this.SESSION_TTL
+    );
     
-    // Add to user's active sessions
+    // Add to user's active sessions set
+    const redis = getRedis();
     await redis.sadd(`user:sessions:${userId}`, sessionId);
     await redis.expire(`user:sessions:${userId}`, this.SESSION_TTL);
     
@@ -53,11 +66,20 @@ export class SessionModel {
   static async getSession(
     sessionId: string
   ): Promise<AnalyticsSession | null> {
-    const redis = this.redis();
-    const key = `session:${sessionId}`;
-    const data = await redis.get(key);
+    const sessionData = await this.sessionManager.getSession(sessionId);
+    if (!sessionData) return null;
     
-    return data ? JSON.parse(data) : null;
+    // Map SessionData to AnalyticsSession
+    return {
+      sessionId: sessionData.sessionId,
+      userId: sessionData.userId,
+      venueId: sessionData.venueId || '',
+      startTime: sessionData.startTime,
+      lastActivity: sessionData.lastActivity,
+      pageViews: sessionData.pageViews || 0,
+      events: sessionData.events || [],
+      metadata: sessionData.metadata
+    };
   }
   
   static async updateSession(
@@ -70,17 +92,19 @@ export class SessionModel {
       throw new Error('Session not found');
     }
     
-    const redis = this.redis();
-    const key = `session:${sessionId}`;
-    
     const updated = {
       ...session,
       ...updates,
       lastActivity: new Date()
     };
     
-    await redis.set(key, JSON.stringify(updated));
-    await redis.expire(key, this.SESSION_TTL);
+    // Update using session manager
+    await this.sessionManager.updateSession(sessionId, {
+      lastActivity: updated.lastActivity,
+      pageViews: updated.pageViews,
+      events: updated.events,
+      metadata: updated.metadata
+    });
   }
   
   static async trackEvent(
@@ -109,26 +133,22 @@ export class SessionModel {
   static async getUserSessions(
     userId: string
   ): Promise<string[]> {
-    const redis = this.redis();
+    const redis = getRedis();
     return await redis.smembers(`user:sessions:${userId}`);
   }
   
   static async getActiveSessions(
     venueId: string
   ): Promise<number> {
-    const redis = this.redis();
-    const pattern = `session:*`;
-    const keys = await redis.keys(pattern);
+    // 🚨 FIXED: Use SCAN instead of blocking KEYS command
+    const keys = await this.scanner.scanKeys('session:*');
     
     let activeCount = 0;
     
     for (const key of keys) {
-      const sessionData = await redis.get(key);
-      if (sessionData) {
-        const session = JSON.parse(sessionData);
-        if (session.venueId === venueId) {
-          activeCount++;
-        }
+      const sessionData = await this.sessionManager.getSession(key.replace('session:', ''));
+      if (sessionData && sessionData.venueId === venueId) {
+        activeCount++;
       }
     }
     
@@ -144,7 +164,7 @@ export class SessionModel {
       return;
     }
     
-    const redis = this.redis();
+    const redis = getRedis();
     
     // Remove from active sessions
     await redis.srem(`user:sessions:${session.userId}`, sessionId);
@@ -165,16 +185,15 @@ export class SessionModel {
     await redis.set(summaryKey, JSON.stringify(summary));
     await redis.expire(summaryKey, 86400); // Keep for 24 hours
     
-    // Delete session
-    await redis.del(`session:${sessionId}`);
+    // Delete session using session manager
+    await this.sessionManager.deleteSession(sessionId);
   }
   
   static async getSessionMetrics(
     venueId: string
   ): Promise<any> {
-    const redis = this.redis();
-    const pattern = `session:summary:*`;
-    const keys = await redis.keys(pattern);
+    // 🚨 FIXED: Use SCAN instead of blocking KEYS command
+    const keys = await this.scanner.scanKeys('session:summary:*');
     
     const metrics = {
       totalSessions: 0,
@@ -182,6 +201,8 @@ export class SessionModel {
       averagePageViews: 0,
       totalDuration: 0
     };
+    
+    const redis = getRedis();
     
     for (const key of keys) {
       const summaryData = await redis.get(key);

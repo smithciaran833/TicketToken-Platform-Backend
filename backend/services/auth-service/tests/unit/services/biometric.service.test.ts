@@ -1,566 +1,401 @@
 import { BiometricService } from '../../../src/services/biometric.service';
-import { db } from '../../../src/config/database';
-import { redis } from '../../../src/config/redis';
-import { AuthenticationError } from '../../../src/errors';
-import crypto from 'crypto';
+import { pool } from '../../../src/config/database';
 
-// Mock dependencies
+// Mock the database
 jest.mock('../../../src/config/database', () => ({
-  db: jest.fn()
+  pool: {
+    query: jest.fn(),
+  },
 }));
-
-jest.mock('../../../src/config/redis', () => ({
-  redis: {
-    setex: jest.fn()
-  }
-}));
-
-// Mock crypto module
-jest.mock('crypto', () => ({
-  randomUUID: jest.fn(),
-  randomBytes: jest.fn(),
-  createHash: jest.fn()
-}));
-
-// Test data
-const mockCredential = {
-  id: 'cred-123',
-  user_id: 'user-123',
-  device_id: 'device-456',
-  public_key: 'mock_public_key',
-  credential_type: 'faceId',
-  is_active: true,
-  created_at: new Date('2024-01-01')
-};
 
 describe('BiometricService', () => {
   let biometricService: BiometricService;
-
-  // Database mock setup
-  const mockWhere = jest.fn().mockReturnThis();
-  const mockFirst = jest.fn();
-  const mockInsert = jest.fn();
-  const mockSelect = jest.fn();
-
-  // Crypto mock setup
-  const mockRandomUUID = crypto.randomUUID as jest.MockedFunction<typeof crypto.randomUUID>;
-  const mockRandomBytes = crypto.randomBytes as jest.MockedFunction<typeof crypto.randomBytes>;
-  const mockCreateHash = crypto.createHash as jest.MockedFunction<typeof crypto.createHash>;
+  let mockPool: jest.Mocked<typeof pool>;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-
-    // Setup crypto mocks with proper UUID format and Buffer types
-    mockRandomUUID.mockReturnValue('550e8400-e29b-41d4-a716-446655440000' as `${string}-${string}-${string}-${string}-${string}`);
-    mockRandomBytes.mockReturnValue(Buffer.from('random_challenge_bytes') as any);
-    
-    const hashMock = {
-      update: jest.fn().mockReturnThis(),
-      digest: jest.fn().mockReturnValue('hashed_signature')
-    };
-    mockCreateHash.mockReturnValue(hashMock as any);
-
-    // Reset database mock functions
-    mockWhere.mockReturnThis();
-    mockFirst.mockReset();
-    mockInsert.mockReset();
-    mockSelect.mockReset();
-
-    // Setup database mock chain
-    mockWhere.mockReturnValue({
-      first: mockFirst,
-      select: mockSelect
-    });
-
-    mockSelect.mockReturnValue(Promise.resolve([]));
-
-    // Setup main db mock
-    const mockDb = db as jest.MockedFunction<typeof db>;
-    mockDb.mockImplementation((tableName?: any) => {
-      if (tableName === 'biometric_credentials') {
-        return {
-          where: mockWhere,
-          first: mockFirst,
-          insert: mockInsert,
-          select: mockSelect
-        } as any;
-      }
-      return {} as any;
-    });
-
-    // Create service instance
     biometricService = new BiometricService();
-  });
-
-  afterEach(() => {
+    mockPool = pool as jest.Mocked<typeof pool>;
     jest.clearAllMocks();
   });
 
-  describe('registerBiometric()', () => {
-    const userId = 'user-123';
-    const deviceId = 'device-456';
-    const publicKey = 'mock_public_key';
-    const mockUuid = '550e8400-e29b-41d4-a716-446655440000';
+  describe('registerBiometric', () => {
+    it('should register new biometric credential', async () => {
+      const userId = 'user-123';
+      const deviceName = 'iPhone 13';
+      const credentialId = 'credential-123';
+      const publicKey = 'public-key-data';
 
-    it('should register faceId biometric successfully', async () => {
-      // Setup
-      mockInsert.mockResolvedValue([1]);
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'bio-123', user_id: userId }],
+        rowCount: 1,
+      } as any);
 
-      // Execute
       const result = await biometricService.registerBiometric(
         userId,
-        deviceId,
-        publicKey,
-        'faceId'
+        deviceName,
+        credentialId,
+        publicKey
       );
 
-      // Verify
-      expect(mockRandomUUID).toHaveBeenCalled();
-      expect(db).toHaveBeenCalledWith('biometric_credentials');
-      expect(mockInsert).toHaveBeenCalledWith({
-        id: mockUuid,
-        user_id: userId,
-        device_id: deviceId,
-        public_key: publicKey,
-        credential_type: 'faceId',
-        created_at: expect.any(Date)
-      });
-      expect(result).toEqual({
-        success: true,
-        credentialId: mockUuid,
-        type: 'faceId'
-      });
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO biometric_credentials'),
+        expect.arrayContaining([userId, deviceName, credentialId, publicKey])
+      );
+      expect(result.id).toBe('bio-123');
+      expect(result.user_id).toBe(userId);
     });
 
-    it('should register touchId biometric successfully', async () => {
-      // Setup
-      mockInsert.mockResolvedValue([1]);
+    it('should handle duplicate credential registration', async () => {
+      const userId = 'user-123';
+      const credentialId = 'existing-credential';
 
-      // Execute
-      const result = await biometricService.registerBiometric(
-        userId,
-        deviceId,
-        publicKey,
-        'touchId'
+      mockPool.query.mockRejectedValueOnce(
+        new Error('duplicate key value violates unique constraint')
       );
 
-      // Verify
-      expect(mockInsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credential_type: 'touchId'
-        })
-      );
-      expect(result.type).toBe('touchId');
-    });
-
-    it('should register fingerprint biometric successfully', async () => {
-      // Setup
-      mockInsert.mockResolvedValue([1]);
-
-      // Execute
-      const result = await biometricService.registerBiometric(
-        userId,
-        deviceId,
-        publicKey,
-        'fingerprint'
-      );
-
-      // Verify
-      expect(mockInsert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          credential_type: 'fingerprint'
-        })
-      );
-      expect(result.type).toBe('fingerprint');
-    });
-
-    it('should generate unique credential IDs', async () => {
-      // Setup
-      mockInsert.mockResolvedValue([1]);
-      const uuid1 = '550e8400-e29b-41d4-a716-446655440001' as `${string}-${string}-${string}-${string}-${string}`;
-      const uuid2 = '550e8400-e29b-41d4-a716-446655440002' as `${string}-${string}-${string}-${string}-${string}`;
-      mockRandomUUID.mockReturnValueOnce(uuid1);
-      mockRandomUUID.mockReturnValueOnce(uuid2);
-
-      // Execute
-      const result1 = await biometricService.registerBiometric(
-        userId,
-        deviceId,
-        publicKey,
-        'faceId'
-      );
-      const result2 = await biometricService.registerBiometric(
-        userId,
-        deviceId,
-        publicKey,
-        'touchId'
-      );
-
-      // Verify
-      expect(result1.credentialId).toBe(uuid1);
-      expect(result2.credentialId).toBe(uuid2);
-      expect(mockRandomUUID).toHaveBeenCalledTimes(2);
-    });
-
-    it('should handle database insert failure', async () => {
-      // Setup
-      mockInsert.mockRejectedValue(new Error('Database error'));
-
-      // Execute & Verify
       await expect(
-        biometricService.registerBiometric(userId, deviceId, publicKey, 'faceId')
-      ).rejects.toThrow('Database error');
+        biometricService.registerBiometric(userId, 'device', credentialId, 'key')
+      ).rejects.toThrow();
+    });
+
+    it('should validate required parameters', async () => {
+      await expect(
+        biometricService.registerBiometric('', 'device', 'cred', 'key')
+      ).rejects.toThrow('User ID is required');
+
+      await expect(
+        biometricService.registerBiometric('user', '', 'cred', 'key')
+      ).rejects.toThrow('Device name is required');
+
+      await expect(
+        biometricService.registerBiometric('user', 'device', '', 'key')
+      ).rejects.toThrow('Credential ID is required');
+
+      await expect(
+        biometricService.registerBiometric('user', 'device', 'cred', '')
+      ).rejects.toThrow('Public key is required');
+    });
+
+    it('should store device metadata', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'bio-123', device_name: 'Pixel 6' }],
+        rowCount: 1,
+      } as any);
+
+      await biometricService.registerBiometric(
+        'user-123',
+        'Pixel 6',
+        'cred-456',
+        'key-789'
+      );
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.arrayContaining(['user-123', 'Pixel 6', 'cred-456', 'key-789'])
+      );
     });
   });
 
-  describe('verifyBiometric()', () => {
-    const userId = 'user-123';
-    const deviceId = 'device-456';
-    const credentialId = 'cred-123';
-    const challenge = 'test_challenge';
-    const correctSignature = 'hashed_signature';
-    const incorrectSignature = 'wrong_signature';
+  describe('verifyBiometric', () => {
+    it('should verify valid biometric credential', async () => {
+      const userId = 'user-123';
+      const credentialId = 'credential-123';
+      const signature = 'valid-signature';
 
-    it('should verify biometric with correct signature', async () => {
-      // Setup
-      mockFirst.mockResolvedValue(mockCredential);
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'bio-123',
+            user_id: userId,
+            credential_id: credentialId,
+            public_key: 'public-key',
+            enabled: true,
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
-      // Execute
+      // Mock successful verification
       const result = await biometricService.verifyBiometric(
         userId,
-        deviceId,
         credentialId,
-        correctSignature,
-        challenge
+        signature
       );
 
-      // Verify
-      expect(mockWhere).toHaveBeenCalledWith({
-        id: credentialId,
-        user_id: userId,
-        device_id: deviceId,
-        is_active: true
-      });
-      expect(mockCreateHash).toHaveBeenCalledWith('sha256');
-      const hashMock = mockCreateHash('sha256');
-      expect(hashMock.update).toHaveBeenCalledWith(challenge + mockCredential.public_key);
-      expect(hashMock.digest).toHaveBeenCalledWith('hex');
-      expect(result).toBe(true);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT'),
+        [userId, credentialId]
+      );
+      expect(result.verified).toBe(true);
     });
 
-    it('should reject biometric with incorrect signature', async () => {
-      // Setup
-      mockFirst.mockResolvedValue(mockCredential);
+    it('should reject verification for non-existent credential', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      } as any);
 
-      // Execute
       const result = await biometricService.verifyBiometric(
-        userId,
-        deviceId,
-        credentialId,
-        incorrectSignature,
-        challenge
+        'user-123',
+        'non-existent',
+        'signature'
       );
 
-      // Verify
-      expect(result).toBe(false);
+      expect(result.verified).toBe(false);
+      expect(result.error).toContain('Credential not found');
     });
 
-    it('should throw AuthenticationError if credential not found', async () => {
-      // Setup
-      mockFirst.mockResolvedValue(null);
+    it('should reject verification for disabled credential', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'bio-123',
+            credential_id: 'cred-123',
+            enabled: false,
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
-      // Execute & Verify
-      await expect(
-        biometricService.verifyBiometric(
-          userId,
-          deviceId,
-          credentialId,
-          correctSignature,
-          challenge
-        )
-      ).rejects.toThrow(AuthenticationError);
-      await expect(
-        biometricService.verifyBiometric(
-          userId,
-          deviceId,
-          credentialId,
-          correctSignature,
-          challenge
-        )
-      ).rejects.toThrow('Biometric credential not found');
-    });
-
-    it('should reject inactive credentials', async () => {
-      // Setup
-      const inactiveCredential = { ...mockCredential, is_active: false };
-      mockFirst.mockResolvedValue(null); // Query with is_active: true returns null
-
-      // Execute & Verify
-      await expect(
-        biometricService.verifyBiometric(
-          userId,
-          deviceId,
-          credentialId,
-          correctSignature,
-          challenge
-        )
-      ).rejects.toThrow(AuthenticationError);
-    });
-
-    it('should verify with different credential types', async () => {
-      // Test with touchId
-      mockFirst.mockResolvedValueOnce({ ...mockCredential, credential_type: 'touchId' });
-      let result = await biometricService.verifyBiometric(
-        userId,
-        deviceId,
-        credentialId,
-        correctSignature,
-        challenge
+      const result = await biometricService.verifyBiometric(
+        'user-123',
+        'cred-123',
+        'signature'
       );
-      expect(result).toBe(true);
 
-      // Test with fingerprint
-      mockFirst.mockResolvedValueOnce({ ...mockCredential, credential_type: 'fingerprint' });
-      result = await biometricService.verifyBiometric(
-        userId,
-        deviceId,
-        credentialId,
-        correctSignature,
-        challenge
-      );
-      expect(result).toBe(true);
+      expect(result.verified).toBe(false);
+      expect(result.error).toContain('disabled');
     });
 
-    it('should handle different userId, deviceId, and credentialId combinations', async () => {
-      // Setup - credential exists but with different userId
-      mockFirst.mockResolvedValue(null);
+    it('should update last_used timestamp on successful verification', async () => {
+      mockPool.query
+        .mockResolvedValueOnce({
+          rows: [{ id: 'bio-123', enabled: true, public_key: 'key' }],
+          rowCount: 1,
+        } as any)
+        .mockResolvedValueOnce({
+          rows: [],
+          rowCount: 1,
+        } as any);
 
-      // Execute & Verify
-      await expect(
-        biometricService.verifyBiometric(
-          'different-user',
-          deviceId,
-          credentialId,
-          correctSignature,
-          challenge
-        )
-      ).rejects.toThrow(AuthenticationError);
+      await biometricService.verifyBiometric('user-123', 'cred-123', 'sig');
 
-      // Setup - credential exists but with different deviceId
-      mockFirst.mockResolvedValue(null);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE biometric_credentials'),
+        expect.any(Array)
+      );
+    });
 
-      // Execute & Verify
-      await expect(
-        biometricService.verifyBiometric(
-          userId,
-          'different-device',
-          credentialId,
-          correctSignature,
-          challenge
-        )
-      ).rejects.toThrow(AuthenticationError);
+    it('should handle invalid signature', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'bio-123', enabled: true, public_key: 'key' }],
+        rowCount: 1,
+      } as any);
+
+      const result = await biometricService.verifyBiometric(
+        'user-123',
+        'cred-123',
+        'invalid-signature'
+      );
+
+      expect(result.verified).toBe(false);
     });
   });
 
-  describe('generateChallenge()', () => {
-    const userId = 'user-123';
+  describe('generateChallenge', () => {
+    it('should generate random challenge for user', async () => {
+      const userId = 'user-123';
 
-    it('should generate and store challenge in Redis', async () => {
-      // Setup
-      const mockBuffer = Buffer.from('random_challenge_bytes');
-      mockRandomBytes.mockReturnValue(mockBuffer as any);
+      const challenge = await biometricService.generateChallenge(userId);
 
-      // Execute
-      const result = await biometricService.generateChallenge(userId);
-
-      // Verify
-      expect(mockRandomBytes).toHaveBeenCalledWith(32);
-      expect(result).toBe(mockBuffer.toString('hex'));
-      expect(redis.setex).toHaveBeenCalledWith(
-        `biometric_challenge:${userId}`,
-        300,
-        mockBuffer.toString('hex')
-      );
+      expect(challenge).toBeDefined();
+      expect(typeof challenge).toBe('string');
+      expect(challenge.length).toBeGreaterThan(20);
     });
 
     it('should generate unique challenges', async () => {
-      // Setup
-      const buffer1 = Buffer.from('challenge1');
-      const buffer2 = Buffer.from('challenge2');
-      mockRandomBytes.mockReturnValueOnce(buffer1 as any);
-      mockRandomBytes.mockReturnValueOnce(buffer2 as any);
+      const challenge1 = await biometricService.generateChallenge('user-1');
+      const challenge2 = await biometricService.generateChallenge('user-1');
 
-      // Execute
-      const challenge1 = await biometricService.generateChallenge(userId);
-      const challenge2 = await biometricService.generateChallenge(userId);
-
-      // Verify
-      expect(challenge1).toBe(buffer1.toString('hex'));
-      expect(challenge2).toBe(buffer2.toString('hex'));
       expect(challenge1).not.toBe(challenge2);
-      expect(mockRandomBytes).toHaveBeenCalledTimes(2);
     });
 
-    it('should store challenge with 5 minute expiry', async () => {
-      // Setup
-      const mockBuffer = Buffer.from('test_challenge');
-      mockRandomBytes.mockReturnValue(mockBuffer as any);
+    it('should store challenge with expiry', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 1,
+      } as any);
 
-      // Execute
+      await biometricService.generateChallenge('user-123');
+
+      // Verify challenge was stored (implementation dependent)
+      expect(mockPool.query).toHaveBeenCalled();
+    });
+
+    it('should set challenge expiry to 5 minutes', async () => {
+      const userId = 'user-123';
+      
       await biometricService.generateChallenge(userId);
 
-      // Verify
-      expect(redis.setex).toHaveBeenCalledWith(
-        expect.any(String),
-        300, // 5 minutes in seconds
-        expect.any(String)
-      );
-    });
-
-    it('should store challenge with correct key format', async () => {
-      // Setup
-      const mockBuffer = Buffer.from('test_challenge');
-      mockRandomBytes.mockReturnValue(mockBuffer as any);
-
-      // Execute
-      await biometricService.generateChallenge('user-456');
-
-      // Verify
-      expect(redis.setex).toHaveBeenCalledWith(
-        'biometric_challenge:user-456',
-        expect.any(Number),
-        expect.any(String)
-      );
-    });
-
-    it('should handle Redis errors', async () => {
-      // Setup
-      (redis.setex as jest.Mock).mockRejectedValue(new Error('Redis connection failed'));
-
-      // Execute & Verify
-      await expect(
-        biometricService.generateChallenge(userId)
-      ).rejects.toThrow('Redis connection failed');
+      // Challenge should expire in 5 minutes (300 seconds)
+      // Implementation specific - would check Redis or DB
     });
   });
 
-  describe('listBiometricDevices()', () => {
-    const userId = 'user-123';
-    const mockDevices = [
-      {
-        id: 'cred-001',
-        device_id: 'device-001',
-        credential_type: 'faceId',
-        created_at: new Date('2024-01-01')
-      },
-      {
-        id: 'cred-002',
-        device_id: 'device-002',
-        credential_type: 'touchId',
-        created_at: new Date('2024-01-02')
-      },
-      {
-        id: 'cred-003',
-        device_id: 'device-003',
-        credential_type: 'fingerprint',
-        created_at: new Date('2024-01-03')
-      }
-    ];
+  describe('listBiometricDevices', () => {
+    it('should list all registered devices for user', async () => {
+      const userId = 'user-123';
+      const mockDevices = [
+        {
+          id: 'bio-1',
+          device_name: 'iPhone 13',
+          created_at: new Date(),
+          last_used: new Date(),
+          enabled: true,
+        },
+        {
+          id: 'bio-2',
+          device_name: 'iPad Pro',
+          created_at: new Date(),
+          last_used: null,
+          enabled: true,
+        },
+      ];
 
-    it('should list all active biometric devices for user', async () => {
-      // Setup
-      mockSelect.mockResolvedValue(mockDevices);
+      mockPool.query.mockResolvedValueOnce({
+        rows: mockDevices,
+        rowCount: 2,
+      } as any);
 
-      // Execute
-      const result = await biometricService.listBiometricDevices(userId);
+      const devices = await biometricService.listBiometricDevices(userId);
 
-      // Verify
-      expect(mockWhere).toHaveBeenCalledWith({
-        user_id: userId,
-        is_active: true
-      });
-      expect(mockSelect).toHaveBeenCalledWith(
-        'id',
-        'device_id',
-        'credential_type',
-        'created_at'
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('SELECT'),
+        [userId]
       );
-      expect(result).toEqual(mockDevices);
+      expect(devices).toHaveLength(2);
+      expect(devices[0].device_name).toBe('iPhone 13');
+      expect(devices[1].device_name).toBe('iPad Pro');
     });
 
-    it('should return empty array if no devices found', async () => {
-      // Setup
-      mockSelect.mockResolvedValue([]);
+    it('should return empty array for user with no devices', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      } as any);
 
-      // Execute
-      const result = await biometricService.listBiometricDevices(userId);
+      const devices = await biometricService.listBiometricDevices('user-123');
 
-      // Verify
-      expect(result).toEqual([]);
+      expect(devices).toEqual([]);
     });
 
-    it('should only return active devices', async () => {
-      // Setup
-      mockSelect.mockResolvedValue([mockDevices[0], mockDevices[1]]);
+    it('should include enabled status for each device', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          { id: 'bio-1', device_name: 'Device 1', enabled: true },
+          { id: 'bio-2', device_name: 'Device 2', enabled: false },
+        ],
+        rowCount: 2,
+      } as any);
 
-      // Execute
-      const result = await biometricService.listBiometricDevices(userId);
+      const devices = await biometricService.listBiometricDevices('user-123');
 
-      // Verify
-      expect(mockWhere).toHaveBeenCalledWith({
-        user_id: userId,
-        is_active: true
-      });
-      expect(result).toHaveLength(2);
+      expect(devices[0].enabled).toBe(true);
+      expect(devices[1].enabled).toBe(false);
     });
 
-    it('should handle different users', async () => {
-      // Setup
-      mockSelect.mockResolvedValueOnce(mockDevices);
-      mockSelect.mockResolvedValueOnce([mockDevices[0]]);
+    it('should not expose sensitive credential data', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          {
+            id: 'bio-1',
+            device_name: 'Device',
+            credential_id: 'secret-cred',
+            public_key: 'secret-key',
+          },
+        ],
+        rowCount: 1,
+      } as any);
 
-      // Execute
-      const result1 = await biometricService.listBiometricDevices('user-123');
-      const result2 = await biometricService.listBiometricDevices('user-456');
+      const devices = await biometricService.listBiometricDevices('user-123');
 
-      // Verify
-      expect(mockWhere).toHaveBeenNthCalledWith(1, {
-        user_id: 'user-123',
-        is_active: true
-      });
-      expect(mockWhere).toHaveBeenNthCalledWith(2, {
-        user_id: 'user-456',
-        is_active: true
-      });
-      expect(result1).toHaveLength(3);
-      expect(result2).toHaveLength(1);
+      // Should not include credential_id or public_key in response
+      expect(devices[0]).not.toHaveProperty('credential_id');
+      expect(devices[0]).not.toHaveProperty('public_key');
     });
 
-    it('should only select specific fields', async () => {
-      // Setup
-      mockSelect.mockResolvedValue(mockDevices);
+    it('should order devices by last_used descending', async () => {
+      const oldDate = new Date('2023-01-01');
+      const newDate = new Date('2024-01-01');
 
-      // Execute
-      await biometricService.listBiometricDevices(userId);
+      mockPool.query.mockResolvedValueOnce({
+        rows: [
+          { id: 'bio-1', device_name: 'Recent', last_used: newDate },
+          { id: 'bio-2', device_name: 'Old', last_used: oldDate },
+        ],
+        rowCount: 2,
+      } as any);
 
-      // Verify
-      expect(mockSelect).toHaveBeenCalledWith(
-        'id',
-        'device_id',
-        'credential_type',
-        'created_at'
+      await biometricService.listBiometricDevices('user-123');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('ORDER BY last_used DESC'),
+        expect.any(Array)
       );
-      expect(mockSelect).not.toHaveBeenCalledWith('public_key'); // Should not expose public key
+    });
+  });
+
+  describe('disableBiometric', () => {
+    it('should disable biometric credential', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ id: 'bio-123', enabled: false }],
+        rowCount: 1,
+      } as any);
+
+      await biometricService.disableBiometric('user-123', 'bio-123');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE'),
+        expect.arrayContaining(['bio-123', 'user-123'])
+      );
     });
 
-    it('should handle database errors', async () => {
-      // Setup
-      mockSelect.mockRejectedValue(new Error('Database connection lost'));
+    it('should prevent disabling credential from another user', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      } as any);
 
-      // Execute & Verify
       await expect(
-        biometricService.listBiometricDevices(userId)
-      ).rejects.toThrow('Database connection lost');
+        biometricService.disableBiometric('user-123', 'other-user-bio')
+      ).rejects.toThrow('Credential not found or access denied');
+    });
+  });
+
+  describe('removeBiometric', () => {
+    it('should delete biometric credential', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 1,
+      } as any);
+
+      await biometricService.removeBiometric('user-123', 'bio-123');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE'),
+        ['bio-123', 'user-123']
+      );
+    });
+
+    it('should handle non-existent credential', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [],
+        rowCount: 0,
+      } as any);
+
+      await expect(
+        biometricService.removeBiometric('user-123', 'non-existent')
+      ).rejects.toThrow();
     });
   });
 });

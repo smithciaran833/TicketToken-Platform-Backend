@@ -17,7 +17,7 @@ export class OrderEventProcessor {
 
   async processOrderEvent(event: OrderEvent): Promise<void> {
     const order = await this.db.query(
-      'SELECT state FROM orders WHERE id = $1',
+      'SELECT status FROM orders WHERE id = $1',
       [event.orderId]
     );
 
@@ -25,18 +25,18 @@ export class OrderEventProcessor {
       throw new Error(`Order ${event.orderId} not found`);
     }
 
-    const currentState = order.rows[0].state as OrderState;
-    
+    const currentState = order.rows[0].status as OrderState;
+
     // Process based on event type and current state
     switch (event.type) {
       case 'order.payment_received':
         if (currentState === OrderState.PAYMENT_PROCESSING) {
-          await this.updateOrderState(event.orderId, OrderState.PAID);
+          await this.updateOrderStatus(event.orderId, OrderState.PAID);
         }
         break;
       case 'order.items_shipped':
         if (currentState === OrderState.PAID) {
-          await this.updateOrderState(event.orderId, OrderState.FULFILLED);
+          await this.updateOrderStatus(event.orderId, OrderState.FULFILLED);
         }
         break;
       case 'order.cancelled':
@@ -45,9 +45,9 @@ export class OrderEventProcessor {
     }
   }
 
-  private async updateOrderState(orderId: string, newState: OrderState): Promise<void> {
+  private async updateOrderStatus(orderId: string, newState: OrderState): Promise<void> {
     await this.db.query(
-      'UPDATE orders SET state = $1, updated_at = NOW() WHERE id = $2',
+      'UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2',
       [newState, orderId]
     );
   }
@@ -61,7 +61,7 @@ export class OrderEventProcessor {
     ];
 
     if (cancellableStates.includes(currentState)) {
-      await this.updateOrderState(orderId, OrderState.CANCELLED);
+      await this.updateOrderStatus(orderId, OrderState.CANCELLED);
     }
   }
 }

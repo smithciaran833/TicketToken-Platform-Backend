@@ -94,11 +94,11 @@ SELECT
      AND DATE_PART('year', t.purchased_at) = DATE_PART('year', CURRENT_DATE)) AS revenue_ytd,
     
     -- Customer metrics
-    (SELECT COUNT(DISTINCT t.owner_id) 
+    (SELECT COUNT(DISTINCT t.user_id) 
      FROM tickets t 
      JOIN events e ON t.event_id = e.id 
      WHERE e.venue_id = v.id 
-     AND t.status IN ('ACTIVE', 'REDEEMED', 'TRANSFERRED')) AS total_unique_customers,
+     AND t.status IN ('active', 'used', 'transferred')) AS total_unique_customers,
     
     -- Capacity utilization (simplified)
     CASE 

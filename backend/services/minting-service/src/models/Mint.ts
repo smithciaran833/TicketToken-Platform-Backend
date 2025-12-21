@@ -16,7 +16,7 @@ export interface IMint {
 
 export class MintModel {
   private db: Knex;
-  private tableName = 'mints';
+  private tableName = 'nft_mints';
 
   constructor(db?: Knex) {
     this.db = db || knex;

@@ -53,7 +53,7 @@ export class WebSocketManagerService {
     this.connections.set(connectionId, connection);
 
     // Update metrics
-    metricsCollector.wsConnectionsActive.set(this.connections.size);
+    // metricsCollector.wsConnectionsActive.set(this.connections.size);
 
     logger.info('WebSocket connection established', { connectionId });
 
@@ -220,7 +220,7 @@ export class WebSocketManagerService {
     this.connections.delete(connectionId);
 
     // Update metrics
-    metricsCollector.wsConnectionsActive.set(this.connections.size);
+    // metricsCollector.wsConnectionsActive.set(this.connections.size);
 
     logger.info('WebSocket connection closed', { connectionId });
   }
@@ -244,7 +244,7 @@ export class WebSocketManagerService {
     }
 
     // Update metrics
-    metricsCollector.wsMessagesSent.inc(sent);
+    // metricsCollector.wsMessagesSent.inc(sent);
 
     logger.debug('Metric update broadcasted', { 
       metric: update.metric, 

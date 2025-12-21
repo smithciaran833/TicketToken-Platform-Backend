@@ -7,20 +7,17 @@ export interface PaymentRequest {
   metadata?: Record<string, any>;
   idempotencyKey: string;
 }
-
 export interface TicketSelection {
   ticketTypeId: string;
   quantity: number;
   price: number;  // STORED AS INTEGER CENTS
   seatNumbers?: string[];
 }
-
 export interface PaymentMethod {
   type: 'card' | 'ach' | 'paypal' | 'crypto';
   token?: string;
   paymentMethodId?: string;
 }
-
 // All monetary values stored as INTEGER CENTS, not decimal dollars
 export interface DynamicFees {
   platform: number;      // cents
@@ -30,7 +27,6 @@ export interface DynamicFees {
   total: number;         // cents
   breakdown: FeeBreakdown;
 }
-
 export interface FeeBreakdown {
   ticketPrice: number;   // cents
   platformFee: number;   // cents
@@ -39,13 +35,11 @@ export interface FeeBreakdown {
   localTax: number;      // cents
   total: number;         // cents
 }
-
 export enum VenueTier {
   STARTER = 'starter',
   PRO = 'pro',
   ENTERPRISE = 'enterprise'
 }
-
 // All monetary values stored as INTEGER CENTS
 export interface VenueBalance {
   available: number;  // cents
@@ -54,13 +48,23 @@ export interface VenueBalance {
   currency: string;
   lastPayout?: Date;
 }
-
+// Transaction types matching database constraint
+export enum TransactionType {
+  TICKET_PURCHASE = 'ticket_purchase',
+  REFUND = 'refund',
+  REFERRAL_BONUS = 'referral_bonus',
+  POINTS_REDEMPTION = 'points_redemption',
+  TRANSFER = 'transfer',
+  FEE = 'fee',
+  PAYOUT = 'payout'
+}
 // All monetary values stored as INTEGER CENTS
 export interface Transaction {
   id: string;
   venueId: string;
   userId: string;
   eventId: string;
+  type: TransactionType;  // required by database
   amount: number;         // cents
   currency: string;
   status: TransactionStatus;
@@ -74,7 +78,6 @@ export interface Transaction {
   createdAt: Date;
   updatedAt: Date;
 }
-
 export enum TransactionStatus {
   PENDING = 'pending',
   PROCESSING = 'processing',

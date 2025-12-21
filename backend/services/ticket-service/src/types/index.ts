@@ -114,6 +114,7 @@ export interface QRValidation {
 
 export interface PurchaseRequest {
   userId: string;
+  tenantId: string;  // Added for tenant isolation
   eventId: string;
   tickets: Array<{
     ticketTypeId: string;
@@ -192,4 +193,3 @@ export interface ServiceResponse<T> {
   error?: string;
   code?: string;
 }
-

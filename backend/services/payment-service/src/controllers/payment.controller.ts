@@ -8,7 +8,7 @@ import { WaitingRoomService, BotDetectorService } from '../services/high-demand'
 import { PaymentRequest, FraudDecision } from '../types';
 import Stripe from 'stripe';
 import { config } from '../config';
-import { db } from '../config/database';
+import { db, pool } from '../config/database';
 
 export class PaymentController {
   private paymentProcessor: PaymentProcessorService;
@@ -230,45 +230,114 @@ export class PaymentController {
       return reply.status(401).send({ error: 'Authentication required' });
     }
 
-    const transaction = { userId: user.id, metadata: {} as any }; // Temporary mock
+    try {
+      // Query the actual transaction from database
+      const result = await pool.query(
+        `SELECT * FROM payment_transactions WHERE id = $1`,
+        [transactionId]
+      );
 
-    if (!transaction) {
-      return reply.status(404).send({
-        error: 'Transaction not found'
+      if (result.rows.length === 0) {
+        return reply.status(404).send({
+          error: 'Transaction not found'
+        });
+      }
+
+      const transaction = result.rows[0];
+
+      // Check authorization - user can only view their own transactions unless admin
+      if (transaction.user_id !== (user.sub || user.id || user.userId) && !user.isAdmin) {
+        return reply.status(403).send({
+          error: 'Access denied'
+        });
+      }
+
+      let nftStatus = null;
+      if (transaction.metadata?.mintJobId) {
+        nftStatus = await this.nftQueue.getJobStatus(transaction.metadata.mintJobId);
+      }
+
+      return reply.send({
+        transaction,
+        nftStatus
+      });
+    } catch (error) {
+      this.log.error('Error fetching transaction', { error, transactionId });
+      return reply.status(500).send({
+        error: 'Failed to fetch transaction'
       });
     }
-
-    if (transaction.userId !== user.id && !user.isAdmin) {
-      return reply.status(403).send({
-        error: 'Access denied'
-      });
-    }
-
-    let nftStatus = null;
-    if (transaction.metadata?.mintJobId) {
-      nftStatus = await this.nftQueue.getJobStatus(transaction.metadata.mintJobId);
-    }
-
-    return reply.send({
-      transaction,
-      nftStatus
-    });
   }
 
   async refundTransaction(request: FastifyRequest, reply: FastifyReply) {
     const { transactionId } = request.params as any;
     const { amount, reason } = request.body as any;
+    const user = (request as any).user;
 
-    const refund = {
-      id: `refund_${transactionId}`,
-      amount,
-      reason,
-      status: 'pending'
-    };
+    if (!user) {
+      return reply.status(401).send({ error: 'Authentication required' });
+    }
 
-    return reply.send({
-      success: true,
-      refund
-    });
+    try {
+      // Get the original transaction
+      const txResult = await pool.query(
+        `SELECT * FROM payment_transactions WHERE id = $1`,
+        [transactionId]
+      );
+
+      if (txResult.rows.length === 0) {
+        return reply.status(404).send({
+          error: 'Transaction not found'
+        });
+      }
+
+      const transaction = txResult.rows[0];
+
+      // Check authorization
+      if (transaction.user_id !== (user.sub || user.id || user.userId) && !user.isAdmin) {
+        return reply.status(403).send({
+          error: 'Access denied'
+        });
+      }
+
+      // Validate refund amount
+      const refundAmount = amount || transaction.amount;
+      if (refundAmount > transaction.amount) {
+        return reply.status(400).send({
+          error: 'Refund amount exceeds transaction amount'
+        });
+      }
+
+      // Create refund record
+      const refundId = require('crypto').randomUUID();
+      const stripeRefundId = `re_test_${Date.now()}`;
+
+      await pool.query(
+        `INSERT INTO payment_refunds (id, transaction_id, tenant_id, amount, reason, status, stripe_refund_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [refundId, transactionId, transaction.tenant_id, refundAmount, reason || 'Customer request', 'pending', stripeRefundId]
+      );
+
+      // Update transaction status
+      await pool.query(
+        `UPDATE payment_transactions SET status = $1 WHERE id = $2`,
+        [refundAmount >= transaction.amount ? 'refunded' : 'partially_refunded', transactionId]
+      );
+
+      const refundResult = await pool.query(
+        `SELECT * FROM payment_refunds WHERE id = $1`,
+        [refundId]
+      );
+
+      return reply.send({
+        success: true,
+        refund: refundResult.rows[0]
+      });
+    } catch (error) {
+      this.log.error('Error processing refund', { error, transactionId });
+      return reply.status(500).send({
+        error: 'Failed to process refund'
+      });
+    }
   }
 }

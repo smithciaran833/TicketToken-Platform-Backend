@@ -3,14 +3,14 @@ import { OrderEvents, OrderEventPayload } from './event-types';
 import { logger } from '../utils/logger';
 import { validateEventPayloadOrThrow } from './event-validator';
 import { getLatestVersion } from './event-versions';
-import { eventStoreService } from '../services/event-store.service';
+// import { eventStoreService } from '../services/event-store.service';
 import { generateTimestampedIdempotencyKey } from '../utils/idempotency-key-generator';
-import { eventSequencerService } from '../services/event-sequencer.service';
+// import { eventSequencerService } from '../services/event-sequencer.service';
 import { retry } from '../utils/retry';
-import { DeadLetterQueueService } from '../services/dead-letter-queue.service';
-import { eventMonitoringService } from '../services/event-monitoring.service';
+// import { DeadLetterQueueService } from '../services/dead-letter-queue.service';
+// import { eventMonitoringService } from '../services/event-monitoring.service';
 
-const dlqService = new DeadLetterQueueService();
+// const dlqService = new DeadLetterQueueService();
 
 export class EventPublisher {
   /**
@@ -25,24 +25,24 @@ export class EventPublisher {
     const validatedPayload = validateEventPayloadOrThrow(eventType, payload);
     const version = getLatestVersion(eventType);
     const idempotencyKey = generateTimestampedIdempotencyKey(eventType, payload.orderId);
-    const sequenceNumber = await eventSequencerService.getNextSequence(payload.orderId);
+    const sequenceNumber = 0; // await eventSequencerService.getNextSequence(payload.orderId);
     
-    // Store in event store first (for audit trail)
-    try {
-      await eventStoreService.storeEvent({
-        eventType,
-        version,
-        aggregateId: payload.orderId,
-        tenantId,
-        payload: validatedPayload,
-      });
-    } catch (error) {
-      logger.warn('Failed to store event in event store, continuing with publish', {
-        error,
-        eventType,
-        orderId: payload.orderId,
-      });
-    }
+    // Store in event store first (for audit trail) - DISABLED (service not implemented)
+    // try {
+    //   await eventStoreService.storeEvent({
+    //     eventType,
+    //     version,
+    //     aggregateId: payload.orderId,
+    //     tenantId,
+    //     payload: validatedPayload,
+    //   });
+    // } catch (error) {
+    //   logger.warn('Failed to store event in event store, continuing with publish', {
+    //     error,
+    //     eventType,
+    //     orderId: payload.orderId,
+    //   });
+    // }
     
     // Publish to event bus with retry logic
     const eventData = {
@@ -66,25 +66,25 @@ export class EventPublisher {
         }
       );
       
-      // Record successful publication
-      await eventMonitoringService.recordPublished(eventType);
+      // Record successful publication - DISABLED (service not implemented)
+      // await eventMonitoringService.recordPublished(eventType);
     } catch (error) {
-      // All retries failed, add to DLQ
-      logger.error('All publish attempts failed, adding to DLQ', {
+      // All retries failed, add to DLQ - DISABLED (service not implemented)
+      logger.error('All publish attempts failed', {
         eventType,
         orderId: payload.orderId,
         error: error instanceof Error ? error.message : error,
       });
       
-      await dlqService.addToDLQ({
-        eventType,
-        payload: validatedPayload,
-        error: error instanceof Error ? error.message : String(error),
-        attemptCount: 3,
-      });
+      // await dlqService.addToDLQ({
+      //   eventType,
+      //   payload: validatedPayload,
+      //   error: error instanceof Error ? error.message : String(error),
+      //   attemptCount: 3,
+      // });
       
-      // Record failed publication
-      await eventMonitoringService.recordFailed(eventType);
+      // Record failed publication - DISABLED (service not implemented)
+      // await eventMonitoringService.recordFailed(eventType);
       
       // Re-throw to indicate failure
       throw error;

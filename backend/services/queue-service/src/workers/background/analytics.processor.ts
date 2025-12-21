@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../../adapters/bull-job-adapter';
 import { BaseWorker } from '../base.worker';
 import { JobResult } from '../../types/job.types';
 import { IdempotencyService } from '../../services/idempotency.service';
@@ -22,7 +22,7 @@ export class AnalyticsProcessor extends BaseWorker<AnalyticsJobData, JobResult> 
     this.idempotencyService = new IdempotencyService();
   }
 
-  protected async execute(job: Job<AnalyticsJobData>): Promise<JobResult> {
+  protected async execute(job: BullJobData<AnalyticsJobData>): Promise<JobResult> {
     const { eventType, venueId, userId, eventId, data, timestamp } = job.data;
 
     // ISSUE #30 FIX: Generate idempotency key for analytics events
@@ -66,8 +66,8 @@ export class AnalyticsProcessor extends BaseWorker<AnalyticsJobData, JobResult> 
       // Store result for idempotency (7 days for analytics)
       await this.idempotencyService.store(
         idempotencyKey,
-        job.queue.name,
-        job.name,
+        job.queue?.name || 'background',
+        job.name || 'analytics-event',
         result,
         7 * 24 * 60 * 60
       );

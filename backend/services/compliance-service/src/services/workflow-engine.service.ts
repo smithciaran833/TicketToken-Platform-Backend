@@ -92,7 +92,7 @@ export class WorkflowEngineService {
 
     // Execute workflow asynchronously
     this.executeWorkflow(workflowId).catch(error => {
-      logger.error(`Workflow execution failed: ${workflowId}`, error);
+      logger.error({ error }, `Workflow execution failed: ${workflowId}`);
     });
   }
 
@@ -134,7 +134,7 @@ export class WorkflowEngineService {
 
       logger.info(`Workflow completed: ${workflowId} with status: ${workflow.status}`);
     } catch (error) {
-      logger.error(`Workflow execution error: ${workflowId}`, error);
+      logger.error({ error }, `Workflow execution error: ${workflowId}`);
       workflow.status = 'failed';
       await this.saveWorkflow(workflow);
     }
@@ -182,7 +182,7 @@ export class WorkflowEngineService {
       step.error = error.message;
       step.completedAt = new Date();
       
-      logger.error(`Step failed: ${step.id}`, error);
+      logger.error({ error }, `Step failed: ${step.id}`);
       throw error;
     }
   }

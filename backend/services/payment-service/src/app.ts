@@ -1,7 +1,6 @@
 import Fastify, { FastifyInstance, FastifyRequest } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
-
 // Import routes
 import paymentRoutes from './routes/payment.routes';
 import marketplaceRoutes from './routes/marketplace.routes';
@@ -13,7 +12,8 @@ import internalRoutes from './routes/internal.routes';
 import internalTaxRoutes from './routes/internal-tax.routes';
 import healthRoutes from './routes/health.routes';
 import feeCalculatorRoutes from './routes/fee-calculator.routes';
-
+import intentsRoutes from './routes/intents.routes';
+import refundRoutes from './routes/refund.routes';
 // Import middleware
 import { errorHandler } from './middleware/error-handler';
 import { idempotencyCacheHook } from './middleware/idempotency';
@@ -31,7 +31,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.addContentTypeParser('application/json', { parseAs: 'buffer' }, async (req: FastifyRequest, payload: Buffer) => {
     // Store raw body for webhook signature verification
     (req as any).rawBody = payload;
-    
     // Parse JSON
     const str = payload.toString('utf8');
     try {
@@ -44,7 +43,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ============================================================================
   // PLUGINS
   // ============================================================================
-  
   // CORS
   await app.register(cors, {
     origin: process.env.CORS_ORIGIN || '*',
@@ -62,7 +60,6 @@ export async function buildApp(): Promise<FastifyInstance> {
   // ============================================================================
   // ROUTES
   // ============================================================================
-  
   // Health routes (no prefix)
   app.register(healthRoutes);
 
@@ -74,6 +71,8 @@ export async function buildApp(): Promise<FastifyInstance> {
   app.register(complianceRoutes, { prefix: '/compliance' });
   app.register(webhookRoutes, { prefix: '/webhooks' });
   app.register(feeCalculatorRoutes, { prefix: '/fees' });
+  app.register(intentsRoutes, { prefix: '/intents' });
+  app.register(refundRoutes, { prefix: '/refunds' });
 
   // Internal routes (no prefix - they define their own /internal paths)
   app.register(internalRoutes);

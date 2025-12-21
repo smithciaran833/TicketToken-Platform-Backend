@@ -28,7 +28,7 @@ async function jobRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:id/retry',
     {
-      preHandler: [authenticate, authorize('admin', 'venue_admin')]
+      preHandler: [authenticate, authorize(['admin', 'venue_admin'])]
     },
     jobController.retryJob.bind(jobController)
   );
@@ -37,7 +37,7 @@ async function jobRoutes(fastify: FastifyInstance) {
   fastify.delete(
     '/:id',
     {
-      preHandler: [authenticate, authorize('admin', 'venue_admin')]
+      preHandler: [authenticate, authorize(['admin', 'venue_admin'])]
     },
     jobController.cancelJob.bind(jobController)
   );
@@ -46,7 +46,7 @@ async function jobRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/batch',
     {
-      preHandler: [authenticate, authorize('admin', 'venue_admin')]
+      preHandler: [authenticate, authorize(['admin', 'venue_admin'])]
     },
     jobController.addBatchJobs.bind(jobController)
   );

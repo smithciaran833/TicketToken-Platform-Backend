@@ -7,7 +7,11 @@ import { initializeCache } from './services/cache.service';
 import { createRateLimiter } from './middleware/rate-limit.middleware';
 import { versionMiddleware } from './middleware/versioning.middleware';
 import { errorHandler } from './middleware/error-handler.middleware';
-import Redis from 'ioredis';
+import { initRedis, getRedis, closeRedisConnections } from './config/redis';
+import { initializeMongoDB } from './config/mongodb';
+import venueContentRoutes from './routes/venue-content.routes';
+import venueReviewsRoutes from './routes/venue-reviews.routes';
+import venueStripeRoutes, { venueStripeWebhookRoutes } from './routes/venue-stripe.routes';
 
 export async function buildApp(): Promise<FastifyInstance> {
   // Check database connection with retry
@@ -19,33 +23,18 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Start database pool monitoring
   startPoolMonitoring();
 
-  // Initialize Redis with retry strategy
-  const redis = new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD,
-    retryStrategy: (times: number) => {
-      const delay = Math.min(times * 50, 2000);
-      return delay;
-    },
-    maxRetriesPerRequest: 3,
-    enableReadyCheck: true,
-    lazyConnect: false
-  });
+  // Initialize Redis
+  await initRedis();
 
-  // Wait for Redis to be ready
-  await new Promise<void>((resolve, reject) => {
-    redis.once('ready', resolve);
-    redis.once('error', reject);
-    setTimeout(() => reject(new Error('Redis connection timeout')), 5000);
-  });
+  // Initialize MongoDB
+  const mongodb = await initializeMongoDB();
 
   // Initialize dependency injection container
-  const container = registerDependencies(db, redis);
+  const container = registerDependencies(db, getRedis(), mongodb);
 
   // Initialize cache service and rate limiter
-  const cacheService = initializeCache(redis);
-  const rateLimiter = createRateLimiter(redis);
+  const cacheService = initializeCache(getRedis());
+  const rateLimiter = createRateLimiter(getRedis());
 
   // Initialize EventPublisher connection
   const eventPublisher = container.resolve('eventPublisher');
@@ -81,7 +70,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     try {
-      if (process.env.NODE_ENV !== "test") {
+      if (true) { // Rate limiting enabled for all envs
         await rateLimiter.checkAllLimits(request, reply);
       }
     } catch (error) {
@@ -92,12 +81,22 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Configure Fastify with plugins and routes
   await configureFastify(fastify, container);
 
+  // Register MongoDB-based routes
+  await fastify.register(venueContentRoutes, { prefix: '/api/venues' });
+
+  // Register review routes
+  await fastify.register(venueReviewsRoutes, { prefix: '/api/venues' });
+
+  // Register Stripe Connect routes
+  await fastify.register(venueStripeRoutes, { prefix: '/api/venues' });
+  await fastify.register(venueStripeWebhookRoutes, { prefix: '/api' });
+
   // Health check routes
 
   // Graceful shutdown hooks
   fastify.addHook('onClose', async () => {
     await eventPublisher.close();
-    await redis.quit();
+    await closeRedisConnections();
     await db.destroy();
   });
 

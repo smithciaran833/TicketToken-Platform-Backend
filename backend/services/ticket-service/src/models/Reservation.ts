@@ -2,10 +2,17 @@ import { Pool } from 'pg';
 
 export interface IReservation {
   id?: string;
+  tenant_id?: string;
+  event_id: string;
+  ticket_type_id: string;
   user_id: string;
-  ticket_id: string;
+  quantity: number;
+  total_quantity: number;
+  tickets: Array<{ ticketTypeId: string; quantity: number }> | string;
+  type_name?: string;
+  status: 'pending' | 'confirmed' | 'expired' | 'cancelled';
   expires_at: Date;
-  status: 'active' | 'expired' | 'completed' | 'cancelled';
+  released_at?: Date;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -16,18 +23,40 @@ export class ReservationModel {
   // SECURITY: Whitelist of allowed update fields
   private readonly UPDATABLE_FIELDS = [
     'user_id',
-    'ticket_id',
+    'event_id',
+    'ticket_type_id',
+    'quantity',
+    'total_quantity',
+    'tickets',
+    'type_name',
     'expires_at',
-    'status'
+    'status',
+    'released_at'
   ];
 
   async create(data: IReservation): Promise<IReservation> {
     const query = `
-      INSERT INTO reservations (user_id, ticket_id, expires_at, status)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO reservations (
+        tenant_id, event_id, ticket_type_id, user_id, 
+        quantity, total_quantity, tickets, type_name,
+        expires_at, status
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *
     `;
-    const values = [data.user_id, data.ticket_id, data.expires_at, data.status || 'active'];
+    const ticketsJson = typeof data.tickets === 'string' ? data.tickets : JSON.stringify(data.tickets);
+    const values = [
+      data.tenant_id,
+      data.event_id,
+      data.ticket_type_id,
+      data.user_id,
+      data.quantity,
+      data.total_quantity,
+      ticketsJson,
+      data.type_name,
+      data.expires_at,
+      data.status || 'pending'
+    ];
     const result = await this.pool.query(query, values);
     return result.rows[0];
   }

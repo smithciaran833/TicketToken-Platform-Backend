@@ -1,5 +1,5 @@
 import { buildApp } from './app';
-import { config, db, redis } from './config';
+import { config, db, getRedis, initRedis, closeRedisConnections } from './config';
 import { logger } from './utils/logger';
 import { escrowMonitorService } from './services/escrow-monitor.service';
 
@@ -17,14 +17,13 @@ async function startServer() {
       logger.warn('Starting server without database connection');
     }
 
-    // Test Redis connection but don't fail if it's not available
+    // Initialize Redis
     try {
-      await redis.ping();
+      await initRedis();
+      await getRedis().ping();
       logger.info('Redis connected');
     } catch (error) {
       logger.warn('Redis not available - continuing without cache', error);
-      // Disable Redis retry attempts
-      redis.disconnect();
     }
 
     // Build and start Fastify server
@@ -50,7 +49,7 @@ process.on('SIGTERM', async () => {
   try {
     escrowMonitorService.stop();
     await db.destroy();
-    redis.disconnect();
+    await closeRedisConnections();
   } catch (error) {
     logger.error('Error during shutdown:', error);
   }
@@ -62,7 +61,7 @@ process.on('SIGINT', async () => {
   try {
     escrowMonitorService.stop();
     await db.destroy();
-    redis.disconnect();
+    await closeRedisConnections();
   } catch (error) {
     logger.error('Error during shutdown:', error);
   }

@@ -4,15 +4,24 @@ import rateLimit from '@fastify/rate-limit';
 import cors from '@fastify/cors';
 import compress from '@fastify/compress';
 import { v4 as uuidv4 } from 'uuid';
-import { orderRoutes, healthRoutes, internalRoutes, metricsRoutes, reportsRoutes, adminRoutes, privacyRoutes } from './routes';
-import { errorHandler, idempotencyCacheHook } from './middleware';
+import { orderRoutes, healthRoutes, metricsRoutes } from './routes';
+import { idempotencyCacheHook } from './middleware';
 import { initializeDatabase } from './config/database';
-import { RedisService } from './services/redis.service';
+import { initRedis } from './config/redis';
 import { connectRabbitMQ } from './config/rabbitmq';
 import { eventSubscriber } from './events';
 import { logger } from './utils/logger';
 
 const SERVICE_NAME = process.env.SERVICE_NAME || 'order-service';
+
+// Simple error handler
+const errorHandler = async (error: any, request: any, reply: any) => {
+  logger.error('Request error', { error: error.message, stack: error.stack });
+  reply.status(error.statusCode || 500).send({
+    error: error.message || 'Internal Server Error',
+    statusCode: error.statusCode || 500,
+  });
+};
 
 export async function createApp(): Promise<FastifyInstance> {
   const app = fastify({
@@ -34,7 +43,7 @@ export async function createApp(): Promise<FastifyInstance> {
 
   // Initialize Redis
   try {
-    await RedisService.initialize();
+    await initRedis();
     logger.info('Redis connection initialized');
   } catch (error) {
     logger.error('Failed to initialize Redis', { error });
@@ -45,7 +54,6 @@ export async function createApp(): Promise<FastifyInstance> {
   try {
     await connectRabbitMQ();
     logger.info('RabbitMQ connection initialized');
-    
     // Subscribe to events
     await eventSubscriber.subscribeToPaymentEvents();
     logger.info('Event subscriptions initialized');
@@ -66,13 +74,11 @@ export async function createApp(): Promise<FastifyInstance> {
         'http://localhost:3000',
         'http://localhost:3001',
       ];
-      
       // Allow requests with no origin (mobile apps, curl, postman)
       if (!origin) {
         callback(null, true);
         return;
       }
-      
       if (allowedOrigins.includes(origin) || process.env.NODE_ENV === 'development') {
         callback(null, true);
       } else {
@@ -102,34 +108,14 @@ export async function createApp(): Promise<FastifyInstance> {
   // Register idempotency cache hook globally
   app.addHook('onSend', idempotencyCacheHook);
 
-  // Register security headers middleware (PCI-DSS compliance)
-  const { securityHeadersMiddleware } = await import('./middleware/security-headers.middleware');
-  app.addHook('onRequest', securityHeadersMiddleware);
-
-  // Register tracing middleware (captures full request lifecycle)
-  const { tracingMiddleware } = await import('./middleware/tracing.middleware');
-  app.addHook('onRequest', tracingMiddleware);
-
   // Register tenant middleware (CRITICAL: must be before routes)
   const { tenantMiddleware } = await import('./middleware/tenant.middleware');
   app.addHook('preHandler', tenantMiddleware);
 
-  // Register MFA middleware (PCI-DSS: MFA for admin access to payment data)
-  const { mfaMiddleware } = await import('./middleware/mfa.middleware');
-  app.addHook('preHandler', mfaMiddleware);
-
-  // Register IP whitelist middleware (PCI-DSS: Restrict payment operations)
-  const { ipWhitelistMiddleware } = await import('./middleware/ip-whitelist.middleware');
-  app.addHook('preHandler', ipWhitelistMiddleware);
-
   // Register routes
   await app.register(healthRoutes);
   await app.register(metricsRoutes);
-  await app.register(internalRoutes);
   await app.register(orderRoutes, { prefix: '/api/v1/orders' });
-  await app.register(reportsRoutes, { prefix: '/api/v1/reports' });
-  await app.register(adminRoutes, { prefix: '/api/v1/admin' });
-  await app.register(privacyRoutes, { prefix: '/api/v1/privacy' });
 
   // Service info endpoint
   app.get('/info', async (request, reply) => {

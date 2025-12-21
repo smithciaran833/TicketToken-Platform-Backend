@@ -14,7 +14,51 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # === FUNCTIONS (01-09) ===
       - ./database/postgresql/functions/core_triggers.sql:/docker-entrypoint-initdb.d/01_core_triggers.sql:ro
+      - ./database/postgresql/functions/audit_trigger_function.sql:/docker-entrypoint-initdb.d/02_audit_trigger_function.sql:ro
+      - ./database/postgresql/functions/create-functions.sql:/docker-entrypoint-initdb.d/03_create_functions.sql:ro
+      - ./database/postgresql/functions/data_retention_cleanup.sql:/docker-entrypoint-initdb.d/04_data_retention_cleanup.sql:ro
+      - ./database/postgresql/functions/mask_sensitive_data.sql:/docker-entrypoint-initdb.d/05_mask_sensitive_data.sql:ro
+      - ./database/postgresql/functions/security_functions.sql:/docker-entrypoint-initdb.d/06_security_functions.sql:ro
+      # === INDEXES (20-29) ===
+      - ./database/postgresql/indexes/foreign_key_indexes.sql:/docker-entrypoint-initdb.d/20_foreign_key_indexes.sql:ro
+      - ./database/postgresql/indexes/partial_indexes.sql:/docker-entrypoint-initdb.d/21_partial_indexes.sql:ro
+      - ./database/postgresql/indexes/performance_indexes.sql:/docker-entrypoint-initdb.d/22_performance_indexes.sql:ro
+      - ./database/postgresql/indexes/search_indexes.sql:/docker-entrypoint-initdb.d/23_search_indexes.sql:ro
+      - ./database/postgresql/indexes/unique_indexes.sql:/docker-entrypoint-initdb.d/24_unique_indexes.sql:ro
+      # === PARTITIONS (30-39) ===
+      - ./database/postgresql/partitions/01_partition_audit_logs.sql:/docker-entrypoint-initdb.d/30_partition_audit_logs.sql:ro
+      - ./database/postgresql/partitions/02_partition_tickets_with_views.sql:/docker-entrypoint-initdb.d/31_partition_tickets.sql:ro
+      - ./database/postgresql/partitions/03_auto_partition_function.sql:/docker-entrypoint-initdb.d/32_auto_partition_function.sql:ro
+      # === TRIGGERS (40-49) ===
+      - ./database/postgresql/triggers/audit_triggers.sql:/docker-entrypoint-initdb.d/40_audit_triggers.sql:ro
+      # === VIEWS (50-59) ===
+      - ./database/postgresql/views/compliance_reporting_view.sql:/docker-entrypoint-initdb.d/50_compliance_reporting_view.sql:ro
+      - ./database/postgresql/views/customer_360_view.sql:/docker-entrypoint-initdb.d/51_customer_360_view.sql:ro
+      - ./database/postgresql/views/event_summary_view.sql:/docker-entrypoint-initdb.d/52_event_summary_view.sql:ro
+      - ./database/postgresql/views/financial_summary_view.sql:/docker-entrypoint-initdb.d/53_financial_summary_view.sql:ro
+      - ./database/postgresql/views/marketplace_activity_view.sql:/docker-entrypoint-initdb.d/54_marketplace_activity_view.sql:ro
+      - ./database/postgresql/views/ticket_status_view.sql:/docker-entrypoint-initdb.d/55_ticket_status_view.sql:ro
+      - ./database/postgresql/views/user_dashboard_view.sql:/docker-entrypoint-initdb.d/56_user_dashboard_view.sql:ro
+      - ./database/postgresql/views/venue_analytics_view.sql:/docker-entrypoint-initdb.d/57_venue_analytics_view.sql:ro
+      # === SECURITY (60-69) ===
+      - ./database/postgresql/enable_rls.sql:/docker-entrypoint-initdb.d/60_enable_rls.sql:ro
+      - ./database/postgresql/apply_security_enhancements.sql:/docker-entrypoint-initdb.d/61_apply_security_enhancements.sql:ro
+      - ./database/postgresql/add_final_rls_policies.sql:/docker-entrypoint-initdb.d/62_add_final_rls_policies.sql:ro
+      - ./database/postgresql/fix_venues_masked_view.sql:/docker-entrypoint-initdb.d/63_fix_venues_masked_view.sql:ro
+      - ./database/postgresql/fix_tax_id_encryption.sql:/docker-entrypoint-initdb.d/64_fix_tax_id_encryption.sql:ro
+      # === MIGRATIONS (70-89) ===
+      - ./database/postgresql/migrations/notification-service/003_create_audit_log.sql:/docker-entrypoint-initdb.d/70_notification_audit_log.sql:ro
+      - ./database/postgresql/migrations/notification-service/004_create_templates.sql:/docker-entrypoint-initdb.d/71_notification_templates.sql:ro
+      - ./database/postgresql/migrations/monitoring-service/003_create_advanced_features.sql:/docker-entrypoint-initdb.d/72_monitoring_advanced.sql:ro
+      - ./database/postgresql/migrations/scanning-service/001_add_tenant_isolation.sql:/docker-entrypoint-initdb.d/73_scanning_tenant_isolation.sql:ro
+      - ./database/postgresql/migrations/transfer-service/001_create_transfer_tables.sql:/docker-entrypoint-initdb.d/74_transfer_tables.sql:ro
+      - ./database/postgresql/migrations/transfer-service/002_add_tenant_isolation.sql:/docker-entrypoint-initdb.d/75_transfer_tenant_isolation.sql:ro
+      - ./database/postgresql/migrations/transfer-service/004_add_performance_functions.sql:/docker-entrypoint-initdb.d/76_transfer_performance.sql:ro
+      - ./database/postgresql/migrations/transfer-service/005_add_blockchain_columns.sql:/docker-entrypoint-initdb.d/77_transfer_blockchain.sql:ro
+      - ./database/postgresql/migrations/transfer-service/006_add_phase6_features.sql:/docker-entrypoint-initdb.d/78_transfer_phase6.sql:ro
+      - ./database/postgresql/migrations/transfer-service/007_add_phase8_features.sql:/docker-entrypoint-initdb.d/79_transfer_phase8.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 10s
@@ -911,7 +955,7 @@ services:
       INTERNAL_SERVICE_SECRET: ${INTERNAL_SERVICE_SECRET}
       LOG_LEVEL: debug
     volumes:
-      - ./backend/services/minting-service/devnet-wallet.json:/app/wallet/devnet-wallet.json:ro  
+      - ./backend/services/minting-service/devnet-wallet.json:/app/wallet/devnet-wallet.json:ro
     depends_on:
       pgbouncer:
         condition: service_started

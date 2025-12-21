@@ -26,7 +26,7 @@ export function rateLimitMiddleware(options: RateLimitOptions = {}) {
       const isLimited = await rateLimiter.isRateLimited(service);
 
       if (isLimited) {
-        const waitTime = rateLimiter.getWaitTime(service);
+        const waitTime = await rateLimiter.getWaitTime(service);
         reply.header('X-RateLimit-Limit', '1');
         reply.header('X-RateLimit-Remaining', '0');
         reply.header('X-RateLimit-Reset', new Date(Date.now() + waitTime).toISOString());

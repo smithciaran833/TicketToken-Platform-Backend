@@ -42,6 +42,10 @@ export class OrderArchivingJob {
   private isRunning = false;
   private jobLogger = createContextLogger({ context: 'order-archiving-job' });
 
+  private get db() {
+    return getDatabase();
+  }
+
   /**
    * Start the archiving job with configured interval
    * Runs daily (every 24 hours) by default
@@ -154,14 +158,13 @@ export class OrderArchivingJob {
    * Archive orders for a specific tenant
    */
   private async archiveTenantOrders(tenantId: string, thresholdDate: Date): Promise<ArchiveStats> {
-    const db = getDatabase();
     const stats: ArchiveStats = this.emptyStats();
     const auditId = uuidv4();
     const startedAt = new Date();
 
     try {
       // Find orders to archive
-      const ordersToArchive = await db.query(`
+      const ordersToArchive = await this.db.query(`
         SELECT id, order_number, status, created_at
         FROM orders
         WHERE tenant_id = $1
@@ -261,10 +264,9 @@ export class OrderArchivingJob {
    * Archive a batch of orders
    */
   private async archiveBatch(tenantId: string, orderIds: string[], thresholdDate: Date): Promise<ArchiveStats> {
-    const db = getDatabase();
     const stats: ArchiveStats = this.emptyStats();
 
-    const client = await db.connect();
+    const client = await this.db.connect();
 
     try {
       await client.query('BEGIN');
@@ -365,8 +367,7 @@ export class OrderArchivingJob {
    * Get list of tenant IDs
    */
   private async getTenants(): Promise<string[]> {
-    const db = getDatabase();
-    const result = await db.query('SELECT DISTINCT tenant_id FROM orders');
+    const result = await this.db.query('SELECT DISTINCT tenant_id FROM orders');
     return result.rows.map(row => row.tenant_id);
   }
 
@@ -374,10 +375,8 @@ export class OrderArchivingJob {
    * Log archiving operation to audit log
    */
   private async logAuditRecord(record: ArchiveAuditLog): Promise<void> {
-    const db = getDatabase();
-    
     try {
-      await db.query(`
+      await this.db.query(`
         INSERT INTO archive.archive_audit_log (
           id, tenant_id, operation, orders_affected, items_affected, events_affected,
           threshold_date, days_old, executed_by, notes, metadata,
@@ -447,6 +446,3 @@ export class OrderArchivingJob {
     };
   }
 }
-
-// Export singleton instance
-export const orderArchivingJob = new OrderArchivingJob();

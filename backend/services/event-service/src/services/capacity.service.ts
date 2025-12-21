@@ -8,21 +8,22 @@ const logger = pino({ name: 'capacity-service' });
 
 export class CapacityService {
   private capacityModel: EventCapacityModel;
-  private venueClient: VenueServiceClient;
 
-  constructor(private db: Knex) {
+  constructor(
+    private db: Knex,
+    private venueClient?: VenueServiceClient
+  ) {
     this.capacityModel = new EventCapacityModel(db);
-    this.venueClient = new VenueServiceClient();
   }
 
   // Helper to parse locked price data decimals
   private parseLockedPriceData(lockedPriceData: any): any {
     if (!lockedPriceData) return null;
-    
+
     return {
       ...lockedPriceData,
-      locked_price: typeof lockedPriceData.locked_price === 'string' 
-        ? parseFloat(lockedPriceData.locked_price) 
+      locked_price: typeof lockedPriceData.locked_price === 'string'
+        ? parseFloat(lockedPriceData.locked_price)
         : lockedPriceData.locked_price,
       service_fee: typeof lockedPriceData.service_fee === 'string'
         ? parseFloat(lockedPriceData.service_fee)
@@ -71,8 +72,8 @@ export class CapacityService {
       ]);
     }
 
-    // Before creating, validate total won't exceed venue capacity
-    if (data.event_id) {
+    // Before creating, validate total won't exceed venue capacity (if venue client available)
+    if (data.event_id && this.venueClient) {
       await this.validateVenueCapacity(data.event_id, tenantId, authToken, data.total_capacity);
     }
 
@@ -107,8 +108,8 @@ export class CapacityService {
         ]);
       }
 
-      // Validate new total won't exceed venue capacity
-      if (authToken) {
+      // Validate new total won't exceed venue capacity (if venue client available)
+      if (authToken && this.venueClient) {
         const capacityDiff = data.total_capacity - existing.total_capacity;
         await this.validateVenueCapacity(existing.event_id, tenantId, authToken, capacityDiff);
       }
@@ -140,80 +141,101 @@ export class CapacityService {
     pricingId?: string,
     authToken?: string
   ): Promise<IEventCapacity> {
-    const capacity = await this.getCapacityById(capacityId, tenantId);
-
-    if (capacity.available_capacity < quantity) {
+    // Validate quantity is positive
+    if (quantity <= 0) {
       throw new ValidationError([{
         field: 'quantity',
-        message: `Only ${capacity.available_capacity} tickets available`
+        message: 'Quantity must be greater than zero'
       }]);
     }
 
-    const reservedExpiresAt = new Date();
-    reservedExpiresAt.setMinutes(reservedExpiresAt.getMinutes() + reservationMinutes);
-
-    // Lock price if pricing_id provided
-    let lockedPriceData = null;
-    if (pricingId && authToken) {
-      const pricing = await this.db('event_pricing')
-        .where({ id: pricingId, tenant_id: tenantId })
+    // Use transaction with row locking to prevent race conditions
+    return await this.db.transaction(async (trx) => {
+      // Lock the row for update to prevent concurrent reservations
+      const capacity = await trx('event_capacity')
+        .where({ id: capacityId, tenant_id: tenantId })
+        .forUpdate()
         .first();
 
-      if (pricing) {
-        // Parse decimals to numbers for locked price
-        const currentPrice = typeof pricing.current_price === 'string' 
-          ? parseFloat(pricing.current_price) 
-          : pricing.current_price;
-        const basePrice = typeof pricing.base_price === 'string'
-          ? parseFloat(pricing.base_price)
-          : pricing.base_price;
-        const serviceFee = typeof pricing.service_fee === 'string'
-          ? parseFloat(pricing.service_fee)
-          : pricing.service_fee;
-        const facilityFee = typeof pricing.facility_fee === 'string'
-          ? parseFloat(pricing.facility_fee)
-          : pricing.facility_fee;
-        const taxRate = typeof pricing.tax_rate === 'string'
-          ? parseFloat(pricing.tax_rate)
-          : pricing.tax_rate;
-
-        lockedPriceData = {
-          pricing_id: pricingId,
-          locked_price: currentPrice || basePrice,
-          locked_at: new Date(),
-          service_fee: serviceFee,
-          facility_fee: facilityFee,
-          tax_rate: taxRate
-        };
+      if (!capacity) {
+        throw new NotFoundError('Capacity section');
       }
-    }
 
-    const [updated] = await this.db('event_capacity')
-      .where({ id: capacityId, tenant_id: tenantId })
-      .update({
-        available_capacity: this.db.raw('available_capacity - ?', [quantity]),
-        reserved_capacity: this.db.raw('COALESCE(reserved_capacity, 0) + ?', [quantity]),
-        reserved_at: new Date(),
-        reserved_expires_at: reservedExpiresAt,
-        locked_price_data: lockedPriceData,
-        updated_at: new Date()
-      })
-      .returning('*');
+      // Check availability after lock is acquired
+      if (capacity.available_capacity < quantity) {
+        throw new ValidationError([{
+          field: 'quantity',
+          message: `Only ${capacity.available_capacity} tickets available`
+        }]);
+      }
 
-    logger.info({
-      capacityId,
-      quantity,
-      expiresAt: reservedExpiresAt,
-      priceLockedAt: lockedPriceData?.locked_price,
-      tenantId
-    }, 'Capacity reserved');
+      const reservedExpiresAt = new Date();
+      reservedExpiresAt.setMinutes(reservedExpiresAt.getMinutes() + reservationMinutes);
 
-    // Parse locked_price_data before returning
-    if (updated.locked_price_data) {
-      updated.locked_price_data = this.parseLockedPriceData(updated.locked_price_data);
-    }
+      // Lock price if pricing_id provided
+      let lockedPriceData = null;
+      if (pricingId && authToken) {
+        const pricing = await trx('event_pricing')
+          .where({ id: pricingId, tenant_id: tenantId })
+          .first();
 
-    return updated;
+        if (pricing) {
+          // Parse decimals to numbers for locked price
+          const currentPrice = typeof pricing.current_price === 'string'
+            ? parseFloat(pricing.current_price)
+            : pricing.current_price;
+          const basePrice = typeof pricing.base_price === 'string'
+            ? parseFloat(pricing.base_price)
+            : pricing.base_price;
+          const serviceFee = typeof pricing.service_fee === 'string'
+            ? parseFloat(pricing.service_fee)
+            : pricing.service_fee;
+          const facilityFee = typeof pricing.facility_fee === 'string'
+            ? parseFloat(pricing.facility_fee)
+            : pricing.facility_fee;
+          const taxRate = typeof pricing.tax_rate === 'string'
+            ? parseFloat(pricing.tax_rate)
+            : pricing.tax_rate;
+
+          lockedPriceData = {
+            pricing_id: pricingId,
+            locked_price: currentPrice || basePrice,
+            locked_at: new Date(),
+            service_fee: serviceFee,
+            facility_fee: facilityFee,
+            tax_rate: taxRate
+          };
+        }
+      }
+
+      // Update with the locked row
+      const [updated] = await trx('event_capacity')
+        .where({ id: capacityId, tenant_id: tenantId })
+        .update({
+          available_capacity: trx.raw('available_capacity - ?', [quantity]),
+          reserved_capacity: trx.raw('COALESCE(reserved_capacity, 0) + ?', [quantity]),
+          reserved_at: new Date(),
+          reserved_expires_at: reservedExpiresAt,
+          locked_price_data: lockedPriceData,
+          updated_at: new Date()
+        })
+        .returning('*');
+
+      logger.info({
+        capacityId,
+        quantity,
+        expiresAt: reservedExpiresAt,
+        priceLockedAt: lockedPriceData?.locked_price,
+        tenantId
+      }, 'Capacity reserved with row lock');
+
+      // Parse locked_price_data before returning
+      if (updated.locked_price_data) {
+        updated.locked_price_data = this.parseLockedPriceData(updated.locked_price_data);
+      }
+
+      return updated;
+    });
   }
 
   async releaseReservation(capacityId: string, quantity: number, tenantId: string): Promise<IEventCapacity> {
@@ -314,6 +336,7 @@ export class CapacityService {
 
   /**
    * Validate that total section capacity doesn't exceed venue max capacity
+   * Skips validation if venueClient is not configured
    */
   async validateVenueCapacity(
     eventId: string,
@@ -321,6 +344,12 @@ export class CapacityService {
     authToken: string,
     additionalCapacity: number = 0
   ): Promise<void> {
+    // Skip validation if venue client not configured
+    if (!this.venueClient) {
+      logger.debug({ eventId }, 'Skipping venue capacity validation - no venue client configured');
+      return;
+    }
+
     // Get all sections for this event
     const sections = await this.getEventCapacity(eventId, tenantId);
     const currentTotalCapacity = sections.reduce((sum, s) => sum + s.total_capacity, 0);
@@ -335,29 +364,37 @@ export class CapacityService {
       throw new NotFoundError('Event');
     }
 
-    // Get venue details
-    const venueData = await this.venueClient.getVenue(event.venue_id, authToken);
-    const venue = venueData.venue || venueData;
+    try {
+      const venueData = await this.venueClient.getVenue(event.venue_id, authToken);
+      const venue = venueData.venue || venueData;
 
-    if (!venue.max_capacity) {
-      logger.warn({ venueId: event.venue_id }, 'Venue has no max_capacity set');
-      return;
+      if (!venue.max_capacity) {
+        logger.warn({ venueId: event.venue_id }, 'Venue has no max_capacity set');
+        return;
+      }
+
+      if (newTotalCapacity > venue.max_capacity) {
+        throw new ValidationError([{
+          field: 'total_capacity',
+          message: `Total section capacity (${newTotalCapacity}) would exceed venue maximum (${venue.max_capacity})`
+        }]);
+      }
+
+      logger.debug({
+        eventId,
+        currentTotalCapacity,
+        additionalCapacity,
+        newTotalCapacity,
+        venueMaxCapacity: venue.max_capacity
+      }, 'Venue capacity validation passed');
+    } catch (error: any) {
+      // If it's a validation error, rethrow it
+      if (error instanceof ValidationError) {
+        throw error;
+      }
+      // For other errors (network, etc.), log and skip validation
+      logger.warn({ eventId, error: error.message }, 'Could not validate venue capacity - skipping');
     }
-
-    if (newTotalCapacity > venue.max_capacity) {
-      throw new ValidationError([{
-        field: 'total_capacity',
-        message: `Total section capacity (${newTotalCapacity}) would exceed venue maximum (${venue.max_capacity})`
-      }]);
-    }
-
-    logger.debug({
-      eventId,
-      currentTotalCapacity,
-      additionalCapacity,
-      newTotalCapacity,
-      venueMaxCapacity: venue.max_capacity
-    }, 'Venue capacity validation passed');
   }
 
   /**

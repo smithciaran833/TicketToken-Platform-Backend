@@ -27,7 +27,7 @@ async function alertsRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/test',
     {
-      preHandler: [authenticate, authorize('admin')]
+      preHandler: [authenticate, authorize(['admin'])]
     },
     alertsController.testAlert.bind(alertsController)
   );

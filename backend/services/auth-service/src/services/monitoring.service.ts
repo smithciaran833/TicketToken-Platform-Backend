@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { db } from '../config/database';
-import { redis } from '../config/redis';
+import { getRedis } from '../config/redis';
 import { pool } from '../config/database';
 
 interface HealthCheckResult {
@@ -76,6 +76,7 @@ export class MonitoringService {
   private async checkRedis(): Promise<CheckResult> {
     const start = Date.now();
     try {
+      const redis = getRedis();
       await redis.ping();
       const latency = Date.now() - start;
       
@@ -165,11 +166,12 @@ export function setupMonitoring(fastify: FastifyInstance, monitoringService: Mon
 
   // Kubernetes readiness probe
   fastify.get('/ready', async (_request, reply) => {
-    try {
-      await Promise.all([
-        db.raw('SELECT 1'),
-        redis.ping()
-      ]);
+      try {
+        const redis = getRedis();
+        await Promise.all([
+          db.raw('SELECT 1'),
+          redis.ping()
+        ]);
       reply.send({ ready: true });
     } catch (error) {
       reply.status(503).send({ ready: false });

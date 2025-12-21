@@ -7,6 +7,8 @@ import adminRoutes from './admin.routes';
 import disputesRoutes from './disputes.routes';
 import taxRoutes from './tax.routes';
 import healthRoutes from './health.routes';
+import webhookRoutes from './webhook.routes';
+import { sellerOnboardingRoutes } from './seller-onboarding.routes';
 import { authMiddleware } from '../middleware/auth.middleware';
 
 export default async function routes(fastify: FastifyInstance) {
@@ -21,6 +23,8 @@ export default async function routes(fastify: FastifyInstance) {
   await fastify.register(adminRoutes, { prefix: '/admin' });
   await fastify.register(disputesRoutes, { prefix: '/disputes' });
   await fastify.register(taxRoutes, { prefix: '/tax' });
+  await fastify.register(sellerOnboardingRoutes, { prefix: '/seller' });
+  await fastify.register(webhookRoutes, { prefix: '/webhooks' });
 
   // Marketplace statistics (authenticated)
   fastify.get('/stats', {

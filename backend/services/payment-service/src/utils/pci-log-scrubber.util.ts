@@ -1,60 +1,61 @@
 /**
  * PCI DSS Log Scrubbing Utility
  * Removes sensitive payment information from logs to maintain PCI compliance
- * 
+ *
  * Critical for avoiding $500k+ fines for logging cardholder data
  */
 
 /**
  * Patterns for sensitive data that must be scrubbed
+ * ORDER MATTERS: More specific patterns (trackData) must come before general patterns (creditCard)
  */
 const SENSITIVE_PATTERNS = {
+  // Track data (magnetic stripe) - MUST be first to catch full track before card number pattern
+  trackData: [
+    /%B\d{13,19}\^[^\^]+\^[^\?]*\?/g, // Track 1: %B<card>^<name>^<exp+service>?
+    /;\d{13,19}=\d{4,}[^;]*/g, // Track 2: ;<card>=<exp><service>
+  ],
+
   // Credit card numbers (various formats)
   creditCard: [
     /\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b/g, // 16 digits with optional separators
     /\b\d{13,19}\b/g, // 13-19 consecutive digits (catches most cards)
   ],
-  
+
   // CVV/CVC codes
   cvv: [
     /\b(cvv|cvc|cvv2|cvc2|cid|csc)[:\s]*\d{3,4}\b/gi,
     /"cvv":\s*"\d{3,4}"/gi,
     /"cvc":\s*"\d{3,4}"/gi,
   ],
-  
+
   // Expiration dates in various formats
   expiration: [
     /\b(exp|expir|expiry|expiration)[:\s]*(0[1-9]|1[0-2])[\/\-]?\d{2,4}\b/gi,
     /"exp_month":\s*"\d{1,2}"/gi,
     /"exp_year":\s*"\d{2,4}"/gi,
   ],
-  
-  // Track data (magnetic stripe)
-  trackData: [
-    /\%B\d{13,19}\^[^\?]+\?\w+/g, // Track 1
-    /;\d{13,19}=\d{4}\d*/g, // Track 2
-  ],
-  
+
   // PIN blocks
   pin: [
     /\b(pin|pinblock)[:\s]*[A-Fa-f0-9]{16,32}\b/gi,
   ],
-  
+
   // SSN (Social Security Number)
   ssn: [
     /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/g,
   ],
-  
+
   // Bank account numbers (8-17 digits)
   bankAccount: [
     /\b(account|acct|routing)[:\s]*\d{8,17}\b/gi,
   ],
-  
+
   // Email addresses (for GDPR, not PCI, but good practice)
   email: [
     /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g,
   ],
-  
+
   // Authorization tokens and API keys
   tokens: [
     /\b(bearer|token|api[_-]?key|secret)[:\s]+[A-Za-z0-9\-._~+\/]+=*/gi,
@@ -67,10 +68,10 @@ const SENSITIVE_PATTERNS = {
  * Replacement text for scrubbed data
  */
 const SCRUBBED_TEXT = {
+  trackData: '[TRACK_REDACTED]',
   creditCard: '[CARD_REDACTED]',
   cvv: '[CVV_REDACTED]',
   expiration: '[EXP_REDACTED]',
-  trackData: '[TRACK_REDACTED]',
   pin: '[PIN_REDACTED]',
   ssn: '[SSN_REDACTED]',
   bankAccount: '[ACCOUNT_REDACTED]',
@@ -87,17 +88,17 @@ export function scrubSensitiveData(input: string): string {
   if (!input || typeof input !== 'string') {
     return input;
   }
-  
+
   let scrubbed = input;
-  
-  // Apply each pattern category
+
+  // Apply each pattern category in order (trackData first, then creditCard, etc.)
   for (const [category, patterns] of Object.entries(SENSITIVE_PATTERNS)) {
     const replacement = SCRUBBED_TEXT[category as keyof typeof SCRUBBED_TEXT];
     for (const pattern of patterns) {
       scrubbed = scrubbed.replace(pattern, replacement);
     }
   }
-  
+
   return scrubbed;
 }
 
@@ -110,24 +111,24 @@ export function scrubObject(obj: any): any {
   if (obj === null || obj === undefined) {
     return obj;
   }
-  
+
   // Handle primitive types
   if (typeof obj === 'string') {
     return scrubSensitiveData(obj);
   }
-  
+
   if (typeof obj !== 'object') {
     return obj;
   }
-  
+
   // Handle arrays
   if (Array.isArray(obj)) {
     return obj.map(item => scrubObject(item));
   }
-  
+
   // Handle objects - create new object to avoid mutation
   const scrubbed: any = {};
-  
+
   for (const [key, value] of Object.entries(obj)) {
     // Specific field names that should always be redacted
     const sensitiveFields = [
@@ -155,7 +156,7 @@ export function scrubObject(obj: any): any {
       'routing_number',
       'routingNumber',
     ];
-    
+
     const lowerKey = key.toLowerCase();
     if (sensitiveFields.some(field => lowerKey.includes(field.toLowerCase()))) {
       scrubbed[key] = '[REDACTED]';
@@ -165,7 +166,7 @@ export function scrubObject(obj: any): any {
       scrubbed[key] = scrubObject(value);
     }
   }
-  
+
   return scrubbed;
 }
 
@@ -174,15 +175,15 @@ export function scrubObject(obj: any): any {
  */
 export class SafeLogger {
   private context: string;
-  
+
   constructor(context: string = 'Application') {
     this.context = context;
   }
-  
+
   private formatMessage(level: string, message: string, meta?: any): void {
     const timestamp = new Date().toISOString();
     const scrubbed = meta ? scrubObject(meta) : undefined;
-    
+
     const logEntry = {
       timestamp,
       level,
@@ -190,7 +191,7 @@ export class SafeLogger {
       message: scrubSensitiveData(message),
       ...(scrubbed && { meta: scrubbed }),
     };
-    
+
     // Use appropriate console method
     switch (level) {
       case 'ERROR':
@@ -209,19 +210,19 @@ export class SafeLogger {
         console.log(JSON.stringify(logEntry));
     }
   }
-  
+
   info(message: string, meta?: any): void {
     this.formatMessage('INFO', message, meta);
   }
-  
+
   warn(message: string, meta?: any): void {
     this.formatMessage('WARN', message, meta);
   }
-  
+
   error(message: string, meta?: any): void {
     this.formatMessage('ERROR', message, meta);
   }
-  
+
   debug(message: string, meta?: any): void {
     this.formatMessage('DEBUG', message, meta);
   }
@@ -236,7 +237,7 @@ export function maskCardNumber(cardNumber: string): string {
   if (!cardNumber || cardNumber.length < 4) {
     return '[INVALID_CARD]';
   }
-  
+
   const last4 = cardNumber.slice(-4);
   return `**** **** **** ${last4}`;
 }
@@ -276,28 +277,28 @@ export async function pciLoggingMiddleware(
   const originalLog = console.log;
   const originalError = console.error;
   const originalWarn = console.warn;
-  
+
   console.log = (...args: any[]) => {
-    const scrubbed = args.map(arg => 
+    const scrubbed = args.map(arg =>
       typeof arg === 'object' ? scrubObject(arg) : scrubSensitiveData(String(arg))
     );
     originalLog.apply(console, scrubbed);
   };
-  
+
   console.error = (...args: any[]) => {
-    const scrubbed = args.map(arg => 
+    const scrubbed = args.map(arg =>
       typeof arg === 'object' ? scrubObject(arg) : scrubSensitiveData(String(arg))
     );
     originalError.apply(console, scrubbed);
   };
-  
+
   console.warn = (...args: any[]) => {
-    const scrubbed = args.map(arg => 
+    const scrubbed = args.map(arg =>
       typeof arg === 'object' ? scrubObject(arg) : scrubSensitiveData(String(arg))
     );
     originalWarn.apply(console, scrubbed);
   };
-  
+
   // Restore original methods when response finishes
   reply.raw.on('finish', () => {
     console.log = originalLog;
@@ -312,7 +313,7 @@ export async function pciLoggingMiddleware(
  */
 export function containsPCIData(input: string): boolean {
   if (!input) return false;
-  
+
   for (const patterns of Object.values(SENSITIVE_PATTERNS)) {
     for (const pattern of patterns) {
       if (pattern.test(input)) {
@@ -320,6 +321,6 @@ export function containsPCIData(input: string): boolean {
       }
     }
   }
-  
+
   return false;
 }

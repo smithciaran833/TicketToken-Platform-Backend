@@ -4,7 +4,6 @@
  */
 
 import Redis from 'ioredis';
-import { getRedisConfig } from '../config';
 import { LockTimeoutError, LockContentionError, LockSystemError } from '../errors/lock-errors';
 
 // Lazy initialize Redis client for locks
@@ -12,17 +11,17 @@ let redis: Redis | null = null;
 
 function getRedisClient(): Redis {
   if (!redis) {
-    const redisConfig = getRedisConfig();
-    redis =
-      typeof redisConfig === 'string'
-        ? new Redis(redisConfig)
-        : new Redis({
-            host: redisConfig.host,
-            port: redisConfig.port,
-            password: redisConfig.password,
-          });
+    const redisUrl = process.env.REDIS_URL;
+    if (redisUrl) {
+      redis = new Redis(redisUrl);
+    } else {
+      redis = new Redis({
+        host: process.env.REDIS_HOST || 'localhost',
+        port: parseInt(process.env.REDIS_PORT || '6379', 10),
+        password: process.env.REDIS_PASSWORD || undefined,
+      });
+    }
 
-    // Handle Redis connection errors
     redis.on('error', (err) => {
       console.error('Redis connection error for distributed locks:', err);
     });
@@ -292,6 +291,46 @@ export class LockMetrics {
     const times = Array.from(this.lockWaitTimes.values());
     if (times.length === 0) return 0;
     return times.reduce((a, b) => a + b, 0) / times.length;
+  }
+}
+
+/**
+ * Simple lock acquisition (alternative to withLock for lightweight use cases)
+ */
+export async function acquireLock(key: string, ttl: number): Promise<boolean> {
+  try {
+    const lockValue = `${process.pid}-${Date.now()}`;
+    const result = await getRedisClient().set(key, lockValue, 'EX', ttl, 'NX');
+    return result === 'OK';
+  } catch (error: any) {
+    console.error(`Failed to acquire lock ${key}:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Release a lock
+ */
+export async function releaseLock(key: string): Promise<boolean> {
+  try {
+    const deleted = await getRedisClient().del(key);
+    return deleted > 0;
+  } catch (error: any) {
+    console.error(`Failed to release lock ${key}:`, error.message);
+    return false;
+  }
+}
+
+/**
+ * Extend lock TTL
+ */
+export async function extendLock(key: string, ttl: number): Promise<boolean> {
+  try {
+    const result = await getRedisClient().expire(key, ttl);
+    return result === 1;
+  } catch (error: any) {
+    console.error(`Failed to extend lock ${key}:`, error.message);
+    return false;
   }
 }
 

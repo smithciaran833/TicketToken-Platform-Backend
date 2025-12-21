@@ -10,7 +10,7 @@ class TaxReportingServiceClass {
     platformFeeCents: number
   ) {
     try {
-      await db('taxable_transactions').insert({
+      await db('tax_transactions').insert({
         id: uuidv4(),
         seller_id: sellerId,
         transfer_id: transferId,

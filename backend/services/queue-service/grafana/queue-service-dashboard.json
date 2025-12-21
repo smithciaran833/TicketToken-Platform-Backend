@@ -1,0 +1,189 @@
+{
+  "dashboard": {
+    "title": "Queue Service Metrics",
+    "tags": ["queue", "tickettoken"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Queue Depth Over Time",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "queue_jobs_waiting{service=\"queue-service\"}",
+            "legendFormat": "{{queue_name}} - Waiting"
+          },
+          {
+            "expr": "queue_jobs_active{service=\"queue-service\"}",
+            "legendFormat": "{{queue_name}} - Active"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 0,
+          "w": 12,
+          "h": 8
+        }
+      },
+      {
+        "id": 2,
+        "title": "Job Processing Rate",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate(queue_jobs_completed_total{service=\"queue-service\"}[5m])",
+            "legendFormat": "{{queue_name}} - Completed/sec"
+          },
+          {
+            "expr": "rate(queue_jobs_failed_total{service=\"queue-service\"}[5m])",
+            "legendFormat": "{{queue_name}} - Failed/sec"
+          }
+        ],
+        "gridPos": {
+          "x": 12,
+          "y": 0,
+          "w": 12,
+          "h": 8
+        }
+      },
+      {
+        "id": 3,
+        "title": "Job Failure Rate",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate(queue_jobs_failed_total{service=\"queue-service\"}[5m]) / rate(queue_jobs_total{service=\"queue-service\"}[5m]) * 100",
+            "legendFormat": "{{queue_name}} - Failure %"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 8,
+          "w": 8,
+          "h": 6
+        }
+      },
+      {
+        "id": 4,
+        "title": "Rate Limiter Status",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate_limiter_tokens_available{service=\"queue-service\"}",
+            "legendFormat": "{{service_name}}"
+          }
+        ],
+        "gridPos": {
+          "x": 8,
+          "y": 8,
+          "w": 8,
+          "h": 6
+        }
+      },
+      {
+        "id": 5,
+        "title": "Idempotency Hit Rate",
+        "type": "gauge",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate(idempotency_hits_total{service=\"queue-service\"}[5m]) / rate(idempotency_checks_total{service=\"queue-service\"}[5m]) * 100",
+            "legendFormat": "Hit Rate %"
+          }
+        ],
+        "gridPos": {
+          "x": 16,
+          "y": 8,
+          "w": 8,
+          "h": 6
+        }
+      },
+      {
+        "id": 6,
+        "title": "Worker Concurrency",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "rate_limiter_concurrent_requests{service=\"queue-service\"}",
+            "legendFormat": "{{service_name}} - Concurrent"
+          },
+          {
+            "expr": "rate_limiter_max_concurrent{service=\"queue-service\"}",
+            "legendFormat": "{{service_name}} - Max"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 14,
+          "w": 12,
+          "h": 6
+        }
+      },
+      {
+        "id": 7,
+        "title": "Circuit Breaker States",
+        "type": "table",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "circuit_breaker_state{service=\"queue-service\"}",
+            "format": "table",
+            "instant": true
+          }
+        ],
+        "gridPos": {
+          "x": 12,
+          "y": 14,
+          "w": 12,
+          "h": 6
+        }
+      },
+      {
+        "id": 8,
+        "title": "Job Processing Duration (p95)",
+        "type": "graph",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "histogram_quantile(0.95, rate(queue_job_duration_seconds_bucket{service=\"queue-service\"}[5m]))",
+            "legendFormat": "{{queue_name}} - p95"
+          }
+        ],
+        "gridPos": {
+          "x": 0,
+          "y": 20,
+          "w": 12,
+          "h": 6
+        }
+      },
+      {
+        "id": 9,
+        "title": "Redis Connection Status",
+        "type": "stat",
+        "datasource": "Prometheus",
+        "targets": [
+          {
+            "expr": "redis_connected{service=\"queue-service\"}",
+            "legendFormat": "DB{{redis_db}}"
+          }
+        ],
+        "gridPos": {
+          "x": 12,
+          "y": 20,
+          "w": 12,
+          "h": 6
+        }
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s"
+  }
+}

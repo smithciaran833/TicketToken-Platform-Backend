@@ -1,12 +1,23 @@
 import { Pool } from 'pg';
 import knex from 'knex';
 
+// SSL/TLS configuration for secure database connections
+const sslConfig = process.env.NODE_ENV === 'production'
+  ? {
+      rejectUnauthorized: true,
+      ca: process.env.DB_CA_CERT,  // For cloud providers (AWS RDS, Azure, etc.)
+    }
+  : process.env.DB_SSL === 'true'
+  ? { rejectUnauthorized: false }  // Allow local testing with self-signed certs
+  : false;  // Disable SSL for local development
+
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '6432'),
   database: process.env.DB_NAME || 'tickettoken_db',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
+  ssl: sslConfig,
 };
 
 // Reduced from max: 20 to max: 5 to prevent connection spikes

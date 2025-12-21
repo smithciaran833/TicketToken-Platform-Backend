@@ -24,7 +24,7 @@ export interface PriceTrend {
 }
 
 export class PriceHistoryModel {
-  private readonly tableName = 'price_history';
+  private readonly tableName = 'marketplace_price_history';
 
   async recordPriceChange(
     listingId: string,

@@ -32,7 +32,7 @@ export class StateTransitionService {
 
     // Update database
     await this.db.query(
-      'UPDATE payments SET state = $1, updated_at = NOW() WHERE id = $2',
+      'UPDATE payment_transactions SET status = $1, updated_at = NOW() WHERE id = $2',
       [newState, context.paymentId]
     );
 

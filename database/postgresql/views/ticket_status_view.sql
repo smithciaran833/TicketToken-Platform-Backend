@@ -1,7 +1,5 @@
--- Ticket Status View
--- Fixed version without non-existent columns
+-- Ticket Status View (CORRECTED - All column names match actual schema)
 
--- Drop existing views
 DROP VIEW IF EXISTS ticket_inventory_summary CASCADE;
 DROP VIEW IF EXISTS ticket_status_details CASCADE;
 
@@ -11,8 +9,7 @@ SELECT
     -- Ticket identification
     t.id AS ticket_id,
     t.ticket_number,
-    t.ticket_code,
-    t.barcode,
+    t.qr_code,
     
     -- Event and venue info
     t.event_id,
@@ -27,7 +24,7 @@ SELECT
     tt.name AS ticket_type_name,
     tt.category AS ticket_category,
     t.face_value,
-    t.purchase_price,
+    t.price AS purchase_price,
     
     -- Section/seat information
     t.section,
@@ -45,10 +42,10 @@ SELECT
     
     -- Current status
     t.status AS current_status,
-    t.is_valid,
+    t.is_validated,
     
     -- Ownership
-    t.owner_id,
+    t.user_id AS owner_id,
     t.original_purchaser_id,
     
     -- Important timestamps
@@ -58,22 +55,26 @@ SELECT
     
     -- Status indicators
     CASE 
-        WHEN t.status = 'ACTIVE' THEN true
+        WHEN t.status = 'active' THEN true
         ELSE false
     END AS is_available,
     
     CASE 
-        WHEN t.status = 'REDEEMED' THEN true
+        WHEN t.status = 'used' THEN true
         ELSE false
     END AS is_redeemed,
     
     CASE 
-        WHEN t.status = 'LISTED' THEN true
+        WHEN EXISTS (
+            SELECT 1 FROM marketplace_listings ml 
+            WHERE ml.ticket_id = t.id 
+            AND ml.status = 'active'
+        ) THEN true
         ELSE false
     END AS is_listed,
     
     CASE 
-        WHEN t.status = 'TRANSFERRED' THEN true
+        WHEN t.status = 'transferred' THEN true
         ELSE false
     END AS is_transferred,
     
@@ -85,24 +86,19 @@ SELECT
     (SELECT COUNT(*) 
      FROM ticket_transfers tr 
      WHERE tr.ticket_id = t.id 
-     AND tr.status = 'PENDING') AS pending_transfers,
+     AND tr.status = 'pending') AS pending_transfers,
     
     -- NFT/Blockchain status
     t.is_nft,
-    t.mint_address,
-    t.mint_transaction_id,
     CASE 
-        WHEN t.is_nft AND t.mint_transaction_id IS NOT NULL THEN 'MINTED'
-        WHEN t.is_nft AND t.mint_transaction_id IS NULL THEN 'PENDING'
-        ELSE 'NOT_NFT'
+        WHEN t.is_nft THEN 'NFT_ENABLED'
+        ELSE 'STANDARD'
     END AS blockchain_status,
     
     -- QR Code information
-    t.qr_code_data,
-    t.qr_code_url,
-    t.qr_code_generated_at,
+    t.qr_code AS qr_code_data,
     CASE 
-        WHEN t.qr_code_data IS NOT NULL THEN true
+        WHEN t.qr_code IS NOT NULL THEN true
         ELSE false
     END AS has_qr_code,
     
@@ -125,9 +121,10 @@ JOIN events e ON t.event_id = e.id
 JOIN venues v ON e.venue_id = v.id
 JOIN ticket_types tt ON t.ticket_type_id = tt.id
 WHERE e.deleted_at IS NULL
-AND v.deleted_at IS NULL;
+AND v.deleted_at IS NULL
+AND t.deleted_at IS NULL;
 
--- Recreate inventory summary view (already working)
+-- Recreate inventory summary view
 CREATE OR REPLACE VIEW ticket_inventory_summary AS
 SELECT 
     e.id AS event_id,
@@ -136,18 +133,18 @@ SELECT
     v.name AS venue_name,
     tt.id AS ticket_type_id,
     tt.name AS ticket_type_name,
+    tt.category AS ticket_category,
     
     -- Status breakdown
     COUNT(*) AS total_tickets,
-    COUNT(*) FILTER (WHERE t.status = 'ACTIVE') AS active_tickets,
-    COUNT(*) FILTER (WHERE t.status = 'REDEEMED') AS redeemed_tickets,
-    COUNT(*) FILTER (WHERE t.status = 'TRANSFERRED') AS transferred_tickets,
-    COUNT(*) FILTER (WHERE t.status = 'LISTED') AS listed_tickets,
-    COUNT(*) FILTER (WHERE t.status = 'CANCELLED') AS cancelled_tickets,
+    COUNT(*) FILTER (WHERE t.status = 'active') AS active_tickets,
+    COUNT(*) FILTER (WHERE t.status = 'used') AS redeemed_tickets,
+    COUNT(*) FILTER (WHERE t.status = 'transferred') AS transferred_tickets,
+    COUNT(*) FILTER (WHERE t.status = 'cancelled') AS cancelled_tickets,
     
     -- Availability percentage
     ROUND(
-        (COUNT(*) FILTER (WHERE t.status = 'ACTIVE'))::numeric / 
+        (COUNT(*) FILTER (WHERE t.status = 'active'))::numeric / 
         NULLIF(COUNT(*), 0) * 100, 
         2
     ) AS availability_percentage,
@@ -156,16 +153,15 @@ SELECT
     t.section,
     
     -- Price range
-    MIN(t.face_value) FILTER (WHERE t.status = 'ACTIVE') AS min_price,
-    MAX(t.face_value) FILTER (WHERE t.status = 'ACTIVE') AS max_price,
-    AVG(t.face_value) FILTER (WHERE t.status = 'ACTIVE') AS avg_price,
+    MIN(t.face_value) FILTER (WHERE t.status = 'active') AS min_price,
+    MAX(t.face_value) FILTER (WHERE t.status = 'active') AS max_price,
+    AVG(t.face_value) FILTER (WHERE t.status = 'active') AS avg_price,
     
     -- NFT statistics
     COUNT(*) FILTER (WHERE t.is_nft = true) AS nft_enabled_tickets,
-    COUNT(*) FILTER (WHERE t.is_nft = true AND t.mint_transaction_id IS NOT NULL) AS minted_nfts,
     
     -- QR code coverage
-    COUNT(*) FILTER (WHERE t.qr_code_data IS NOT NULL) AS tickets_with_qr,
+    COUNT(*) FILTER (WHERE t.qr_code IS NOT NULL) AS tickets_with_qr,
     
     -- Transfer activity
     SUM(t.transfer_count) AS total_transfers
@@ -175,15 +171,16 @@ JOIN events e ON t.event_id = e.id
 JOIN venues v ON e.venue_id = v.id
 JOIN ticket_types tt ON t.ticket_type_id = tt.id
 WHERE e.deleted_at IS NULL
-GROUP BY e.id, e.name, e.status, v.name, tt.id, tt.name, t.section
+AND t.deleted_at IS NULL
+GROUP BY e.id, e.name, e.status, v.name, tt.id, tt.name, tt.category, t.section
 ORDER BY e.name, tt.name, t.section;
 
 -- Create indexes for performance
 CREATE INDEX IF NOT EXISTS idx_tickets_event_status 
-ON tickets(event_id, status);
+ON tickets(event_id, status) WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_tickets_type_status 
-ON tickets(ticket_type_id, status);
+ON tickets(ticket_type_id, status) WHERE deleted_at IS NULL;
 
 -- Grant permissions
 GRANT SELECT ON ticket_status_details TO PUBLIC;

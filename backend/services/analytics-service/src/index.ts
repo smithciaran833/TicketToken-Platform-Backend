@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { createServer } from './server';
 import { logger } from './utils/logger';
 import { connectDatabases } from './config/database';
-import { connectRedis } from './config/redis';
+import { initRedis } from './config/redis';
 import { connectRabbitMQ } from './config/rabbitmq';
 import { startWebSocketServer } from './config/websocket';
 import { startEventProcessors } from './processors';
@@ -23,7 +23,7 @@ async function startService() {
     await connectDatabases();
 
     // Connect to Redis
-    await connectRedis();
+    await initRedis();
 
     // Connect to RabbitMQ
     await connectRabbitMQ();

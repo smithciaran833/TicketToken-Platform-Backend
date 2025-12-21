@@ -137,48 +137,17 @@ export class MintQueue extends BaseQueue {
   }
 
   async storeJobRecord(jobId: string, ticketId: string, userId: string, status: string): Promise<void> {
-    // First check if job exists
-    const existing = await this.db.query(
-      'SELECT id FROM queue_jobs WHERE job_id = $1',
-      [jobId]
-    );
-
-    if (existing.rows.length > 0) {
-      // Update existing
-      await this.db.query(
-        'UPDATE queue_jobs SET status = $1 WHERE job_id = $2',
-        [status, jobId]
-      );
-    } else {
-      // Insert new
-      await this.db.query(`
-        INSERT INTO queue_jobs (
-          job_id,
-          queue_name,
-          job_type,
-          ticket_id,
-          user_id,
-          status,
-          created_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, NOW())
-      `, [jobId, 'nft-minting', 'MINT', ticketId, userId, status]);
-    }
+    // REMOVED: queue_jobs table doesn't exist - BullMQ uses Redis for job tracking
+    // This was legacy code referencing a PostgreSQL table that was never migrated
+    // Job status is already tracked by BullMQ in Redis
+    console.log(`Job ${jobId} for ticket ${ticketId} status: ${status}`);
   }
 
   async updateJobRecord(jobId: string, status: string, result: MintResult | null = null, error: string | null = null): Promise<void> {
-    const metadata = result ? { result } : {};
-
-    await this.db.query(`
-      UPDATE queue_jobs
-      SET
-        status = $1,
-        metadata = $2,
-        error_message = $3,
-        completed_at = CASE WHEN $1 = 'COMPLETED' THEN NOW() ELSE completed_at END,
-        failed_at = CASE WHEN $1 = 'FAILED' THEN NOW() ELSE failed_at END
-      WHERE job_id = $4
-    `, [status, JSON.stringify(metadata), error, jobId]);
+    // REMOVED: queue_jobs table doesn't exist - BullMQ uses Redis for job tracking
+    // This was legacy code referencing a PostgreSQL table that was never migrated
+    // Job status is already tracked by BullMQ in Redis
+    console.log(`Job ${jobId} ${status}${error ? `: ${error}` : ''}`);
   }
 
   async simulateMint(ticketId: string, metadata: any): Promise<MintResult> {

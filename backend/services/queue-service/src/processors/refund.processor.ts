@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../adapters/bull-job-adapter';
 import { stripeService, RefundData, RefundResult } from '../services/stripe.service';
 import { emailService } from '../services/email.service';
 import { webhookService } from '../services/webhook.service';
@@ -26,7 +26,7 @@ export interface RefundJobResult extends RefundResult {
  * Process refund job
  * Creates a Stripe refund and handles the result
  */
-export async function processRefund(job: Job<RefundJobData>): Promise<RefundJobResult> {
+export async function processRefund(job: BullJobData<RefundJobData>): Promise<RefundJobResult> {
   const startTime = Date.now();
   const { orderId, userId, tenantId, refundReason, ...refundData } = job.data;
 
@@ -38,7 +38,7 @@ export async function processRefund(job: Job<RefundJobData>): Promise<RefundJobR
     paymentIntentId: refundData.paymentIntentId,
     amount: refundData.amount,
     reason: refundData.reason,
-    attempt: job.attemptsMade + 1,
+    attempt: (job.attemptsMade || 0) + 1,
   });
 
   try {
@@ -58,7 +58,7 @@ export async function processRefund(job: Job<RefundJobData>): Promise<RefundJobR
       });
 
       // Update job progress
-      await job.progress(100);
+      await job.progress?.(100);
 
       return {
         ...result,
@@ -85,7 +85,7 @@ export async function processRefund(job: Job<RefundJobData>): Promise<RefundJobR
       orderId,
       userId,
       error: error.message,
-      attempt: job.attemptsMade + 1,
+      attempt: (job.attemptsMade || 0) + 1,
       processingTime,
     });
 
@@ -98,7 +98,7 @@ export async function processRefund(job: Job<RefundJobData>): Promise<RefundJobR
  * Handle refund job failure
  * Called when all retry attempts have been exhausted
  */
-export async function onRefundFailed(job: Job<RefundJobData>, error: Error): Promise<void> {
+export async function onRefundFailed(job: BullJobData<RefundJobData>, error: Error): Promise<void> {
   const { orderId, userId, tenantId, paymentIntentId } = job.data;
 
   logger.error('Refund job failed permanently', {
@@ -138,7 +138,7 @@ export async function onRefundFailed(job: Job<RefundJobData>, error: Error): Pro
 /**
  * Handle refund job completion
  */
-export async function onRefundCompleted(job: Job<RefundJobData>, result: RefundJobResult): Promise<void> {
+export async function onRefundCompleted(job: BullJobData<RefundJobData>, result: RefundJobResult): Promise<void> {
   const { orderId, userId, tenantId } = job.data;
 
   logger.info('Refund job completed', {
@@ -179,7 +179,7 @@ export async function onRefundCompleted(job: Job<RefundJobData>, result: RefundJ
 /**
  * Handle refund job progress
  */
-export async function onRefundProgress(job: Job<RefundJobData>, progress: number): Promise<void> {
+export async function onRefundProgress(job: BullJobData<RefundJobData>, progress: number): Promise<void> {
   logger.debug('Refund job progress', {
     jobId: job.id,
     orderId: job.data.orderId,

@@ -382,8 +382,8 @@ export class ComplianceService {
   private async hasVerifiedPayoutMethod(venueId: string): Promise<boolean> {
     // Check for verified payment integration
     const integration = await db('venue_integrations')
-      .where({ venue_id: venueId, status: 'active' })
-      .whereIn('type', ['stripe', 'square'])
+      .where({ venue_id: venueId, is_active: true })
+      .whereIn('integration_type', ['stripe', 'square'])
       .first();
     
     return !!integration;
@@ -450,7 +450,7 @@ export class ComplianceService {
       const staffEmails = await db('venue_staff')
         .where({ venue_id: venueId })
         .whereIn('role', ['owner', 'admin'])
-        .pluck('email');
+        .pluck('contact_email');
 
       // Queue email notifications
       for (const email of staffEmails) {

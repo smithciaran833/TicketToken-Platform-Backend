@@ -35,9 +35,43 @@ export interface IStaffWithUser extends IStaffMember {
   };
 }
 
+/**
+ * StaffModel - venue_staff table uses is_active for soft delete, NOT deleted_at
+ */
 export class StaffModel extends BaseModel {
   constructor(db: Knex | Knex.Transaction) {
     super('venue_staff', db);
+  }
+
+  // Override: venue_staff has no deleted_at column
+  async findById(id: string, columns: string[] = ['*']) {
+    return this.db(this.tableName)
+      .where({ id })
+      .select(columns)
+      .first();
+  }
+
+  // Override: venue_staff has no deleted_at column
+  async update(id: string, data: any) {
+    const [record] = await this.db(this.tableName)
+      .where({ id })
+      .update({
+        ...data,
+        updated_at: new Date()
+      })
+      .returning('*');
+
+    return record;
+  }
+
+  // Override: use is_active instead of deleted_at for soft delete
+  async delete(id: string) {
+    return this.db(this.tableName)
+      .where({ id })
+      .update({
+        is_active: false,
+        updated_at: new Date()
+      });
   }
 
   async findByVenueAndUser(venueId: string, userId: string): Promise<IStaffMember | null> {
@@ -71,19 +105,25 @@ export class StaffModel extends BaseModel {
 
     // If exists but inactive, reactivate instead of creating new
     if (existing && !existing.is_active) {
+      const permissions = staffData.permissions && staffData.permissions.length > 0
+        ? staffData.permissions
+        : this.getDefaultPermissions(staffData.role!);
+
       const [reactivated] = await this.db(this.tableName)
         .where({ id: existing.id })
         .update({
           is_active: true,
           role: staffData.role,
-          permissions: staffData.permissions || this.getDefaultPermissions(staffData.role!),
+          permissions: permissions,
           updated_at: new Date()
         })
         .returning('*');
       return reactivated;
     }
 
-    const permissions = staffData.permissions || this.getDefaultPermissions(staffData.role!);
+    const permissions = staffData.permissions && staffData.permissions.length > 0
+      ? staffData.permissions
+      : this.getDefaultPermissions(staffData.role!);
 
     return this.create({
       ...staffData,
@@ -144,6 +184,8 @@ export class StaffModel extends BaseModel {
     const permissionMap = {
       owner: ['*'],
       manager: [
+        'venue:read',
+        'venue:update',
         'events:create',
         'events:update',
         'events:delete',
@@ -181,7 +223,7 @@ export class StaffModel extends BaseModel {
       .where({ venue_id: venueId, is_active: true })
       .count('* as count')
       .first();
-    
+
     const currentStaff = parseInt(String(result?.count || '0'), 10);
     const limit = 50;
 

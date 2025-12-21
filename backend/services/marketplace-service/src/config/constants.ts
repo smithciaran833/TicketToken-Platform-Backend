@@ -6,6 +6,11 @@ export const FEES = {
   MIN_SELLER_PERCENTAGE: 80.00, // Seller gets at least 80%
 } as const;
 
+// Feature flags
+export const FEATURE_FLAGS = {
+  ENABLE_VENUE_ROYALTY_SPLIT: process.env.ENABLE_VENUE_ROYALTY_SPLIT === 'true',
+} as const;
+
 // Listing constraints
 export const LISTING_CONSTRAINTS = {
   MIN_PRICE: 1.00, // Minimum listing price in USD
@@ -114,6 +119,7 @@ export const SUCCESS_MESSAGES = {
 
 export default {
   FEES,
+  FEATURE_FLAGS,
   LISTING_CONSTRAINTS,
   TIME_CONSTRAINTS,
   ANTI_BOT_LIMITS,

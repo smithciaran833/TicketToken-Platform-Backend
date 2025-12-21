@@ -34,7 +34,7 @@ async function queueRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:name/pause',
     {
-      preHandler: [authenticate, authorize('admin')]
+      preHandler: [authenticate, authorize(['admin'])]
     },
     queueController.pauseQueue.bind(queueController)
   );
@@ -42,7 +42,7 @@ async function queueRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:name/resume',
     {
-      preHandler: [authenticate, authorize('admin')]
+      preHandler: [authenticate, authorize(['admin'])]
     },
     queueController.resumeQueue.bind(queueController)
   );
@@ -50,7 +50,7 @@ async function queueRoutes(fastify: FastifyInstance) {
   fastify.post(
     '/:name/clear',
     {
-      preHandler: [authenticate, authorize('admin')]
+      preHandler: [authenticate, authorize(['admin'])]
     },
     queueController.clearQueue.bind(queueController)
   );

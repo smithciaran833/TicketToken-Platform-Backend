@@ -17,10 +17,10 @@ export class ProcessWebhookQueueJob {
   async execute(): Promise<void> {
     // Get unprocessed webhooks
     const webhooks = await this.db.query(
-      `SELECT * FROM webhook_inbox 
-       WHERE processed = false 
+      `SELECT * FROM webhook_inbox
+       WHERE status = 'pending'
        AND retry_count < 5
-       ORDER BY created_at ASC 
+       ORDER BY created_at ASC
        LIMIT 10`
     );
 
@@ -31,26 +31,27 @@ export class ProcessWebhookQueueJob {
 
   private async processWebhook(webhook: any): Promise<void> {
     try {
-      const payload = JSON.parse(webhook.payload);
-      
+      const payload = typeof webhook.payload === 'string' 
+        ? JSON.parse(webhook.payload) 
+        : webhook.payload;
+
       switch (webhook.provider) {
         case 'stripe':
-          // Process based on event type
-          await this.processStripeWebhook(payload, webhook.webhook_id);
+          await this.processStripeWebhook(payload, webhook.webhook_id || webhook.event_id);
           break;
         // Add other providers here
       }
 
       // Mark as processed
       await this.db.query(
-        'UPDATE webhook_inbox SET processed = true, processed_at = NOW() WHERE id = $1',
+        `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW() WHERE id = $1`,
         [webhook.id]
       );
     } catch (error: any) {
       // Update retry count and error
       await this.db.query(
-        `UPDATE webhook_inbox 
-         SET retry_count = retry_count + 1, 
+        `UPDATE webhook_inbox
+         SET retry_count = retry_count + 1,
              error_message = $1,
              updated_at = NOW()
          WHERE id = $2`,
@@ -60,7 +61,6 @@ export class ProcessWebhookQueueJob {
   }
 
   private async processStripeWebhook(payload: any, webhookId: string): Promise<void> {
-    // Process the webhook payload
     log.info('Processing Stripe webhook', { webhookId });
     // The actual processing is handled by the handler
   }

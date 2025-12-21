@@ -17,7 +17,7 @@ export class SchedulerService {
     // Daily compliance checks (4 AM)
     this.scheduleDaily('compliance-checks', 4, async () => {
       logger.info('Running daily compliance checks...');
-      await batchService.dailyComplianceChecks();
+      await batchService.dailyComplianceChecks("system");
     });
     
     // Weekly report generation (Sunday 2 AM)
@@ -31,7 +31,7 @@ export class SchedulerService {
     this.scheduleYearly('1099-generation', 1, 15, async () => {
       const previousYear = new Date().getFullYear() - 1;
       logger.info(`Generating 1099s for year ${previousYear}...`);
-      await batchService.generateYear1099Forms(previousYear);
+      await batchService.generateYear1099Forms(previousYear, "system");
     });
     
     logger.info('Scheduled jobs started successfully');

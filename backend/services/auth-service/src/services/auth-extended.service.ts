@@ -1,7 +1,7 @@
 import bcrypt from 'bcrypt';
 // import crypto from 'crypto';
 import { db } from '../config/database';
-import { redis } from '../config/redis';
+import { getRedis } from '../config/redis';
 import { ValidationError, AuthenticationError } from '../errors';
 import { passwordResetRateLimiter } from '../utils/rateLimiter';
 import { EmailService } from './email.service';
@@ -11,6 +11,23 @@ export class AuthExtendedService {
 
   constructor(emailService: EmailService) {
     this.emailService = emailService;
+  }
+
+  /**
+   * Non-blocking Redis SCAN implementation to replace blocking KEYS command
+   */
+  private async scanKeys(pattern: string): Promise<string[]> {
+    const redis = getRedis();
+    const keys: string[] = [];
+    let cursor = '0';
+
+    do {
+      const [nextCursor, batch] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+      cursor = nextCursor;
+      keys.push(...batch);
+    } while (cursor !== '0');
+
+    return keys;
   }
 
   async requestPasswordReset(email: string, ipAddress: string): Promise<void> {
@@ -37,8 +54,11 @@ export class AuthExtendedService {
 
     // Log the request
     await db('audit_logs').insert({
-      user_id: user.id,
+      service: 'auth-service',
       action: 'password_reset_requested',
+      action_type: 'security',
+      resource_type: 'user',
+      user_id: user.id,
       ip_address: ipAddress,
       created_at: new Date()
     });
@@ -46,10 +66,11 @@ export class AuthExtendedService {
 
   async resetPassword(token: string, newPassword: string, ipAddress: string): Promise<void> {
     // Get token data from Redis
+    const redis = getRedis();
     const tokenData = await redis.get(`password-reset:${token}`);
-    
+
     if (!tokenData) {
-      throw new ValidationError('Invalid or expired reset token' as any);
+      throw new ValidationError(['Invalid or expired reset token']);
     }
 
     const { userId } = JSON.parse(tokenData);
@@ -72,8 +93,8 @@ export class AuthExtendedService {
     // Delete the reset token
     await redis.del(`password-reset:${token}`);
 
-    // Invalidate all refresh tokens for this user
-    const keys = await redis.keys(`refresh_token:*`);
+    // Invalidate all refresh tokens for this user using non-blocking SCAN
+    const keys = await this.scanKeys('refresh_token:*');
     for (const key of keys) {
       const data = await redis.get(key);
       if (data) {
@@ -86,8 +107,11 @@ export class AuthExtendedService {
 
     // Log the password reset
     await db('audit_logs').insert({
-      user_id: userId,
+      service: 'auth-service',
       action: 'password_reset_completed',
+      action_type: 'security',
+      resource_type: 'user',
+      user_id: userId,
       ip_address: ipAddress,
       created_at: new Date()
     });
@@ -95,17 +119,33 @@ export class AuthExtendedService {
 
   async verifyEmail(token: string): Promise<void> {
     // Get token data from Redis
+    const redis = getRedis();
     const tokenData = await redis.get(`email-verify:${token}`);
-    
+
     if (!tokenData) {
-      throw new ValidationError('Invalid or expired verification token' as any);
+      throw new ValidationError(['Invalid or expired verification token']);
     }
 
     const { userId, email } = JSON.parse(tokenData);
 
+    // Verify user exists first
+    const user = await db('users').withSchema('public')
+      .where({ id: userId })
+      .whereNull('deleted_at')
+      .first();
+
+    if (!user) {
+      throw new ValidationError(['User not found']);
+    }
+
+    // Verify email matches
+    if (user.email !== email) {
+      throw new ValidationError(['Email mismatch']);
+    }
+
     // Update user as verified
     const updated = await db('users').withSchema('public')
-      .where({ id: userId, email })
+      .where({ id: userId })
       .whereNull('deleted_at')
       .update({
         email_verified: true,
@@ -114,7 +154,7 @@ export class AuthExtendedService {
       });
 
     if (updated === 0) {
-      throw new ValidationError('User not found or email mismatch' as any);
+      throw new ValidationError(['Failed to update user']);
     }
 
     // Delete the verification token
@@ -122,23 +162,29 @@ export class AuthExtendedService {
 
     // Log the verification
     await db('audit_logs').insert({
-      user_id: userId,
+      service: 'auth-service',
       action: 'email_verified',
+      action_type: 'security',
+      resource_type: 'user',
+      user_id: userId,
       created_at: new Date()
     });
+    
+    console.log(`Email verified successfully for user: ${userId}`);
   }
 
   async resendVerificationEmail(userId: string): Promise<void> {
     // Rate limit resend requests
+    const redis = getRedis();
     const rateLimitKey = `resend-verify:${userId}`;
     const attempts = await redis.incr(rateLimitKey);
-    
+
     if (attempts === 1) {
       await redis.expire(rateLimitKey, 3600); // 1 hour
     }
-    
+
     if (attempts > 3) {
-      throw new ValidationError('Too many resend attempts. Try again later.' as any);
+      throw new ValidationError(['Too many resend attempts. Try again later.']);
     }
 
     // Get user
@@ -148,11 +194,11 @@ export class AuthExtendedService {
       .first();
 
     if (!user) {
-      throw new ValidationError('User not found' as any);
+      throw new ValidationError(['User not found']);
     }
 
     if (user.email_verified) {
-      throw new ValidationError('Email already verified' as any);
+      throw new ValidationError(['Email already verified']);
     }
 
     // Send new verification email
@@ -164,8 +210,8 @@ export class AuthExtendedService {
   }
 
   async changePassword(
-    userId: string, 
-    currentPassword: string, 
+    userId: string,
+    currentPassword: string,
     newPassword: string
   ): Promise<void> {
     // Get user
@@ -190,12 +236,12 @@ export class AuthExtendedService {
     // Ensure new password is different
     const samePassword = await bcrypt.compare(newPassword, user.password_hash);
     if (samePassword) {
-      throw new ValidationError('New password must be different from current password' as any);
+      throw new ValidationError(['New password must be different from current password']);
     }
 
     // Hash and update password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-    
+
     await db('users').withSchema('public')
       .where({ id: userId })
       .update({
@@ -206,28 +252,31 @@ export class AuthExtendedService {
 
     // Log the change
     await db('audit_logs').insert({
-      user_id: userId,
+      service: 'auth-service',
       action: 'password_changed',
+      action_type: 'security',
+      resource_type: 'user',
+      user_id: userId,
       created_at: new Date()
     });
-    
+
     // Invalidate all user sessions after password change
     await db('user_sessions')
       .where({ user_id: userId })
       .whereNull('revoked_at')
-      .update({ 
+      .update({
         revoked_at: new Date(),
         metadata: db.raw("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", [
           JSON.stringify({ revoked_reason: 'password_changed' })
         ])
       });
-    
+
     console.log('All sessions invalidated due to password change for user:', userId);
   }
 
   private validatePasswordStrength(password: string): void {
     if (password.length < 8) {
-      throw new ValidationError('Password must be at least 8 characters long' as any);
+      throw new ValidationError(['Password must be at least 8 characters long']);
     }
 
     const hasUpperCase = /[A-Z]/.test(password);

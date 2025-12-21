@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import { Resend } from 'resend';
 // import { db } from '../config/database';
-import { redis } from '../config/redis';
+import { getRedis } from '../config/redis';
 import { env } from '../config/env';
 
 interface EmailTemplate {
@@ -23,6 +23,7 @@ export class EmailService {
     // const expires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
 
     // Store token in Redis
+    const redis = getRedis();
     await redis.setex(
       `email-verify:${token}`,
       24 * 60 * 60,
@@ -30,7 +31,7 @@ export class EmailService {
     );
 
     const verifyUrl = `${env.API_GATEWAY_URL}/auth/verify-email?token=${token}`;
-    
+
     const template: EmailTemplate = {
       subject: 'Verify your TicketToken account',
       html: `
@@ -42,7 +43,7 @@ export class EmailService {
         <p>If you didn't create this account, please ignore this email.</p>
       `,
       text: `Welcome to TicketToken, ${firstName}!
-      
+
 Please verify your email address by visiting:
 ${verifyUrl}
 
@@ -56,8 +57,9 @@ If you didn't create this account, please ignore this email.`
 
   async sendPasswordResetEmail(userId: string, email: string, firstName: string): Promise<void> {
     const token = crypto.randomBytes(32).toString('hex');
-    
+
     // Store token in Redis with 1 hour expiry
+    const redis = getRedis();
     await redis.setex(
       `password-reset:${token}`,
       60 * 60,
@@ -65,7 +67,7 @@ If you didn't create this account, please ignore this email.`
     );
 
     const resetUrl = `${env.API_GATEWAY_URL}/auth/reset-password?token=${token}`;
-    
+
     const template: EmailTemplate = {
       subject: 'Reset your TicketToken password',
       html: `
@@ -119,8 +121,8 @@ Each code can only be used once. Keep them secure!`
   }
 
   private async sendEmail(to: string, template: EmailTemplate): Promise<void> {
-    // Development mode - log to console for testing
-    if (env.NODE_ENV === 'development') {
+    // Development and Test mode - log to console, don't send actual emails
+    if (env.NODE_ENV === 'development' || env.NODE_ENV === 'test') {
       console.log('📧 Email would be sent:', {
         to,
         subject: template.subject,

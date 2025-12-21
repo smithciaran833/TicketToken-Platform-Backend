@@ -1,16 +1,25 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import Joi from 'joi';
-import { ValidationError } from '../errors';
 
-export function validate(schema: Joi.Schema) {
-  return async (request: FastifyRequest, _reply: FastifyReply) => {
+export function validate(schema: Joi.Schema, source: 'body' | 'query' | 'params' = 'body') {
+  return async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const validated = await schema.validateAsync(request.body, {
+      const dataToValidate = source === 'body' ? request.body :
+                             source === 'query' ? request.query :
+                             request.params;
+
+      const validated = await schema.validateAsync(dataToValidate, {
         abortEarly: false,
         stripUnknown: true,
       });
-      
-      request.body = validated;
+
+      if (source === 'body') {
+        request.body = validated;
+      } else if (source === 'query') {
+        request.query = validated;
+      } else {
+        request.params = validated;
+      }
     } catch (error) {
       if (error instanceof Joi.ValidationError) {
         const errors = error.details.map(detail => ({
@@ -18,7 +27,14 @@ export function validate(schema: Joi.Schema) {
           message: detail.message,
         }));
         
-        throw new ValidationError(errors);
+        // Create a user-friendly error message that includes field names
+        const errorMessage = errors.map(e => e.message).join(', ');
+        
+        // Throw a plain error with statusCode 400 for schema validation
+        const validationError: any = new Error(errorMessage);
+        validationError.statusCode = 400;
+        validationError.errors = errors;
+        throw validationError;
       }
       throw error;
     }

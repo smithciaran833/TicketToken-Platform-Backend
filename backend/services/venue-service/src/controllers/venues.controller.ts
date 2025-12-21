@@ -167,7 +167,6 @@ export async function venueRoutes(fastify: FastifyInstance) {
   );
 
   // Get venue by ID - SECURED
-  // FIX #2: Catch "Access denied" errors from getVenue and return 403
   fastify.get('/:venueId',
     {
       preHandler: [authenticate, addTenantContext]
@@ -177,22 +176,16 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const { venueId } = request.params;
         const userId = request.user?.id;
 
-        // This may throw "Access denied" error
         const venue = await venueService.getVenue(venueId, userId);
         if (!venue) {
-          return reply.status(404).send({ error: 'Venue not found' });
+          throw new NotFoundError('Venue');
         }
 
         venueOperations.inc({ operation: 'read', status: 'success' });
         return reply.send(venue);
       } catch (error: any) {
-        // FIX #2: Check if it's an access denied error from getVenue
-        if (error.message === 'Access denied') {
-          return reply.status(403).send({ error: 'Access denied to this venue' });
-        }
         venueOperations.inc({ operation: 'read', status: 'error' });
-        logger.error({ error }, 'Failed to get venue');
-        return reply.status(500).send({ error: 'Internal server error' });
+        throw error;
       }
     }
   );
@@ -428,6 +421,12 @@ export async function venueRoutes(fastify: FastifyInstance) {
 
         return reply.send(staff);
       } catch (error: any) {
+        if (error.statusCode === 403 || error.name === 'ForbiddenError') {
+          return reply.status(403).send({ error: error.message });
+        }
+        if (error.statusCode === 404 || error.name === 'NotFoundError') {
+          return reply.status(404).send({ error: error.message });
+        }
         logger.error({ error, venueId: request.params.venueId }, 'Failed to get staff');
         return ErrorResponseBuilder.internal(reply, 'Failed to get staff list');
       }

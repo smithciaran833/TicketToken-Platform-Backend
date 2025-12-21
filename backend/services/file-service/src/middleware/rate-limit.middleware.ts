@@ -24,10 +24,11 @@ export async function registerRateLimiting(app: FastifyInstance) {
     },
     errorResponseBuilder: (request, context) => {
       logger.warn(`Rate limit exceeded for ${(request as any).user?.id || request.ip}`);
+      const retryAfter = Number(context.after) || 0;
       return {
         statusCode: 429,
         error: 'Too Many Requests',
-        message: `Rate limit exceeded. Try again in ${Math.ceil(context.after / 1000)} seconds.`,
+        message: `Rate limit exceeded. Try again in ${Math.ceil(retryAfter / 1000)} seconds.`,
         retryAfter: context.after
       };
     },
@@ -56,10 +57,11 @@ export const uploadRateLimiter = {
         return user?.id || request.ip;
       },
       errorResponseBuilder: (request: any, context: any) => {
+        const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
           error: 'Too Many Requests',
-          message: `Upload limit exceeded. You can upload ${context.max} files per ${context.timeWindow}. Try again in ${Math.ceil(context.after / 1000)} seconds.`,
+          message: `Upload limit exceeded. You can upload ${context.max} files per ${context.timeWindow}. Try again in ${Math.ceil(retryAfter / 1000)} seconds.`,
           retryAfter: context.after
         };
       }
@@ -81,10 +83,11 @@ export const downloadRateLimiter = {
         return user?.id || request.ip;
       },
       errorResponseBuilder: (request: any, context: any) => {
+        const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
           error: 'Too Many Requests',
-          message: `Download limit exceeded. Try again in ${Math.ceil(context.after / 1000)} seconds.`,
+          message: `Download limit exceeded. Try again in ${Math.ceil(retryAfter / 1000)} seconds.`,
           retryAfter: context.after
         };
       }
@@ -106,10 +109,11 @@ export const processingRateLimiter = {
         return user?.id || request.ip;
       },
       errorResponseBuilder: (request: any, context: any) => {
+        const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
           error: 'Too Many Requests',
-          message: `Processing limit exceeded. Try again in ${Math.ceil(context.after / 1000)} seconds.`,
+          message: `Processing limit exceeded. Try again in ${Math.ceil(retryAfter / 1000)} seconds.`,
           retryAfter: context.after
         };
       }
@@ -131,10 +135,11 @@ export const qrRateLimiter = {
         return user?.id || request.ip;
       },
       errorResponseBuilder: (request: any, context: any) => {
+        const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
           error: 'Too Many Requests',
-          message: `QR generation limit exceeded. Try again in ${Math.ceil(context.after / 1000)} seconds.`,
+          message: `QR generation limit exceeded. Try again in ${Math.ceil(retryAfter / 1000)} seconds.`,
           retryAfter: context.after
         };
       }

@@ -46,7 +46,7 @@ export class TaxService {
         percentToThreshold: (newTotal / this.FORM_1099_THRESHOLD) * 100
       };
     } catch (error) {
-      logger.error('Error tracking sale:', error);
+      logger.error({ error }, 'Error tracking sale:');
       throw error;
     }
   }

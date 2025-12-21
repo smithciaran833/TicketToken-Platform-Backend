@@ -21,7 +21,7 @@ export class RefundModel {
       ) VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING *
     `;
-    
+
     const values = [
       data.transactionId,
       data.amount,
@@ -30,23 +30,25 @@ export class RefundModel {
       data.stripeRefundId,
       JSON.stringify(data.metadata || {})
     ];
-    
+
     const result = await query(text, values);
     return result.rows[0];
   }
 
   static async updateStatus(id: string, status: string, stripeRefundId?: string): Promise<Refund> {
+    // Use separate parameters to avoid PostgreSQL type inference issues
     const text = `
-      UPDATE payment_refunds 
-      SET status = $2, 
+      UPDATE payment_refunds
+      SET status = $2,
           stripe_refund_id = COALESCE($3, stripe_refund_id),
-          completed_at = CASE WHEN $2 = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
+          completed_at = CASE WHEN $4 = 'completed' THEN CURRENT_TIMESTAMP ELSE completed_at END,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $1
       RETURNING *
     `;
-    
-    const result = await query(text, [id, status, stripeRefundId]);
+
+    // Pass status twice - once for SET, once for CASE comparison
+    const result = await query(text, [id, status, stripeRefundId || null, status]);
     return result.rows[0];
   }
 }

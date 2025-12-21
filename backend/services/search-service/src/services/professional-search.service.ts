@@ -105,6 +105,56 @@ export class ProfessionalSearchService {
         filter.push({ range: { capacity: capacityRange } });
       }
 
+      // NEW: Performer filter (nested query)
+      if (filters.performer) {
+        must.push({
+          nested: {
+            path: 'performers',
+            query: {
+              match: { 
+                'performers.name': { 
+                  query: filters.performer, 
+                  fuzziness: 'AUTO' 
+                } 
+              }
+            }
+          }
+        });
+      }
+
+      // NEW: Genre filter (nested query)
+      if (filters.genre) {
+        must.push({
+          nested: {
+            path: 'performers',
+            query: { 
+              match: { 'performers.genre': filters.genre } 
+            }
+          }
+        });
+      }
+
+      // NEW: Amenities filter (venues)
+      if (filters.amenities?.length) {
+        filter.push({ 
+          terms: { amenities: filters.amenities } 
+        });
+      }
+
+      // NEW: Accessibility features filter (venues)
+      if (filters.accessibility?.length) {
+        filter.push({ 
+          terms: { accessibilityFeatures: filters.accessibility } 
+        });
+      }
+
+      // NEW: Minimum rating filter
+      if (filters.minRating) {
+        filter.push({ 
+          range: { 'ratings.averageRating': { gte: filters.minRating } } 
+        });
+      }
+
       // Build sort
       const sortOptions = this.buildSort(sort, location);
 
@@ -328,6 +378,44 @@ export class ProfessionalSearchService {
       },
       avg_price: {
         avg: { field: 'price' }
+      },
+      // NEW: Performer aggregation (nested)
+      performers: {
+        nested: { path: 'performers' },
+        aggs: { 
+          names: { 
+            terms: { field: 'performers.name.keyword', size: 20 } 
+          } 
+        }
+      },
+      // NEW: Genre aggregation (nested)
+      genres: {
+        nested: { path: 'performers' },
+        aggs: { 
+          names: { 
+            terms: { field: 'performers.genre.keyword', size: 20 } 
+          } 
+        }
+      },
+      // NEW: Amenities aggregation
+      amenities: {
+        terms: { field: 'amenities', size: 20 }
+      },
+      // NEW: Accessibility aggregation
+      accessibility: {
+        terms: { field: 'accessibilityFeatures', size: 20 }
+      },
+      // NEW: Ratings histogram
+      ratings: {
+        histogram: { 
+          field: 'ratings.averageRating', 
+          interval: 1,
+          min_doc_count: 0
+        }
+      },
+      // NEW: Average rating
+      avgRating: {
+        avg: { field: 'ratings.averageRating' }
       }
     };
   }
@@ -352,7 +440,33 @@ export class ProfessionalSearchService {
         month: b.key_as_string,
         count: b.doc_count
       })) || [],
-      avgPrice: aggregations.avg_price?.value || 0
+      avgPrice: aggregations.avg_price?.value || 0,
+      // NEW: Performer facets (nested aggregation)
+      performers: aggregations.performers?.names?.buckets?.map((b: any) => ({
+        name: b.key,
+        count: b.doc_count
+      })) || [],
+      // NEW: Genre facets (nested aggregation)
+      genres: aggregations.genres?.names?.buckets?.map((b: any) => ({
+        name: b.key,
+        count: b.doc_count
+      })) || [],
+      // NEW: Amenities facets
+      amenities: aggregations.amenities?.buckets?.map((b: any) => ({
+        name: b.key,
+        count: b.doc_count
+      })) || [],
+      // NEW: Accessibility facets
+      accessibility: aggregations.accessibility?.buckets?.map((b: any) => ({
+        name: b.key,
+        count: b.doc_count
+      })) || [],
+      // NEW: Ratings histogram
+      ratingsDistribution: aggregations.ratings?.buckets?.map((b: any) => ({
+        rating: b.key,
+        count: b.doc_count
+      })) || [],
+      avgRating: aggregations.avgRating?.value || 0
     };
   }
 

@@ -1,0 +1,2615 @@
+
+> auth-service@1.0.0 test
+> jest tests/integration
+
+
+  ●  Cannot log after tests are done. Did you forget to wait for something async in your test?
+    Attempted to log "Redis client connected".
+
+      34 | const originalConsoleWarn = console.warn;
+      35 |
+    > 36 | console.log = (...args: any[]) => {
+         |     ^
+      37 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+      38 |   originalConsoleLog(...sanitized);
+      39 | };
+
+      at console.log (node_modules/@jest/console/build/BufferedConsole.js:156:10)
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:36:5)
+      at EventEmitter.<anonymous> (src/config/redis.ts:25:13)
+
+
+  ●  Cannot log after tests are done. Did you forget to wait for something async in your test?
+    Attempted to log "Redis client ready".
+
+      34 | const originalConsoleWarn = console.warn;
+      35 |
+    > 36 | console.log = (...args: any[]) => {
+         |     ^
+      37 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+      38 |   originalConsoleLog(...sanitized);
+      39 | };
+
+      at console.log (node_modules/@jest/console/build/BufferedConsole.js:156:10)
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:36:5)
+      at EventEmitter.<anonymous> (src/config/redis.ts:31:13)
+
+FAIL tests/integration/wallet-flows/wallet-auth-flows.test.ts (7.098 s)
+  ● Console
+
+    console.log
+      ✓ Test environment loaded from .env.test
+
+      at Object.<anonymous> (tests/jest.setup.js:10:9)
+
+    console.log
+      ✓ DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tickettoken_db
+
+      at Object.<anonymous> (tests/jest.setup.js:11:9)
+
+    console.log
+      ✓ REDIS_URL: undefined
+
+      at Object.<anonymous> (tests/jest.setup.js:12:9)
+
+    console.log
+      ✓ JWT RS256 keys loaded successfully
+
+      at Object.<anonymous> (src/services/jwt.service.ts:45:11)
+
+    console.log
+      Redis client connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Redis client ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Registration › should complete Solana wallet registration: request nonce → sign → register
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Registration › should generate unique nonce for each wallet request
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Registration › should reject registration with invalid signature
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Registration › should reject registration with expired nonce
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Registration › should store wallet public key in database
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Login › should login with wallet signature verification
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Login › should reject login with invalid signature
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Login › should create session after wallet login
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Login › should issue JWT tokens after wallet login
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Solana Wallet Login › should prevent nonce reuse
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Wallet Linking › should link Solana wallet to existing account
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Wallet Linking › should support multiple wallets per account
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Wallet Linking › should unlink wallet from account
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Wallet Security › should enforce tenant isolation for wallet accounts
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+  ● Integration: Wallet Authentication Flows › Wallet Security › should expire nonces after 15 minutes
+
+    error: duplicate key value violates unique constraint "tenants_slug_unique"
+
+      31 |
+      32 |     // Create test tenant
+    > 33 |     const tenantResult = await pool.query(
+         |                          ^
+      34 |       `INSERT INTO tenants (name, slug, settings) VALUES ($1, $2, $3) RETURNING id`,
+      35 |       ['Wallet Test Tenant', 'wallet-test-tenant', JSON.stringify({})]
+      36 |     );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:33:26)
+
+
+  ● Test suite failed to run
+
+    error: relation "wallet_accounts" does not exist
+
+      40 |   afterAll(async () => {
+      41 |     await pool.query('DELETE FROM users WHERE email LIKE $1', ['wallet-test%']);
+    > 42 |     await pool.query('DELETE FROM wallet_accounts WHERE public_key LIKE $1', [solanaPublicKey]);
+         |     ^
+      43 |     await pool.query('DELETE FROM tenants WHERE id = $1', [testTenantId]);
+      44 |     await app.close();
+      45 |     await pool.end();
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/wallet-flows/wallet-auth-flows.test.ts:42:5)
+
+FAIL tests/integration/tenant-isolation/tenant-security.test.ts (9.801 s)
+  ● Console
+
+    console.log
+      ✓ Test environment loaded from .env.test
+
+      at Object.<anonymous> (tests/jest.setup.js:10:9)
+
+    console.log
+      ✓ DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tickettoken_db
+
+      at Object.<anonymous> (tests/jest.setup.js:11:9)
+
+    console.log
+      ✓ REDIS_URL: undefined
+
+      at Object.<anonymous> (tests/jest.setup.js:12:9)
+
+    console.log
+      ✓ JWT RS256 keys loaded successfully
+
+      at Object.<anonymous> (src/services/jwt.service.ts:45:11)
+
+    console.log
+      Redis client connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Redis client ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:18:59.752Z] [INFO] [cache-service] Redis connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:18:59.757Z] [INFO] [cache-service] Redis ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Registration error: {
+        length: 315,
+        name: 'error',
+        severity: 'ERROR',
+        code: '23503',
+        detail: 'Key (user_id)=(9c552c80-cf9a-11f0-8581-0242ac120007) is not present in table "users".',
+        hint: undefined,
+        position: undefined,
+        internalPosition: undefined,
+        internalQuery: undefined,
+        where: undefined,
+        schema: 'public',
+        table: 'user_sessions',
+        column: undefined,
+        dataType: undefined,
+        constraint: 'user_sessions_user_id_foreign',
+        file: 'ri_triggers.c',
+        line: '2608',
+        routine: 'ri_ReportViolation'
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthController.register (src/controllers/auth.controller.ts:32:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:52:12)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Registration error: {
+        length: 315,
+        name: 'error',
+        severity: 'ERROR',
+        code: '23503',
+        detail: 'Key (user_id)=(9c6ecfd2-cf9a-11f0-b343-0242ac120007) is not present in table "users".',
+        hint: undefined,
+        position: undefined,
+        internalPosition: undefined,
+        internalQuery: undefined,
+        where: undefined,
+        schema: 'public',
+        table: 'user_sessions',
+        column: undefined,
+        dataType: undefined,
+        constraint: 'user_sessions_user_id_foreign',
+        file: 'ri_triggers.c',
+        line: '2608',
+        routine: 'ri_ReportViolation'
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthController.register (src/controllers/auth.controller.ts:32:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:52:12)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Registration error: {
+        length: 315,
+        name: 'error',
+        severity: 'ERROR',
+        code: '23503',
+        detail: 'Key (user_id)=(9c7cdfe6-cf9a-11f0-8985-0242ac120007) is not present in table "users".',
+        hint: undefined,
+        position: undefined,
+        internalPosition: undefined,
+        internalQuery: undefined,
+        where: undefined,
+        schema: 'public',
+        table: 'user_sessions',
+        column: undefined,
+        dataType: undefined,
+        constraint: 'user_sessions_user_id_foreign',
+        file: 'ri_triggers.c',
+        line: '2608',
+        routine: 'ri_ReportViolation'
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthController.register (src/controllers/auth.controller.ts:32:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:52:12)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Registration error: {
+        length: 315,
+        name: 'error',
+        severity: 'ERROR',
+        code: '23503',
+        detail: 'Key (user_id)=(9ce71bb8-cf9a-11f0-afe0-0242ac120007) is not present in table "users".',
+        hint: undefined,
+        position: undefined,
+        internalPosition: undefined,
+        internalQuery: undefined,
+        where: undefined,
+        schema: 'public',
+        table: 'user_sessions',
+        column: undefined,
+        dataType: undefined,
+        constraint: 'user_sessions_user_id_foreign',
+        file: 'ri_triggers.c',
+        line: '2608',
+        routine: 'ri_ReportViolation'
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthController.register (src/controllers/auth.controller.ts:32:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:52:12)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant1!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Tenant2!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localho...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant Data Isolation › should prevent user in Tenant 1 from accessing Tenant 2 user data
+
+    TypeError: Cannot read properties of undefined (reading 'id')
+
+      93 |     });
+      94 |     const tenant2Data = JSON.parse(tenant2Response.body);
+    > 95 |     tenant2UserId = tenant2Data.user.id;
+         |                                      ^
+      96 |     tenant2AccessToken = tenant2Data.tokens.accessToken;
+      97 |   });
+      98 |
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:95:38)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant Data Isolation › should reject JWT from Tenant 1 for Tenant 2 resources
+
+    TypeError: Cannot read properties of undefined (reading 'id')
+
+      144 |       // Should return Tenant 1 user, not allow tenant switching
+      145 |       const data = JSON.parse(response.body);
+    > 146 |       expect(data.user.id).toBe(tenant1UserId);
+          |                        ^
+      147 |       expect(data.user.tenant_id).toBe(tenant1Id);
+      148 |     });
+      149 |
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:146:24)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant Data Isolation › should scope user lookups to tenant
+
+    TypeError: Cannot read properties of undefined (reading 'id')
+
+      93 |     });
+      94 |     const tenant2Data = JSON.parse(tenant2Response.body);
+    > 95 |     tenant2UserId = tenant2Data.user.id;
+         |                                      ^
+      96 |     tenant2AccessToken = tenant2Data.tokens.accessToken;
+      97 |   });
+      98 |
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:95:38)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant Data Isolation › should scope session list to tenant
+
+    TypeError: Cannot read properties of undefined (reading 'id')
+
+      80 |     });
+      81 |     const tenant1Data = JSON.parse(tenant1Response.body);
+    > 82 |     tenant1UserId = tenant1Data.user.id;
+         |                                      ^
+      83 |     tenant1AccessToken = tenant1Data.tokens.accessToken;
+      84 |
+      85 |     // Register user in tenant 2
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:82:38)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant Data Isolation › should scope password reset to tenant
+
+    TypeError: Cannot read properties of undefined (reading 'id')
+
+      80 |     });
+      81 |     const tenant1Data = JSON.parse(tenant1Response.body);
+    > 82 |     tenant1UserId = tenant1Data.user.id;
+         |                                      ^
+      83 |     tenant1AccessToken = tenant1Data.tokens.accessToken;
+      84 |
+      85 |     // Register user in tenant 2
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:82:38)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant ID Validation › should reject requests with invalid tenant_id
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 400
+    Received: 422
+
+      249 |       });
+      250 |
+    > 251 |       expect(response.statusCode).toBe(400);
+          |                                   ^
+      252 |       const data = JSON.parse(response.body);
+      253 |       expect(data.error).toContain('tenant');
+      254 |     });
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:251:35)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant ID Validation › should reject requests with missing tenant_id
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 400
+    Received: 409
+
+      265 |       });
+      266 |
+    > 267 |       expect(response.statusCode).toBe(400);
+          |                                   ^
+      268 |     });
+      269 |
+      270 |     it('should reject JWT with mismatched tenant_id', async () => {
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:267:35)
+
+  ● Integration: Multi-Tenant Isolation & Security › Tenant ID Validation › should include tenant_id in all database queries
+
+    TypeError: Cannot read properties of undefined (reading 'id')
+
+      93 |     });
+      94 |     const tenant2Data = JSON.parse(tenant2Response.body);
+    > 95 |     tenant2UserId = tenant2Data.user.id;
+         |                                      ^
+      96 |     tenant2AccessToken = tenant2Data.tokens.accessToken;
+      97 |   });
+      98 |
+
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:95:38)
+
+  ● Integration: Multi-Tenant Isolation & Security › Cross-Tenant Attack Prevention › should reject session ID from another tenant
+
+    error: column "created_at" does not exist
+
+      324 |     it('should reject session ID from another tenant', async () => {
+      325 |       // Get session ID for Tenant 2 user
+    > 326 |       const session2Result = await pool.query(
+          |                              ^
+      327 |         'SELECT id FROM user_sessions WHERE user_id = $1 ORDER BY created_at DESC LIMIT 1',
+      328 |         [tenant2UserId]
+      329 |       );
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:326:30)
+
+  ● Integration: Multi-Tenant Isolation & Security › Cross-Tenant Attack Prevention › should prevent OAuth account linking across tenants
+
+    error: relation "oauth_accounts" does not exist
+
+      353 |       
+      354 |       // Verify OAuth accounts have tenant association through user
+    > 355 |       const oauth1Result = await pool.query(
+          |                            ^
+      356 |         `SELECT u.tenant_id FROM oauth_accounts o
+      357 |          JOIN users u ON o.user_id = u.id
+      358 |          WHERE u.id = $1`,
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:355:28)
+
+  ● Integration: Multi-Tenant Isolation & Security › Cross-Tenant Attack Prevention › should prevent wallet linking across tenants
+
+    error: relation "wallet_accounts" does not exist
+
+      370 |     it('should prevent wallet linking across tenants', async () => {
+      371 |       // Verify wallet accounts are tenant-scoped
+    > 372 |       const wallet1Result = await pool.query(
+          |                             ^
+      373 |         `SELECT u.tenant_id FROM wallet_accounts w
+      374 |          JOIN users u ON w.user_id = u.id
+      375 |          WHERE u.id = $1`,
+
+      at node_modules/pg-pool/index.js:45:11
+      at Object.<anonymous> (tests/integration/tenant-isolation/tenant-security.test.ts:372:29)
+
+FAIL tests/integration/auth-flows/complete-auth-flows.test.ts (17.111 s)
+  ● Console
+
+    console.log
+      ✓ Test environment loaded from .env.test
+
+      at Object.<anonymous> (tests/jest.setup.js:10:9)
+
+    console.log
+      ✓ DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tickettoken_db
+
+      at Object.<anonymous> (tests/jest.setup.js:11:9)
+
+    console.log
+      ✓ REDIS_URL: undefined
+
+      at Object.<anonymous> (tests/jest.setup.js:12:9)
+
+    console.log
+      ✓ JWT RS256 keys loaded successfully
+
+      at Object.<anonymous> (src/services/jwt.service.ts:45:11)
+
+    console.log
+      Redis client connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Redis client ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:18:59.750Z] [INFO] [cache-service] Redis connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:18:59.754Z] [INFO] [cache-service] Redis ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Reset your TicketToken password',
+        preview: 'Password Reset Request\n' +
+          '\n' +
+          'Hi Integration,\n' +
+          '\n' +
+          'We received a request to reset your password. Visit the lin...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Reset your TicketToken password',
+        preview: 'Password Reset Request\n' +
+          '\n' +
+          'Hi Integration,\n' +
+          '\n' +
+          'We received a request to reset your password. Visit the lin...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Password reset error - Raw error: {
+        name: 'Error',
+        message: 'Validation failed',
+        type: 'ValidationError',
+        errors: [ 'Invalid or expired reset token' ],
+        stack: [
+          'Error: Validation failed',
+          '    at AuthExtendedService.resetPassword (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/services/auth-extended.service.ts:55:13)',
+          '    at processTicksAndRejections (node:internal/process/task_queues:95:5)'
+        ]
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthExtendedController.resetPassword (src/controllers/auth-extended.controller.ts:47:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:86:12)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Password reset error - Raw error: {
+        name: 'Error',
+        message: 'Validation failed',
+        type: 'ValidationError',
+        errors: [ 'Invalid or expired reset token' ],
+        stack: [
+          'Error: Validation failed',
+          '    at AuthExtendedService.resetPassword (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/services/auth-extended.service.ts:55:13)',
+          '    at processTicksAndRejections (node:internal/process/task_queues:95:5)'
+        ]
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthExtendedController.resetPassword (src/controllers/auth-extended.controller.ts:47:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:86:12)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Reset your TicketToken password',
+        preview: 'Password Reset Request\n' +
+          '\n' +
+          'Hi Integration,\n' +
+          '\n' +
+          'We received a request to reset your password. Visit the lin...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      Password reset error - Raw error: {
+        name: 'Error',
+        message: 'Validation failed',
+        type: 'ValidationError',
+        errors: [ 'Invalid or expired reset token' ],
+        stack: [
+          'Error: Validation failed',
+          '    at AuthExtendedService.resetPassword (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/services/auth-extended.service.ts:55:13)',
+          '    at processTicksAndRejections (node:internal/process/task_queues:95:5)'
+        ]
+      }
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at AuthExtendedController.resetPassword (src/controllers/auth-extended.controller.ts:47:15)
+      at Object.<anonymous> (src/routes/auth.routes.ts:86:12)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Reset your TicketToken password',
+        preview: 'Password Reset Request\n' +
+          '\n' +
+          'Hi Integration,\n' +
+          '\n' +
+          'We received a request to reset your password. Visit the lin...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Reset your TicketToken password',
+        preview: 'Password Reset Request\n' +
+          '\n' +
+          'Hi Integration,\n' +
+          '\n' +
+          'We received a request to reset your password. Visit the lin...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:19:08.522Z] [INFO] [cache-service] {"tags":["user:a09b1cbe-cf9a-11f0-aa63-0242ac120007"],"count":2} Deleted keys by tags
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:19:08.523Z] [INFO] [cache-service] {"tags":["user:a09b1cbe-cf9a-11f0-aa63-0242ac120007"],"count":0} Deleted keys by tags
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, Integration!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://loc...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+  ● Integration: Complete Authentication Flows › Complete Login Flow › should complete full login flow with JWT tokens and session creation
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: true
+    Received: false
+
+      323 |       // Verify user data
+      324 |       expect(data.user.email).toBe(testUser.email);
+    > 325 |       expect(data.user.email_verified).toBe(true);
+          |                                        ^
+      326 |
+      327 |       // Verify session in database
+      328 |       const sessionResult = await pool.query(
+
+      at Object.<anonymous> (tests/integration/auth-flows/complete-auth-flows.test.ts:325:40)
+
+  ● Integration: Complete Authentication Flows › Password Reset Flow › should complete password reset flow: request → reset → login
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "9f630fdc-cf9a-11f0-aa63-0242ac120007"
+    Received: undefined
+
+      539 |       
+      540 |       const parsedData = JSON.parse(tokenData!);
+    > 541 |       expect(parsedData.userId).toBe(userId);
+          |                                 ^
+      542 |
+      543 |       // Step 3: Reset password with token
+      544 |       const newPassword = 'NewPassword123!@#';
+
+      at Object.<anonymous> (tests/integration/auth-flows/complete-auth-flows.test.ts:541:33)
+
+  ● Integration: Complete Authentication Flows › Session Management › should terminate all sessions on logout-all
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 500
+
+      917 |       });
+      918 |
+    > 919 |       expect(logoutAllResponse.statusCode).toBe(200);
+          |                                            ^
+      920 |
+      921 |       // All sessions should be terminated
+      922 |       const sessionResult = await pool.query(
+
+      at Object.<anonymous> (tests/integration/auth-flows/complete-auth-flows.test.ts:919:44)
+
+FAIL tests/integration/mfa-flows/mfa-complete-flows.test.ts (21.816 s)
+  ● Console
+
+    console.log
+      ✓ Test environment loaded from .env.test
+
+      at Object.<anonymous> (tests/jest.setup.js:10:9)
+
+    console.log
+      ✓ DATABASE_URL: postgresql://postgres:postgres@localhost:5432/tickettoken_db
+
+      at Object.<anonymous> (tests/jest.setup.js:11:9)
+
+    console.log
+      ✓ REDIS_URL: undefined
+
+      at Object.<anonymous> (tests/jest.setup.js:12:9)
+
+    console.log
+      ✓ JWT RS256 keys loaded successfully
+
+      at Object.<anonymous> (src/services/jwt.service.ts:45:11)
+
+    console.log
+      Redis client connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Redis client ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      Setting search_path to public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      New client connected to database with search_path = public
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:18:59.751Z] [INFO] [cache-service] Redis connected
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [2025-12-02T16:18:59.754Z] [INFO] [cache-service] Redis ready
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      MFA verifyAndEnableTOTP error: Invalid MFA token Error: Invalid MFA token
+          at MFAService.verifyAndEnableTOTP (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/services/mfa.service.ts:80:15)
+          at processTicksAndRejections (node:internal/process/task_queues:95:5)
+          at AuthController.verifyMFASetup (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/controllers/auth.controller.ts:226:22)
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at MFAService.verifyAndEnableTOTP (src/services/mfa.service.ts:96:15)
+      at AuthController.verifyMFASetup (src/controllers/auth.controller.ts:226:22)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.error
+      MFA setupTOTP error: MFA is already enabled for this account Error: MFA is already enabled for this account
+          at MFAService.setupTOTP (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/services/mfa.service.ts:23:15)
+          at processTicksAndRejections (node:internal/process/task_queues:95:5)
+          at AuthController.setupMFA (/home/kevin/Desktop/TicketToken-Platform/backend/services/auth-service/src/controllers/auth.controller.ts:211:22)
+
+      41 | console.error = (...args: any[]) => {
+      42 |   const sanitized = args.map(arg => PIISanitizer.sanitize(arg));
+    > 43 |   originalConsoleError(...sanitized);
+         |   ^
+      44 | };
+      45 |
+      46 | console.warn = (...args: any[]) => {
+
+      at console.Object.<anonymous>.console.error (src/utils/logger.ts:43:3)
+      at MFAService.setupTOTP (src/services/mfa.service.ts:55:15)
+      at AuthController.setupMFA (src/controllers/auth.controller.ts:211:22)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: true,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] MFA required, no token provided
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      MFA disabled for user: a38d9c08-cf9a-11f0-bd1d-0242ac120007
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      MFA disabled for user: a3ca06b6-cf9a-11f0-bd1d-0242ac120007
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Auth service returned: {
+        hasUser: true,
+        hasTokens: '[REDACTED]',
+        mfaEnabled: false,
+        mfaTokenProvided: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      [LOGIN] Sending response with tokens: {
+        hasTokens: '[REDACTED]',
+        hasAccessToken: '[REDACTED]',
+        hasRefreshToken: '[REDACTED]'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      MFA disabled for user: a452c92e-cf9a-11f0-bd1d-0242ac120007
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      📧 Email would be sent: {
+        to: '[EMAIL]',
+        subject: 'Verify your TicketToken account',
+        preview: 'Welcome to TicketToken, MFA!\n' +
+          '      \n' +
+          'Please verify your email address by visiting:\n' +
+          'http://localhost:3...'
+      }
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+    console.log
+      MFA disabled for user: a48b131a-cf9a-11f0-bd1d-0242ac120007
+
+      at console.Object.<anonymous>.console.log (src/utils/logger.ts:38:3)
+
+  ● Integration: MFA Complete Flows › MFA Login Flow › should grant access with valid TOTP code
+
+    expect(received).toBeDefined()
+
+    Received: undefined
+
+      360 |       const mfaData = JSON.parse(mfaResponse.body);
+      361 |       
+    > 362 |       expect(mfaData.tokens).toBeDefined();
+          |                              ^
+      363 |       expect(mfaData.tokens.accessToken).toBeDefined();
+      364 |       expect(mfaData.tokens.refreshToken).toBeDefined();
+      365 |     });
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:362:30)
+
+  ● Integration: MFA Complete Flows › MFA Login Flow › should reject login with invalid TOTP code
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 401
+    Received: 200
+
+      386 |       });
+      387 |
+    > 388 |       expect(mfaResponse.statusCode).toBe(401);
+          |                                      ^
+      389 |     });
+      390 |
+      391 |     it('should accept TOTP within time window', async () => {
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:388:38)
+
+  ● Integration: MFA Complete Flows › MFA Login Flow › should rate limit TOTP verification attempts
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 401
+    Received: 200
+
+      432 |
+      433 |         if (i < 5) {
+    > 434 |           expect(mfaResponse.statusCode).toBe(401); // Failed auth
+          |                                          ^
+      435 |         } else {
+      436 |           expect(mfaResponse.statusCode).toBe(429); // Rate limited
+      437 |         }
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:434:42)
+
+  ● Integration: MFA Complete Flows › Backup Code Flow › should allow login with backup code
+
+    expect(received).toBeDefined()
+
+    Received: undefined
+
+      505 |       expect(mfaResponse.statusCode).toBe(200);
+      506 |       const data = JSON.parse(mfaResponse.body);
+    > 507 |       expect(data.tokens).toBeDefined();
+          |                           ^
+      508 |     });
+      509 |
+      510 |     it('should mark backup code as used after single use', async () => {
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:507:27)
+
+  ● Integration: MFA Complete Flows › Backup Code Flow › should mark backup code as used after single use
+
+    expect(received).toBeLessThan(expected)
+
+    Expected: < 10
+    Received:   10
+
+      530 |       const remainingCodes = userResult.rows[0].backup_codes || [];
+      531 |       // Code should be removed or array should have 9 codes
+    > 532 |       expect(remainingCodes.length).toBeLessThan(10);
+          |                                     ^
+      533 |
+      534 |       // Try to use same code again
+      535 |       const mfaResponse2 = await app.inject({
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:532:37)
+
+  ● Integration: MFA Complete Flows › Backup Code Flow › should track remaining backup codes
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 7
+    Received: 10
+
+      567 |
+      568 |       const remainingCodes = remainingResult.rows[0].backup_codes || [];
+    > 569 |       expect(remainingCodes.length).toBe(7); // 10 - 3 = 7
+          |                                     ^
+      570 |     });
+      571 |
+      572 |     it('should allow regenerating backup codes', async () => {
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:569:37)
+
+  ● Integration: MFA Complete Flows › Backup Code Flow › should allow regenerating backup codes
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 401
+    Received: 200
+
+      604 |       });
+      605 |
+    > 606 |       expect(oldCodeTest.statusCode).toBe(401);
+          |                                      ^
+      607 |     });
+      608 |   });
+      609 |
+
+      at Object.<anonymous> (tests/integration/mfa-flows/mfa-complete-flows.test.ts:606:38)
+
+A worker process has failed to exit gracefully and has been force exited. This is likely caused by tests leaking due to improper teardown. Try running with --detectOpenHandles to find leaks. Active timers can also cause this, ensure that .unref() was called on them.
+Test Suites: 4 failed, 1 skipped, 4 of 5 total
+Tests:       36 failed, 20 skipped, 43 passed, 99 total
+Snapshots:   0 total
+Time:        23.198 s, estimated 28 s
+Ran all test suites matching /tests\/integration/i.

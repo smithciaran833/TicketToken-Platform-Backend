@@ -1,81 +1,34 @@
-# Compiled output
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
 dist/
 build/
 *.js.map
-*.d.ts.map
 
-# Dependencies
-node_modules/
-bower_components/
-
-# Environment files
+# Environment
 .env
 .env.*
 !.env.example
-*.key
-*.pem
-*.crt
 
 # Logs
-logs/
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
+logs/
 
-# Runtime data
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# Testing
-coverage/
-.nyc_output/
-
-# IDEs
-.vscode/
+# IDE
 .idea/
+.vscode/
 *.swp
-*.swo
-*~
 
-# OS files
+# OS
 .DS_Store
 Thumbs.db
 
-# Temporary files
-tmp/
-temp/
-*.tmp
-*.temp
+# Test coverage
+coverage/
 
-# Build artifacts
+# Misc
 *.tgz
-*.zip
-*.tar.gz
-
-# Database
-*.sqlite
-*.sqlite3
-*.db
-
-# Redis
-dump.rdb
-
-# Yarn
-.yarn/*
-!.yarn/patches
-!.yarn/releases
-!.yarn/plugins
-!.yarn/sdks
-!.yarn/versions
-.pnp.*
-
-# Solana/Blockchain wallet files
-*wallet*.json
-*keypair*.json
-*.wallet
-devnet-wallet.json
-mainnet-wallet.json
+*.lock

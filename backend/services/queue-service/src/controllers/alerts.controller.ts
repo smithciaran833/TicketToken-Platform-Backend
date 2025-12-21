@@ -52,15 +52,15 @@ export class AlertsController {
              acknowledged_by = $1,
              acknowledged_at = NOW()
          WHERE id = $2`,
-        [request.user?.id, id]
+        [request.user?.userId, id]
       );
 
-      logger.info(`Alert ${id} acknowledged by user ${request.user?.id}`);
+      logger.info(`Alert ${id} acknowledged by user ${request.user?.userId}`);
 
       return reply.send({
         alertId: id,
         status: 'acknowledged',
-        acknowledgedBy: request.user?.id
+        acknowledgedBy: request.user?.userId
       });
     } catch (error) {
       logger.error('Failed to acknowledge alert:', error);
@@ -73,7 +73,7 @@ export class AlertsController {
     try {
       const { severity = 'info', channel = 'log' } = request.body as any;
 
-      logger.warn(`Test alert triggered by user ${request.user?.id}`);
+      logger.warn(`Test alert triggered by user ${request.user?.userId}`);
 
       // This would trigger actual alerts in production
       // For now, just log it

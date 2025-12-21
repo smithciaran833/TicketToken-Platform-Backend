@@ -1,5 +1,3 @@
-import { JobOptions } from 'bull';
-
 /**
  * Job Priority Management
  * Define and manage priority levels for different job types
@@ -13,8 +11,15 @@ export enum JobPriority {
   BACKGROUND = 10, // Lowest priority - batch processing
 }
 
-export interface PriorityJobOptions extends JobOptions {
+export interface PriorityJobOptions {
   priority: number;
+  attempts: number;
+  backoff: {
+    type: 'exponential' | 'fixed';
+    delay: number;
+  };
+  removeOnComplete: boolean;
+  removeOnFail: boolean;
 }
 
 /**
@@ -81,7 +86,7 @@ function getAttemptsForPriority(priority: number): number {
 /**
  * Get backoff strategy based on priority
  */
-function getBackoffForPriority(priority: number): JobOptions['backoff'] {
+function getBackoffForPriority(priority: number): { type: 'exponential' | 'fixed'; delay: number } {
   if (priority <= JobPriority.CRITICAL) {
     return {
       type: 'exponential',

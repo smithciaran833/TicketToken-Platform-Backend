@@ -28,4 +28,7 @@ pub struct CreateEventParams {
     pub description: String,
     pub transferable: bool,
     pub resaleable: bool,
+    pub artist_wallet: Pubkey,
+    pub artist_percentage: u16,
+    pub venue_percentage: u16,
 }

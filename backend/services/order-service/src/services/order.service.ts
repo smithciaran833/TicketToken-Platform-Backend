@@ -251,7 +251,7 @@ export class OrderService {
 
       // 3. Update order to RESERVED
       const expiresAt = new Date(Date.now() + orderConfig.reservation.durationMinutes * 60 * 1000);
-      const updatedOrder = await this.orderModel.update(order.id, {
+      const updatedOrder = await this.orderModel.update(order.id, tenantId, {
         status: OrderStatus.RESERVED,
         paymentIntentId: paymentIntent.paymentIntentId,
         expiresAt,
@@ -299,62 +299,62 @@ export class OrderService {
       async () => {
         try {
           const order = await this.orderModel.findById(request.orderId, tenantId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
+          if (!order) {
+            throw new Error('Order not found');
+          }
 
-      if (order.status !== OrderStatus.RESERVED) {
-        throw new Error(`Cannot confirm order in ${order.status} status`);
-      }
+          if (order.status !== OrderStatus.RESERVED) {
+            throw new Error(`Cannot confirm order in ${order.status} status`);
+          }
 
-      // 1. Confirm payment (with circuit breaker + retry)
-      await retry(
-        () => this.paymentCircuitBreaker.execute(() =>
-          this.paymentClient.confirmPayment(request.paymentIntentId)
-        ),
-        { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
-      );
+          // 1. Confirm payment (with circuit breaker + retry)
+          await retry(
+            () => this.paymentCircuitBreaker.execute(() =>
+              this.paymentClient.confirmPayment(request.paymentIntentId)
+            ),
+            { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+          );
 
-      // 2. Confirm ticket allocation (with circuit breaker + retry)
-      await retry(
-        () => this.ticketCircuitBreaker.execute(() =>
-          this.ticketClient.confirmAllocation(order.id)
-        ),
-        { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
-      );
+          // 2. Confirm ticket allocation (with circuit breaker + retry)
+          await retry(
+            () => this.ticketCircuitBreaker.execute(() =>
+              this.ticketClient.confirmAllocation(order.id)
+            ),
+            { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+          );
 
-      // 3. Update order to CONFIRMED
-      const updatedOrder = await this.orderModel.update(order.id, {
-        status: OrderStatus.CONFIRMED,
-        confirmedAt: new Date(),
-        expiresAt: null,
-      } as OrderUpdateData);
+          // 3. Update order to CONFIRMED
+          const updatedOrder = await this.orderModel.update(order.id, tenantId, {
+            status: OrderStatus.CONFIRMED,
+            confirmedAt: new Date(),
+            expiresAt: null,
+          } as OrderUpdateData);
 
-      // 4. Create order event
-      await this.orderEventModel.create({
-        orderId: order.id,
-        tenantId,
-        eventType: OrderEventType.PAYMENT_CONFIRMED,
-        metadata: {
-          paymentIntentId: request.paymentIntentId,
-        },
-      });
+          // 4. Create order event
+          await this.orderEventModel.create({
+            orderId: order.id,
+            tenantId,
+            eventType: OrderEventType.PAYMENT_CONFIRMED,
+            metadata: {
+              paymentIntentId: request.paymentIntentId,
+            },
+          });
 
-      logger.info('Order confirmed', {
-        orderId: updatedOrder.id,
-        paymentIntentId: request.paymentIntentId
-      });
+          logger.info('Order confirmed', {
+            orderId: updatedOrder.id,
+            paymentIntentId: request.paymentIntentId
+          });
 
-      // 5. Publish event
-      const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
-      await eventPublisher.publishOrderConfirmed({
-        ...this.createEventPayload(updatedOrder, items),
-        paymentIntentId: request.paymentIntentId,
-      });
+          // 5. Publish event
+          const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
+          await eventPublisher.publishOrderConfirmed({
+            ...this.createEventPayload(updatedOrder, items),
+            paymentIntentId: request.paymentIntentId,
+          });
 
-      // 6. Collect metrics
-      orderMetrics.orderStateTransitions.inc({ from_state: OrderStatus.RESERVED, to_state: OrderStatus.CONFIRMED });
-      orderMetrics.activeReservations.dec();
+          // 6. Collect metrics
+          orderMetrics.orderStateTransitions.inc({ from_state: OrderStatus.RESERVED, to_state: OrderStatus.CONFIRMED });
+          orderMetrics.activeReservations.dec();
 
           return updatedOrder;
         } catch (error) {
@@ -374,98 +374,98 @@ export class OrderService {
       async () => {
         try {
           const order = await this.orderModel.findById(request.orderId, tenantId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
+          if (!order) {
+            throw new Error('Order not found');
+          }
 
-      if (![OrderStatus.PENDING, OrderStatus.RESERVED, OrderStatus.CONFIRMED].includes(order.status as any)) {
-        throw new Error(`Cannot cancel order in ${order.status} status`);
-      }
+          if (![OrderStatus.PENDING, OrderStatus.RESERVED, OrderStatus.CONFIRMED].includes(order.status as any)) {
+            throw new Error(`Cannot cancel order in ${order.status} status`);
+          }
 
-      let refund: OrderRefund | undefined;
-      let refundAmountCents = 0;
+          let refund: OrderRefund | undefined;
+          let refundAmountCents = 0;
 
-      // 1. Release tickets (with circuit breaker + retry)
-      await retry(
-        () => this.ticketCircuitBreaker.execute(() =>
-          this.ticketClient.releaseTickets(order.id)
-        ),
-        { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-      );
+          // 1. Release tickets (with circuit breaker + retry)
+          await retry(
+            () => this.ticketCircuitBreaker.execute(() =>
+              this.ticketClient.releaseTickets(order.id)
+            ),
+            { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
+          );
 
-      // 2. Handle payment refund if payment was made
-      if (order.status === OrderStatus.CONFIRMED && order.paymentIntentId) {
-        refundAmountCents = order.totalCents;
+          // 2. Handle payment refund if payment was made
+          if (order.status === OrderStatus.CONFIRMED && order.paymentIntentId) {
+            refundAmountCents = order.totalCents;
 
-        const refundResult = await retry(
-          () => this.paymentCircuitBreaker.execute(() =>
-            this.paymentClient.initiateRefund({
+            const refundResult = await retry(
+              () => this.paymentCircuitBreaker.execute(() =>
+                this.paymentClient.initiateRefund({
+                  orderId: order.id,
+                  paymentIntentId: order.paymentIntentId,
+                  amountCents: refundAmountCents,
+                  reason: request.reason,
+                })
+              ),
+              { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+            );
+
+            refund = await this.orderRefundModel.create({
               orderId: order.id,
-              paymentIntentId: order.paymentIntentId,
-              amountCents: refundAmountCents,
+              tenantId,
+              refundAmountCents,
+              refundReason: request.reason,
+              refundStatus: RefundStatus.PENDING,
+              stripeRefundId: refundResult.refundId,
+              initiatedBy: request.userId,
+            });
+          } else if (order.status === OrderStatus.RESERVED && order.paymentIntentId) {
+            await retry(
+              () => this.paymentCircuitBreaker.execute(() =>
+                this.paymentClient.cancelPaymentIntent(order.paymentIntentId)
+              ),
+              { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
+            );
+          }
+
+          // 3. Update order to CANCELLED
+          const updatedOrder = await this.orderModel.update(order.id, tenantId, {
+            status: OrderStatus.CANCELLED,
+            cancelledAt: new Date(),
+            expiresAt: null,
+          } as OrderUpdateData);
+
+          // 4. Create order event
+          await this.orderEventModel.create({
+            orderId: order.id,
+            tenantId,
+            eventType: OrderEventType.ORDER_CANCELLED,
+            userId: request.userId,
+            metadata: {
               reason: request.reason,
-            })
-          ),
-          { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
-        );
+              refundAmountCents,
+            },
+          });
 
-        refund = await this.orderRefundModel.create({
-          orderId: order.id,
-          tenantId,
-          refundAmountCents,
-          refundReason: request.reason,
-          refundStatus: RefundStatus.PENDING,
-          stripeRefundId: refundResult.refundId,
-          initiatedBy: request.userId,
-        });
-      } else if (order.status === OrderStatus.RESERVED && order.paymentIntentId) {
-        await retry(
-          () => this.paymentCircuitBreaker.execute(() =>
-            this.paymentClient.cancelPaymentIntent(order.paymentIntentId)
-          ),
-          { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-        );
-      }
+          logger.info('Order cancelled', {
+            orderId: updatedOrder.id,
+            reason: request.reason,
+            refundAmount: refundAmountCents
+          });
 
-      // 3. Update order to CANCELLED
-      const updatedOrder = await this.orderModel.update(order.id, {
-        status: OrderStatus.CANCELLED,
-        cancelledAt: new Date(),
-        expiresAt: null,
-      } as OrderUpdateData);
+          // 5. Publish event
+          const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
+          await eventPublisher.publishOrderCancelled({
+            ...this.createEventPayload(updatedOrder, items),
+            reason: request.reason,
+            refundAmountCents,
+          });
 
-      // 4. Create order event
-      await this.orderEventModel.create({
-        orderId: order.id,
-        tenantId,
-        eventType: OrderEventType.ORDER_CANCELLED,
-        userId: request.userId,
-        metadata: {
-          reason: request.reason,
-          refundAmountCents,
-        },
-      });
-
-      logger.info('Order cancelled', {
-        orderId: updatedOrder.id,
-        reason: request.reason,
-        refundAmount: refundAmountCents
-      });
-
-      // 5. Publish event
-      const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
-      await eventPublisher.publishOrderCancelled({
-        ...this.createEventPayload(updatedOrder, items),
-        reason: request.reason,
-        refundAmountCents,
-      });
-
-      // 6. Collect metrics
-      orderMetrics.ordersCancelled.inc({ reason: request.reason });
-      orderMetrics.orderStateTransitions.inc({ from_state: order.status, to_state: OrderStatus.CANCELLED });
-      if (order.status === OrderStatus.RESERVED) {
-        orderMetrics.activeReservations.dec();
-      }
+          // 6. Collect metrics
+          orderMetrics.ordersCancelled.inc({ reason: request.reason });
+          orderMetrics.orderStateTransitions.inc({ from_state: order.status, to_state: OrderStatus.CANCELLED });
+          if (order.status === OrderStatus.RESERVED) {
+            orderMetrics.activeReservations.dec();
+          }
 
           return { order: updatedOrder, refund };
         } catch (error) {
@@ -518,7 +518,7 @@ export class OrderService {
       }
 
       // 3. Update order to EXPIRED
-      const updatedOrder = await this.orderModel.update(order.id, {
+      const updatedOrder = await this.orderModel.update(order.id, tenantId, {
         status: OrderStatus.EXPIRED,
         expiresAt: null,
       } as OrderUpdateData);
@@ -559,79 +559,79 @@ export class OrderService {
       async () => {
         try {
           const order = await this.orderModel.findById(request.orderId, tenantId);
-      if (!order) {
-        throw new Error('Order not found');
-      }
+          if (!order) {
+            throw new Error('Order not found');
+          }
 
-      if (order.status !== OrderStatus.CONFIRMED) {
-        throw new Error(`Cannot refund order in ${order.status} status`);
-      }
+          if (order.status !== OrderStatus.CONFIRMED) {
+            throw new Error(`Cannot refund order in ${order.status} status`);
+          }
 
-      if (!order.paymentIntentId) {
-        throw new Error('No payment intent found for order');
-      }
+          if (!order.paymentIntentId) {
+            throw new Error('No payment intent found for order');
+          }
 
-      // 1. Initiate refund with payment service (with circuit breaker + retry)
-      const refundResult = await retry(
-        () => this.paymentCircuitBreaker.execute(() =>
-          this.paymentClient.initiateRefund({
+          // 1. Initiate refund with payment service (with circuit breaker + retry)
+          const refundResult = await retry(
+            () => this.paymentCircuitBreaker.execute(() =>
+              this.paymentClient.initiateRefund({
+                orderId: order.id,
+                paymentIntentId: order.paymentIntentId,
+                amountCents: request.amountCents,
+                reason: request.reason,
+              })
+            ),
+            { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+          );
+
+          // 2. Create refund record
+          const refund = await this.orderRefundModel.create({
             orderId: order.id,
-            paymentIntentId: order.paymentIntentId,
-            amountCents: request.amountCents,
+            tenantId,
+            refundAmountCents: request.amountCents,
+            refundReason: request.reason,
+            refundStatus: RefundStatus.PENDING,
+            stripeRefundId: refundResult.refundId,
+            initiatedBy: request.userId,
+            metadata: request.metadata,
+          });
+
+          // 3. Update order status
+          const updatedOrder = await this.orderModel.update(order.id, tenantId, {
+            status: OrderStatus.REFUNDED,
+            refundedAt: new Date(),
+          } as OrderUpdateData);
+
+          // 4. Create order event
+          await this.orderEventModel.create({
+            orderId: order.id,
+            tenantId,
+            eventType: OrderEventType.REFUND_ISSUED,
+            userId: request.userId,
+            metadata: {
+              refundAmountCents: request.amountCents,
+              reason: request.reason,
+              refundId: refund.refundId,
+            },
+          });
+
+          logger.info('Order refunded', {
+            orderId: order.id,
+            refundAmount: request.amountCents,
+            refundId: refund.refundId
+          });
+
+          // 5. Publish event
+          const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
+          await eventPublisher.publishOrderRefunded({
+            ...this.createEventPayload(updatedOrder, items),
+            refundAmountCents: request.amountCents,
             reason: request.reason,
-          })
-        ),
-        { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
-      );
+          });
 
-      // 2. Create refund record
-      const refund = await this.orderRefundModel.create({
-        orderId: order.id,
-        tenantId,
-        refundAmountCents: request.amountCents,
-        refundReason: request.reason,
-        refundStatus: RefundStatus.PENDING,
-        stripeRefundId: refundResult.refundId,
-        initiatedBy: request.userId,
-        metadata: request.metadata,
-      });
-
-      // 3. Update order status
-      const updatedOrder = await this.orderModel.update(order.id, {
-        status: OrderStatus.REFUNDED,
-        refundedAt: new Date(),
-      } as OrderUpdateData);
-
-      // 4. Create order event
-      await this.orderEventModel.create({
-        orderId: order.id,
-        tenantId,
-        eventType: OrderEventType.REFUND_ISSUED,
-        userId: request.userId,
-        metadata: {
-          refundAmountCents: request.amountCents,
-          reason: request.reason,
-          refundId: refund.refundId,
-        },
-      });
-
-      logger.info('Order refunded', {
-        orderId: order.id,
-        refundAmount: request.amountCents,
-        refundId: refund.refundId
-      });
-
-      // 5. Publish event
-      const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
-      await eventPublisher.publishOrderRefunded({
-        ...this.createEventPayload(updatedOrder, items),
-        refundAmountCents: request.amountCents,
-        reason: request.reason,
-      });
-
-      // 6. Collect metrics
-      orderMetrics.ordersRefunded.inc();
-      orderMetrics.orderStateTransitions.inc({ from_state: OrderStatus.CONFIRMED, to_state: OrderStatus.REFUNDED });
+          // 6. Collect metrics
+          orderMetrics.ordersRefunded.inc();
+          orderMetrics.orderStateTransitions.inc({ from_state: OrderStatus.CONFIRMED, to_state: OrderStatus.REFUNDED });
 
           return { order: updatedOrder, refund };
         } catch (error) {
@@ -671,5 +671,9 @@ export class OrderService {
 
   async findOrdersByEvent(eventId: string, tenantId: string, statuses?: OrderStatus[]): Promise<Order[]> {
     return this.orderModel.findByEvent(eventId, tenantId, statuses);
+  }
+
+  async getTenantsWithReservedOrders(limit: number = 1000): Promise<string[]> {
+    return this.orderModel.getTenantsWithReservedOrders(limit);
   }
 }

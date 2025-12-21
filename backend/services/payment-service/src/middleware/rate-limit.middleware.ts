@@ -4,7 +4,7 @@
  */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { redis } from '../config/redis';
+import { getRedis } from '../config/redis';
 import { SafeLogger } from '../utils/pci-log-scrubber.util';
 
 const logger = new SafeLogger('RateLimiter');
@@ -40,6 +40,8 @@ async function rateLimiter(
   const key = `${options.keyPrefix}${userId || ip || 'unknown'}`;
 
   try {
+    const redis = getRedis();
+    
     // Get current count
     const current = await redis.get(key);
     const count = current ? parseInt(current, 10) : 0;

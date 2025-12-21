@@ -72,7 +72,8 @@ export class VerificationService {
     // Store document reference
     await db('venue_documents').insert({
       venue_id: venueId,
-      type: documentType,
+      document_type: documentType,
+      file_url: documentData.fileUrl || 'placeholder.pdf',
       status: 'pending',
       submitted_at: new Date(),
       metadata: documentData,
@@ -110,7 +111,7 @@ export class VerificationService {
     const verification = await this.verifyVenue(venueId);
     const documents = await db('venue_documents')
       .where({ venue_id: venueId })
-      .select('type', 'status');
+      .select('document_type', 'status');
 
     const completedChecks = Object.entries(verification.checks)
       .filter(([_, passed]) => passed)
@@ -143,7 +144,7 @@ export class VerificationService {
     // Check if required business fields are present
     return !!(
       venue.name &&
-      venue.address &&
+      venue.address_line1 &&
       venue.venue_type &&
       venue.max_capacity
     );
@@ -152,8 +153,8 @@ export class VerificationService {
   private async verifyTaxInfo(venueId: string): Promise<boolean> {
     // Check for tax documents
     const taxDocs = await db('venue_documents')
-      .where({ venue_id: venueId, type: 'tax_id', status: 'approved' })
-      .orWhere({ venue_id: venueId, type: 'w9', status: 'approved' })
+      .where({ venue_id: venueId, document_type: 'tax_id', status: 'approved' })
+      .orWhere({ venue_id: venueId, document_type: 'w9', status: 'approved' })
       .first();
 
     return !!taxDocs;
@@ -162,8 +163,8 @@ export class VerificationService {
   private async verifyBankAccount(venueId: string): Promise<boolean> {
     // Check for verified payment integration
     const paymentIntegration = await db('venue_integrations')
-      .where({ venue_id: venueId, status: 'active' })
-      .whereIn('type', ['stripe', 'square'])
+      .where({ venue_id: venueId, is_active: true })
+      .whereIn('integration_type', ['stripe', 'square'])
       .first();
 
     return !!paymentIntegration;
@@ -173,7 +174,7 @@ export class VerificationService {
     // Check for identity documents
     const identityDocs = await db('venue_documents')
       .where({ venue_id: venueId, status: 'approved' })
-      .whereIn('type', ['drivers_license', 'passport'])
+      .whereIn('document_type', ['drivers_license', 'passport'])
       .first();
 
     return !!identityDocs;
@@ -183,12 +184,8 @@ export class VerificationService {
     await db('venues')
       .where({ id: venueId })
       .update({
-        settings: db.raw("settings || ?::jsonb", JSON.stringify({
-          verification: {
-            verified: true,
-            verifiedAt: new Date(),
-          },
-        })),
+        is_verified: true,
+        verified_at: new Date(),
         updated_at: new Date(),
       });
   }
@@ -207,7 +204,7 @@ export class VerificationService {
   private async triggerBusinessVerification(venueId: string): Promise<void> {
     try {
       const { VerificationAdapterFactory } = await import('../integrations/verification-adapters');
-      
+
       if (!VerificationAdapterFactory.isConfigured('business_info')) {
         logger.warn({ venueId }, 'Business verification not configured, using manual fallback');
         await this.triggerManualVerification(venueId, 'business_info');
@@ -216,12 +213,12 @@ export class VerificationService {
 
       const adapter = VerificationAdapterFactory.create('business_info');
       const venue = await db('venues').where({ id: venueId }).first();
-      
+
       const result = await adapter.verify({
         venueId,
         businessInfo: {
           businessName: venue.name,
-          address: venue.address,
+          address: venue.address_line1,
           businessType: venue.venue_type,
         },
       });
@@ -237,7 +234,7 @@ export class VerificationService {
   private async triggerTaxVerification(venueId: string): Promise<void> {
     try {
       const { VerificationAdapterFactory } = await import('../integrations/verification-adapters');
-      
+
       if (!VerificationAdapterFactory.isConfigured('tax_id')) {
         logger.warn({ venueId }, 'Tax verification not configured, using manual fallback');
         await this.triggerManualVerification(venueId, 'tax_id');
@@ -246,10 +243,10 @@ export class VerificationService {
 
       const adapter = VerificationAdapterFactory.create('tax_id');
       const taxDoc = await db('venue_documents')
-        .where({ venue_id: venueId, type: 'tax_id' })
+        .where({ venue_id: venueId, document_type: 'tax_id' })
         .orderBy('created_at', 'desc')
         .first();
-      
+
       if (!taxDoc) {
         logger.warn({ venueId }, 'No tax document found for verification');
         return;
@@ -271,7 +268,7 @@ export class VerificationService {
   private async triggerBankVerification(venueId: string): Promise<void> {
     try {
       const { VerificationAdapterFactory } = await import('../integrations/verification-adapters');
-      
+
       if (!VerificationAdapterFactory.isConfigured('bank_account')) {
         logger.warn({ venueId }, 'Bank verification not configured, using manual fallback');
         await this.triggerManualVerification(venueId, 'bank_account');
@@ -281,10 +278,10 @@ export class VerificationService {
       const adapter = VerificationAdapterFactory.create('bank_account');
       const bankDoc = await db('venue_documents')
         .where({ venue_id: venueId })
-        .whereIn('type', ['bank_statement', 'voided_check'])
+        .whereIn('document_type', ['bank_statement', 'voided_check'])
         .orderBy('created_at', 'desc')
         .first();
-      
+
       const result = await adapter.verify({
         venueId,
         accountData: bankDoc?.metadata || {},
@@ -300,7 +297,7 @@ export class VerificationService {
   private async triggerIdentityVerification(venueId: string): Promise<void> {
     try {
       const { VerificationAdapterFactory } = await import('../integrations/verification-adapters');
-      
+
       if (!VerificationAdapterFactory.isConfigured('identity')) {
         logger.warn({ venueId }, 'Identity verification not configured, using manual fallback');
         await this.triggerManualVerification(venueId, 'identity');
@@ -310,10 +307,10 @@ export class VerificationService {
       const adapter = VerificationAdapterFactory.create('identity');
       const identityDoc = await db('venue_documents')
         .where({ venue_id: venueId })
-        .whereIn('type', ['drivers_license', 'passport'])
+        .whereIn('document_type', ['drivers_license', 'passport'])
         .orderBy('created_at', 'desc')
         .first();
-      
+
       if (!identityDoc) {
         logger.warn({ venueId }, 'No identity document found for verification');
         return;
@@ -321,7 +318,7 @@ export class VerificationService {
 
       const result = await adapter.verify({
         venueId,
-        documentType: identityDoc.type,
+        documentType: identityDoc.document_type,
         documentData: identityDoc.metadata || {},
       });
 
@@ -337,7 +334,7 @@ export class VerificationService {
    * Used when external verification services are unavailable or not configured
    */
   private async triggerManualVerification(
-    venueId: string, 
+    venueId: string,
     verificationType: string
   ): Promise<void> {
     try {
@@ -358,7 +355,7 @@ export class VerificationService {
       // Update document status to pending manual review
       await db('venue_documents')
         .where({ venue_id: venueId })
-        .whereIn('type', this.getDocumentTypesForVerification(verificationType))
+        .whereIn('document_type', this.getDocumentTypesForVerification(verificationType))
         .update({
           status: 'pending_manual_review',
           updated_at: new Date(),

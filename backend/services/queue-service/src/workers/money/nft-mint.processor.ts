@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../../adapters/bull-job-adapter';
 import { BaseWorker } from '../base.worker';
 import { JobResult } from '../../types/job.types';
 import { IdempotencyService } from '../../services/idempotency.service';
@@ -22,7 +22,7 @@ export class NFTMintProcessor extends BaseWorker<NFTMintJobData, JobResult> {
     this.idempotencyService = new IdempotencyService();
   }
 
-  protected async execute(job: Job<NFTMintJobData>): Promise<JobResult> {
+  protected async execute(job: BullJobData<NFTMintJobData>): Promise<JobResult> {
     const { eventId, ticketId, userId, metadata } = job.data;
 
     // Generate idempotency key
@@ -62,8 +62,8 @@ export class NFTMintProcessor extends BaseWorker<NFTMintJobData, JobResult> {
       // Store result permanently for NFTs
       await this.idempotencyService.store(
         idempotencyKey,
-        job.queue.name,
-        job.name,
+        job.queue?.name || 'money',
+        job.name || 'nft-mint',
         result,
         365 * 24 * 60 * 60 // 1 year for NFTs
       );

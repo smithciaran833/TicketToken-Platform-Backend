@@ -40,7 +40,7 @@ COPY --from=builder /app/backend/services/auth-service/src/migrations ./src/migr
 RUN echo '#!/bin/sh' > ./entrypoint.sh && \
     echo 'set -e' >> ./entrypoint.sh && \
     echo 'echo "Running migrations for auth-service..."' >> ./entrypoint.sh && \
-    echo 'npm run migrate || echo "Migration failed, continuing..."' >> ./entrypoint.sh && \
+    echo 'npm run migrate || exit 1' >> ./entrypoint.sh && \
     echo 'exec "$@"' >> ./entrypoint.sh && \
     chmod +x ./entrypoint.sh
 

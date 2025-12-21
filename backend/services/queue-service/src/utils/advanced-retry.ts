@@ -1,4 +1,4 @@
-import { Job } from 'bull';
+import { BullJobData } from '../adapters/bull-job-adapter';
 import { logger } from './logger';
 
 /**
@@ -83,11 +83,11 @@ function fibonacci(n: number): number {
  * Determine if job should be retried
  */
 export function shouldRetryJob(
-  job: Job,
+  job: BullJobData,
   error: Error,
   config: RetryConfig
 ): RetryResult {
-  const attemptNumber = job.attemptsMade + 1;
+  const attemptNumber = (job.attemptsMade || 0) + 1;
 
   // Check if max attempts reached
   if (attemptNumber >= config.maxAttempts) {
@@ -200,10 +200,9 @@ export const RetryPresets = {
 /**
  * Log retry metrics for monitoring
  */
-export function logRetryMetrics(job: Job, retryResult: RetryResult): void {
+export function logRetryMetrics(job: BullJobData, retryResult: RetryResult): void {
   const metrics = {
     jobId: job.id,
-    queueName: job.queue.name,
     attemptsMade: job.attemptsMade,
     shouldRetry: retryResult.shouldRetry,
     delay: retryResult.delay,

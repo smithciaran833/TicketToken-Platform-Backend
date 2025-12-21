@@ -1,7 +1,6 @@
 [workspace]
-resolver = "1"
 members = [
-    "programs/*"
+    "programs/tickettoken",
 ]
 
 [profile.release]

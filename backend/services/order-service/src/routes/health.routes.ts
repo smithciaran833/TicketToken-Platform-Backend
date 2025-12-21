@@ -1,6 +1,6 @@
 import { FastifyInstance } from 'fastify';
 import { getDatabase } from '../config/database';
-import { getRedisClient } from '../config/redis';
+import { RedisService } from '../services/redis.service';
 
 export async function healthRoutes(fastify: FastifyInstance) {
   // Liveness probe - check if service is alive
@@ -21,16 +21,16 @@ export async function healthRoutes(fastify: FastifyInstance) {
       await pool.query('SELECT 1');
       checks.database = true;
     } catch (error) {
-      fastify.log.error('Database health check failed', error);
+      fastify.log.error({ err: error }, 'Database health check failed');
     }
 
     try {
       // Check Redis connection
-      const redis = getRedisClient();
+      const redis = RedisService.getClient();
       await redis.ping();
       checks.redis = true;
     } catch (error) {
-      fastify.log.error('Redis health check failed', error);
+      fastify.log.error({ err: error }, 'Redis health check failed');
     }
 
     const allHealthy = checks.database && checks.redis;
@@ -57,17 +57,17 @@ export async function healthRoutes(fastify: FastifyInstance) {
       await pool.query('SELECT 1');
       checks.database = { healthy: true, latency: Date.now() - start };
     } catch (error) {
-      fastify.log.error('Database health check failed', error);
+      fastify.log.error({ err: error }, 'Database health check failed');
     }
 
     // Check Redis
     try {
       const start = Date.now();
-      const redis = getRedisClient();
+      const redis = RedisService.getClient();
       await redis.ping();
       checks.redis = { healthy: true, latency: Date.now() - start };
     } catch (error) {
-      fastify.log.error('Redis health check failed', error);
+      fastify.log.error({ err: error }, 'Redis health check failed');
     }
 
     const allHealthy = checks.database.healthy && checks.redis.healthy;

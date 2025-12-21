@@ -1,9 +1,9 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fastifyRateLimit from '@fastify/rate-limit';
 import { config } from '../config';
-import { REDIS_KEYS } from '../config/redis';
 import { createRequestLogger, logSecurityEvent } from '../utils/logger';
-import { RateLimitError } from '../types';
+import { RateLimitError, AuthUser } from '../types';
+import { getRateLimiter, getKeyBuilder } from '@tickettoken/shared';
 
 // Rate limit configurations for different endpoints
 const RATE_LIMIT_CONFIGS = {
@@ -46,16 +46,18 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
     skipOnError: false,
     keyGenerator: (request: FastifyRequest) => {
       // Use authenticated user ID if available, otherwise IP
-      const userId = request.user?.id;
+      const keyBuilder = getKeyBuilder();
+      const user = request.user as AuthUser | undefined;
+      const userId = user?.id;
       const apiKey = request.headers['x-api-key'];
       const ip = request.ip;
 
       if (userId) {
-        return `${REDIS_KEYS.RATE_LIMIT}user:${userId}`;
+        return keyBuilder.rateLimit('user', userId);
       } else if (apiKey) {
-        return `${REDIS_KEYS.RATE_LIMIT}api:${apiKey}`;
+        return keyBuilder.rateLimit('api', apiKey as string);
       } else {
-        return `${REDIS_KEYS.RATE_LIMIT}ip:${ip}`;
+        return keyBuilder.rateLimit('ip', ip);
       }
     },
     errorResponseBuilder: (_request: FastifyRequest, context: any) => {
@@ -89,11 +91,12 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
       }, 'Rate limit exceeded');
 
       // Log security event
+      const user = request.user as AuthUser | undefined;
       logSecurityEvent('rate_limit_exceeded', {
         key,
         path: request.url,
         ip: request.ip,
-        userId: request.user?.id,
+        userId: user?.id,
       }, 'medium');
     },
   });
@@ -105,7 +108,8 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
     }
 
     const logger = createRequestLogger(request.id);
-    const userId = request.user?.id || request.ip;
+    const user = request.user as AuthUser | undefined;
+    const userId = user?.id || request.ip;
     const body = request.body as Record<string, any>;
     const eventId = body?.eventId;
 
@@ -174,9 +178,10 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
   });
 }
 
-// Sliding window rate limiter for ticket purchases
+// 🚨 FIXED: Atomic sliding window rate limiter using Lua scripts from shared library
+// Prevents race conditions that could allow burst attacks
 async function checkTicketPurchaseLimit(
-  server: FastifyInstance,
+  _server: FastifyInstance,
   userId: string,
   eventId: string
 ): Promise<{
@@ -186,54 +191,24 @@ async function checkTicketPurchaseLimit(
   retryAfter?: number;
   reason?: string;
 }> {
-  const key = `${REDIS_KEYS.RATE_LIMIT_TICKET}${userId}:${eventId}`;
-  const now = Date.now();
-  const windowStart = now - RATE_LIMIT_CONFIGS.ticketPurchase.timeWindow;
-
-  // Remove old entries
-  await server.redis.zremrangebyscore(key, '-inf', windowStart);
-
-  // Count recent attempts
-  const count = await server.redis.zcard(key);
-
-  if (count >= RATE_LIMIT_CONFIGS.ticketPurchase.max) {
-    // Check if user is blocked
-    const blockKey = `${key}:blocked`;
-    const blocked = await server.redis.get(blockKey);
-
-    if (blocked) {
-      return {
-        allowed: false,
-        remaining: 0,
-        attemptCount: count,
-        retryAfter: RATE_LIMIT_CONFIGS.ticketPurchase.blockDuration / 1000,
-        reason: 'Blocked due to excessive attempts',
-      };
-    }
-
-    // Block user
-    await server.redis.setex(
-      blockKey,
-      RATE_LIMIT_CONFIGS.ticketPurchase.blockDuration / 1000,
-      'blocked'
-    );
-
-    return {
-      allowed: false,
-      remaining: 0,
-      attemptCount: count,
-      retryAfter: RATE_LIMIT_CONFIGS.ticketPurchase.blockDuration / 1000,
-      reason: 'Too many purchase attempts',
-    };
-  }
-
-  // Add current attempt
-  await server.redis.zadd(key, now, `${now}-${Math.random()}`);
-  await server.redis.expire(key, 120); // Expire after 2 minutes
+  const rateLimiter = getRateLimiter();
+  const keyBuilder = getKeyBuilder();
+  
+  const key = keyBuilder.rateLimit('ticket', `${userId}:${eventId}`);
+  
+  // Use atomic sliding window from shared library
+  const result = await rateLimiter.slidingWindow(
+    key,
+    RATE_LIMIT_CONFIGS.ticketPurchase.max,
+    RATE_LIMIT_CONFIGS.ticketPurchase.timeWindow
+  );
 
   return {
-    allowed: true,
-    remaining: RATE_LIMIT_CONFIGS.ticketPurchase.max - count - 1,
+    allowed: result.allowed,
+    remaining: result.remaining,
+    attemptCount: result.current,
+    retryAfter: result.retryAfter,
+    reason: result.allowed ? undefined : 'Rate limit exceeded',
   };
 }
 
@@ -253,8 +228,9 @@ export async function adjustRateLimits(server: FastifyInstance) {
         // Reduce rate limits by 50% under high load
         const adjustment = 0.5;
 
+        const keyBuilder = getKeyBuilder();
         await server.redis.set(
-          `${REDIS_KEYS.RATE_LIMIT}adjustment`,
+          keyBuilder.rateLimit('adjustment', 'global'),
           adjustment.toString(),
           'EX',
           60
@@ -266,7 +242,8 @@ export async function adjustRateLimits(server: FastifyInstance) {
         }, 'Rate limits reduced due to high load');
       } else if (loadFactor < 0.5) {
         // Normal rate limits
-        await server.redis.del(`${REDIS_KEYS.RATE_LIMIT}adjustment`);
+        const keyBuilder = getKeyBuilder();
+        await server.redis.del(keyBuilder.rateLimit('adjustment', 'global'));
       }
     } catch (error) {
       server.log.error({ error }, 'Failed to adjust rate limits');
@@ -280,14 +257,15 @@ export async function checkApiKeyRateLimit(
   apiKey: string,
   _request: FastifyRequest
 ): Promise<boolean> {
-  const keyData = await server.redis.get(`${REDIS_KEYS.API_KEY}${apiKey}`);
+  const keyBuilder = getKeyBuilder();
+  const keyData = await server.redis.get(keyBuilder.apiKey(apiKey));
 
   if (!keyData) {
     return false;
   }
 
   const { rateLimit } = JSON.parse(keyData);
-  const key = `${REDIS_KEYS.RATE_LIMIT}apikey:${apiKey}`;
+  const key = keyBuilder.rateLimit('apikey', apiKey);
 
   // Use venue-specific rate limit
   const limit = rateLimit || RATE_LIMIT_CONFIGS.venueApi.max;

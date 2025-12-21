@@ -1,0 +1,172 @@
+openapi: 3.0.0
+info:
+  title: Queue Service API
+  description: Background job processing and queue management for TicketToken platform
+  version: 1.0.0
+  contact:
+    name: TicketToken Platform Team
+    
+servers:
+  - url: http://localhost:3011
+    description: Development server
+  - url: https://api.tickettoken.com
+    description: Production server
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      
+  schemas:
+    QueueJob:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Unique job identifier
+        queueName:
+          type: string
+          enum: [money, communication, background]
+        jobType:
+          type: string
+        data:
+          type: object
+        priority:
+          type: integer
+          minimum: 1
+          maximum: 10
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        createdAt:
+          type: string
+          format: date-time
+          
+    QueueStats:
+      type: object
+      properties:
+        queueName:
+          type: string
+        waiting:
+          type: integer
+        active:
+          type: integer
+        completed:
+          type: integer
+        failed:
+          type: integer
+        delayed:
+          type: integer
+          
+    CircuitBreakerStatus:
+      type: object
+      properties:
+        service:
+          type: string
+        state:
+          type: string
+          enum: [CLOSED, OPEN, HALF_OPEN]
+        failures:
+          type: integer
+        nextAttempt:
+          type: string
+          format: date-time
+          nullable: true
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+        statusCode:
+          type: integer
+
+security:
+  - bearerAuth: []
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Check if the service is running
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  service:
+                    type: string
+                    
+  /api/v1/queue/stats:
+    get:
+      summary: Get queue statistics
+      description: Returns statistics for all queues
+      tags: [Queue Management]
+      responses:
+        '200':
+          description: Queue statistics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QueueStats'
+        '401':
+          description: Unauthorized
+          
+  /api/v1/queue/circuit-breakers:
+    get:
+      summary: Get circuit breaker status
+      description: Returns status of all circuit breakers
+      tags: [Monitoring]
+      responses:
+        '200':
+          description: Circuit breaker statuses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CircuitBreakerStatus'
+                  
+  /api/v1/queue/jobs/{jobId}:
+    get:
+      summary: Get job status
+      description: Get the status of a specific job
+      tags: [Jobs]
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Job found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueueJob'
+        '404':
+          description: Job not found
+          
+tags:
+  - name: Health
+    description: Health check endpoints
+  - name: Queue Management
+    description: Queue statistics and management
+  - name: Jobs
+    description: Individual job operations
+  - name: Monitoring
+    description: Monitoring and observability endpoints

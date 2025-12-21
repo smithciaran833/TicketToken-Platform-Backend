@@ -1,8 +1,9 @@
 import { PublicKey } from '@solana/web3.js';
 import { ethers } from 'ethers';
 import nacl from 'tweetnacl';
-import { db } from '../config/database';
-import { redis } from '../config/redis';
+import bs58 from 'bs58';
+import { pool } from '../config/database';
+import { getRedis } from '../config/redis';
 import { AuthenticationError } from '../errors';
 import crypto from 'crypto';
 import { JWTService } from './jwt.service';
@@ -14,10 +15,23 @@ export class WalletService {
     this.jwtService = new JWTService();
   }
 
-  async generateNonce(walletAddress: string): Promise<string> {
+  async generateNonce(publicKey: string, chain: string): Promise<{ nonce: string; message: string }> {
     const nonce = crypto.randomBytes(32).toString('hex');
-    await redis.setex(`wallet_nonce:${walletAddress}`, 300, nonce);
-    return nonce;
+    const timestamp = Date.now();
+    const message = `Sign this message to authenticate with TicketToken\nNonce: ${nonce}\nTimestamp: ${timestamp}`;
+
+    const nonceData = {
+      nonce,
+      publicKey,
+      chain,
+      timestamp,
+      expiresAt: timestamp + 900000 // 15 minutes
+    };
+
+    const redis = getRedis();
+    await redis.setex(`wallet-nonce:${nonce}`, 900, JSON.stringify(nonceData));
+
+    return { nonce, message };
   }
 
   async verifySolanaSignature(
@@ -27,9 +41,9 @@ export class WalletService {
   ): Promise<boolean> {
     try {
       const publicKeyObj = new PublicKey(publicKey);
-      const signatureBuffer = Buffer.from(signature, 'base64');
+      const signatureBuffer = bs58.decode(signature);
       const messageBuffer = Buffer.from(message);
-      
+
       return nacl.sign.detached.verify(
         messageBuffer,
         signatureBuffer,
@@ -55,101 +69,335 @@ export class WalletService {
     }
   }
 
-  async connectWallet(
-    userId: string,
-    walletAddress: string,
-    network: 'solana' | 'ethereum',
-    signature: string
-  ): Promise<any> {
-    const nonce = await redis.get(`wallet_nonce:${walletAddress}`);
-    if (!nonce) {
+  async registerWithWallet(
+    publicKey: string,
+    signature: string,
+    nonce: string,
+    chain: 'solana' | 'ethereum',
+    tenantId: string
+  ): Promise<{ user: any; tokens: any; wallet: any }> {
+    // Verify nonce
+    const redis = getRedis();
+    const nonceData = await redis.get(`wallet-nonce:${nonce}`);
+    if (!nonceData) {
       throw new AuthenticationError('Nonce expired or not found');
     }
 
-    const message = `Connect wallet to TicketToken\nNonce: ${nonce}`;
-    
+    const storedNonce = JSON.parse(nonceData);
+    if (storedNonce.publicKey !== publicKey || storedNonce.chain !== chain) {
+      throw new AuthenticationError('Nonce mismatch');
+    }
+
+    // Reconstruct message
+    const message = `Sign this message to authenticate with TicketToken\nNonce: ${storedNonce.nonce}\nTimestamp: ${storedNonce.timestamp}`;
+
+    // Verify signature
     let isValid = false;
-    if (network === 'solana') {
-      isValid = await this.verifySolanaSignature(walletAddress, signature, message);
+    if (chain === 'solana') {
+      isValid = await this.verifySolanaSignature(publicKey, signature, message);
     } else {
-      isValid = await this.verifyEthereumSignature(walletAddress, signature, message);
+      isValid = await this.verifyEthereumSignature(publicKey, signature, message);
     }
 
     if (!isValid) {
+      await redis.del(`wallet-nonce:${nonce}`);
       throw new AuthenticationError('Invalid wallet signature');
     }
 
-    const existingConnection = await db('wallet_connections')
-      .where({ wallet_address: walletAddress, network })
-      .first();
+    // Create user and wallet connection in transaction
+    const client = await pool.connect();
+    let user;
+    let tokens;
 
-    if (existingConnection && existingConnection.user_id !== userId) {
-      throw new AuthenticationError('Wallet already connected to another account');
+    try {
+      await client.query('BEGIN');
+
+      // Create synthetic email for wallet user (MUST BE LOWERCASE!)
+      const syntheticEmail = `wallet-${publicKey.substring(0, 16).toLowerCase()}@internal.wallet`;
+
+      // Create user
+      const userResult = await client.query(
+        `INSERT INTO users (email, password_hash, email_verified, tenant_id, created_at)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING id, email, email_verified, mfa_enabled, permissions, role, tenant_id`,
+        [syntheticEmail, '', true, tenantId, new Date()]
+      );
+
+      user = userResult.rows[0];
+
+      // Create wallet connection (map chain → network)
+      const network = chain;
+      await client.query(
+        `INSERT INTO wallet_connections (user_id, wallet_address, network, verified, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [user.id, publicKey, network, true, new Date()]
+      );
+
+      // Create session
+      await client.query(
+        `INSERT INTO user_sessions (user_id, started_at)
+         VALUES ($1, NOW())`,
+        [user.id]
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
 
-    if (!existingConnection) {
-      await db('wallet_connections').insert({
-        user_id: userId,
-        wallet_address: walletAddress,
-        network: network,
-        verified: true
-      });
-    }
+    // Delete nonce
+    await redis.del(`wallet-nonce:${nonce}`);
 
-    await redis.del(`wallet_nonce:${walletAddress}`);
+    // Generate tokens
+    tokens = await this.jwtService.generateTokenPair({
+      id: user.id,
+      email: user.email,
+      tenant_id: user.tenant_id,
+      permissions: user.permissions,
+      role: user.role,
+      wallet: publicKey
+    });
 
     return {
-      success: true,
-      wallet: { address: walletAddress, network, connected: true }
+      user: {
+        id: user.id,
+        email: user.email,
+        email_verified: user.email_verified,
+        mfa_enabled: user.mfa_enabled || false,
+        tenant_id: user.tenant_id
+      },
+      tokens,
+      wallet: {
+        address: publicKey,
+        chain,
+        connected: true
+      }
     };
   }
 
   async loginWithWallet(
-    walletAddress: string,
-    network: 'solana' | 'ethereum',
-    signature: string
-  ): Promise<any> {
-    const nonce = await redis.get(`wallet_nonce:${walletAddress}`);
-    if (!nonce) {
+    publicKey: string,
+    signature: string,
+    nonce: string,
+    chain: 'solana' | 'ethereum'
+  ): Promise<{ user: any; tokens: any; wallet: any }> {
+    // Verify nonce
+    const redis = getRedis();
+    const nonceData = await redis.get(`wallet-nonce:${nonce}`);
+    if (!nonceData) {
       throw new AuthenticationError('Nonce expired or not found');
     }
 
-    const message = `Login to TicketToken\nNonce: ${nonce}`;
-    
+    const storedNonce = JSON.parse(nonceData);
+    if (storedNonce.publicKey !== publicKey || storedNonce.chain !== chain) {
+      throw new AuthenticationError('Nonce mismatch');
+    }
+
+    // Reconstruct message
+    const message = `Sign this message to authenticate with TicketToken\nNonce: ${storedNonce.nonce}\nTimestamp: ${storedNonce.timestamp}`;
+
+    // Verify signature
     let isValid = false;
-    if (network === 'solana') {
-      isValid = await this.verifySolanaSignature(walletAddress, signature, message);
+    if (chain === 'solana') {
+      isValid = await this.verifySolanaSignature(publicKey, signature, message);
     } else {
-      isValid = await this.verifyEthereumSignature(walletAddress, signature, message);
+      isValid = await this.verifyEthereumSignature(publicKey, signature, message);
     }
 
     if (!isValid) {
+      await redis.del(`wallet-nonce:${nonce}`);
       throw new AuthenticationError('Invalid wallet signature');
     }
 
-    const connection = await db('wallet_connections')
-      .where({ wallet_address: walletAddress, network, verified: true })
-      .first();
+    // Map chain → network for database query
+    const network = chain;
 
-    if (!connection) {
+    // Find wallet connection
+    // Note: We get user first, then verify tenant_id to ensure multi-tenant isolation
+    const connectionResult = await pool.query(
+      'SELECT wc.*, u.tenant_id FROM wallet_connections wc JOIN users u ON wc.user_id = u.id WHERE wc.wallet_address = $1 AND wc.network = $2 AND wc.verified = true AND u.deleted_at IS NULL',
+      [publicKey, network]
+    );
+
+    if (connectionResult.rows.length === 0) {
+      await redis.del(`wallet-nonce:${nonce}`);
       throw new AuthenticationError('Wallet not connected to any account');
     }
 
-    const user = await db('users').where({ id: connection.user_id }).first();
-    if (!user) {
+    const connection = connectionResult.rows[0];
+
+    // Get user
+    const userResult = await pool.query(
+      'SELECT id, email, email_verified, mfa_enabled, permissions, role, tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [connection.user_id]
+    );
+
+    if (userResult.rows.length === 0) {
+      await redis.del(`wallet-nonce:${nonce}`);
       throw new AuthenticationError('User not found');
     }
 
-    await redis.del(`wallet_nonce:${walletAddress}`);
-    await db('users').where({ id: user.id }).update({ last_login_at: new Date() });
+    const user = userResult.rows[0];
 
-    const tokens = await this.jwtService.generateTokenPair(user);
+    // Create session in transaction
+    const client = await pool.connect();
+    let tokens;
+
+    try {
+      await client.query('BEGIN');
+
+      // Create session
+      await client.query(
+        `INSERT INTO user_sessions (user_id, started_at)
+         VALUES ($1, NOW())`,
+        [user.id]
+      );
+
+      // Update last login
+      await client.query(
+        'UPDATE users SET last_login_at = NOW() WHERE id = $1',
+        [user.id]
+      );
+
+      await client.query('COMMIT');
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    // Delete nonce
+    await redis.del(`wallet-nonce:${nonce}`);
+
+    // Generate tokens
+    tokens = await this.jwtService.generateTokenPair({
+      id: user.id,
+      email: user.email,
+      tenant_id: user.tenant_id,
+      permissions: user.permissions,
+      role: user.role,
+      wallet: publicKey
+    });
+
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        email_verified: user.email_verified,
+        mfa_enabled: user.mfa_enabled || false,
+        tenant_id: user.tenant_id
+      },
+      tokens,
+      wallet: {
+        address: publicKey,
+        chain,
+        connected: true
+      }
+    };
+  }
+
+  async linkWallet(
+    userId: string,
+    publicKey: string,
+    signature: string,
+    nonce: string,
+    chain: 'solana' | 'ethereum'
+  ): Promise<{ success: boolean; wallet: any }> {
+    // Verify nonce
+    const redis = getRedis();
+    const nonceData = await redis.get(`wallet-nonce:${nonce}`);
+    if (!nonceData) {
+      throw new AuthenticationError('Nonce expired or not found');
+    }
+
+    const storedNonce = JSON.parse(nonceData);
+    if (storedNonce.publicKey !== publicKey || storedNonce.chain !== chain) {
+      throw new AuthenticationError('Nonce mismatch');
+    }
+
+    // Reconstruct message
+    const message = `Sign this message to authenticate with TicketToken\nNonce: ${storedNonce.nonce}\nTimestamp: ${storedNonce.timestamp}`;
+
+    // Verify signature
+    let isValid = false;
+    if (chain === 'solana') {
+      isValid = await this.verifySolanaSignature(publicKey, signature, message);
+    } else {
+      isValid = await this.verifyEthereumSignature(publicKey, signature, message);
+    }
+
+    if (!isValid) {
+      await redis.del(`wallet-nonce:${nonce}`);
+      throw new AuthenticationError('Invalid wallet signature');
+    }
+
+    // Map chain → network
+    const network = chain;
+
+    // Get requesting user's tenant_id for multi-tenant isolation
+    const userCheck = await pool.query(
+      'SELECT tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL',
+      [userId]
+    );
     
+    if (userCheck.rows.length === 0) {
+      await redis.del(`wallet-nonce:${nonce}`);
+      throw new AuthenticationError('User not found');
+    }
+    
+    const userTenantId = userCheck.rows[0].tenant_id;
+
+    // Check if wallet already linked to different user (within same tenant for isolation)
+    const existingResult = await pool.query(
+      'SELECT wc.user_id, u.tenant_id FROM wallet_connections wc JOIN users u ON wc.user_id = u.id WHERE wc.wallet_address = $1 AND wc.network = $2 AND u.tenant_id = $3 AND u.deleted_at IS NULL',
+      [publicKey, network, userTenantId]
+    );
+
+    if (existingResult.rows.length > 0 && existingResult.rows[0].user_id !== userId) {
+      await redis.del(`wallet-nonce:${nonce}`);
+      throw new AuthenticationError('Wallet already connected to another account');
+    }
+
+    // Insert wallet connection if not exists
+    if (existingResult.rows.length === 0) {
+      await pool.query(
+        `INSERT INTO wallet_connections (user_id, wallet_address, network, verified, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [userId, publicKey, network, true, new Date()]
+      );
+    }
+
+    // Delete nonce
+    await redis.del(`wallet-nonce:${nonce}`);
+
     return {
       success: true,
-      user: { id: user.id, email: user.email },
-      tokens,
-      wallet: { address: walletAddress, network }
+      wallet: {
+        address: publicKey,
+        chain,
+        connected: true
+      }
     };
+  }
+
+  async unlinkWallet(
+    userId: string,
+    publicKey: string
+  ): Promise<{ success: boolean }> {
+    // Delete wallet connection with tenant_id verification for multi-tenant isolation
+    const result = await pool.query(
+      'DELETE FROM wallet_connections wc USING users u WHERE wc.user_id = u.id AND wc.user_id = $1 AND wc.wallet_address = $2 AND u.deleted_at IS NULL',
+      [userId, publicKey]
+    );
+
+    if (result.rowCount === 0) {
+      throw new AuthenticationError('Wallet not found or not linked to your account');
+    }
+
+    return { success: true };
   }
 }

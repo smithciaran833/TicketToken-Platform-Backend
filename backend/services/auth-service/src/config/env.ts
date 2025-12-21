@@ -32,10 +32,17 @@ export interface EnvConfig {
   // Encryption
   ENCRYPTION_KEY: string;
 
-  // OAuth
+  // OAuth - Google
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_REDIRECT_URI?: string;
+  
+  // OAuth - GitHub
+  GITHUB_CLIENT_ID?: string;
+  GITHUB_CLIENT_SECRET?: string;
+  GITHUB_REDIRECT_URI?: string;
+  
+  // OAuth - Apple
   APPLE_CLIENT_ID?: string;
   APPLE_TEAM_ID?: string;
   APPLE_KEY_ID?: string;
@@ -83,8 +90,19 @@ function validateEnv(): EnvConfig {
   const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem');
   const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem');
 
-  // Generate or use encryption key (32 bytes for AES-256)
-  const encryptionKey = process.env.ENCRYPTION_KEY || 'default-encryption-key-change-in-production-32chars';
+  // Encryption key validation (32 bytes for AES-256)
+  const encryptionKey = process.env.ENCRYPTION_KEY;
+  
+  if (!encryptionKey) {
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('ENCRYPTION_KEY is required in production environment');
+    }
+    console.warn('⚠️  WARNING: Using insecure default ENCRYPTION_KEY in development. Set ENCRYPTION_KEY env var for production.');
+  } else if (encryptionKey.length < 32) {
+    throw new Error('ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption');
+  }
+  
+  const finalEncryptionKey = encryptionKey || 'dev-only-insecure-key-not-for-prod-32chars';
 
   return {
     NODE_ENV: (process.env.NODE_ENV as any) || 'development',
@@ -107,7 +125,22 @@ function validateEnv(): EnvConfig {
     JWT_PRIVATE_KEY_PATH: privateKeyPath,
     JWT_PUBLIC_KEY_PATH: publicKeyPath,
 
-    ENCRYPTION_KEY: encryptionKey,
+    ENCRYPTION_KEY: finalEncryptionKey,
+
+    // OAuth - Google
+    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
+    GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
+    
+    // OAuth - GitHub
+    GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
+    GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
+    GITHUB_REDIRECT_URI: process.env.GITHUB_REDIRECT_URI,
+    
+    // OAuth - Apple
+    APPLE_CLIENT_ID: process.env.APPLE_CLIENT_ID,
+    APPLE_TEAM_ID: process.env.APPLE_TEAM_ID,
+    APPLE_KEY_ID: process.env.APPLE_KEY_ID,
 
     BCRYPT_ROUNDS: parseInt(process.env.BCRYPT_ROUNDS || '12', 10),
     LOCKOUT_MAX_ATTEMPTS: parseInt(process.env.LOCKOUT_MAX_ATTEMPTS || '5', 10),

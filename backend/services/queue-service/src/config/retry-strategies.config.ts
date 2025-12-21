@@ -1,60 +1,120 @@
-export interface RetryStrategy {
-  type: 'fixed' | 'exponential' | 'linear';
-  attempts: number;
+/**
+ * Retry Strategies Configuration
+ * 
+ * Defines retry behavior for different job types
+ * All strategies are configurable via environment variables
+ */
+
+// Backoff configuration (compatible with both Bull and pg-boss)
+export interface BackoffOptions {
+  type: 'exponential' | 'fixed';
   delay: number;
-  maxDelay?: number;
-  factor?: number;
+}
+
+export interface RetryStrategy {
+  attempts: number;
+  backoff: BackoffOptions;
+  description: string;
 }
 
 export const RETRY_STRATEGIES: Record<string, RetryStrategy> = {
-  'payment': {
-    type: 'exponential',
-    attempts: 5,
-    delay: 1000,
-    maxDelay: 60000,
-    factor: 2
+  // Money queue jobs
+  'payment-process': {
+    attempts: parseInt(process.env.RETRY_PAYMENT || '10'),
+    backoff: { type: 'exponential', delay: 2000 },
+    description: 'Critical payment processing - aggressive retries'
   },
-  'email': {
-    type: 'exponential',
-    attempts: 3,
-    delay: 5000,
-    maxDelay: 30000,
-    factor: 2
+  
+  'refund-process': {
+    attempts: parseInt(process.env.RETRY_REFUND || '10'),
+    backoff: { type: 'exponential', delay: 2000 },
+    description: 'Refund processing - must succeed'
   },
-  'webhook': {
-    type: 'exponential',
-    attempts: 5,
-    delay: 2000,
-    maxDelay: 120000,
-    factor: 3
+  
+  'payout-process': {
+    attempts: parseInt(process.env.RETRY_PAYOUT || '8'),
+    backoff: { type: 'exponential', delay: 3000 },
+    description: 'Venue payouts - critical but less time-sensitive'
   },
-  'minting': {
-    type: 'linear',
-    attempts: 10,
-    delay: 30000
+  
+  // Blockchain jobs
+  'nft-mint': {
+    attempts: parseInt(process.env.RETRY_NFT_MINT || '5'),
+    backoff: { type: 'exponential', delay: 5000 },
+    description: 'NFT minting - expensive operation, moderate retries'
   },
-  'default': {
-    type: 'exponential',
-    attempts: 3,
-    delay: 1000,
-    maxDelay: 10000,
-    factor: 2
+  
+  'nft-transfer': {
+    attempts: parseInt(process.env.RETRY_NFT_MINT || '5'),
+    backoff: { type: 'exponential', delay: 5000 },
+    description: 'NFT transfer - similar to minting'
+  },
+  
+  // Communication jobs
+  'send-email': {
+    attempts: parseInt(process.env.RETRY_EMAIL || '5'),
+    backoff: { type: 'fixed', delay: 5000 },
+    description: 'Email delivery - moderate retries with fixed delay'
+  },
+  
+  'send-sms': {
+    attempts: parseInt(process.env.RETRY_SMS || '3'),
+    backoff: { type: 'fixed', delay: 10000 },
+    description: 'SMS delivery - fewer retries to avoid spam'
+  },
+  
+  // Background jobs
+  'analytics-event': {
+    attempts: parseInt(process.env.RETRY_ANALYTICS || '2'),
+    backoff: { type: 'fixed', delay: 10000 },
+    description: 'Analytics tracking - best effort'
+  },
+  
+  'report-generation': {
+    attempts: parseInt(process.env.RETRY_ANALYTICS || '2'),
+    backoff: { type: 'fixed', delay: 15000 },
+    description: 'Report generation - can be delayed'
+  },
+  
+  'cache-warming': {
+    attempts: 1,
+    backoff: { type: 'fixed', delay: 0 },
+    description: 'Cache warming - no retries needed'
   }
 };
 
+/**
+ * Get retry strategy for a job type
+ */
 export function getRetryStrategy(jobType: string): RetryStrategy {
-  const strategy = jobType.split('.')[0];
-  return RETRY_STRATEGIES[strategy] || RETRY_STRATEGIES.default;
+  return RETRY_STRATEGIES[jobType] || {
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 1000 },
+    description: 'Default retry strategy'
+  };
 }
 
-export function calculateBackoff(attempt: number, strategy: RetryStrategy): number {
-  switch (strategy.type) {
-    case 'fixed':
-      return strategy.delay;
-    case 'linear':
-      return strategy.delay * attempt;
-    case 'exponential':
-      const delay = strategy.delay * Math.pow(strategy.factor || 2, attempt - 1);
-      return Math.min(delay, strategy.maxDelay || delay);
+/**
+ * Get all configured retry strategies
+ */
+export function getAllRetryStrategies(): Record<string, RetryStrategy> {
+  return { ...RETRY_STRATEGIES };
+}
+
+/**
+ * Validate retry strategies
+ */
+export function validateRetryStrategies(): void {
+  for (const [jobType, strategy] of Object.entries(RETRY_STRATEGIES)) {
+    if (strategy.attempts < 0 || strategy.attempts > 50) {
+      console.warn(`Warning: Unusual retry attempt count for ${jobType}: ${strategy.attempts}`);
+    }
+    
+    if (strategy.backoff.delay && (strategy.backoff.delay < 0 || strategy.backoff.delay > 300000)) {
+      console.warn(`Warning: Unusual backoff delay for ${jobType}: ${strategy.backoff.delay}ms`);
+    }
   }
 }
+
+// Validate on import
+validateRetryStrategies();

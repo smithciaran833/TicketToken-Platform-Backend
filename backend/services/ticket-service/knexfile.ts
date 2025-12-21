@@ -1,7 +1,11 @@
 import type { Knex } from 'knex';
 import * as dotenv from 'dotenv';
+import * as pg from 'pg';
 
 dotenv.config();
+
+// Parse decimal/numeric types as floats instead of strings
+pg.types.setTypeParser(1700, parseFloat);
 
 const config: { [key: string]: Knex.Config } = {
   development: {

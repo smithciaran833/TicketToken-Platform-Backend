@@ -1,0 +1,41 @@
+{
+  "name": "@shared/mongodb",
+  "version": "1.0.0",
+  "description": "Shared MongoDB connection and utilities library for TicketToken platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "mongodb",
+    "mongoose",
+    "database",
+    "tickettoken"
+  ],
+  "author": "TicketToken",
+  "license": "MIT",
+  "dependencies": {
+    "mongoose": "^8.0.3",
+    "mongodb": "^6.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.3",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.11",
+    "ts-jest": "^29.1.1",
+    "eslint": "^8.56.0",
+    "@typescript-eslint/eslint-plugin": "^6.15.0",
+    "@typescript-eslint/parser": "^6.15.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

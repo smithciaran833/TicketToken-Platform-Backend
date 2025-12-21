@@ -1,37 +1,40 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import { TaxController } from '../controllers/tax.controller';
 
-const router = Router();
-const controller = new TaxController();
+export default async function taxRoutes(
+  fastify: FastifyInstance,
+  opts: FastifyPluginOptions
+): Promise<void> {
+  const controller = new TaxController();
 
-// Jurisdiction routes
-router.post('/jurisdictions', (req, res) => controller.createJurisdiction(req as any, res));
-router.get('/jurisdictions', (req, res) => controller.getJurisdictions(req as any, res));
-router.patch('/jurisdictions/:jurisdictionId', (req, res) => controller.updateJurisdiction(req as any, res));
+  // Jurisdiction routes
+  fastify.post('/jurisdictions', controller.createJurisdiction);
+  fastify.get('/jurisdictions', controller.getJurisdictions);
+  fastify.patch('/jurisdictions/:jurisdictionId', controller.updateJurisdiction);
 
-// Tax rate routes
-router.post('/rates', (req, res) => controller.createTaxRate(req as any, res));
-router.get('/rates', (req, res) => controller.getTaxRates(req as any, res));
+  // Tax rate routes
+  fastify.post('/rates', controller.createTaxRate);
+  fastify.get('/rates', controller.getTaxRates);
 
-// Tax category routes
-router.post('/categories', (req, res) => controller.createCategory(req as any, res));
-router.get('/categories', (req, res) => controller.getCategories(req as any, res));
+  // Tax category routes
+  fastify.post('/categories', controller.createCategory);
+  fastify.get('/categories', controller.getCategories);
 
-// Tax exemption routes
-router.post('/exemptions', (req, res) => controller.createExemption(req as any, res));
-router.get('/exemptions/customer/:customerId', (req, res) => controller.getCustomerExemptions(req as any, res));
-router.post('/exemptions/:exemptionId/verify', (req, res) => controller.verifyExemption(req as any, res));
+  // Tax exemption routes
+  fastify.post('/exemptions', controller.createExemption);
+  fastify.get('/exemptions/customer/:customerId', controller.getCustomerExemptions);
+  fastify.post('/exemptions/:exemptionId/verify', controller.verifyExemption);
 
-// Tax calculation routes
-router.post('/calculate', (req, res) => controller.calculateTax(req as any, res));
-router.get('/orders/:orderId', (req, res) => controller.getTaxForOrder(req as any, res));
+  // Tax calculation routes
+  fastify.post('/calculate', controller.calculateTax);
+  fastify.get('/orders/:orderId', controller.getTaxForOrder);
 
-// Provider configuration routes
-router.post('/provider/configure', (req, res) => controller.configureProvider(req as any, res));
-router.get('/provider/config', (req, res) => controller.getProviderConfig(req as any, res));
+  // Provider configuration routes
+  fastify.post('/provider/configure', controller.configureProvider);
+  fastify.get('/provider/config', controller.getProviderConfig);
 
-// Tax reporting routes
-router.post('/reports', (req, res) => controller.generateReport(req as any, res));
-router.get('/reports', (req, res) => controller.getReports(req as any, res));
-router.post('/reports/:reportId/file', (req, res) => controller.fileReport(req as any, res));
-export default router;
+  // Tax reporting routes
+  fastify.post('/reports', controller.generateReport);
+  fastify.get('/reports', controller.getReports);
+  fastify.post('/reports/:reportId/file', controller.fileReport);
+}

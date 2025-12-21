@@ -1,3 +1,4 @@
+import type Redis from 'ioredis';
 import { getRedis } from '../config/redis';
 import { getAnalyticsDb } from '../config/database';
 import { logger } from '../utils/logger';
@@ -9,7 +10,7 @@ interface AggregationWindow {
 }
 
 export class RealtimeAggregationService {
-  private redis = getRedis();
+  private redis!: Redis;
   private analyticsDb = getAnalyticsDb();
   private intervalHandles: NodeJS.Timeout[] = [];
   
@@ -21,6 +22,9 @@ export class RealtimeAggregationService {
 
   async startAggregationPipeline() {
     logger.info('Starting real-time aggregation pipeline');
+
+    // Initialize Redis client
+    this.redis = getRedis();
 
     // Set up aggregation intervals
     this.setupAggregationIntervals();

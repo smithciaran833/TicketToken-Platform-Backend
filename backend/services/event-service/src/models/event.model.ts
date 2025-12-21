@@ -1,7 +1,6 @@
 import { BaseModel } from './base.model';
 import { Knex } from 'knex';
 
-// Complete interface matching database schema (50+ fields)
 export interface IEvent {
   // Core Identity
   id?: string;
@@ -39,10 +38,17 @@ export interface IEvent {
   special_requirements?: string[];
   accessibility_info?: Record<string, any>;
 
-  // Blockchain Integration
+  // Blockchain Integration (legacy)
   collection_address?: string;
   mint_authority?: string;
   royalty_percentage?: number;
+
+  // Blockchain Integration (new - Week 3)
+  event_pda?: string;
+  artist_wallet?: string;
+  artist_percentage?: number;
+  venue_percentage?: number;
+  blockchain_status?: 'pending' | 'synced' | 'failed';
 
   // Virtual/Hybrid Event Settings
   is_virtual?: boolean;
@@ -76,12 +82,12 @@ export interface IEvent {
   updated_at?: Date;
   deleted_at?: Date;
 
-  // Legacy/Compatibility Fields (for backward compatibility)
-  event_date?: Date;         // Maps to first schedule's starts_at
-  doors_open?: Date;         // Maps to first schedule's doors_open_at
-  capacity?: number;         // Maps to total capacity across all sections
-  category?: string;         // Maps to primary_category_id
-  image_url?: string;        // Maps to banner_image_url
+  // Legacy/Compatibility Fields
+  event_date?: Date;
+  doors_open?: Date;
+  capacity?: number;
+  category?: string;
+  image_url?: string;
 }
 
 export class EventModel extends BaseModel {
@@ -133,7 +139,6 @@ export class EventModel extends BaseModel {
     return this.transformFromDb(created);
   }
 
-  // Override update to use transformation
   async update(id: string, data: Partial<IEvent>): Promise<IEvent> {
     const dbData = this.transformForDb(data);
     const [record] = await this.db(this.tableName)
@@ -193,17 +198,9 @@ export class EventModel extends BaseModel {
       });
     }
 
-    if (category_id) {
-      query = query.where('primary_category_id', category_id);
-    }
-
-    if (venue_id) {
-      query = query.where('venue_id', venue_id);
-    }
-
-    if (status) {
-      query = query.where('status', status);
-    }
+    if (category_id) query = query.where('primary_category_id', category_id);
+    if (venue_id) query = query.where('venue_id', venue_id);
+    if (status) query = query.where('status', status);
 
     const sortColumn = sort_by === 'name' ? 'name' :
                       sort_by === 'priority' ? 'priority_score' :
@@ -216,27 +213,20 @@ export class EventModel extends BaseModel {
   }
 
   async incrementViewCount(eventId: string): Promise<void> {
-    await this.db('events')
-      .where({ id: eventId })
-      .increment('view_count', 1);
+    await this.db('events').where({ id: eventId }).increment('view_count', 1);
   }
 
   async incrementInterestCount(eventId: string): Promise<void> {
-    await this.db('events')
-      .where({ id: eventId })
-      .increment('interest_count', 1);
+    await this.db('events').where({ id: eventId }).increment('interest_count', 1);
   }
 
   async incrementShareCount(eventId: string): Promise<void> {
-    await this.db('events')
-      .where({ id: eventId })
-      .increment('share_count', 1);
+    await this.db('events').where({ id: eventId }).increment('share_count', 1);
   }
 
   private transformForDb(eventData: Partial<IEvent>): any {
     const dbData: any = {};
 
-    // Map all the fields from IEvent to database columns
     if (eventData.id !== undefined) dbData.id = eventData.id;
     if (eventData.tenant_id !== undefined) dbData.tenant_id = eventData.tenant_id;
     if (eventData.venue_id !== undefined) dbData.venue_id = eventData.venue_id;
@@ -256,7 +246,6 @@ export class EventModel extends BaseModel {
     if (eventData.is_featured !== undefined) dbData.is_featured = eventData.is_featured;
     if (eventData.priority_score !== undefined) dbData.priority_score = eventData.priority_score;
 
-    // Handle legacy image_url -> banner_image_url mapping
     if (eventData.image_url !== undefined) dbData.banner_image_url = eventData.image_url;
     if (eventData.banner_image_url !== undefined) dbData.banner_image_url = eventData.banner_image_url;
     if (eventData.thumbnail_image_url !== undefined) dbData.thumbnail_image_url = eventData.thumbnail_image_url;
@@ -272,6 +261,13 @@ export class EventModel extends BaseModel {
     if (eventData.collection_address !== undefined) dbData.collection_address = eventData.collection_address;
     if (eventData.mint_authority !== undefined) dbData.mint_authority = eventData.mint_authority;
     if (eventData.royalty_percentage !== undefined) dbData.royalty_percentage = eventData.royalty_percentage;
+
+    // New blockchain fields
+    if (eventData.event_pda !== undefined) dbData.event_pda = eventData.event_pda;
+    if (eventData.artist_wallet !== undefined) dbData.artist_wallet = eventData.artist_wallet;
+    if (eventData.artist_percentage !== undefined) dbData.artist_percentage = eventData.artist_percentage;
+    if (eventData.venue_percentage !== undefined) dbData.venue_percentage = eventData.venue_percentage;
+    if (eventData.blockchain_status !== undefined) dbData.blockchain_status = eventData.blockchain_status;
 
     if (eventData.is_virtual !== undefined) dbData.is_virtual = eventData.is_virtual;
     if (eventData.is_hybrid !== undefined) dbData.is_hybrid = eventData.is_hybrid;
@@ -296,7 +292,6 @@ export class EventModel extends BaseModel {
     if (eventData.created_by !== undefined) dbData.created_by = eventData.created_by;
     if (eventData.updated_by !== undefined) dbData.updated_by = eventData.updated_by;
 
-    // Handle legacy category -> primary_category_id mapping
     if (eventData.category !== undefined) dbData.primary_category_id = eventData.category;
 
     return dbData;
@@ -305,7 +300,6 @@ export class EventModel extends BaseModel {
   private transformFromDb(dbEvent: any): IEvent {
     if (!dbEvent) return dbEvent;
 
-    // Parse JSON fields
     if (typeof dbEvent.image_gallery === 'string') {
       try {
         dbEvent.image_gallery = JSON.parse(dbEvent.image_gallery);
@@ -343,6 +337,12 @@ export class EventModel extends BaseModel {
       collection_address: dbEvent.collection_address,
       mint_authority: dbEvent.mint_authority,
       royalty_percentage: dbEvent.royalty_percentage ? parseFloat(dbEvent.royalty_percentage) : undefined,
+      // New blockchain fields
+      event_pda: dbEvent.event_pda,
+      artist_wallet: dbEvent.artist_wallet,
+      artist_percentage: dbEvent.artist_percentage ? parseFloat(dbEvent.artist_percentage) : undefined,
+      venue_percentage: dbEvent.venue_percentage ? parseFloat(dbEvent.venue_percentage) : undefined,
+      blockchain_status: dbEvent.blockchain_status,
       is_virtual: dbEvent.is_virtual,
       is_hybrid: dbEvent.is_hybrid,
       streaming_platform: dbEvent.streaming_platform,
@@ -363,7 +363,6 @@ export class EventModel extends BaseModel {
       created_at: dbEvent.created_at,
       updated_at: dbEvent.updated_at,
       deleted_at: dbEvent.deleted_at,
-      // Legacy compatibility fields
       image_url: dbEvent.banner_image_url,
       category: dbEvent.primary_category_id,
     };

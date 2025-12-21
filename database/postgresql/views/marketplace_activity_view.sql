@@ -2,6 +2,7 @@
 -- Secondary market analytics view for TicketToken platform
 -- Built incrementally to ensure each phase works before adding complexity
 -- Generated on: Sat Jul 19 00:29:46 EDT 2025
+-- CORRECTED: Thu Nov 28 2025 - Fixed 11 column mismatches
 
 -- Fix Phase 2: Listing details with correct columns
 DROP VIEW IF EXISTS marketplace_activity_with_listings CASCADE;
@@ -10,14 +11,14 @@ CREATE OR REPLACE VIEW marketplace_activity_with_listings AS
 SELECT 
     mab.*,
     l.price as listing_price,
-    l.original_price,
-    l.listing_type,
+    l.original_face_value as original_price,  -- FIX 1: Correct column name
+    NULL::text as listing_type,                -- FIX 2: Stub v2 feature (not implemented)
     l.status as listing_status,
     l.listed_at as listing_created_at,
-    l.is_featured,
-    l.accepts_offers,
+    false as is_featured,                      -- FIX 3: Stub v2 feature (not implemented)
+    false as accepts_offers,                   -- FIX 4: Stub v2 feature (not implemented)
     l.view_count,
-    l.offer_count,
+    0 as offer_count,                          -- FIX 5: Stub v2 feature (not implemented)
     -- Price comparison
     mab.sale_price - l.price as price_difference,
     CASE 
@@ -26,7 +27,7 @@ SELECT
         ELSE 0 
     END as price_change_percent
 FROM marketplace_activity_basic mab
-LEFT JOIN listings l ON mab.listing_id = l.id;
+LEFT JOIN marketplace_listings l ON mab.listing_id = l.id;
 
 -- Test with: SELECT COUNT(*) FROM marketplace_activity_with_listings;
 
@@ -57,30 +58,43 @@ LEFT JOIN users seller ON mawl.seller_id = seller.id;
 -- =====================================================================
 -- PHASE 4: ADD FEE AND ROYALTY CALCULATIONS
 -- Include all marketplace fees and seller payouts
+-- CORRECTED: Join to platform_fees table for fee data
 -- =====================================================================
 
 CREATE OR REPLACE VIEW marketplace_activity_with_fees AS
 SELECT 
     mawu.*,
-    -- Fees from marketplace_transactions
-    mt.platform_fee,
-    mt.platform_fee_percentage,
-    mt.payment_processing_fee,
-    mt.blockchain_fee,
-    mt.total_fees,
-    mt.seller_payout,
+    -- Fees from platform_fees table (FIX 6, 7, 8: Get from correct table)
+    pf.platform_fee_amount as platform_fee,
+    pf.platform_fee_percentage,
+    pf.seller_payout,
+    -- Blockchain fee from marketplace_transfers (FIX 9: Correct column name)
+    mt.network_fee_usd as blockchain_fee,
+    -- Payment processing fee (FIX 10: Not implemented for blockchain marketplace)
+    0 as payment_processing_fee,
+    -- Total fees calculation (FIX 11: Calculate from available data)
+    COALESCE(pf.platform_fee_amount, 0) + 
+    COALESCE(pf.venue_fee_amount, 0) + 
+    COALESCE(mt.network_fee_usd, 0) as total_fees,
     -- Fee percentages
     CASE 
-        WHEN mawu.sale_price > 0 THEN (mt.total_fees / mawu.sale_price * 100)
+        WHEN mawu.sale_price > 0 THEN (
+            (COALESCE(pf.platform_fee_amount, 0) + 
+             COALESCE(pf.venue_fee_amount, 0) + 
+             COALESCE(mt.network_fee_usd, 0)) / mawu.sale_price * 100
+        )
         ELSE 0 
     END as total_fee_percent,
     -- Seller keeps percentage
     CASE 
-        WHEN mawu.sale_price > 0 THEN (mt.seller_payout / mawu.sale_price * 100)
+        WHEN mawu.sale_price > 0 THEN (
+            COALESCE(pf.seller_payout, 0) / mawu.sale_price * 100
+        )
         ELSE 0 
     END as seller_keep_percent
 FROM marketplace_activity_with_users mawu
-JOIN marketplace_transactions mt ON mawu.transaction_id = mt.id;
+LEFT JOIN marketplace_transfers mt ON mawu.transaction_id = mt.id
+LEFT JOIN platform_fees pf ON mt.id = pf.transfer_id;
 
 -- Test with: SELECT COUNT(*) FROM marketplace_activity_with_fees;
 
@@ -106,9 +120,9 @@ SELECT
         PARTITION BY mawf.sale_date
         ORDER BY mawf.sale_price DESC
     ) as daily_price_rank,
-    -- Average price by listing type
+    -- Average price by listing type (uses stubbed listing_type)
     AVG(mawf.sale_price) OVER (
-        PARTITION BY mawf.listing_type
+        PARTITION BY COALESCE(mawf.listing_type, 'fixed_price')
     ) as avg_price_by_type
 FROM marketplace_activity_with_fees mawf;
 
@@ -155,8 +169,8 @@ CREATE OR REPLACE VIEW marketplace_activity AS
 SELECT * FROM marketplace_activity_with_trends;
 
 -- Create indexes for better performance
-CREATE INDEX IF NOT EXISTS idx_marketplace_tx_created ON marketplace_transactions(created_at);
-CREATE INDEX IF NOT EXISTS idx_marketplace_tx_ticket ON marketplace_transactions(ticket_id);
+CREATE INDEX IF NOT EXISTS idx_marketplace_tx_created ON marketplace_transfers(created_at);
+CREATE INDEX IF NOT EXISTS idx_marketplace_tx_ticket ON marketplace_transfers(ticket_id);
 
 -- =====================================================================
 -- MATERIALIZED VIEW FOR PERFORMANCE
@@ -231,13 +245,22 @@ ORDER BY trade_count DESC;
 -- COMMENTS AND DOCUMENTATION
 -- =====================================================================
 
-COMMENT ON VIEW marketplace_activity IS 'Comprehensive marketplace activity view with user info, fees, volume analysis, and trend identification';
+COMMENT ON VIEW marketplace_activity IS 'Comprehensive marketplace activity view with user info, fees, volume analysis, and trend identification. CORRECTED 2025-11-28: Fixed 11 column mismatches (1 rename, 6 from platform_fees table, 4 v2 feature stubs)';
 COMMENT ON VIEW daily_marketplace_summary IS 'Daily aggregated marketplace metrics for reporting';
 COMMENT ON VIEW seller_performance IS 'Seller performance metrics including sales, revenue, and timing';
 COMMENT ON VIEW hot_tickets_report IS 'Identifies frequently traded tickets with price analysis';
 
 -- Test queries
 /*
+-- Verify all columns are accessible
+SELECT 
+    original_price, listing_type, is_featured, accepts_offers, offer_count,
+    platform_fee, platform_fee_percentage, payment_processing_fee, 
+    blockchain_fee, total_fees, seller_payout
+FROM marketplace_activity 
+LIMIT 1;
+
+-- Check fee data integrity
 SELECT COUNT(*) FROM marketplace_activity;
 SELECT * FROM daily_marketplace_summary LIMIT 5;
 SELECT * FROM seller_performance LIMIT 10;

@@ -28,12 +28,15 @@ export class TicketService {
     const id = uuidv4();
     const query = `
       INSERT INTO ticket_types (
-        id, tenant_id, event_id, name, description, price_cents,
-        quantity, available_quantity, max_per_purchase,
-        sale_start_date, sale_end_date, metadata
+        id, tenant_id, event_id, name, description, price,
+        quantity, available_quantity, max_purchase,
+        sale_start, sale_end, metadata
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
       RETURNING *
     `;
+
+    // Convert cents to dollars for DB (DB uses price as decimal)
+    const priceValue = data.priceCents ? data.priceCents / 100 : 0;
 
     const values = [
       id,
@@ -41,7 +44,7 @@ export class TicketService {
       data.eventId,
       data.name,
       data.description || null,
-      data.priceCents,
+      priceValue,
       data.quantity,
       data.quantity,
       data.maxPerPurchase,
@@ -58,7 +61,7 @@ export class TicketService {
     const query = `
       SELECT * FROM ticket_types
       WHERE event_id = $1 AND tenant_id = $2
-      ORDER BY price_cents ASC
+      ORDER BY price ASC
     `;
 
     const result = await DatabaseService.query<TicketType>(query, [eventId, tenantId]);
@@ -97,16 +100,21 @@ export class TicketService {
             const reservationId = uuidv4();
             const expiresAt = new Date(Date.now() + config.limits.reservationTimeout * 1000);
 
+            // Use tenant_id from request for security
+            const tenantId = purchaseRequest.tenantId;
+
             for (const ticketRequest of purchaseRequest.tickets) {
+              // SECURITY FIX: Include tenant_id in query to enforce tenant isolation
               const lockQuery = `
                 SELECT * FROM ticket_types
-                WHERE id = $1 AND event_id = $2
+                WHERE id = $1 AND event_id = $2 AND tenant_id = $3
                 FOR UPDATE
               `;
 
               const result = await client.query(lockQuery, [
                 ticketRequest.ticketTypeId,
-                purchaseRequest.eventId
+                purchaseRequest.eventId,
+                tenantId
               ]);
 
               if (result.rows.length === 0) {
@@ -114,6 +122,7 @@ export class TicketService {
               }
 
               const ticketType = result.rows[0];
+
               if (ticketType.available_quantity < ticketRequest.quantity) {
                 throw new ConflictError(`Not enough tickets available for ${ticketType.name}`);
               }
@@ -128,8 +137,8 @@ export class TicketService {
 
             const reservationQuery = `
               INSERT INTO reservations (
-                id, user_id, event_id, ticket_type_id, total_quantity, tickets, expires_at, status, type_name, created_at
-              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                id, tenant_id, user_id, event_id, ticket_type_id, quantity, total_quantity, tickets, expires_at, status, type_name, created_at
+              ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
               RETURNING *
             `;
 
@@ -139,13 +148,15 @@ export class TicketService {
 
             const reservationResult = await client.query(reservationQuery, [
               reservationId,
+              tenantId,
               purchaseRequest.userId,
               purchaseRequest.eventId,
               firstTicketType.ticketTypeId,
+              firstTicketType.quantity,
               totalQuantity,
               JSON.stringify(purchaseRequest.tickets),
               expiresAt,
-              'ACTIVE',
+              'pending',
               typeName,
               new Date()
             ]);
@@ -210,8 +221,9 @@ export class TicketService {
 
             const reservation = resResult.rows[0];
             const eventId = reservation.event_id;
+            const tenantId = reservation.tenant_id;
 
-            if (reservation.status !== 'ACTIVE') {
+            if (reservation.status !== 'pending') {
               throw new ConflictError('Reservation is no longer active');
             }
 
@@ -231,22 +243,27 @@ export class TicketService {
 
               for (let i = 0; i < quantity; i++) {
                 const ticketId = uuidv4();
+                const ticketNumber = `TKT-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 
                 const insertQuery = `
                   INSERT INTO tickets (
-                    id, event_id, ticket_type_id, user_id, status, price_cents,
+                    id, tenant_id, event_id, ticket_type_id, user_id, ticket_number, qr_code, status, price, price_cents,
                     is_transferable, transfer_count, payment_id, purchased_at
-                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, NOW())
+                  ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 0, $12, NOW())
                   RETURNING *
                 `;
 
                 const ticketResult = await client.query(insertQuery, [
                   ticketId,
+                  tenantId,
                   eventId,
                   ticketType.id,
                   reservation.user_id,
-                  'SOLD',
-                  ticketType.price_cents,
+                  ticketNumber,
+                  `QR-${ticketNumber}`,
+                  'active',
+                  ticketType.price,
+                  ticketType.price ? Math.round(ticketType.price * 100) : null,
                   true,
                   paymentId
                 ]);
@@ -261,7 +278,7 @@ export class TicketService {
             }
 
             await client.query(
-              `UPDATE reservations SET status = 'COMPLETED', updated_at = NOW() WHERE id = $1`,
+              `UPDATE reservations SET status = 'confirmed', updated_at = NOW() WHERE id = $1`,
               [reservationId]
             );
 
@@ -318,7 +335,7 @@ export class TicketService {
 
   async getTicket(ticketId: string, tenantId?: string): Promise<any> {
     const cacheKey = `ticket:${ticketId}`;
-    
+
     try {
       const cached = await RedisService.get(cacheKey);
       if (cached) {
@@ -336,7 +353,7 @@ export class TicketService {
     `;
 
     const params: any[] = [ticketId];
-    
+
     if (tenantId) {
       query += ' AND t.tenant_id = $2';
       params.push(tenantId);
@@ -373,7 +390,7 @@ export class TicketService {
     `;
 
     const params: any[] = [userId, tenantId];
-    
+
     if (eventId) {
       query += ' AND t.event_id = $3';
       params.push(eventId);
@@ -418,7 +435,7 @@ export class TicketService {
           return await DatabaseService.transaction(async (client) => {
             const resQuery = `
               SELECT * FROM reservations
-              WHERE id = $1 AND user_id = $2 AND status = 'ACTIVE'
+              WHERE id = $1 AND user_id = $2 AND status = 'pending'
               FOR UPDATE
             `;
             const resResult = await client.query(resQuery, [reservationId, userId]);
@@ -430,7 +447,7 @@ export class TicketService {
             const reservation = resResult.rows[0];
 
             await client.query(
-              `UPDATE reservations SET status = 'CANCELLED', updated_at = NOW() WHERE id = $1`,
+              `UPDATE reservations SET status = 'cancelled', updated_at = NOW() WHERE id = $1`,
               [reservationId]
             );
 
@@ -520,7 +537,7 @@ export class TicketService {
 
       const ticket = await this.getTicket(payload.ticketId);
 
-      const isValid = ticket.status === 'SOLD' && !ticket.used_at && !ticket.validated_at;
+      const isValid = ticket.status === 'active' && !ticket.used_at && !ticket.validated_at;
 
       return {
         valid: isValid,
@@ -531,6 +548,12 @@ export class TicketService {
         }
       };
     } catch (error) {
+      this.log.warn('QR validation failed', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        errorType: error instanceof Error ? error.name : typeof error,
+        qrDataLength: qrData?.length || 0
+      });
+
       return {
         valid: false,
         error: 'Invalid QR code'
@@ -562,23 +585,23 @@ export class TicketService {
       values.push(data.description);
     }
     if (data.priceCents !== undefined) {
-      updates.push(`price_cents = $${paramCount++}`);
-      values.push(data.priceCents);
+      updates.push(`price = $${paramCount++}`);
+      values.push(data.priceCents / 100);
     }
     if (data.quantity !== undefined) {
       updates.push(`quantity = $${paramCount++}`);
       values.push(data.quantity);
     }
     if (data.maxPerPurchase !== undefined) {
-      updates.push(`max_per_purchase = $${paramCount++}`);
+      updates.push(`max_purchase = $${paramCount++}`);
       values.push(data.maxPerPurchase);
     }
     if (data.saleStartDate !== undefined) {
-      updates.push(`sale_start_date = $${paramCount++}`);
+      updates.push(`sale_start = $${paramCount++}`);
       values.push(data.saleStartDate);
     }
     if (data.saleEndDate !== undefined) {
-      updates.push(`sale_end_date = $${paramCount++}`);
+      updates.push(`sale_end = $${paramCount++}`);
       values.push(data.saleEndDate);
     }
 
@@ -605,11 +628,11 @@ export class TicketService {
 
   private encryptData(data: string): string {
     const algorithm = 'aes-256-cbc';
-    
+
     if (!process.env.QR_ENCRYPTION_KEY) {
       throw new Error('QR_ENCRYPTION_KEY environment variable is required but not set');
     }
-    
+
     const key = Buffer.from(process.env.QR_ENCRYPTION_KEY);
     const iv = crypto.randomBytes(16);
 
@@ -622,11 +645,11 @@ export class TicketService {
 
   private decryptData(data: string): string {
     const algorithm = 'aes-256-cbc';
-    
+
     if (!process.env.QR_ENCRYPTION_KEY) {
       throw new Error('QR_ENCRYPTION_KEY environment variable is required but not set');
     }
-    
+
     const key = Buffer.from(process.env.QR_ENCRYPTION_KEY);
 
     const parts = data.split(':');

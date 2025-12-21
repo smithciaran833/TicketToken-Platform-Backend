@@ -105,7 +105,7 @@ export async function analyzeTable(tableName: string ): Promise<void> {
     await db.query(`ANALYZE ${tableName}`);
     logger.info(`Analyzed table: ${tableName}`);
   } catch (error) {
-    logger.error(`Failed to analyze table ${tableName}:`, error);
+    logger.error({ error }, `Failed to analyze table ${tableName}:`);
   }
 }
 
@@ -128,7 +128,7 @@ export async function getSlowQueries(limit: number = 10): Promise<any[]> {
     );
     return result.rows;
   } catch (error) {
-    logger.error('Failed to get slow queries:', error);
+    logger.error({ error }, 'Failed to get slow queries:');
     return [];
   }
 }
@@ -153,7 +153,7 @@ export async function getConnectionPoolStats(): Promise<{
 
     return result.rows[0] || { total: 0, idle: 0, waiting: 0 };
   } catch (error) {
-    logger.error('Failed to get connection pool stats:', error);
+    logger.error({ error }, 'Failed to get connection pool stats:');
     return { total: 0, idle: 0, waiting: 0 };
   }
 }
@@ -180,7 +180,7 @@ export async function vacuumAnalyzeTables(): Promise<void> {
       await db.query(`VACUUM ANALYZE ${table}`);
       logger.info(`Vacuumed table: ${table}`);
     } catch (error) {
-      logger.error(`Failed to vacuum table ${table}:`, error);
+      logger.error({ error }, `Failed to vacuum table ${table}:`);
     }
   }
 
@@ -203,7 +203,7 @@ export async function getTableSizes(): Promise<any[]> {
     `);
     return result.rows;
   } catch (error) {
-    logger.error('Failed to get table sizes:', error);
+    logger.error({ error }, 'Failed to get table sizes:');
     return [];
   }
 }
@@ -228,7 +228,7 @@ export async function getIndexUsageStats(tableName?: string): Promise<any[]> {
     `);
     return result.rows;
   } catch (error) {
-    logger.error('Failed to get index usage stats:', error);
+    logger.error({ error }, 'Failed to get index usage stats:');
     return [];
   }
 }
@@ -263,7 +263,7 @@ export async function getCacheStatistics(): Promise<{
       evictions: 0,
     };
   } catch (error) {
-    logger.error('Failed to get cache statistics:', error);
+    logger.error({ error }, 'Failed to get cache statistics:');
     return { hitRatio: 0, size: 0, evictions: 0 };
   }
 }
@@ -287,7 +287,7 @@ export async function getLongRunningQueries(minDuration: number = 5000): Promise
     );
     return result.rows;
   } catch (error) {
-    logger.error('Failed to get long-running queries:', error);
+    logger.error({ error }, 'Failed to get long-running queries:');
     return [];
   }
 }
@@ -301,7 +301,7 @@ export async function killQuery(pid: number): Promise<boolean> {
     logger.warn(`Killed query with PID: ${pid}`);
     return true;
   } catch (error) {
-    logger.error(`Failed to kill query ${pid}:`, error);
+    logger.error({ error }, `Failed to kill query ${pid}:`);
     return false;
   }
 }

@@ -1,7 +1,12 @@
 import type { Knex } from 'knex';
 import dotenv from 'dotenv';
+import pg from 'pg';
 
 dotenv.config();
+
+// Configure pg to parse NUMERIC and DECIMAL types as numbers instead of strings
+// Type IDs: 1700 = NUMERIC/DECIMAL
+pg.types.setTypeParser(1700, (val: string) => parseFloat(val));
 
 const config: { [key: string]: Knex.Config } = {
   development: {

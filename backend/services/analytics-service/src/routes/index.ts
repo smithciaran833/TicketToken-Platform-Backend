@@ -1,23 +1,26 @@
-import { Router } from 'express';
+import { FastifyInstance, FastifyPluginOptions } from 'fastify';
 import analyticsRoutes from './analytics.routes';
 
-const router = Router();
+export default async function routes(
+  fastify: FastifyInstance,
+  opts: FastifyPluginOptions
+): Promise<void> {
+  // Mount analytics routes
+  await fastify.register(analyticsRoutes, { prefix: '/' });
 
-// Mount analytics routes
-router.use('/', analyticsRoutes);
+  // Cache management endpoints
+  fastify.get('/cache/stats', async (req, reply) => {
+    const { serviceCache } = require('../services/cache-integration');
+    const stats = serviceCache.getStats();
+    return reply.send(stats);
+  });
+
+  fastify.delete('/cache/flush', async (req, reply) => {
+    const { serviceCache } = require('../services/cache-integration');
+    await serviceCache.flush();
+    return reply.send({ success: true, message: 'Cache flushed' });
+  });
+}
 
 // Export as named export to match what app.ts expects
-export { router };
-
-// Cache management endpoints
-router.get('/cache/stats', async (req, res) => {
-  const { serviceCache } = require('../services/cache-integration');
-  const stats = serviceCache.getStats();
-  res.json(stats);
-});
-
-router.delete('/cache/flush', async (req, res) => {
-  const { serviceCache } = require('../services/cache-integration');
-  await serviceCache.flush();
-  res.json({ success: true, message: 'Cache flushed' });
-});
+export { routes as router };

@@ -1,15 +1,8 @@
-import { Queue } from 'bull';
 import { PERSISTENCE_TIERS } from '../config/constants';
 
 export interface QueueConfig {
   name: string;
   persistenceTier: keyof typeof PERSISTENCE_TIERS;
-  redis: {
-    host: string;
-    port: number;
-    password?: string;
-    db?: number;
-  };
   defaultJobOptions: {
     attempts: number;
     backoff: {

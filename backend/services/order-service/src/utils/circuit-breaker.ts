@@ -101,3 +101,17 @@ export class CircuitBreaker {
     logger.info(`Circuit breaker ${this.name} manually reset`);
   }
 }
+
+/**
+ * Factory function to create a circuit breaker wrapper around an async function
+ */
+export function createCircuitBreaker<T extends (...args: any[]) => Promise<any>>(
+  fn: T,
+  options: Partial<CircuitBreakerOptions> & { name: string }
+): T {
+  const breaker = new CircuitBreaker(options.name, options);
+  
+  return ((...args: Parameters<T>) => {
+    return breaker.execute(() => fn(...args));
+  }) as T;
+}

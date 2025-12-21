@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import logger from './utils/logger';
 import { register } from './utils/metrics';
 import { transferRoutes } from './routes/transfer.routes';
+import { setTenantContext } from './middleware/tenant-context';
 
 /**
  * APPLICATION SETUP
@@ -23,11 +24,28 @@ export async function createApp(pool: Pool) {
     genReqId: () => uuidv4()
   });
 
+  // Make pool available to middleware
+  app.decorate('db', pool);
+
   // Security & Rate Limiting
   await app.register(helmet);
   await app.register(rateLimit, {
     max: 100,
     timeWindow: '1 minute'
+  });
+
+  // ====================================
+  // TENANT ISOLATION MIDDLEWARE
+  // ====================================
+  // This middleware sets the PostgreSQL session variable for Row Level Security
+  // IMPORTANT: Register AFTER authentication middleware (when added)
+  app.addHook('onRequest', async (request, reply) => {
+    try {
+      await setTenantContext(request, reply);
+    } catch (error) {
+      logger.error({ error }, 'Failed to set tenant context');
+      // Allow request to proceed - RLS will block unauthorized access
+    }
   });
 
   // Health Checks

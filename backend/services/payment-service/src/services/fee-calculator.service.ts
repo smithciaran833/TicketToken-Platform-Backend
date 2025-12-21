@@ -1,3 +1,14 @@
+/**
+ * SIMPLE FEE CALCULATOR - For UI Preview
+ * 
+ * This is a lightweight fee calculator for frontend fee estimates.
+ * Does NOT include tax or blockchain gas fees.
+ * 
+ * For actual payment processing, use core/fee-calculator.service.ts
+ * 
+ * @see docs/FEE_CALCULATOR_ARCHITECTURE.md
+ */
+
 import axios from 'axios';
 import { logger } from '../utils/logger';
 

@@ -123,7 +123,7 @@ export class VenueService {
       // Still need to check access for cached venues
       const hasAccess = await this.checkVenueAccess(venueId, userId);
       if (!hasAccess) {
-        throw new Error('Access denied');
+        throw new ForbiddenError('Access denied to this venue');
       }
       return JSON.parse(cached);
     }
@@ -140,7 +140,7 @@ export class VenueService {
     // NOW check access permission for existing venue
     const hasAccess = await this.checkVenueAccess(venueId, userId);
     if (!hasAccess) {
-      throw new Error('Access denied');
+      throw new ForbiddenError('Access denied to this venue');
     }
 
     // Cache the venue since it exists and user has access
@@ -155,7 +155,7 @@ export class VenueService {
     // Check permission
     const hasPermission = await staffModel.hasPermission(venueId, userId, 'venue:update');
     if (!hasPermission) {
-      throw new Error('Permission denied');
+      throw new ForbiddenError('Permission denied');
     }
 
     // Check if slug is being updated and is unique
@@ -209,6 +209,9 @@ export class VenueService {
 
     await venueModel.softDelete(venueId);
 
+    // Log venue deletion
+    await this.auditLogger.log('venue_deleted', userId, venueId);
+
     // Clear all caches
     await this.clearVenueCache(venueId);
 
@@ -257,11 +260,11 @@ export class VenueService {
       this.logger.debug('Checking venue access', { venueId, userId });
 
       const staffMember = await staffModel.findByVenueAndUser(venueId, userId);
-      this.logger.debug('Staff member lookup result', { 
-        venueId, 
-        userId, 
+      this.logger.debug('Staff member lookup result', {
+        venueId,
+        userId,
         hasStaffMember: !!staffMember,
-        isActive: staffMember?.is_active 
+        isActive: staffMember?.is_active
       });
 
       if (!staffMember || !staffMember.is_active) {
@@ -270,17 +273,17 @@ export class VenueService {
       }
 
       const venue = await venueModel.findById(venueId);
-      this.logger.debug('Venue lookup result', { 
-        venueId, 
+      this.logger.debug('Venue lookup result', {
+        venueId,
         venueExists: !!venue,
-        venueStatus: venue?.status 
+        venueStatus: venue?.status
       });
 
       if (!venue || venue.status !== 'ACTIVE') {
-        this.logger.debug('Access denied: venue not found or inactive', { 
-          venueId, 
+        this.logger.debug('Access denied: venue not found or inactive', {
+          venueId,
           venueExists: !!venue,
-          status: venue?.status 
+          status: venue?.status
         });
         return false;
       }
@@ -288,9 +291,9 @@ export class VenueService {
       this.logger.debug('Access granted', { venueId, userId });
       return true;
     } catch (error) {
-      this.logger.error('Error checking venue access', { 
-        error, 
-        venueId, 
+      this.logger.error('Error checking venue access', {
+        error,
+        venueId,
         userId,
         errorMessage: error instanceof Error ? error.message : 'Unknown error'
       });
@@ -456,18 +459,20 @@ export class VenueService {
 
   private async canDeleteVenue(venueId: string): Promise<{ allowed: boolean; reason?: string }> {
     try {
-      // Check for active or future events
-      const activeEvents = await this.db('events')
-        .where('venue_id', venueId)
-        .where('event_date', '>=', new Date())
-        .whereNull('deleted_at')
+      // Check for active or future events via event_schedules
+      const activeEvents = await this.db('event_schedules')
+        .join('events', 'event_schedules.event_id', 'events.id')
+        .where('events.venue_id', venueId)
+        .where('event_schedules.starts_at', '>=', new Date())
+        .whereNull('events.deleted_at')
+        .whereNull('event_schedules.deleted_at')
         .count('* as count')
         .first();
 
       if (activeEvents && parseInt(activeEvents.count as string) > 0) {
-        this.logger.warn('Cannot delete venue: has upcoming events', { 
-          venueId, 
-          eventCount: activeEvents.count 
+        this.logger.warn('Cannot delete venue: has upcoming events', {
+          venueId,
+          eventCount: activeEvents.count
         });
         return {
           allowed: false,
@@ -475,42 +480,28 @@ export class VenueService {
         };
       }
 
-      // Check for pending or confirmed orders for events at this venue
-      const activeOrders = await this.db('orders')
-        .join('events', 'orders.event_id', 'events.id')
-        .where('events.venue_id', venueId)
-        .whereIn('orders.status', ['pending', 'confirmed', 'paid'])
-        .whereNull('orders.deleted_at')
-        .count('* as count')
-        .first();
-
-      if (activeOrders && parseInt(activeOrders.count as string) > 0) {
-        this.logger.warn('Cannot delete venue: has active orders', { 
-          venueId, 
-          orderCount: activeOrders.count 
-        });
-        return {
-          allowed: false,
-          reason: 'Venue has active ticket orders. Please process or cancel all pending orders before deletion.'
-        };
-      }
+      // NOTE: Order checking removed - this is cross-service concern
+      // The event-service and order-service should handle order validation
+      // Venue service only validates venue-specific constraints
 
       // Check for events in the past 90 days (for audit/compliance reasons)
       const recentPastDate = new Date();
       recentPastDate.setDate(recentPastDate.getDate() - 90);
-      
-      const recentEvents = await this.db('events')
-        .where('venue_id', venueId)
-        .where('event_date', '>=', recentPastDate)
-        .where('event_date', '<', new Date())
-        .whereNull('deleted_at')
+
+      const recentEvents = await this.db('event_schedules')
+        .join('events', 'event_schedules.event_id', 'events.id')
+        .where('events.venue_id', venueId)
+        .where('event_schedules.starts_at', '>=', recentPastDate)
+        .where('event_schedules.starts_at', '<', new Date())
+        .whereNull('events.deleted_at')
+        .whereNull('event_schedules.deleted_at')
         .count('* as count')
         .first();
 
       if (recentEvents && parseInt(recentEvents.count as string) > 0) {
-        this.logger.warn('Cannot delete venue: has recent past events', { 
-          venueId, 
-          eventCount: recentEvents.count 
+        this.logger.warn('Cannot delete venue: has recent past events', {
+          venueId,
+          eventCount: recentEvents.count
         });
         return {
           allowed: false,

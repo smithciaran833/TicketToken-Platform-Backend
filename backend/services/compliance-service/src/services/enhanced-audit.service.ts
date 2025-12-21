@@ -49,7 +49,7 @@ export class EnhancedAuditService {
       ]
     );
 
-    logger.info(`Audit log: ${entry.action} on ${entry.resource}`, entry);
+    logger.info({ entry }, `Audit log: ${entry.action} on ${entry.resource}`);
   }
 
   /**

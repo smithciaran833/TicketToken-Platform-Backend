@@ -13,9 +13,9 @@ CREATE TRIGGER audit_venues_trigger
     FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
 
 -- Financial transactions
-DROP TRIGGER IF EXISTS audit_transactions_trigger ON transactions;
+DROP TRIGGER IF EXISTS audit_transactions_trigger ON payment_transactions;
 CREATE TRIGGER audit_transactions_trigger
-    AFTER INSERT OR UPDATE OR DELETE ON transactions
+    AFTER INSERT OR UPDATE OR DELETE ON payment_transactions
     FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
 
 -- Tickets (for fraud prevention)
@@ -25,9 +25,7 @@ CREATE TRIGGER audit_tickets_trigger
     FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
 
 -- KYC records
-DROP TRIGGER IF EXISTS audit_kyc_trigger ON kyc_records;
 CREATE TRIGGER audit_kyc_trigger
-    AFTER INSERT OR UPDATE OR DELETE ON kyc_records
     FOR EACH ROW EXECUTE FUNCTION audit_trigger_function();
 
 -- Payment methods (PCI compliance)

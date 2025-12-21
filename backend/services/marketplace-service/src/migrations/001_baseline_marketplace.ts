@@ -49,12 +49,20 @@ export async function up(knex: Knex): Promise<void> {
     table.integer('view_count').defaultTo(0);
     table.integer('favorite_count').defaultTo(0);
 
+    // Payment Methods (for Stripe Connect fiat support)
+    table.boolean('accepts_fiat_payment').defaultTo(false);
+    table.boolean('accepts_crypto_payment').defaultTo(true);
+
     // Standard timestamps
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true }); // Soft delete
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for marketplace_listings
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_listings_tenant_id ON marketplace_listings(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_listings_ticket_id ON marketplace_listings(ticket_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_listings_seller_id ON marketplace_listings(seller_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_listings_event_id ON marketplace_listings(event_id)');
@@ -106,12 +114,23 @@ export async function up(knex: Knex): Promise<void> {
     table.decimal('network_fee', 20, 6); // Blockchain fee in smallest unit
     table.integer('network_fee_usd'); // INTEGER CENTS
 
+    // Fiat Payment Support (Stripe Connect)
+    table.string('payment_method', 20).defaultTo('crypto'); // 'crypto' or 'fiat'
+    table.string('fiat_currency', 3).nullable(); // 'USD', 'EUR', etc.
+    table.string('stripe_payment_intent_id', 255).nullable();
+    table.string('stripe_transfer_id', 255).nullable();
+    table.integer('stripe_application_fee_amount').nullable(); // INTEGER CENTS
+
     // Standard timestamps
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true }); // Soft delete
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for marketplace_transfers
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_tenant_id ON marketplace_transfers(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_listing_id ON marketplace_transfers(listing_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_buyer_id ON marketplace_transfers(buyer_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_seller_id ON marketplace_transfers(seller_id)');
@@ -119,6 +138,14 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_event_id ON marketplace_transfers(event_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_buyer_status ON marketplace_transfers(buyer_id, status)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_seller_status ON marketplace_transfers(seller_id, status)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_stripe_payment_intent ON marketplace_transfers(stripe_payment_intent_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_transfers_payment_method ON marketplace_transfers(payment_method)');
+
+  // Add check constraint for payment methods
+  await knex.raw(`
+    ALTER TABLE marketplace_transfers ADD CONSTRAINT chk_marketplace_transfers_payment_method
+    CHECK (payment_method IN ('crypto', 'fiat'))
+  `);
 
   console.log('✅ marketplace_transfers table created');
 
@@ -150,9 +177,12 @@ export async function up(knex: Knex): Promise<void> {
     // Standard timestamps
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for platform_fees
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_platform_fees_tenant_id ON platform_fees(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_platform_fees_transfer_id ON platform_fees(transfer_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_platform_fees_platform_collected ON platform_fees(platform_fee_collected)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_platform_fees_venue_paid ON platform_fees(venue_fee_paid)');
@@ -199,7 +229,11 @@ export async function up(knex: Knex): Promise<void> {
     // Standard timestamps
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
+
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_venue_marketplace_settings_tenant_id ON venue_marketplace_settings(tenant_id)');
 
   console.log('✅ venue_marketplace_settings table created');
 
@@ -224,9 +258,12 @@ export async function up(knex: Knex): Promise<void> {
 
     // Timestamp
     table.timestamp('changed_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for marketplace_price_history
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_price_history_tenant_id ON marketplace_price_history(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_price_history_listing_id ON marketplace_price_history(listing_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_price_history_event_id ON marketplace_price_history(event_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_price_history_changed_at ON marketplace_price_history(changed_at)');
@@ -274,15 +311,44 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('filed_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for marketplace_disputes
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_disputes_tenant_id ON marketplace_disputes(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_disputes_transfer_id ON marketplace_disputes(transfer_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_disputes_listing_id ON marketplace_disputes(listing_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_disputes_filed_by ON marketplace_disputes(filed_by)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_disputes_status ON marketplace_disputes(status)');
 
   console.log('✅ marketplace_disputes table created');
+
+  // ==========================================
+  // 6.5. DISPUTE_EVIDENCE TABLE
+  // ==========================================
+  await knex.schema.createTableIfNotExists('dispute_evidence', (table) => {
+    table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('dispute_id').notNullable();
+    table.uuid('submitted_by').notNullable();
+
+    // Evidence Details
+    table.string('evidence_type', 100).notNullable();
+    table.text('content').notNullable();
+    table.jsonb('metadata');
+
+    // Timestamp
+    table.timestamp('submitted_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
+  });
+
+  // Indexes for dispute_evidence
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_dispute_evidence_tenant_id ON dispute_evidence(tenant_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_dispute_evidence_dispute_id ON dispute_evidence(dispute_id)');
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_dispute_evidence_submitted_by ON dispute_evidence(submitted_by)');
+
+  console.log('✅ dispute_evidence table created');
 
   // ==========================================
   // 7. TAX_TRANSACTIONS TABLE
@@ -316,9 +382,12 @@ export async function up(knex: Knex): Promise<void> {
     // Timestamps
     table.timestamp('transaction_date', { useTz: true }).notNullable();
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for tax_transactions
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_tax_transactions_tenant_id ON tax_transactions(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_tax_transactions_transfer_id ON tax_transactions(transfer_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_tax_transactions_seller_id ON tax_transactions(seller_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_tax_transactions_tax_year ON tax_transactions(tax_year)');
@@ -343,9 +412,12 @@ export async function up(knex: Knex): Promise<void> {
 
     // Additional Metadata
     table.jsonb('metadata').defaultTo('{}');
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for anti_bot_activities
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_activities_tenant_id ON anti_bot_activities(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_activities_user_id ON anti_bot_activities(user_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_activities_timestamp ON anti_bot_activities(timestamp)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_activities_user_action ON anti_bot_activities(user_id, action_type)');
@@ -366,9 +438,12 @@ export async function up(knex: Knex): Promise<void> {
 
     // Timestamp
     table.timestamp('flagged_at', { useTz: true }).defaultTo(knex.fn.now());
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for anti_bot_violations
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_violations_tenant_id ON anti_bot_violations(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_violations_user_id ON anti_bot_violations(user_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_violations_severity ON anti_bot_violations(severity)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_anti_bot_violations_flagged_at ON anti_bot_violations(flagged_at)');
@@ -393,9 +468,12 @@ export async function up(knex: Knex): Promise<void> {
 
     // Status
     table.boolean('is_active').defaultTo(true);
+
+    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Indexes for marketplace_blacklist
+  await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_blacklist_tenant_id ON marketplace_blacklist(tenant_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_blacklist_user_id ON marketplace_blacklist(user_id)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_blacklist_wallet_address ON marketplace_blacklist(wallet_address)');
   await knex.raw('CREATE INDEX IF NOT EXISTS idx_marketplace_blacklist_is_active ON marketplace_blacklist(is_active)');
@@ -484,16 +562,133 @@ export async function up(knex: Knex): Promise<void> {
 
   console.log('✅ get_user_active_listings_count() function created');
 
+  // ==========================================
+  // ROW LEVEL SECURITY
+  // ==========================================
+  await knex.raw('ALTER TABLE marketplace_listings ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_transfers ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE platform_fees ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE venue_marketplace_settings ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_price_history ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_disputes ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE dispute_evidence ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE tax_transactions ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE anti_bot_activities ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE anti_bot_violations ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_blacklist ENABLE ROW LEVEL SECURITY');
+
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON marketplace_listings USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON marketplace_transfers USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON platform_fees USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON venue_marketplace_settings USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON marketplace_price_history USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON marketplace_disputes USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON dispute_evidence USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON tax_transactions USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON anti_bot_activities USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON anti_bot_violations USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+  await knex.raw(`CREATE POLICY tenant_isolation_policy ON marketplace_blacklist USING (tenant_id::text = current_setting('app.current_tenant', true))`);
+
+  console.log('✅ RLS enabled on all tables');
+
+  // ==========================================
+  // FOREIGN KEY CONSTRAINTS
+  // ==========================================
+  console.log('');
+  console.log('🔗 Adding foreign key constraints...');
+
+  // Internal FKs
+  await knex.schema.alterTable('marketplace_transfers', (table) => {
+    table.foreign('listing_id').references('id').inTable('marketplace_listings').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('platform_fees', (table) => {
+    table.foreign('transfer_id').references('id').inTable('marketplace_transfers').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('marketplace_price_history', (table) => {
+    table.foreign('listing_id').references('id').inTable('marketplace_listings').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('marketplace_disputes', (table) => {
+    table.foreign('transfer_id').references('id').inTable('marketplace_transfers').onDelete('CASCADE');
+    table.foreign('listing_id').references('id').inTable('marketplace_listings').onDelete('RESTRICT');
+  });
+  
+  await knex.schema.alterTable('dispute_evidence', (table) => {
+    table.foreign('dispute_id').references('id').inTable('marketplace_disputes').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('tax_transactions', (table) => {
+    table.foreign('transfer_id').references('id').inTable('marketplace_transfers').onDelete('CASCADE');
+  });
+
+  // Cross-service FKs
+  await knex.schema.alterTable('marketplace_listings', (table) => {
+    table.foreign('ticket_id').references('id').inTable('tickets').onDelete('CASCADE');
+    table.foreign('seller_id').references('id').inTable('users').onDelete('RESTRICT');
+    table.foreign('event_id').references('id').inTable('events').onDelete('RESTRICT');
+    table.foreign('venue_id').references('id').inTable('venues').onDelete('RESTRICT');
+    table.foreign('approved_by').references('id').inTable('users').onDelete('SET NULL');
+  });
+  
+  await knex.schema.alterTable('marketplace_transfers', (table) => {
+    table.foreign('buyer_id').references('id').inTable('users').onDelete('RESTRICT');
+    table.foreign('seller_id').references('id').inTable('users').onDelete('RESTRICT');
+    table.foreign('event_id').references('id').inTable('events').onDelete('RESTRICT');
+    table.foreign('venue_id').references('id').inTable('venues').onDelete('RESTRICT');
+  });
+  
+  await knex.schema.alterTable('venue_marketplace_settings', (table) => {
+    table.foreign('venue_id').references('id').inTable('venues').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('marketplace_price_history', (table) => {
+    table.foreign('event_id').references('id').inTable('events').onDelete('RESTRICT');
+    table.foreign('changed_by').references('id').inTable('users').onDelete('SET NULL');
+  });
+  
+  await knex.schema.alterTable('marketplace_disputes', (table) => {
+    table.foreign('filed_by').references('id').inTable('users').onDelete('RESTRICT');
+    table.foreign('filed_against').references('id').inTable('users').onDelete('RESTRICT');
+    table.foreign('resolved_by').references('id').inTable('users').onDelete('SET NULL');
+  });
+  
+  await knex.schema.alterTable('dispute_evidence', (table) => {
+    table.foreign('submitted_by').references('id').inTable('users').onDelete('RESTRICT');
+  });
+  
+  await knex.schema.alterTable('tax_transactions', (table) => {
+    table.foreign('seller_id').references('id').inTable('users').onDelete('RESTRICT');
+  });
+  
+  await knex.schema.alterTable('anti_bot_activities', (table) => {
+    table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('anti_bot_violations', (table) => {
+    table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
+  });
+  
+  await knex.schema.alterTable('marketplace_blacklist', (table) => {
+    table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
+    table.foreign('banned_by').references('id').inTable('users').onDelete('SET NULL');
+  });
+
+  console.log('✅ All foreign key constraints added (7 internal + 22 cross-service = 29 total)');
+
+  console.log('');
   console.log('🎉 Marketplace Service baseline migration complete!');
-  console.log('📊 Tables created: 10 tables + 3 stored procedures');
+  console.log('📊 Tables created: 11 tables + 3 stored procedures');
   console.log('');
   console.log('Created Tables:');
-  console.log('  ✅ marketplace_listings (main listings table)');
-  console.log('  ✅ marketplace_transfers (purchase/transfer records)');
+  console.log('  ✅ marketplace_listings (main listings table - with fiat payment support)');
+  console.log('  ✅ marketplace_transfers (purchase/transfer records - with Stripe tracking)');
   console.log('  ✅ platform_fees (fee breakdown)');
   console.log('  ✅ venue_marketplace_settings (venue configuration)');
   console.log('  ✅ marketplace_price_history (price change tracking)');
   console.log('  ✅ marketplace_disputes (dispute management)');
+  console.log('  ✅ dispute_evidence (dispute evidence tracking)');
   console.log('  ✅ tax_transactions (tax reporting)');
   console.log('  ✅ anti_bot_activities (bot detection logs)');
   console.log('  ✅ anti_bot_violations (flagged suspicious activity)');
@@ -503,9 +698,37 @@ export async function up(knex: Knex): Promise<void> {
   console.log('  ✅ expire_marketplace_listings() (auto-expire listings)');
   console.log('  ✅ calculate_marketplace_fees() (fee calculation)');
   console.log('  ✅ get_user_active_listings_count() (listing count)');
+  console.log('');
+  console.log('🔗 Foreign Keys: 29 constraints added');
+  console.log('💳 Fiat Payment Support: Enabled via Stripe Connect (destination charges)');
 }
 
 export async function down(knex: Knex): Promise<void> {
+  // Drop RLS policies
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON marketplace_blacklist');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON anti_bot_violations');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON anti_bot_activities');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON tax_transactions');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON dispute_evidence');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON marketplace_disputes');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON marketplace_price_history');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON venue_marketplace_settings');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON platform_fees');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON marketplace_transfers');
+  await knex.raw('DROP POLICY IF EXISTS tenant_isolation_policy ON marketplace_listings');
+
+  await knex.raw('ALTER TABLE marketplace_blacklist DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE anti_bot_violations DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE anti_bot_activities DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE tax_transactions DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE dispute_evidence DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_disputes DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_price_history DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE venue_marketplace_settings DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE platform_fees DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_transfers DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE marketplace_listings DISABLE ROW LEVEL SECURITY');
+
   // Drop functions first
   await knex.raw('DROP FUNCTION IF EXISTS get_user_active_listings_count(UUID, UUID)');
   await knex.raw('DROP FUNCTION IF EXISTS calculate_marketplace_fees(INTEGER, DECIMAL, DECIMAL)');
@@ -516,6 +739,7 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('anti_bot_violations');
   await knex.schema.dropTableIfExists('anti_bot_activities');
   await knex.schema.dropTableIfExists('tax_transactions');
+  await knex.schema.dropTableIfExists('dispute_evidence');
   await knex.schema.dropTableIfExists('marketplace_disputes');
   await knex.schema.dropTableIfExists('marketplace_price_history');
   await knex.schema.dropTableIfExists('venue_marketplace_settings');

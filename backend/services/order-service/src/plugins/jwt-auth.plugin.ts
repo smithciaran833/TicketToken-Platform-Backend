@@ -1,7 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from '@fastify/jwt';
-import { AuthenticatedUser } from '../types/fastify';
 
 export interface JWTPayload {
   sub: string;
@@ -12,6 +11,15 @@ export interface JWTPayload {
   permissions?: string[];
   iat: number;
   exp: number;
+}
+
+interface AuthenticatedUser {
+  id: string;
+  tenantId: string;
+  tenantName?: string;
+  email: string;
+  role: string;
+  permissions: string[];
 }
 
 async function jwtAuthPlugin(fastify: FastifyInstance) {
@@ -27,8 +35,9 @@ async function jwtAuthPlugin(fastify: FastifyInstance) {
   fastify.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       await request.jwtVerify();
-      
-      const payload = request.user as JWTPayload;
+
+      // Extract payload from JWT
+      const payload = request.user as unknown as JWTPayload;
 
       // Attach typed user to request
       const authenticatedUser: AuthenticatedUser = {

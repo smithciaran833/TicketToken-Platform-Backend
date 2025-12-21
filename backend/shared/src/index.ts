@@ -11,12 +11,20 @@ export { createAxiosInstance } from './http';
 // Cache utilities
 export { createCache } from './cache/src/index';
 
+// Redis utilities (PHASE 1 - Complete Redis Implementation)
+export * from './redis';
+
+// MongoDB utilities
+export * from '../mongodb/src';
+
+// Content Reviews - Services only (types already exported by MongoDB)
+export { ReviewService, RatingService, ModerationService } from '../content-reviews/src';
+
 // ============================================================================
 // SECURITY
 // ============================================================================
 
 // Audit logging (PHASE 0 - Secured)
-export { AuditLogger } from '../security/audit-logger';
 
 // Note: Framework-specific middleware (helmet, rate limiters, authenticate) removed
 // Services should implement their own middleware using their chosen framework
@@ -28,10 +36,8 @@ export { AuditService, auditService, auditMiddleware } from './services/audit.se
 export { PIISanitizer } from './utils/pii-sanitizer';
 
 // Input validation utilities (PHASE 1 - Critical Security)
-export { InputValidator } from '../security/validators/input-validator';
 
 // Cryptography utilities (PHASE 1 - Critical Security)
-export { CryptoService } from '../security/utils/crypto-service';
 
 // ============================================================================
 // DISTRIBUTED SYSTEMS
@@ -52,6 +58,9 @@ export {
   withLock,
   withLockRetry,
   tryLock,
+  acquireLock,
+  releaseLock,
+  extendLock,
   LockKeys,
   LockMetrics,
   redlock,
@@ -77,3 +86,46 @@ export { secretsManager, SecretsManager } from '../utils/secrets-manager';
 // Secrets configuration mapping
 export { SECRETS_CONFIG } from '../config/secrets.config';
 export type { SecretKey } from '../config/secrets.config';
+
+// ============================================================================
+// BLOCKCHAIN CLIENT
+// ============================================================================
+
+// Blockchain client for interacting with TicketToken smart contract
+export { BlockchainClient } from './blockchain/client';
+
+// Blockchain types
+export type {
+  BlockchainConfig,
+  CreateEventParams,
+  CreateEventResult,
+  RegisterTicketParams,
+  RegisterTicketResult,
+  TransferTicketParams,
+  VerifyTicketParams,
+  RoyaltyInfo,
+  TicketInfo,
+  EventInfo,
+} from './blockchain/types';
+
+// Blockchain errors
+export {
+  BlockchainError,
+  TransactionError,
+  AccountNotFoundError,
+  ConfigurationError,
+  TicketAlreadyUsedError,
+  InvalidRoyaltyError,
+} from './blockchain/types';
+
+// PDA derivation helpers
+export {
+  derivePlatformPDA,
+  deriveVenuePDA,
+  deriveEventPDA,
+  deriveTicketPDA,
+  deriveReentrancyGuardPDA,
+  deriveListingReentrancyGuardPDA,
+  toBase58,
+  fromBase58,
+} from './blockchain/pda';
