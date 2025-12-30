@@ -138,17 +138,15 @@ function SideNav() {
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Settings</h1>
         <p className="text-sm text-gray-500 mb-6">Configure your venue</p>
         <nav className="space-y-1">
-          {settingsSections.map(function(section) {
-            return (
-              
-                key={section.id}
-                href={"#" + section.id}
-                className="block px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
-              >
-                {section.title}
-              </a>
-            );
-          })}
+          {settingsSections.map((section) => (
+            <a
+              key={section.id}
+              href={"#" + section.id}
+              className="block px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+            >
+              {section.title}
+            </a>
+          ))}
         </nav>
       </div>
     </div>
@@ -159,38 +157,36 @@ function SettingsContent() {
   return (
     <div className="flex-1 min-w-0">
       <div className="space-y-8">
-        {settingsSections.map(function(section) {
-          return (
-            <div key={section.id} id={section.id}>
-              <h2 className="text-base font-semibold text-gray-900 mb-3 pb-2 border-b border-gray-200">
-                {section.title}
-              </h2>
-              <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
-                {section.items.map(function(item) {
-                  const Icon = item.icon;
-                  return (
-                    <Link
-                      key={item.name}
-                      to={item.href}
-                      className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors group"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 bg-gray-100 group-hover:bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors">
-                          <Icon className="w-4 h-4 text-gray-500 group-hover:text-purple-600 transition-colors" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900 text-sm">{item.name}</p>
-                          <p className="text-xs text-gray-500">{item.description}</p>
-                        </div>
+        {settingsSections.map((section) => (
+          <div key={section.id} id={section.id}>
+            <h2 className="text-base font-semibold text-gray-900 mb-3 pb-2 border-b border-gray-200">
+              {section.title}
+            </h2>
+            <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <Link
+                    key={item.name}
+                    to={item.href}
+                    className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 bg-gray-100 group-hover:bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors">
+                        <Icon className="w-4 h-4 text-gray-500 group-hover:text-purple-600 transition-colors" />
                       </div>
-                      <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
-                    </Link>
-                  );
-                })}
-              </div>
+                      <div>
+                        <p className="font-medium text-gray-900 text-sm">{item.name}</p>
+                        <p className="text-xs text-gray-500">{item.description}</p>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
+                  </Link>
+                );
+              })}
             </div>
-          );
-        })}
+          </div>
+        ))}
       </div>
     </div>
   );

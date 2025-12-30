@@ -14,6 +14,7 @@ import { setupHealthRoutes } from './services/monitoring.service';
 import { pool } from './config/database';
 import { getRedis } from './config/redis';
 import { correlationMiddleware } from './middleware/correlation.middleware';
+import { registerIdempotencyHooks } from './middleware/idempotency.middleware';
 import { withCorrelation } from './utils/logger';
 import { RateLimitError } from './errors';
 import { swaggerOptions, swaggerUiOptions } from './config/swagger';
@@ -45,7 +46,11 @@ export async function buildApp(): Promise<FastifyInstance> {
   });
 
   // Register correlation ID middleware first
+  // Then register idempotency hooks for state-changing operations
   await correlationMiddleware(app);
+
+  // Register idempotency hooks for state-changing operations
+  registerIdempotencyHooks(app);
 
   // Wrap request handling with correlation context
   app.addHook('preHandler', async (request) => {
