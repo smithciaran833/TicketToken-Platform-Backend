@@ -1,55 +1,44 @@
-FROM node:20-alpine AS builder
+# CD-D4: Base image pinned to digest for reproducibility
+FROM node:20-alpine@sha256:7a91aa397f2e2dfbfcdad2e2d72599f374e0b0172be1d86eeb73a61c84d0e4cf AS builder
+
 WORKDIR /app
-RUN npm install -g npm@latest
-COPY tsconfig.base.json ./tsconfig.base.json
-COPY backend/shared ./backend/shared
-COPY backend/services/auth-service ./backend/services/auth-service
 
-WORKDIR /app/backend/shared
-RUN npm ci
-RUN npm run build || true
+# Copy package files
+COPY package*.json ./
+COPY tsconfig.json ./
 
-WORKDIR /app/backend/services/auth-service
-RUN npm ci
+# Install dependencies
+RUN npm ci && npm cache clean --force
+
+# Copy source
+COPY src ./src
+
+# Build
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine
-WORKDIR /app/backend/services/auth-service
-RUN apk add --no-cache dumb-init
-RUN npm install -g npm@latest
+FROM node:20-alpine@sha256:7a91aa397f2e2dfbfcdad2e2d72599f374e0b0172be1d86eeb73a61c84d0e4cf
 
-# Copy shared module
-COPY --from=builder /app/backend/shared /app/backend/shared
+WORKDIR /app
 
-# Copy package files
-COPY --from=builder /app/backend/services/auth-service/package.json ./package.json
-COPY --from=builder /app/backend/services/auth-service/package-lock.json ./package-lock.json
+# Security: non-root user
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001
 
-# Install ALL dependencies (need typescript and knex for migrations)
-RUN npm ci
+# Copy built assets
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY package*.json ./
 
-# Copy built artifacts
-COPY --from=builder /app/backend/services/auth-service/dist ./dist
+# Set ownership
+RUN chown -R nodejs:nodejs /app
 
-# Copy migration files
-COPY --from=builder /app/backend/services/auth-service/knexfile.ts ./knexfile.ts
-COPY --from=builder /app/backend/services/auth-service/src/migrations ./src/migrations
-
-# Create entrypoint script IN THE WORKDIR
-RUN echo '#!/bin/sh' > ./entrypoint.sh && \
-    echo 'set -e' >> ./entrypoint.sh && \
-    echo 'echo "Running migrations for auth-service..."' >> ./entrypoint.sh && \
-    echo 'npm run migrate || exit 1' >> ./entrypoint.sh && \
-    echo 'exec "$@"' >> ./entrypoint.sh && \
-    chmod +x ./entrypoint.sh
-
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
 USER nodejs
 
 EXPOSE 3001
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-ENTRYPOINT ["./entrypoint.sh", "dumb-init", "--"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3001/health/live || exit 1
+
 CMD ["node", "dist/index.js"]
