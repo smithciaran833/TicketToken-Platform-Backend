@@ -179,7 +179,7 @@ export async function up(knex: Knex): Promise<void> {
 
   await knex.schema.createTable('users', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v1()'));
-    table.string('email', 255).notNullable().unique();
+    table.string('email', 255).notNullable();
     table.string('password_hash', 255).notNullable();
     table.boolean('email_verified').notNullable().defaultTo(false);
     table.string('email_verification_token', 64);
@@ -264,7 +264,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // Users indexes
-  await knex.raw('CREATE INDEX idx_users_email ON users(email)');
+  await knex.raw('CREATE UNIQUE INDEX idx_users_email_active ON users(email) WHERE deleted_at IS NULL');
   await knex.raw('CREATE INDEX idx_users_username ON users(username)');
   await knex.raw('CREATE INDEX idx_users_phone ON users(phone)');
   await knex.raw('CREATE INDEX idx_users_role ON users(role)');

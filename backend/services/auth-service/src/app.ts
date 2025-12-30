@@ -4,6 +4,8 @@ import helmet from '@fastify/helmet';
 import csrf from '@fastify/csrf-protection';
 import rateLimit from '@fastify/rate-limit';
 import underPressure from '@fastify/under-pressure';
+import swagger from '@fastify/swagger';
+import swaggerUi from '@fastify/swagger-ui';
 import { createDependencyContainer } from './config/dependencies';
 import { authRoutes } from './routes/auth.routes';
 import { env } from './config/env';
@@ -13,6 +15,7 @@ import { getRedis } from './config/redis';
 import { correlationMiddleware } from './middleware/correlation.middleware';
 import { withCorrelation } from './utils/logger';
 import { RateLimitError } from './errors';
+import { swaggerOptions, swaggerUiOptions } from './config/swagger';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -50,6 +53,10 @@ export async function buildApp(): Promise<FastifyInstance> {
     const correlationId = request.correlationId || request.id;
     return withCorrelation(correlationId, () => {});
   });
+
+  // DOC-API1, DOC-API2: OpenAPI/Swagger documentation
+  await app.register(swagger, swaggerOptions);
+  await app.register(swaggerUi, swaggerUiOptions);
 
   // HC-F7: Under pressure - automatic load shedding
   await app.register(underPressure, {
