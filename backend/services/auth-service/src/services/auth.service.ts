@@ -215,12 +215,18 @@ export class AuthService {
       try {
         await client.query('BEGIN');
 
-        if (user.failed_login_attempts > 0 || user.locked_until) {
-          await client.query(
-            'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
-            [user.id]
-          );
-        }
+        // Atomic update: reset failed attempts, increment login_count, update last_login
+        await client.query(
+          `UPDATE users SET 
+            failed_login_attempts = 0, 
+            locked_until = NULL,
+            login_count = login_count + 1,
+            last_login_at = NOW(),
+            last_login_ip = $2,
+            last_active_at = NOW()
+          WHERE id = $1`,
+          [user.id, data.ipAddress || null]
+        );
 
         tokens = await this.jwtService.generateTokenPair(user);
 
@@ -431,7 +437,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(newPassword, 10);
 
     await pool.query(
-      'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL WHERE id = $2',
+      'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL, password_changed_at = NOW() WHERE id = $2',
       [passwordHash, user.id]
     );
 
@@ -465,7 +471,7 @@ export class AuthService {
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
 
     await pool.query(
-      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      'UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2',
       [newPasswordHash, userId]
     );
 
