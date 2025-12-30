@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Plus, Search, Filter, Clock, CheckCircle, AlertCircle, MessageCircle } from "lucide-react";
+import { ArrowLeft, Plus, Search, Clock, CheckCircle, AlertCircle, MessageCircle } from "lucide-react";
 import { Button } from "../../components/ui";
 
 const tickets = [

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Check, Circle, Play, ChevronRight, Building2, Calendar, Ticket, QrCode, DollarSign } from "lucide-react";
+import { ArrowLeft, Check, Play, ChevronRight, Building2, Calendar, Ticket, QrCode, DollarSign } from "lucide-react";
 import { Button } from "../../components/ui";
 
 const steps = [
@@ -87,7 +87,6 @@ export default function GettingStarted() {
       {/* Steps */}
       <div className="space-y-4">
         {steps.map((step, index) => {
-          const Icon = step.icon;
           const isExpanded = expandedStep === step.id;
 
           return (

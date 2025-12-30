@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Bell, Mail, MessageSquare, Check } from "lucide-react";
+import { ArrowLeft, Mail, MessageSquare } from "lucide-react";
 import { Button, Toggle, useToast, ToastContainer } from "../../components/ui";
 
 export default function SubscribeUpdates() {

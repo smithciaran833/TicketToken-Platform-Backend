@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, CheckCircle, AlertCircle, Send, Paperclip } from "lucide-react";
+import { ArrowLeft, CheckCircle, AlertCircle, Send, Paperclip } from "lucide-react";
 import { Button, useToast, ToastContainer } from "../../components/ui";
 
 const ticket = {
@@ -19,7 +19,7 @@ const ticket = {
 };
 
 export default function TicketDetail() {
-  const { id } = useParams();
+  const { id: _id } = useParams();
   const toast = useToast();
   const [reply, setReply] = useState("");
 

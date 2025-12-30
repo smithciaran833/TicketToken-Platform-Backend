@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowLeft, FileText, Video, Download, Folder, ChevronRight } from "lucide-react";
+import { ArrowLeft, FileText, Video, Download, Folder } from "lucide-react";
 
 const categories = [
   {

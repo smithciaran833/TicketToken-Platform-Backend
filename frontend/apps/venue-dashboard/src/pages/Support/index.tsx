@@ -1,8 +1,8 @@
 import { Link } from "react-router-dom";
 import { 
-  Search, Book, Video, Rocket, Award, MessageCircle, Phone, 
-  Calendar, AlertTriangle, User, GraduationCap, Bug, Lightbulb,
-  Ticket, FileText, Bell, Activity, ChevronRight
+  Search, Book, Video, Rocket, Award, MessageCircle, 
+  Calendar, AlertTriangle, GraduationCap, Bug, Lightbulb,
+  Ticket, FileText, Activity, ChevronRight
 } from "lucide-react";
 
 const categories = [

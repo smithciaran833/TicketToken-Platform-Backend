@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ChevronDown, Calendar, DollarSign, Megaphone, Users, HeartHandshake, ChevronRight } from "lucide-react";
+import { ArrowLeft, ChevronDown, Calendar, DollarSign, Megaphone, Users, HeartHandshake } from "lucide-react";
 
 const topics = [
   {

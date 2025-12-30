@@ -155,7 +155,8 @@ export async function up(knex: Knex): Promise<void> {
       GET DIAGNOSTICS deleted_count = ROW_COUNT;
       RAISE NOTICE 'Anonymized % users', deleted_count;
 
-      DELETE FROM wallet_connections WHERE user_id NOT IN (SELECT id FROM users);
+      DELETE FROM wallet_connections WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days');
+      DELETE FROM oauth_connections WHERE user_id IN (SELECT id FROM users WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '30 days');
       DELETE FROM user_sessions WHERE user_id NOT IN (SELECT id FROM users);
     END;
     $$ LANGUAGE plpgsql;

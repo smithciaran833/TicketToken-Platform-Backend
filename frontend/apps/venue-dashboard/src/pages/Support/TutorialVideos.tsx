@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Play, Clock, Filter } from "lucide-react";
+import { ArrowLeft, Play, Clock } from "lucide-react";
 
 const categories = ["All", "Getting Started", "Events", "Scanning", "Analytics", "Settings"];
 

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, ThumbsUp, MessageCircle, TrendingUp, Filter, Plus } from "lucide-react";
+import { ArrowLeft, ThumbsUp, MessageCircle, Plus } from "lucide-react";
 import { Button } from "../../components/ui";
 
 const features = [

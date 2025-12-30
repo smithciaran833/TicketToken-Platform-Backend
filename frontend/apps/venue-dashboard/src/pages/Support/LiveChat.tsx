@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Send, Paperclip, X, User } from "lucide-react";
+import { ArrowLeft, Send, Paperclip, User } from "lucide-react";
 import { Button } from "../../components/ui";
 
 interface Message {

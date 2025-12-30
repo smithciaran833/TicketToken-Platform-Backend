@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { ArrowLeft, Calendar, Clock, Phone, Check } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ArrowLeft, Calendar, Clock, Check } from "lucide-react";
 import { Button, Input, Textarea, Select, useToast, ToastContainer } from "../../components/ui";
 
 const topicOptions = [
@@ -20,7 +20,6 @@ const timeSlots = [
 ];
 
 export default function ScheduleCall() {
-  const navigate = useNavigate();
   const toast = useToast();
   
   const [topic, setTopic] = useState("");

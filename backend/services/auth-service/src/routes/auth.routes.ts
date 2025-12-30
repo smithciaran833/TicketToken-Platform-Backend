@@ -482,6 +482,38 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     // ============================================
+    // GDPR / DATA RIGHTS (Authenticated)
+    // ============================================
+
+    // CL-ACC1, CL-ACC2, CL-PORT1, CL-PORT2: Export all user data (GDPR Article 15 & 20)
+    fastify.get('/gdpr/export', {
+      preHandler: async (request: any, reply: any) => {
+        await validate(schemas.emptyBodySchema)(request, reply);
+      }
+    }, async (request: any, reply: any) => {
+      return profileController.exportData(request, reply);
+    });
+
+    // CL-CONW1: Get current consent status
+    fastify.get('/consent', {
+      preHandler: async (request: any, reply: any) => {
+        await validate(schemas.emptyBodySchema)(request, reply);
+      }
+    }, async (request: any, reply: any) => {
+      return profileController.getConsent(request, reply);
+    });
+
+    // CL-CONW1: Update consent preferences (withdraw/grant marketing consent)
+    fastify.put('/consent', async (request: any, reply: any) => {
+      return profileController.updateConsent(request, reply);
+    });
+
+    // CL-ERA1, CL-ERA2: Request account deletion (GDPR Article 17 - Right to Erasure)
+    fastify.post('/gdpr/delete', async (request: any, reply: any) => {
+      return profileController.requestDeletion(request, reply);
+    });
+
+    // ============================================
     // VENUE ROLE MANAGEMENT (Authenticated + Permissions)
     // ============================================
 

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { ArrowLeft, Star, Check, Users, Clock, Phone } from "lucide-react";
 import { Button, Textarea, useToast, ToastContainer } from "../../components/ui";
 
@@ -17,7 +17,6 @@ const plans = [
 ];
 
 export default function RequestAccountManager() {
-  const navigate = useNavigate();
   const toast = useToast();
   const [notes, setNotes] = useState("");
   const [submitted, setSubmitted] = useState(false);

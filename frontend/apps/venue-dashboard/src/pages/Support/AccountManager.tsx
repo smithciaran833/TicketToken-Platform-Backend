@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { ArrowLeft, User, Mail, Phone, Calendar, MessageCircle, Star } from "lucide-react";
+import { ArrowLeft, Mail, Phone, Calendar, MessageCircle } from "lucide-react";
 import { Button } from "../../components/ui";
 
 const accountManager = {
