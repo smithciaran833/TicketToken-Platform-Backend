@@ -17,11 +17,20 @@ import {
   Search,
   Building2,
   Wrench,
+  ChevronDown,
+  Check,
+  Plus,
 } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: ReactNode;
 }
+
+const venues = [
+  { id: 1, name: "The Grand Theater", location: "Downtown, New York" },
+  { id: 2, name: "Riverside Amphitheater", location: "Brooklyn, New York" },
+  { id: 3, name: "The Jazz Lounge", location: "Manhattan, New York" },
+];
 
 const navigation = [
   { name: "Dashboard", href: "/venue", icon: LayoutDashboard },
@@ -39,6 +48,8 @@ const navigation = [
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [venueDropdownOpen, setVenueDropdownOpen] = useState(false);
+  const [currentVenue, setCurrentVenue] = useState(venues[0]);
   const location = useLocation();
 
   const isActive = (href: string) => {
@@ -46,6 +57,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       return location.pathname === "/venue";
     }
     return location.pathname.startsWith(href);
+  };
+
+  const switchVenue = (venue: typeof venues[0]) => {
+    setCurrentVenue(venue);
+    setVenueDropdownOpen(false);
   };
 
   return (
@@ -58,7 +74,8 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       )}
 
       <aside className={`fixed top-0 left-0 z-50 h-full w-64 bg-gray-900 transform transition-transform duration-200 ease-in-out lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"}`}>
-        <div className="h-16 flex items-center px-4">
+        {/* Logo */}
+        <div className="h-16 flex items-center px-4 border-b border-gray-800">
           <Link to="/venue" className="flex items-center gap-2">
             <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center">
               <Building2 className="w-5 h-5 text-white" />
@@ -67,6 +84,72 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           </Link>
         </div>
 
+        {/* Venue Switcher */}
+        <div className="px-3 py-3 border-b border-gray-800">
+          <div className="relative">
+            <button
+              onClick={() => setVenueDropdownOpen(!venueDropdownOpen)}
+              className="w-full flex items-center justify-between px-3 py-2 bg-gray-800 rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <div className="w-8 h-8 bg-purple-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                  <Building2 className="w-4 h-4 text-white" />
+                </div>
+                <div className="text-left min-w-0">
+                  <p className="text-sm font-medium text-white truncate">{currentVenue.name}</p>
+                  <p className="text-xs text-gray-400 truncate">{currentVenue.location}</p>
+                </div>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${venueDropdownOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {/* Dropdown */}
+            {venueDropdownOpen && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-gray-800 rounded-lg shadow-lg border border-gray-700 overflow-hidden z-50">
+                <div className="py-1">
+                  {venues.map((venue) => (
+                    <button
+                      key={venue.id}
+                      onClick={() => switchVenue(venue)}
+                      className="w-full flex items-center gap-3 px-3 py-2 hover:bg-gray-700 transition-colors"
+                    >
+                      <div className="w-8 h-8 bg-gray-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                        <Building2 className="w-4 h-4 text-gray-300" />
+                      </div>
+                      <div className="text-left flex-1 min-w-0">
+                        <p className="text-sm font-medium text-white truncate">{venue.name}</p>
+                        <p className="text-xs text-gray-400 truncate">{venue.location}</p>
+                      </div>
+                      {currentVenue.id === venue.id && (
+                        <Check className="w-4 h-4 text-purple-400 flex-shrink-0" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="border-t border-gray-700 py-1">
+                  <Link
+                    to="/venues"
+                    onClick={() => setVenueDropdownOpen(false)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <Building2 className="w-4 h-4" />
+                    Manage Venues
+                  </Link>
+                  <Link
+                    to="/venues/new"
+                    onClick={() => setVenueDropdownOpen(false)}
+                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <Plus className="w-4 h-4" />
+                    Add Venue
+                  </Link>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Navigation */}
         <nav className="px-3 py-4 space-y-1">
           {navigation.map((item) => {
             const Icon = item.icon;
@@ -89,6 +172,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           })}
         </nav>
 
+        {/* User */}
         <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-800">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">

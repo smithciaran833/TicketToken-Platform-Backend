@@ -7,6 +7,7 @@ import { ProfileController } from '../controllers/profile.controller';
 import { WalletController } from '../controllers/wallet.controller';
 import { createAuthMiddleware } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
+import { validateTenant } from '../middleware/tenant.middleware';
 import * as schemas from '../validators/auth.validators';
 import { loginRateLimiter, registrationRateLimiter } from '../utils/rateLimiter';
 
@@ -33,13 +34,6 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   const walletController = new WalletController(walletService);
   const authMiddleware = createAuthMiddleware(jwtService, rbacService);
 
-  // Helper to add tenant context
-  const addTenantContext = async (request: any) => {
-    const user = request.user;
-    const tenantId = user?.tenant_id || '00000000-0000-0000-0000-000000000001';
-    request.tenantId = tenantId;
-  };
-
   // ============================================
   // PUBLIC ROUTES (Still need rate limiting)
   // ============================================
@@ -59,9 +53,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       try {
         await rateLimitService.consume('login', null, request.ip);
       } catch (error) {
-        return reply.status(429).send({
-          error: 'Too many login attempts. Please try again later.'
-        });
+        throw error; // Let the global error handler add rate limit headers
       }
       await loginRateLimiter.consume(request.ip);
       await validate(schemas.loginSchema)(request, reply);
@@ -86,9 +78,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       try {
         await rateLimitService.consume('reset-password', null, request.ip);
       } catch (error) {
-        return reply.status(429).send({
-          error: 'Too many password reset attempts. Please try again later.'
-        });
+        throw error; // Let the global error handler add rate limit headers
       }
       await validate(schemas.resetPasswordSchema)(request, reply);
     }
@@ -242,10 +232,11 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
 
   // Register authenticated routes group
   fastify.register(async function authenticatedRoutes(fastify) {
-    // Add authentication to ALL routes in this group
+    // Add authentication and RLS context to ALL routes in this group
     fastify.addHook('preHandler', async (request: any, reply: any) => {
       await authMiddleware.authenticate(request, reply);
-      await addTenantContext(request);
+      // Set RLS context for multi-tenant security (CRITICAL fix)
+      await validateTenant(request, reply);
     });
 
     // User verification status

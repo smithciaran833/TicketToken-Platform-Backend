@@ -12,6 +12,7 @@ import { pool } from './config/database';
 import { getRedis } from './config/redis';
 import { correlationMiddleware } from './middleware/correlation.middleware';
 import { withCorrelation } from './utils/logger';
+import { RateLimitError } from './errors';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -34,8 +35,8 @@ export async function buildApp(): Promise<FastifyInstance> {
     bodyLimit: 1048576,
     // Generate request IDs if not provided
     genReqId: (req) => {
-      return (req.headers['x-correlation-id'] as string) || 
-             (req.headers['x-request-id'] as string) || 
+      return (req.headers['x-correlation-id'] as string) ||
+             (req.headers['x-request-id'] as string) ||
              require('crypto').randomUUID();
     },
   });
@@ -196,11 +197,40 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Rate limiting
+    // Rate limiting with proper headers (CRITICAL fix)
+    // Handle both custom RateLimitError and generic 429 errors
+    if (error instanceof RateLimitError || error.name === 'RateLimitError' || error.constructor?.name === 'RateLimitError') {
+      const ttl = error.ttl || 60;
+      const limit = error.limit || 100;
+      const resetTime = Math.ceil(Date.now() / 1000) + ttl;
+
+      return reply
+        .status(429)
+        .header('Content-Type', 'application/problem+json')
+        .header('RateLimit-Limit', String(limit))
+        .header('RateLimit-Remaining', '0')
+        .header('RateLimit-Reset', String(resetTime))
+        .header('Retry-After', String(ttl))
+        .send({
+          type: 'https://httpstatuses.com/429',
+          title: 'Too Many Requests',
+          status: 429,
+          detail: error.message || 'Too many requests. Please try again later.',
+          instance: request.url,
+          correlationId,
+          code: 'RATE_LIMIT_EXCEEDED',
+          retryAfter: ttl,
+        });
+    }
+
+    // Generic 429 fallback (for errors without RateLimitError type)
     if (statusCode === 429) {
       return reply
         .status(429)
         .header('Content-Type', 'application/problem+json')
+        .header('RateLimit-Limit', '100')
+        .header('RateLimit-Remaining', '0')
+        .header('Retry-After', '60')
         .send({
           type: 'https://httpstatuses.com/429',
           title: 'Too Many Requests',
@@ -208,6 +238,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           detail: 'Too many requests. Please try again later.',
           instance: request.url,
           correlationId,
+          code: 'RATE_LIMIT_EXCEEDED',
         });
     }
 

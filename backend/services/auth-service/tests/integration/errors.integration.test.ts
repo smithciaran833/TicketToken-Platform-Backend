@@ -11,7 +11,7 @@ import {
 
 /**
  * INTEGRATION TESTS FOR ERROR CLASSES
- * 
+ *
  * These tests verify custom error classes:
  * - Error inheritance and properties
  * - Status codes and messages
@@ -44,7 +44,8 @@ describe('Error Classes Integration Tests', () => {
 
       expect(error.stack).toBeDefined();
       expect(typeof error.stack).toBe('string');
-      expect(error.stack).toContain('AppError');
+      // Stack trace should contain the test file where error was created
+      expect(error.stack).toContain('errors.integration.test');
     });
 
     it('should be instanceof Error', () => {

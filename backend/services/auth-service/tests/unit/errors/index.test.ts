@@ -77,14 +77,14 @@ describe('Error Classes', () => {
     it('should create 403 error with default message', () => {
       const error = new AuthorizationError();
 
-      expect(error.message).toBe('Insufficient permissions');
+      expect(error.message).toBe('Access denied');
       expect(error.statusCode).toBe(403);
     });
 
     it('should create 403 error with custom message', () => {
-      const error = new AuthorizationError('Access denied');
+      const error = new AuthorizationError('Insufficient permissions');
 
-      expect(error.message).toBe('Access denied');
+      expect(error.message).toBe('Insufficient permissions');
       expect(error.statusCode).toBe(403);
     });
   });

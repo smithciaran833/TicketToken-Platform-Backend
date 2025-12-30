@@ -4,19 +4,33 @@ import {
   addTenantFilter,
   TenantIsolationError
 } from '../../src/middleware/tenant.middleware';
+import { pool } from '../../src/config/database';
+
+// Mock the database pool
+jest.mock('../../src/config/database', () => ({
+  pool: {
+    query: jest.fn()
+  }
+}));
 
 /**
  * INTEGRATION TESTS FOR TENANT MIDDLEWARE
- * 
+ *
  * These tests verify tenant isolation functionality:
  * - Tenant validation middleware
  * - Resource tenant matching
  * - Query filter helpers
  * - TenantIsolationError class
- * - No mocks (tests actual middleware logic)
+ * - RLS context setting
  */
 
 describe('Tenant Middleware Integration Tests', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    // Default: pool.query succeeds
+    (pool.query as jest.Mock).mockResolvedValue({ rows: [], rowCount: 0 });
+  });
+
   describe('validateTenant()', () => {
     it('should return 401 when request.user is undefined', async () => {
       const request: any = {
@@ -38,6 +52,7 @@ describe('Tenant Middleware Integration Tests', () => {
         error: 'Authentication required',
         code: 'AUTH_REQUIRED'
       });
+      expect(pool.query).not.toHaveBeenCalled();
     });
 
     it('should return 403 when user.tenant_id is null', async () => {
@@ -65,6 +80,7 @@ describe('Tenant Middleware Integration Tests', () => {
         error: 'Invalid tenant context',
         code: 'MISSING_TENANT_ID'
       });
+      expect(pool.query).not.toHaveBeenCalled();
     });
 
     it('should return 403 when user.tenant_id is undefined', async () => {
@@ -91,6 +107,7 @@ describe('Tenant Middleware Integration Tests', () => {
         error: 'Invalid tenant context',
         code: 'MISSING_TENANT_ID'
       });
+      expect(pool.query).not.toHaveBeenCalled();
     });
 
     it('should log error when tenant_id is missing', async () => {
@@ -121,7 +138,37 @@ describe('Tenant Middleware Integration Tests', () => {
       );
     });
 
-    it('should log debug when validation passes', async () => {
+    it('should set RLS context via pool.query when tenant is valid', async () => {
+      const request: any = {
+        user: {
+          id: 'user-123',
+          email: 'test@example.com',
+          tenant_id: 'tenant-456'
+        },
+        log: {
+          error: jest.fn(),
+          debug: jest.fn()
+        }
+      };
+      const reply: any = {
+        status: jest.fn().mockReturnThis(),
+        send: jest.fn()
+      };
+
+      await validateTenant(request, reply);
+
+      expect(pool.query).toHaveBeenCalledTimes(2);
+      expect(pool.query).toHaveBeenCalledWith(
+        'SELECT set_config($1, $2, true)',
+        ['app.current_tenant_id', 'tenant-456']
+      );
+      expect(pool.query).toHaveBeenCalledWith(
+        'SELECT set_config($1, $2, true)',
+        ['app.current_user_id', 'user-123']
+      );
+    });
+
+    it('should log debug when validation passes with RLS context set', async () => {
       const request: any = {
         user: {
           id: 'user-123',
@@ -145,7 +192,7 @@ describe('Tenant Middleware Integration Tests', () => {
           userId: 'user-123',
           tenantId: 'tenant-456'
         },
-        'Tenant validation passed'
+        'Tenant validation passed with RLS context set'
       );
     });
 
@@ -193,6 +240,67 @@ describe('Tenant Middleware Integration Tests', () => {
 
       expect(result).toBeUndefined();
       expect(reply.status).not.toHaveBeenCalled();
+    });
+
+    it('should return 500 when RLS context setting fails', async () => {
+      (pool.query as jest.Mock).mockRejectedValue(new Error('Database connection failed'));
+
+      const request: any = {
+        user: {
+          id: 'user-123',
+          email: 'test@example.com',
+          tenant_id: 'tenant-456'
+        },
+        log: {
+          error: jest.fn(),
+          debug: jest.fn()
+        }
+      };
+      const reply: any = {
+        status: jest.fn().mockReturnThis(),
+        send: jest.fn()
+      };
+
+      await validateTenant(request, reply);
+
+      expect(reply.status).toHaveBeenCalledWith(500);
+      expect(reply.send).toHaveBeenCalledWith({
+        success: false,
+        error: 'Internal server error',
+        code: 'RLS_CONTEXT_ERROR'
+      });
+    });
+
+    it('should log error when RLS context setting fails', async () => {
+      const dbError = new Error('Database connection failed');
+      (pool.query as jest.Mock).mockRejectedValue(dbError);
+
+      const request: any = {
+        user: {
+          id: 'user-123',
+          email: 'test@example.com',
+          tenant_id: 'tenant-456'
+        },
+        log: {
+          error: jest.fn(),
+          debug: jest.fn()
+        }
+      };
+      const reply: any = {
+        status: jest.fn().mockReturnThis(),
+        send: jest.fn()
+      };
+
+      await validateTenant(request, reply);
+
+      expect(request.log.error).toHaveBeenCalledWith(
+        {
+          userId: 'user-123',
+          tenantId: 'tenant-456',
+          error: dbError
+        },
+        'Failed to set RLS context'
+      );
     });
   });
 

@@ -96,6 +96,12 @@ import SecurityCheckpoints from "./pages/Team/SecurityCheckpoints";
 import StaffCheckIn from "./pages/Team/StaffCheckIn";
 import StaffAnnouncements from "./pages/Team/StaffAnnouncements";
 import StaffOnDuty from "./pages/Team/StaffOnDuty";
+import InviteMember from "./pages/Team/InviteMember";
+import MemberDetail from "./pages/Team/MemberDetail";
+import EditPermissions from "./pages/Team/EditPermissions";
+import TransferOwnership from "./pages/Team/TransferOwnership";
+import AuditLog from "./pages/Team/AuditLog";
+import TwoFactorSetup from "./pages/Team/TwoFactorSetup";
 
 // Settings Section
 import SettingsIndex from "./pages/Settings";
@@ -160,6 +166,12 @@ import IncidentDetail from "./pages/Operations/IncidentDetail";
 import EquipmentList from "./pages/Operations/EquipmentList";
 import AddEquipment from "./pages/Operations/AddEquipment";
 import EquipmentCheck from "./pages/Operations/EquipmentCheck";
+
+// Multi-Venue Section
+import VenuesList from "./pages/Venues";
+import AddVenue from "./pages/Venues/AddVenue";
+import CrossVenueAnalytics from "./pages/Venues/CrossVenueAnalytics";
+import CompareVenues from "./pages/Venues/CompareVenues";
 
 function isEventPreviewPath(pathname: string): boolean {
   const parts = pathname.split('/');
@@ -272,11 +284,17 @@ function AppContent() {
         <Route path="/venue/team" element={<StaffList />} />
         <Route path="/venue/team/roles" element={<StaffRoles />} />
         <Route path="/venue/team/add" element={<AddStaffMember />} />
+        <Route path="/venue/team/invite" element={<InviteMember />} />
         <Route path="/venue/team/assignments" element={<StaffAssignments />} />
         <Route path="/venue/team/checkpoints" element={<SecurityCheckpoints />} />
         <Route path="/venue/team/checkin" element={<StaffCheckIn />} />
         <Route path="/venue/team/announcements" element={<StaffAnnouncements />} />
         <Route path="/venue/team/onduty" element={<StaffOnDuty />} />
+        <Route path="/venue/team/transfer" element={<TransferOwnership />} />
+        <Route path="/venue/team/audit" element={<AuditLog />} />
+        <Route path="/venue/team/2fa" element={<TwoFactorSetup />} />
+        <Route path="/venue/team/:id" element={<MemberDetail />} />
+        <Route path="/venue/team/:id/permissions" element={<EditPermissions />} />
 
         {/* Settings */}
         <Route path="/venue/settings" element={<SettingsIndex />} />
@@ -341,6 +359,12 @@ function AppContent() {
         <Route path="/venue/operations/equipment" element={<EquipmentList />} />
         <Route path="/venue/operations/equipment/new" element={<AddEquipment />} />
         <Route path="/venue/operations/equipment/check" element={<EquipmentCheck />} />
+
+        {/* Multi-Venue */}
+        <Route path="/venues" element={<VenuesList />} />
+        <Route path="/venues/new" element={<AddVenue />} />
+        <Route path="/venues/analytics" element={<CrossVenueAnalytics />} />
+        <Route path="/venues/compare" element={<CompareVenues />} />
 
         <Route path="/" element={<Navigate to="/venue" replace />} />
       </Routes>
