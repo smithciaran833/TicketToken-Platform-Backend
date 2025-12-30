@@ -2,6 +2,7 @@ import { db } from '../config/database';
 import { getRedis } from '../config/redis';
 import { AuthenticationError } from '../errors';
 import crypto from 'crypto';
+import { redisKeys } from '../utils/redisKeys';
 
 export class BiometricService {
   /**
@@ -13,7 +14,6 @@ export class BiometricService {
     publicKey: string,
     type: 'faceId' | 'touchId' | 'fingerprint' = 'faceId'
   ): Promise<any> {
-    // Check for duplicate device registration
     const existing = await db('biometric_credentials')
       .where({
         user_id: userId,
@@ -25,10 +25,8 @@ export class BiometricService {
       throw new AuthenticationError('Device already registered');
     }
 
-    // Generate a unique credential ID
     const credentialId = crypto.randomUUID();
 
-    // Store biometric credential
     await db('biometric_credentials').insert({
       id: credentialId,
       user_id: userId,
@@ -52,12 +50,17 @@ export class BiometricService {
     userId: string,
     credentialId: string,
     signature: string,
-    challenge: string
+    challenge: string,
+    tenantId?: string
   ): Promise<{ valid: boolean; userId: string }> {
-    // Verify challenge is valid and not reused
     const redis = getRedis();
-    const storedChallenge = await redis.get(`biometric_challenge:${userId}`);
     
+    // Try tenant-prefixed key first, then fall back
+    let storedChallenge = await redis.get(redisKeys.biometricChallenge(userId, tenantId));
+    if (!storedChallenge) {
+      storedChallenge = await redis.get(`biometric_challenge:${userId}`);
+    }
+
     if (!storedChallenge) {
       throw new AuthenticationError('Challenge expired or not found');
     }
@@ -66,10 +69,10 @@ export class BiometricService {
       throw new AuthenticationError('Invalid challenge');
     }
 
-    // Consume the challenge (one-time use)
+    // Consume the challenge (one-time use) - delete both patterns
+    await redis.del(redisKeys.biometricChallenge(userId, tenantId));
     await redis.del(`biometric_challenge:${userId}`);
 
-    // Get stored credential
     const credential = await db('biometric_credentials')
       .where({
         id: credentialId,
@@ -82,7 +85,6 @@ export class BiometricService {
     }
 
     // In production, verify signature with public key using WebAuthn
-    // For now, we'll do a simple hash check for testing
     const expectedSignature = crypto
       .createHash('sha256')
       .update(challenge + credential.public_key)
@@ -100,13 +102,12 @@ export class BiometricService {
   /**
    * Generate biometric challenge
    */
-  async generateChallenge(userId: string): Promise<string> {
+  async generateChallenge(userId: string, tenantId?: string): Promise<string> {
     const challenge = crypto.randomBytes(32).toString('hex');
 
-    // Store challenge in Redis with 5 minute expiry
     const redis = getRedis();
     await redis.setex(
-      `biometric_challenge:${userId}`,
+      redisKeys.biometricChallenge(userId, tenantId),
       300,
       challenge
     );

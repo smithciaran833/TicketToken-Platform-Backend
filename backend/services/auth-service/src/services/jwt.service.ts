@@ -8,6 +8,7 @@ import { getRedis } from '../config/redis';
 import { TokenError } from '../errors';
 import { pool } from '../config/database';
 import { logger } from '../utils/logger';
+import { redisKeys } from '../utils/redisKeys';
 
 interface TokenPayload {
   sub: string;
@@ -58,7 +59,6 @@ class JWTKeyManager {
   }
 
   private async loadFromSecretsManager(): Promise<void> {
-    // In production, keys come from environment (loaded by secrets manager)
     const privateKey = process.env.JWT_PRIVATE_KEY;
     const publicKey = process.env.JWT_PUBLIC_KEY;
 
@@ -66,11 +66,9 @@ class JWTKeyManager {
       throw new Error('JWT keys not found in environment. Ensure secrets are loaded.');
     }
 
-    // Decode base64 if needed (AWS Secrets Manager often stores as base64)
     const decodedPrivate = this.decodeKey(privateKey);
     const decodedPublic = this.decodeKey(publicKey);
 
-    // Current key
     this.keys.set('current', {
       keyId: 'current',
       privateKey: decodedPrivate,
@@ -78,7 +76,6 @@ class JWTKeyManager {
     });
     this.currentKeyId = 'current';
 
-    // Load previous key for rotation support (optional)
     const previousPrivate = process.env.JWT_PRIVATE_KEY_PREVIOUS;
     const previousPublic = process.env.JWT_PUBLIC_KEY_PREVIOUS;
 
@@ -95,7 +92,6 @@ class JWTKeyManager {
   }
 
   private async loadFromFilesystem(): Promise<void> {
-    // Development: load from filesystem
     const defaultKeyPath = path.join(process.env.HOME!, 'tickettoken-secrets');
     const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem');
     const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem');
@@ -120,7 +116,6 @@ class JWTKeyManager {
   }
 
   private decodeKey(key: string): string {
-    // If it looks like base64 (no PEM headers), decode it
     if (!key.includes('-----BEGIN')) {
       return Buffer.from(key, 'base64').toString('utf8');
     }
@@ -141,20 +136,17 @@ class JWTKeyManager {
   }
 
   getPublicKey(keyId?: string): string {
-    // If no keyId specified, return current
     if (!keyId) {
       const keyPair = this.keys.get(this.currentKeyId);
       if (!keyPair) throw new Error('No current JWT key');
       return keyPair.publicKey;
     }
 
-    // Try to find the specific key
     const keyPair = this.keys.get(keyId);
     if (keyPair) return keyPair.publicKey;
 
-    // Fallback: try all keys (for tokens signed with unknown keyId)
     for (const [, kp] of this.keys) {
-      return kp.publicKey; // Return first available for verification attempt
+      return kp.publicKey;
     }
 
     throw new Error(`JWT public key not found: ${keyId}`);
@@ -168,7 +160,6 @@ class JWTKeyManager {
   }
 }
 
-// Singleton key manager
 const keyManager = new JWTKeyManager();
 
 export class JWTService {
@@ -186,7 +177,6 @@ export class JWTService {
   async generateTokenPair(user: any): Promise<{ accessToken: string; refreshToken: string }> {
     await keyManager.initialize();
 
-    // Ensure we have tenant_id - fetch if not provided
     let tenantId = user.tenant_id;
     if (!tenantId && user.id) {
       const result = await pool.query(
@@ -198,7 +188,6 @@ export class JWTService {
 
     const currentKeyId = keyManager.getCurrentKeyId();
 
-    // Access token
     const accessTokenPayload = {
       sub: user.id,
       type: 'access' as const,
@@ -223,7 +212,6 @@ export class JWTService {
       accessTokenOptions
     );
 
-    // Refresh token
     const refreshTokenId = crypto.randomUUID();
     const family = crypto.randomUUID();
 
@@ -247,7 +235,6 @@ export class JWTService {
       refreshTokenOptions
     );
 
-    // Store refresh token metadata with tenant_id
     const refreshData: RefreshTokenData = {
       userId: user.id,
       tenantId: tenantId,
@@ -258,9 +245,10 @@ export class JWTService {
     };
 
     const redis = getRedis();
+    // Use tenant-prefixed key for multi-tenant isolation
     await redis.setex(
-      `refresh_token:${refreshTokenId}`,
-      7 * 24 * 60 * 60, // 7 days
+      redisKeys.refreshToken(refreshTokenId, tenantId),
+      7 * 24 * 60 * 60,
       JSON.stringify(refreshData)
     );
 
@@ -271,7 +259,6 @@ export class JWTService {
     await keyManager.initialize();
 
     try {
-      // Get keyId from token header to use correct key
       const decoded = jwt.decode(token, { complete: true });
       const keyId = decoded?.header?.kid;
 
@@ -311,11 +298,9 @@ export class JWTService {
     try {
       const redis = getRedis();
 
-      // Get keyId from token header
       const decodedHeader = jwt.decode(refreshToken, { complete: true });
       const keyId = decodedHeader?.header?.kid;
 
-      // Verify refresh token
       const decoded = jwt.verify(refreshToken, keyManager.getPublicKey(keyId), {
         algorithms: ['RS256'],
       }) as TokenPayload;
@@ -324,19 +309,16 @@ export class JWTService {
         throw new TokenError('Invalid token type');
       }
 
-      // Check if token exists and hasn't been revoked
-      const storedData = await redis.get(`refresh_token:${decoded.jti}`);
+      // Use tenant-prefixed key
+      const storedData = await redis.get(redisKeys.refreshToken(decoded.jti, decoded.tenant_id));
 
       if (!storedData) {
-        // Token reuse detected - invalidate entire family
-        await this.invalidateTokenFamily(decoded.family!);
+        await this.invalidateTokenFamily(decoded.family!, decoded.tenant_id);
         throw new TokenError('Token reuse detected - possible theft');
       }
 
-      // Parse stored data
       const tokenData: RefreshTokenData = JSON.parse(storedData);
 
-      // Fetch fresh user data
       const userResult = await pool.query(
         'SELECT id, tenant_id, email, permissions, role FROM users WHERE id = $1',
         [decoded.sub]
@@ -348,7 +330,6 @@ export class JWTService {
 
       const user = userResult.rows[0];
 
-      // Generate new token pair with current key
       const newTokens = await this.generateTokenPair({
         id: user.id,
         tenant_id: user.tenant_id,
@@ -359,8 +340,8 @@ export class JWTService {
         userAgent,
       });
 
-      // Invalidate old refresh token
-      await redis.del(`refresh_token:${decoded.jti}`);
+      // Use tenant-prefixed key
+      await redis.del(redisKeys.refreshToken(decoded.jti, decoded.tenant_id));
 
       return newTokens;
     } catch (error) {
@@ -371,9 +352,13 @@ export class JWTService {
     }
   }
 
-  async invalidateTokenFamily(family: string): Promise<void> {
+  async invalidateTokenFamily(family: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
-    const keys = await this.scanner.scanKeys('refresh_token:*');
+    // Scan for keys with tenant prefix if provided
+    const pattern = tenantId 
+      ? `tenant:${tenantId}:refresh_token:*`
+      : 'refresh_token:*';
+    const keys = await this.scanner.scanKeys(pattern);
 
     for (const key of keys) {
       const data = await redis.get(key);
@@ -386,9 +371,13 @@ export class JWTService {
     }
   }
 
-  async revokeAllUserTokens(userId: string): Promise<void> {
+  async revokeAllUserTokens(userId: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
-    const keys = await this.scanner.scanKeys('refresh_token:*');
+    // Scan for keys with tenant prefix if provided
+    const pattern = tenantId 
+      ? `tenant:${tenantId}:refresh_token:*`
+      : 'refresh_token:*';
+    const keys = await this.scanner.scanKeys(pattern);
 
     for (const key of keys) {
       const data = await redis.get(key);
@@ -420,19 +409,15 @@ export class JWTService {
     }
   }
 
-  // JWKS endpoint support
   getJWKS(): { keys: any[] } {
     const publicKeys = keyManager.getAllPublicKeys();
 
-    // Convert PEM to JWK format (simplified - in production use jose library)
     return {
       keys: publicKeys.map(({ keyId, publicKey }) => ({
         kty: 'RSA',
         use: 'sig',
         alg: 'RS256',
         kid: keyId,
-        // Note: In production, properly convert PEM to JWK components (n, e)
-        // For now, this provides the structure
         pem: publicKey,
       })),
     };

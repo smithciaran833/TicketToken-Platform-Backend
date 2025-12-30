@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import { Resend } from 'resend';
-// import { db } from '../config/database';
 import { getRedis } from '../config/redis';
 import { env } from '../config/env';
+import { redisKeys } from '../utils/redisKeys';
 
 interface EmailTemplate {
   subject: string;
@@ -14,20 +14,18 @@ export class EmailService {
   private resend: Resend;
 
   constructor() {
-    // Initialize Resend - safe to use placeholder in dev mode since we bypass it
     this.resend = new Resend(env.RESEND_API_KEY || 'key_placeholder_for_dev');
   }
 
-  async sendVerificationEmail(userId: string, email: string, firstName: string): Promise<void> {
+  async sendVerificationEmail(userId: string, email: string, firstName: string, tenantId?: string): Promise<void> {
     const token = crypto.randomBytes(32).toString('hex');
-    // const expires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
 
-    // Store token in Redis
+    // Store token in Redis with tenant prefix
     const redis = getRedis();
     await redis.setex(
-      `email-verify:${token}`,
+      redisKeys.emailVerify(token, tenantId),
       24 * 60 * 60,
-      JSON.stringify({ userId, email })
+      JSON.stringify({ userId, email, tenantId })
     );
 
     const verifyUrl = `${env.API_GATEWAY_URL}/auth/verify-email?token=${token}`;
@@ -55,15 +53,15 @@ If you didn't create this account, please ignore this email.`
     await this.sendEmail(email, template);
   }
 
-  async sendPasswordResetEmail(userId: string, email: string, firstName: string): Promise<void> {
+  async sendPasswordResetEmail(userId: string, email: string, firstName: string, tenantId?: string): Promise<void> {
     const token = crypto.randomBytes(32).toString('hex');
 
-    // Store token in Redis with 1 hour expiry
+    // Store token in Redis with tenant prefix
     const redis = getRedis();
     await redis.setex(
-      `password-reset:${token}`,
+      redisKeys.passwordReset(token, tenantId),
       60 * 60,
-      JSON.stringify({ userId, email })
+      JSON.stringify({ userId, email, tenantId })
     );
 
     const resetUrl = `${env.API_GATEWAY_URL}/auth/reset-password?token=${token}`;
@@ -121,7 +119,6 @@ Each code can only be used once. Keep them secure!`
   }
 
   private async sendEmail(to: string, template: EmailTemplate): Promise<void> {
-    // Development and Test mode - log to console, don't send actual emails
     if (env.NODE_ENV === 'development' || env.NODE_ENV === 'test') {
       console.log('📧 Email would be sent:', {
         to,
@@ -131,7 +128,6 @@ Each code can only be used once. Keep them secure!`
       return;
     }
 
-    // Production mode - send via Resend
     try {
       const { data, error } = await this.resend.emails.send({
         from: env.EMAIL_FROM,

@@ -1,10 +1,10 @@
 import bcrypt from 'bcrypt';
-// import crypto from 'crypto';
 import { db } from '../config/database';
 import { getRedis } from '../config/redis';
 import { ValidationError, AuthenticationError } from '../errors';
 import { passwordResetRateLimiter } from '../utils/rateLimiter';
 import { EmailService } from './email.service';
+import { redisKeys } from '../utils/redisKeys';
 
 export class AuthExtendedService {
   private emailService: EmailService;
@@ -45,11 +45,12 @@ export class AuthExtendedService {
       return;
     }
 
-    // Send password reset email
+    // Send password reset email with tenant context
     await this.emailService.sendPasswordResetEmail(
       user.id,
       user.email,
-      user.first_name
+      user.first_name,
+      user.tenant_id
     );
 
     // Log the request
@@ -65,15 +66,31 @@ export class AuthExtendedService {
   }
 
   async resetPassword(token: string, newPassword: string, ipAddress: string): Promise<void> {
-    // Get token data from Redis
     const redis = getRedis();
-    const tokenData = await redis.get(`password-reset:${token}`);
+    
+    // Try to find token with tenant prefix (scan for pattern)
+    // First try without prefix for backwards compatibility
+    let tokenData = await redis.get(`password-reset:${token}`);
+    let tenantId: string | undefined;
+    
+    // If not found, scan for tenant-prefixed key
+    if (!tokenData) {
+      const keys = await this.scanKeys(`tenant:*:password-reset:${token}`);
+      if (keys.length > 0) {
+        tokenData = await redis.get(keys[0]);
+        // Extract tenantId from key pattern: tenant:{tenantId}:password-reset:{token}
+        const match = keys[0].match(/^tenant:([^:]+):password-reset:/);
+        tenantId = match ? match[1] : undefined;
+      }
+    }
 
     if (!tokenData) {
       throw new ValidationError(['Invalid or expired reset token']);
     }
 
-    const { userId } = JSON.parse(tokenData);
+    const parsed = JSON.parse(tokenData);
+    const userId = parsed.userId;
+    tenantId = tenantId || parsed.tenantId;
 
     // Validate password strength
     this.validatePasswordStrength(newPassword);
@@ -90,11 +107,18 @@ export class AuthExtendedService {
         updated_at: new Date()
       });
 
-    // Delete the reset token
+    // Delete the reset token (try both patterns)
     await redis.del(`password-reset:${token}`);
+    if (tenantId) {
+      await redis.del(redisKeys.passwordReset(token, tenantId));
+    }
 
     // Invalidate all refresh tokens for this user using non-blocking SCAN
-    const keys = await this.scanKeys('refresh_token:*');
+    const refreshPattern = tenantId 
+      ? `tenant:${tenantId}:refresh_token:*`
+      : 'refresh_token:*';
+    const keys = await this.scanKeys(refreshPattern);
+    
     for (const key of keys) {
       const data = await redis.get(key);
       if (data) {
@@ -118,15 +142,29 @@ export class AuthExtendedService {
   }
 
   async verifyEmail(token: string): Promise<void> {
-    // Get token data from Redis
     const redis = getRedis();
-    const tokenData = await redis.get(`email-verify:${token}`);
+    
+    // Try to find token (with or without tenant prefix)
+    let tokenData = await redis.get(`email-verify:${token}`);
+    let tenantId: string | undefined;
+    
+    if (!tokenData) {
+      const keys = await this.scanKeys(`tenant:*:email-verify:${token}`);
+      if (keys.length > 0) {
+        tokenData = await redis.get(keys[0]);
+        const match = keys[0].match(/^tenant:([^:]+):email-verify:/);
+        tenantId = match ? match[1] : undefined;
+      }
+    }
 
     if (!tokenData) {
       throw new ValidationError(['Invalid or expired verification token']);
     }
 
-    const { userId, email } = JSON.parse(tokenData);
+    const parsed = JSON.parse(tokenData);
+    const userId = parsed.userId;
+    const email = parsed.email;
+    tenantId = tenantId || parsed.tenantId;
 
     // Verify user exists first
     const user = await db('users').withSchema('public')
@@ -157,8 +195,11 @@ export class AuthExtendedService {
       throw new ValidationError(['Failed to update user']);
     }
 
-    // Delete the verification token
+    // Delete the verification token (try both patterns)
     await redis.del(`email-verify:${token}`);
+    if (tenantId) {
+      await redis.del(redisKeys.emailVerify(token, tenantId));
+    }
 
     // Log the verification
     await db('audit_logs').insert({
@@ -169,7 +210,7 @@ export class AuthExtendedService {
       user_id: userId,
       created_at: new Date()
     });
-    
+
     console.log(`Email verified successfully for user: ${userId}`);
   }
 
@@ -201,11 +242,12 @@ export class AuthExtendedService {
       throw new ValidationError(['Email already verified']);
     }
 
-    // Send new verification email
+    // Send new verification email with tenant context
     await this.emailService.sendVerificationEmail(
       user.id,
       user.email,
-      user.first_name
+      user.first_name,
+      user.tenant_id
     );
   }
 

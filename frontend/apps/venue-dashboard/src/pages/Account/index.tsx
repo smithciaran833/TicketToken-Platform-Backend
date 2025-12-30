@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { User, Lock, Shield, Bell, CreditCard, Building2, ChevronRight } from "lucide-react";
+import { User, Lock, Shield, Bell, ChevronRight } from "lucide-react";
 
 const sections = [
   {

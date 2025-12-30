@@ -19,9 +19,19 @@ export class RateLimiter {
     };
   }
 
-  async consume(key: string, _points = 1): Promise<void> {
+  /**
+   * Consume rate limit points
+   * @param key - Identifier (IP, userId, etc.)
+   * @param points - Points to consume (default 1)
+   * @param tenantId - Optional tenant ID for multi-tenant isolation
+   */
+  async consume(key: string, points = 1, tenantId?: string): Promise<void> {
     const redis = getRedis();
-    const fullKey = `${this.keyPrefix}:${key}`;
+    
+    // Build key with tenant prefix for multi-tenant isolation
+    const fullKey = tenantId 
+      ? `tenant:${tenantId}:${this.keyPrefix}:${key}`
+      : `${this.keyPrefix}:${key}`;
     const blockKey = `${fullKey}:block`;
 
     // Check if blocked
@@ -33,7 +43,7 @@ export class RateLimiter {
 
     // Get current points
     const currentPoints = await redis.incr(fullKey);
-    
+
     // Set expiry on first request
     if (currentPoints === 1) {
       await redis.expire(fullKey, this.options.duration);
@@ -43,7 +53,6 @@ export class RateLimiter {
     if (currentPoints > this.options.points) {
       // Block the key
       await redis.setex(blockKey, this.options.blockDuration!, '1');
-      
       throw new RateLimitError(
         'Rate limit exceeded',
         this.options.blockDuration!
@@ -51,9 +60,11 @@ export class RateLimiter {
     }
   }
 
-  async reset(key: string): Promise<void> {
+  async reset(key: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
-    const fullKey = `${this.keyPrefix}:${key}`;
+    const fullKey = tenantId 
+      ? `tenant:${tenantId}:${this.keyPrefix}:${key}`
+      : `${this.keyPrefix}:${key}`;
     const blockKey = `${fullKey}:block`;
     
     await redis.del(fullKey);

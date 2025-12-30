@@ -5,46 +5,41 @@ import { db } from '../config/database';
 import { getRedis } from '../config/redis';
 import { env } from '../config/env';
 import { AuthenticationError } from '../errors';
+import { redisKeys } from '../utils/redisKeys';
 
 export class MFAService {
-  async setupTOTP(userId: string): Promise<{
+  async setupTOTP(userId: string, tenantId?: string): Promise<{
     secret: string;
     qrCode: string;
   }> {
     try {
-      // Get user - explicitly use core schema
       const user = await db('users').withSchema('public').where('users.id', userId).first();
       if (!user) {
         throw new Error('User not found');
       }
 
-      // Check if MFA already enabled
       if (user.mfa_enabled) {
         throw new Error('MFA is already enabled for this account');
       }
 
-      // Generate secret
       const secret = speakeasy.generateSecret({
         name: `TicketToken (${user.email})`,
         issuer: env.MFA_ISSUER || 'TicketToken',
         length: 32,
       });
 
-      // Generate QR code
       const qrCode = await QRCode.toDataURL(secret.otpauth_url || "");
-
-      // Generate backup codes
       const backupCodes = this.generateBackupCodes();
 
-      // Store temporarily until verified (both hashed and original)
       const redis = getRedis();
       await redis.setex(
-        `mfa:setup:${userId}`,
-        600, // 10 minutes
+        redisKeys.mfaSetup(userId, tenantId || user.tenant_id),
+        600,
         JSON.stringify({
           secret: this.encrypt(secret.base32),
           backupCodes: backupCodes.map(code => this.hashBackupCode(code)),
-          plainBackupCodes: backupCodes, // Store plain codes temporarily
+          plainBackupCodes: backupCodes,
+          tenantId: tenantId || user.tenant_id,
         })
       );
 
@@ -58,19 +53,24 @@ export class MFAService {
     }
   }
 
-  async verifyAndEnableTOTP(userId: string, token: string): Promise<{ backupCodes: string[] }> {
+  async verifyAndEnableTOTP(userId: string, token: string, tenantId?: string): Promise<{ backupCodes: string[] }> {
     try {
-      // Get temporary setup data
       const redis = getRedis();
-      const setupData = await redis.get(`mfa:setup:${userId}`);
+      
+      // Try tenant-prefixed key first, then fall back
+      let setupData = await redis.get(redisKeys.mfaSetup(userId, tenantId));
+      if (!setupData && tenantId) {
+        setupData = await redis.get(`mfa:setup:${userId}`);
+      }
+      
       if (!setupData) {
         throw new Error('MFA setup expired or not found');
       }
 
-      const { secret, backupCodes, plainBackupCodes } = JSON.parse(setupData);
+      const { secret, backupCodes, plainBackupCodes, tenantId: storedTenantId } = JSON.parse(setupData);
+      const effectiveTenantId = tenantId || storedTenantId;
       const decryptedSecret = this.decrypt(secret);
 
-      // Verify token
       const verified = speakeasy.totp.verify({
         secret: decryptedSecret,
         encoding: 'base32',
@@ -82,17 +82,16 @@ export class MFAService {
         throw new AuthenticationError('Invalid MFA token');
       }
 
-      // Enable MFA for user with hashed backup codes
       await db('users').withSchema('public').where('users.id', userId).update({
         mfa_enabled: true,
         mfa_secret: secret,
-        backup_codes: backupCodes, // Store as array directly
+        backup_codes: backupCodes,
       });
 
-      // Clean up temporary data
+      // Clean up - try both key patterns
+      await redis.del(redisKeys.mfaSetup(userId, effectiveTenantId));
       await redis.del(`mfa:setup:${userId}`);
 
-      // Return plain backup codes to user (this is the only time they'll see them)
       return { backupCodes: plainBackupCodes };
     } catch (error: any) {
       console.error('MFA verifyAndEnableTOTP error:', error.message, error.stack);
@@ -100,7 +99,7 @@ export class MFAService {
     }
   }
 
-  async verifyTOTP(userId: string, token: string): Promise<boolean> {
+  async verifyTOTP(userId: string, token: string, tenantId?: string): Promise<boolean> {
     try {
       const user = await db('users').withSchema('public').where('users.id', userId).first();
 
@@ -108,33 +107,30 @@ export class MFAService {
         return false;
       }
 
-      // Validate token format - must be exactly 6 digits
       if (!/^\d{6}$/.test(token)) {
         return false;
       }
 
       const secret = this.decrypt(user.mfa_secret);
+      const effectiveTenantId = tenantId || user.tenant_id;
 
-      // Check recent use to prevent replay attacks
       const redis = getRedis();
-      const recentKey = `mfa:recent:${userId}:${token}`;
+      const recentKey = redisKeys.mfaRecent(userId, token, effectiveTenantId);
       const recentlyUsed = await redis.get(recentKey);
 
       if (recentlyUsed) {
         throw new AuthenticationError('MFA token recently used');
       }
 
-      // Verify TOTP with tighter window (1 step = 30 seconds before/after)
       const verified = speakeasy.totp.verify({
         secret,
         encoding: 'base32',
         token,
-        window: 1, // Reduced from 2 to 1 for stricter validation
+        window: 1,
       });
 
       if (verified) {
-        // Mark token as used
-        await redis.setex(recentKey, 90, '1'); // 90 seconds
+        await redis.setex(recentKey, 90, '1');
       }
 
       return verified;
@@ -152,7 +148,6 @@ export class MFAService {
         return false;
       }
 
-      // backup_codes is TEXT[] in PostgreSQL - already an array
       const backupCodes = user.backup_codes;
       if (!Array.isArray(backupCodes) || backupCodes.length === 0) {
         return false;
@@ -165,10 +160,8 @@ export class MFAService {
         return false;
       }
 
-      // Remove used code
       backupCodes.splice(codeIndex, 1);
 
-      // Store as native PostgreSQL array (Knex handles conversion)
       await db('users').withSchema('public').where('users.id', userId).update({
         backup_codes: backupCodes,
       });
@@ -183,7 +176,7 @@ export class MFAService {
   async regenerateBackupCodes(userId: string): Promise<{ backupCodes: string[] }> {
     try {
       const user = await db('users').withSchema('public').where('users.id', userId).first();
-      
+
       if (!user) {
         throw new Error('User not found');
       }
@@ -192,11 +185,9 @@ export class MFAService {
         throw new Error('MFA is not enabled for this account');
       }
 
-      // Generate new backup codes
       const newBackupCodes = this.generateBackupCodes();
       const hashedCodes = newBackupCodes.map(code => this.hashBackupCode(code));
 
-      // Update user with new backup codes
       await db('users').withSchema('public').where('users.id', userId).update({
         backup_codes: hashedCodes,
       });
@@ -208,7 +199,7 @@ export class MFAService {
     }
   }
 
-  async requireMFAForOperation(userId: string, operation: string): Promise<void> {
+  async requireMFAForOperation(userId: string, operation: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
     const sensitiveOperations = [
       'withdraw:funds',
@@ -222,17 +213,15 @@ export class MFAService {
       return;
     }
 
-    // Check if MFA was recently verified
-    const recentMFA = await redis.get(`mfa:verified:${userId}`);
+    const recentMFA = await redis.get(redisKeys.mfaVerified(userId, tenantId));
     if (!recentMFA) {
       throw new AuthenticationError('MFA required for this operation');
     }
   }
 
-  async markMFAVerified(userId: string): Promise<void> {
-    // Mark MFA as recently verified for sensitive operations
+  async markMFAVerified(userId: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
-    await redis.setex(`mfa:verified:${userId}`, 300, '1'); // 5 minutes
+    await redis.setex(redisKeys.mfaVerified(userId, tenantId), 300, '1');
   }
 
   private generateBackupCodes(): string[] {
@@ -279,31 +268,27 @@ export class MFAService {
     return decrypted;
   }
 
-  async disableTOTP(userId: string, password: string, token: string): Promise<void> {
+  async disableTOTP(userId: string, password: string, token: string, tenantId?: string): Promise<void> {
     try {
-      // Verify password first
       const user = await db('users').withSchema('public').where('users.id', userId).first();
-      
+
       if (!user) {
         throw new Error('User not found');
       }
 
-      // Import bcrypt for password verification
       const bcrypt = require('bcrypt');
       const passwordValid = await bcrypt.compare(password, user.password_hash);
-      
+
       if (!passwordValid) {
         throw new Error('Invalid password');
       }
 
-      // Verify MFA token
-      const mfaValid = await this.verifyTOTP(user.id, token);
-      
+      const mfaValid = await this.verifyTOTP(user.id, token, tenantId || user.tenant_id);
+
       if (!mfaValid) {
         throw new Error('Invalid MFA token');
       }
 
-      // Clear MFA settings from user record
       await db('users').withSchema('public')
         .where({ 'users.id': userId })
         .update({
@@ -313,8 +298,12 @@ export class MFAService {
           updated_at: new Date()
         });
 
-      // Clear any MFA-related data from Redis
       const redis = getRedis();
+      const effectiveTenantId = tenantId || user.tenant_id;
+      
+      // Clean up both old and new key patterns
+      await redis.del(redisKeys.mfaSecret(userId, effectiveTenantId));
+      await redis.del(redisKeys.mfaVerified(userId, effectiveTenantId));
       await redis.del(`mfa:secret:${userId}`);
       await redis.del(`mfa:verified:${userId}`);
 

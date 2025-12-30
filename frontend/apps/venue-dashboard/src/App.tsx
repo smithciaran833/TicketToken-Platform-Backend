@@ -20,6 +20,17 @@ import EventFAQ from "./pages/EventFAQ";
 import CreateEvent from "./pages/CreateEvent";
 import EditEvent from "./pages/EditEvent";
 
+// Auth Section
+import {
+  Login,
+  ForgotPassword,
+  ResetPassword,
+  AcceptInvite,
+  VerifyEmail,
+  OnboardingWelcome,
+  ConnectStripe
+} from "./pages/Auth";
+
 // Tickets Section
 import TicketTypesList from "./pages/Tickets";
 import CreateTicketType from "./pages/Tickets/CreateTicketType";
@@ -173,6 +184,56 @@ import AddVenue from "./pages/Venues/AddVenue";
 import CrossVenueAnalytics from "./pages/Venues/CrossVenueAnalytics";
 import CompareVenues from "./pages/Venues/CompareVenues";
 
+// Support Section
+import HelpCenter from "./pages/Support";
+import SearchHelp from "./pages/Support/SearchHelp";
+import HelpArticle from "./pages/Support/HelpArticle";
+import TutorialVideos from "./pages/Support/TutorialVideos";
+import GettingStarted from "./pages/Support/GettingStarted";
+import BestPractices from "./pages/Support/BestPractices";
+import ContactSupport from "./pages/Support/ContactSupport";
+import LiveChat from "./pages/Support/LiveChat";
+import ScheduleCall from "./pages/Support/ScheduleCall";
+import EmergencyHotline from "./pages/Support/EmergencyHotline";
+import AccountManager from "./pages/Support/AccountManager";
+import RequestAccountManager from "./pages/Support/RequestAccountManager";
+import TrainingSessions from "./pages/Support/TrainingSessions";
+import TrainingMaterials from "./pages/Support/TrainingMaterials";
+import Sandbox from "./pages/Support/Sandbox";
+import BugReport from "./pages/Support/BugReport";
+import FeatureRequest from "./pages/Support/FeatureRequest";
+import VoteFeatures from "./pages/Support/VoteFeatures";
+import SupportTickets from "./pages/Support/SupportTickets";
+import TicketDetail from "./pages/Support/TicketDetail";
+import LegalTerms from "./pages/Support/LegalTerms";
+import LegalPrivacy from "./pages/Support/LegalPrivacy";
+import LegalCompliance from "./pages/Support/LegalCompliance";
+import TaxForms from "./pages/Support/TaxForms";
+import PlatformAnnouncements from "./pages/Support/PlatformAnnouncements";
+import PlatformStatus from "./pages/Support/PlatformStatus";
+import SubscribeUpdates from "./pages/Support/SubscribeUpdates";
+
+// Account Section
+import AccountSettings from "./pages/Account";
+import EditProfile from "./pages/Account/EditProfile";
+import ChangePassword from "./pages/Account/ChangePassword";
+import Enable2FA from "./pages/Account/Enable2FA";
+import NotificationPreferences from "./pages/Account/NotificationPreferences";
+
+// Auth routes that don't use DashboardLayout
+const authRoutes = [
+  "/login",
+  "/forgot-password",
+  "/reset-password",
+  "/invite",
+  "/verify-email",
+  "/onboarding"
+];
+
+function isAuthRoute(pathname: string): boolean {
+  return authRoutes.some(route => pathname.startsWith(route));
+}
+
 function isEventPreviewPath(pathname: string): boolean {
   const parts = pathname.split('/');
   return parts.length === 5 && parts[1] === 'venue' && parts[2] === 'events' && parts[4] === 'preview';
@@ -181,6 +242,22 @@ function isEventPreviewPath(pathname: string): boolean {
 function AppContent() {
   const location = useLocation();
 
+  // Auth routes - no layout
+  if (isAuthRoute(location.pathname)) {
+    return (
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password/:token" element={<ResetPassword />} />
+        <Route path="/invite/:token" element={<AcceptInvite />} />
+        <Route path="/verify-email/:token" element={<VerifyEmail />} />
+        <Route path="/onboarding" element={<OnboardingWelcome />} />
+        <Route path="/onboarding/payments" element={<ConnectStripe />} />
+      </Routes>
+    );
+  }
+
+  // Event preview - no layout
   if (isEventPreviewPath(location.pathname)) {
     return (
       <Routes>
@@ -189,6 +266,7 @@ function AppContent() {
     );
   }
 
+  // Dashboard routes - with layout
   return (
     <DashboardLayout>
       <Routes>
@@ -366,7 +444,44 @@ function AppContent() {
         <Route path="/venues/analytics" element={<CrossVenueAnalytics />} />
         <Route path="/venues/compare" element={<CompareVenues />} />
 
-        <Route path="/" element={<Navigate to="/venue" replace />} />
+        {/* Support */}
+        <Route path="/venue/support" element={<HelpCenter />} />
+        <Route path="/venue/support/search" element={<SearchHelp />} />
+        <Route path="/venue/support/articles/:id" element={<HelpArticle />} />
+        <Route path="/venue/support/tutorials" element={<TutorialVideos />} />
+        <Route path="/venue/support/getting-started" element={<GettingStarted />} />
+        <Route path="/venue/support/best-practices" element={<BestPractices />} />
+        <Route path="/venue/support/contact" element={<ContactSupport />} />
+        <Route path="/venue/support/chat" element={<LiveChat />} />
+        <Route path="/venue/support/schedule" element={<ScheduleCall />} />
+        <Route path="/venue/support/emergency" element={<EmergencyHotline />} />
+        <Route path="/venue/support/account-manager" element={<AccountManager />} />
+        <Route path="/venue/support/account-manager/request" element={<RequestAccountManager />} />
+        <Route path="/venue/support/training" element={<TrainingSessions />} />
+        <Route path="/venue/support/training/materials" element={<TrainingMaterials />} />
+        <Route path="/venue/support/sandbox" element={<Sandbox />} />
+        <Route path="/venue/support/bug-report" element={<BugReport />} />
+        <Route path="/venue/support/feature-request" element={<FeatureRequest />} />
+        <Route path="/venue/support/features" element={<VoteFeatures />} />
+        <Route path="/venue/support/tickets" element={<SupportTickets />} />
+        <Route path="/venue/support/tickets/:id" element={<TicketDetail />} />
+        <Route path="/venue/support/legal/terms" element={<LegalTerms />} />
+        <Route path="/venue/support/legal/privacy" element={<LegalPrivacy />} />
+        <Route path="/venue/support/legal/compliance" element={<LegalCompliance />} />
+        <Route path="/venue/support/legal/tax-forms" element={<TaxForms />} />
+        <Route path="/venue/support/announcements" element={<PlatformAnnouncements />} />
+        <Route path="/venue/support/status" element={<PlatformStatus />} />
+        <Route path="/venue/support/subscribe" element={<SubscribeUpdates />} />
+
+        {/* Account */}
+        <Route path="/account/settings" element={<AccountSettings />} />
+        <Route path="/account/profile" element={<EditProfile />} />
+        <Route path="/account/password" element={<ChangePassword />} />
+        <Route path="/account/2fa" element={<Enable2FA />} />
+        <Route path="/account/notifications" element={<NotificationPreferences />} />
+
+        {/* Default redirect */}
+        <Route path="/" element={<Navigate to="/login" replace />} />
       </Routes>
     </DashboardLayout>
   );

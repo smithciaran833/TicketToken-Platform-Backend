@@ -112,7 +112,7 @@ export class AuthService {
       }
 
       // Send verification email after transaction completes (async, non-blocking)
-      await this.emailService.sendVerificationEmail(user.id, user.email, user.first_name);
+      await this.emailService.sendVerificationEmail(user.id, user.email, user.first_name, user.tenant_id);
 
       return {
         user: {
