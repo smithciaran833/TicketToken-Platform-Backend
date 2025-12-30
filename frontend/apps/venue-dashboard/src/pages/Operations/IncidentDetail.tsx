@@ -27,7 +27,7 @@ const incident = {
 };
 
 export default function IncidentDetail() {
-  const { id } = useParams();
+  const { id: _id } = useParams();
   const toast = useToast();
 
   const [showNoteModal, setShowNoteModal] = useState(false);
@@ -203,7 +203,7 @@ export default function IncidentDetail() {
               <p className="text-sm text-gray-500">No photos attached</p>
             ) : (
               <div className="grid grid-cols-2 gap-2">
-                {incident.photos.map((photo, index) => (
+                {incident.photos.map((_photo, index) => (
                   <div key={index} className="aspect-square bg-gray-100 rounded-lg" />
                 ))}
               </div>

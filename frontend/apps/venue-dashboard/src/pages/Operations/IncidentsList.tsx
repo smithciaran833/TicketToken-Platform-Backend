@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Plus, Search, Download, AlertTriangle, MoreVertical, Eye } from "lucide-react";
-import { Button, Dropdown } from "../../components/ui";
+import { ArrowLeft, Plus, Search, Download, AlertTriangle } from "lucide-react";
+import { Button } from "../../components/ui";
 
 const incidents = [
   { id: 1, date: "2025-01-15 8:30 PM", event: "Summer Music Festival", type: "Medical", description: "Attendee fainted near stage", severity: "high", status: "open" },
@@ -40,9 +40,6 @@ export default function IncidentsList() {
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  const getDropdownItems = (incident: typeof incidents[0]) => [
-    { label: "View Details", icon: <Eye className="w-4 h-4" />, onClick: () => {} },
-  ];
 
   const getSeverityBadge = (severity: string) => {
     const styles = {

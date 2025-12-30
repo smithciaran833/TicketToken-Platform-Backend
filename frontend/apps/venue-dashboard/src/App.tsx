@@ -152,8 +152,16 @@ import SafetyEvacuation from "./pages/Settings/SafetyEvacuation";
 import SafetyProtocols from "./pages/Settings/SafetyProtocols";
 import SafetyMedical from "./pages/Settings/SafetyMedical";
 
+// Operations Section
+import OperationsIndex from "./pages/Operations";
+import IncidentsList from "./pages/Operations/IncidentsList";
+import LogIncident from "./pages/Operations/LogIncident";
+import IncidentDetail from "./pages/Operations/IncidentDetail";
+import EquipmentList from "./pages/Operations/EquipmentList";
+import AddEquipment from "./pages/Operations/AddEquipment";
+import EquipmentCheck from "./pages/Operations/EquipmentCheck";
+
 function isEventPreviewPath(pathname: string): boolean {
-  // Match /venue/events/:id/preview but not other preview paths
   const parts = pathname.split('/');
   return parts.length === 5 && parts[1] === 'venue' && parts[2] === 'events' && parts[4] === 'preview';
 }
@@ -272,68 +280,67 @@ function AppContent() {
 
         {/* Settings */}
         <Route path="/venue/settings" element={<SettingsIndex />} />
-        {/* Profile & Media */}
         <Route path="/venue/settings/profile" element={<VenueProfile />} />
         <Route path="/venue/settings/media" element={<VenueMedia />} />
         <Route path="/venue/settings/social" element={<VenueSocial />} />
         <Route path="/venue/settings/hours" element={<VenueHours />} />
         <Route path="/venue/settings/preview" element={<VenuePreview />} />
-        {/* Location & Access */}
         <Route path="/venue/settings/location" element={<VenueLocation />} />
         <Route path="/venue/settings/parking" element={<VenueParking />} />
         <Route path="/venue/settings/transit" element={<VenueTransit />} />
         <Route path="/venue/settings/loadin" element={<VenueLoadIn />} />
         <Route path="/venue/settings/curfew" element={<VenueCurfew />} />
         <Route path="/venue/settings/age" element={<VenueAge />} />
-        {/* Entry & Capacity */}
         <Route path="/venue/settings/entry" element={<EntryPoints />} />
         <Route path="/venue/settings/exit" element={<ExitPoints />} />
         <Route path="/venue/settings/reentry" element={<ReEntryPolicy />} />
         <Route path="/venue/settings/capacity" element={<CapacitySettings />} />
-        {/* Seating */}
         <Route path="/venue/settings/seating/configs" element={<SeatingConfigs />} />
         <Route path="/venue/settings/seating/builder" element={<SeatingMapBuilder />} />
         <Route path="/venue/settings/seating/sections" element={<SeatingSections />} />
         <Route path="/venue/settings/seating/accessibility" element={<SeatingAccessibility />} />
         <Route path="/venue/settings/seating/preview" element={<SeatingPreview />} />
-        {/* VIP */}
         <Route path="/venue/settings/vip/areas" element={<VIPAreas />} />
         <Route path="/venue/settings/vip/access" element={<VIPAccess />} />
         <Route path="/venue/settings/vip/amenities" element={<VIPAmenities />} />
         <Route path="/venue/settings/vip/guestlists" element={<VIPGuestLists />} />
         <Route path="/venue/settings/vip/willcall" element={<VIPWillCall />} />
         <Route path="/venue/settings/vip/idverify" element={<VIPIDVerify />} />
-        {/* Legal */}
         <Route path="/venue/settings/legal/tax" element={<LegalTax />} />
         <Route path="/venue/settings/legal/insurance" element={<LegalInsurance />} />
         <Route path="/venue/settings/legal/liquor" element={<LegalLiquor />} />
         <Route path="/venue/settings/legal/payouts" element={<LegalPayouts />} />
         <Route path="/venue/settings/legal/verification" element={<LegalVerification />} />
         <Route path="/venue/settings/legal/verification/submit" element={<LegalVerificationSubmit />} />
-        {/* Branding */}
         <Route path="/venue/settings/branding/logo" element={<BrandingLogo />} />
         <Route path="/venue/settings/branding/tickets" element={<BrandingTickets />} />
         <Route path="/venue/settings/branding/email" element={<BrandingEmail />} />
         <Route path="/venue/settings/branding/preview" element={<BrandingPreview />} />
         <Route path="/venue/settings/branding/domain" element={<BrandingDomain />} />
-        {/* Communication */}
         <Route path="/venue/settings/communication/email" element={<CommEmailTemplates />} />
         <Route path="/venue/settings/communication/email/new" element={<CommEmailCreate />} />
         <Route path="/venue/settings/communication/email/preview" element={<CommEmailPreview />} />
         <Route path="/venue/settings/communication/sms" element={<CommSMSTemplates />} />
         <Route path="/venue/settings/communication/sms/new" element={<CommSMSCreate />} />
         <Route path="/venue/settings/communication/notifications" element={<CommNotifications />} />
-        {/* Policies */}
         <Route path="/venue/settings/policies/refund" element={<PolicyRefund />} />
         <Route path="/venue/settings/policies/age" element={<PolicyAge />} />
         <Route path="/venue/settings/policies/bags" element={<PolicyBags />} />
         <Route path="/venue/settings/policies/custom" element={<PolicyCustom />} />
         <Route path="/venue/settings/policies/custom/new" element={<PolicyCustomCreate />} />
-        {/* Safety */}
         <Route path="/venue/settings/safety/emergency" element={<SafetyEmergency />} />
         <Route path="/venue/settings/safety/evacuation" element={<SafetyEvacuation />} />
         <Route path="/venue/settings/safety/protocols" element={<SafetyProtocols />} />
         <Route path="/venue/settings/safety/medical" element={<SafetyMedical />} />
+
+        {/* Operations */}
+        <Route path="/venue/operations" element={<OperationsIndex />} />
+        <Route path="/venue/operations/incidents" element={<IncidentsList />} />
+        <Route path="/venue/operations/incidents/new" element={<LogIncident />} />
+        <Route path="/venue/operations/incidents/:id" element={<IncidentDetail />} />
+        <Route path="/venue/operations/equipment" element={<EquipmentList />} />
+        <Route path="/venue/operations/equipment/new" element={<AddEquipment />} />
+        <Route path="/venue/operations/equipment/check" element={<EquipmentCheck />} />
 
         <Route path="/" element={<Navigate to="/venue" replace />} />
       </Routes>

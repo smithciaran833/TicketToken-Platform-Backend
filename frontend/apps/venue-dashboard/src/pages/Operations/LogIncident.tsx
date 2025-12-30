@@ -42,7 +42,7 @@ export default function LogIncident() {
   });
 
   const [involvedPeople, setInvolvedPeople] = useState<{ type: string; name: string; details: string }[]>([]);
-  const [photos, setPhotos] = useState<string[]>([]);
+  const [_photos, _setPhotos] = useState<string[]>([]);
 
   const addPerson = () => {
     setInvolvedPeople([...involvedPeople, { type: "customer", name: "", details: "" }]);

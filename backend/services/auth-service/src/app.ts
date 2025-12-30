@@ -10,6 +10,8 @@ import { env } from './config/env';
 import { setupHealthRoutes } from './services/monitoring.service';
 import { pool } from './config/database';
 import { getRedis } from './config/redis';
+import { correlationMiddleware } from './middleware/correlation.middleware';
+import { withCorrelation } from './utils/logger';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -26,19 +28,33 @@ export async function buildApp(): Promise<FastifyInstance> {
     trustProxy: true,
     requestIdHeader: 'x-request-id',
     disableRequestLogging: false,
-    // GD-F9: Request/connection timeouts
     connectionTimeout: 10000,
     keepAliveTimeout: 72000,
     requestTimeout: 30000,
-    // GD-F10: Body size limit (1MB)
     bodyLimit: 1048576,
+    // Generate request IDs if not provided
+    genReqId: (req) => {
+      return (req.headers['x-correlation-id'] as string) || 
+             (req.headers['x-request-id'] as string) || 
+             require('crypto').randomUUID();
+    },
+  });
+
+  // Register correlation ID middleware first
+  await correlationMiddleware(app);
+
+  // Wrap request handling with correlation context
+  app.addHook('preHandler', async (request) => {
+    // This ensures all async operations within the request have access to correlation ID
+    const correlationId = request.correlationId || request.id;
+    return withCorrelation(correlationId, () => {});
   });
 
   // HC-F7: Under pressure - automatic load shedding
   await app.register(underPressure, {
-    maxEventLoopDelay: 1000, // 1 second
-    maxHeapUsedBytes: 500 * 1024 * 1024, // 500MB
-    maxRssBytes: 1024 * 1024 * 1024, // 1GB
+    maxEventLoopDelay: 1000,
+    maxHeapUsedBytes: 500 * 1024 * 1024,
+    maxRssBytes: 1024 * 1024 * 1024,
     maxEventLoopUtilization: 0.98,
     pressureHandler: (_req, rep, type, value) => {
       rep
@@ -54,7 +70,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     },
     healthCheck: async () => {
-      // Check database and Redis connectivity
       try {
         const redis = getRedis();
         await Promise.all([
@@ -109,7 +124,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     global: false,
     max: 100,
     timeWindow: '15 minutes',
-    // CRITICAL: Add rate limit headers
     addHeaders: {
       'x-ratelimit-limit': true,
       'x-ratelimit-remaining': true,
@@ -138,16 +152,16 @@ export async function buildApp(): Promise<FastifyInstance> {
         status: 404,
         detail: `Route ${request.method} ${request.url} not found`,
         instance: request.url,
-        correlationId: request.id,
+        correlationId: request.correlationId || request.id,
       });
   });
 
-  // Global error handler (RFC 7807) - registered BEFORE routes
+  // Global error handler (RFC 7807)
   app.setErrorHandler((error: any, request, reply) => {
     request.log.error(error);
 
     const statusCode = error.statusCode || 500;
-    const correlationId = request.id;
+    const correlationId = request.correlationId || request.id;
 
     // Under pressure errors
     if (error.code === 'FST_UNDER_PRESSURE') {
@@ -271,7 +285,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Default 500 - hide internal details in production
+    // Default 500
     const detail = env.NODE_ENV === 'production'
       ? 'Internal server error'
       : error.message || 'Internal server error';
@@ -289,7 +303,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
   });
 
-  // Setup health check routes (/health, /health/live, /health/ready, /health/startup, /metrics)
+  // Setup health check routes
   await setupHealthRoutes(app);
 
   // Register auth routes

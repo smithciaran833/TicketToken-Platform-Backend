@@ -16,11 +16,11 @@ import {
   Bell,
   Search,
   Building2,
+  Wrench,
 } from "lucide-react";
 
 interface DashboardLayoutProps {
   children: ReactNode;
-  currentPath?: string;
 }
 
 const navigation = [
@@ -32,6 +32,7 @@ const navigation = [
   { name: "Financials", href: "/venue/financials", icon: DollarSign },
   { name: "Marketing", href: "/venue/marketing", icon: Megaphone },
   { name: "Resale", href: "/venue/resale", icon: RefreshCw },
+  { name: "Operations", href: "/venue/operations", icon: Wrench },
   { name: "Team", href: "/venue/team", icon: Users },
   { name: "Settings", href: "/venue/settings", icon: Settings },
 ];
