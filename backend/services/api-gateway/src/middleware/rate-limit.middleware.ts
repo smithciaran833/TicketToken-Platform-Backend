@@ -43,7 +43,10 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
     max: config.rateLimit.global.max,
     timeWindow: config.rateLimit.global.timeWindow,
     redis: server.redis,
-    skipOnError: false,
+    // FIXED: skipOnError: true to prevent Redis failures from causing total outage
+    // Trade-off: During Redis outage, rate limiting is bypassed (fail-open)
+    // This is generally preferred over fail-closed for availability
+    skipOnError: true,
     keyGenerator: (request: FastifyRequest) => {
       // Use authenticated user ID if available, otherwise IP
       const keyBuilder = getKeyBuilder();
@@ -99,6 +102,21 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
         userId: user?.id,
       }, 'medium');
     },
+    // Log when rate limiting is skipped due to Redis error
+    onError: (request: FastifyRequest, _key: string, error: Error) => {
+      const logger = createRequestLogger(request.id);
+      logger.error({
+        error: error.message,
+        path: request.url,
+        method: request.method,
+      }, 'Rate limiting skipped due to Redis error - request allowed through');
+
+      logSecurityEvent('rate_limit_redis_error', {
+        error: error.message,
+        path: request.url,
+        ip: request.ip,
+      }, 'high');
+    },
   });
 
   // Custom rate limiter for ticket purchases with sliding window
@@ -118,37 +136,50 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
     }
 
     // Check ticket purchase rate limit
-    const limitResult = await checkTicketPurchaseLimit(server, userId, eventId);
+    try {
+      const limitResult = await checkTicketPurchaseLimit(server, userId, eventId);
 
-    if (!limitResult.allowed) {
-      logger.error({
-        userId,
-        eventId,
-        attemptCount: limitResult.attemptCount,
-        retryAfter: limitResult.retryAfter,
-      }, 'Ticket purchase rate limit exceeded');
-
-      // Log potential bot activity
-      if (limitResult.attemptCount && limitResult.attemptCount > 10) {
-        logSecurityEvent('potential_ticket_bot', {
+      if (!limitResult.allowed) {
+        logger.error({
           userId,
           eventId,
           attemptCount: limitResult.attemptCount,
-          ip: request.ip,
-          userAgent: request.headers['user-agent'],
-        }, 'high');
+          retryAfter: limitResult.retryAfter,
+        }, 'Ticket purchase rate limit exceeded');
+
+        // Log potential bot activity
+        if (limitResult.attemptCount && limitResult.attemptCount > 10) {
+          logSecurityEvent('potential_ticket_bot', {
+            userId,
+            eventId,
+            attemptCount: limitResult.attemptCount,
+            ip: request.ip,
+            userAgent: request.headers['user-agent'],
+          }, 'high');
+        }
+
+        if (limitResult.retryAfter) {
+          reply.header('Retry-After', limitResult.retryAfter.toString());
+        }
+        throw new RateLimitError(limitResult.retryAfter || 60);
       }
 
-      if (limitResult.retryAfter) {
-        reply.header('Retry-After', limitResult.retryAfter.toString());
+      // Set rate limit headers
+      reply.header('X-RateLimit-Limit', RATE_LIMIT_CONFIGS.ticketPurchase.max.toString());
+      reply.header('X-RateLimit-Remaining', (limitResult.remaining || 0).toString());
+      reply.header('X-RateLimit-Reset', new Date(Date.now() + 60000).toISOString());
+    } catch (error) {
+      // If it's a RateLimitError, rethrow it
+      if (error instanceof RateLimitError) {
+        throw error;
       }
-      throw new RateLimitError(limitResult.retryAfter || 60);
+      // For Redis errors, log and allow through (fail-open)
+      logger.error({
+        error: (error as Error).message,
+        userId,
+        eventId,
+      }, 'Ticket purchase rate limit check failed - allowing request');
     }
-
-    // Set rate limit headers
-    reply.header('X-RateLimit-Limit', RATE_LIMIT_CONFIGS.ticketPurchase.max.toString());
-    reply.header('X-RateLimit-Remaining', (limitResult.remaining || 0).toString());
-    reply.header('X-RateLimit-Reset', new Date(Date.now() + 60000).toISOString());
   });
 
   // Venue tier-based rate limiting
@@ -178,7 +209,7 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
   });
 }
 
-// 🚨 FIXED: Atomic sliding window rate limiter using Lua scripts from shared library
+// Atomic sliding window rate limiter using Lua scripts from shared library
 // Prevents race conditions that could allow burst attacks
 async function checkTicketPurchaseLimit(
   _server: FastifyInstance,
@@ -193,9 +224,9 @@ async function checkTicketPurchaseLimit(
 }> {
   const rateLimiter = getRateLimiter();
   const keyBuilder = getKeyBuilder();
-  
+
   const key = keyBuilder.rateLimit('ticket', `${userId}:${eventId}`);
-  
+
   // Use atomic sliding window from shared library
   const result = await rateLimiter.slidingWindow(
     key,

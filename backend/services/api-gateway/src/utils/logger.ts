@@ -29,22 +29,74 @@ export const logger = pino({
     },
   }),
 
-  // Redact sensitive information
+  // Redact sensitive information (PII and secrets)
   redact: {
     paths: [
+      // Authentication & secrets
       'password',
       'authorization',
       'cookie',
-      'creditCard',
-      'cvv',
-      'ssn',
+      'token',
+      'refreshToken',
+      'accessToken',
+      'apiKey',
+      'secret',
       '*.password',
       '*.authorization',
+      '*.token',
+      '*.refreshToken',
+      '*.accessToken',
+      '*.apiKey',
+      '*.secret',
       'headers.authorization',
       'headers.cookie',
+      'headers.x-api-key',
       'body.password',
+      'body.token',
+      'body.refreshToken',
+      
+      // PII - Personal Identifiable Information
+      'email',
+      'phone',
+      'phoneNumber',
+      'ssn',
+      'socialSecurityNumber',
+      'dateOfBirth',
+      'dob',
+      '*.email',
+      '*.phone',
+      '*.phoneNumber',
+      '*.ssn',
+      '*.dateOfBirth',
+      '*.dob',
+      'body.email',
+      'body.phone',
+      'body.phoneNumber',
+      'user.email',
+      'user.phone',
+      
+      // Financial data
+      'creditCard',
+      'cardNumber',
+      'cvv',
+      'cvc',
+      'accountNumber',
+      'routingNumber',
+      'bankAccount',
+      '*.creditCard',
+      '*.cardNumber',
+      '*.cvv',
+      '*.cvc',
+      '*.accountNumber',
       'body.creditCard',
+      'body.cardNumber',
       'body.cvv',
+      
+      // Address info (partial PII)
+      'address.street',
+      'address.line1',
+      'address.line2',
+      '*.address.street',
     ],
     censor: '[REDACTED]',
   },
@@ -56,19 +108,23 @@ export const logger = pino({
       id: req.id,
       method: req.method,
       url: req.url,
-      path: req.routeOptions?.url || req.url,  // FIXED: use routeOptions.url
+      path: req.routeOptions?.url || req.url,
       parameters: req.params,
       headers: {
         'x-request-id': req.headers?.['x-request-id'],
-        'x-venue-id': req.headers?.['x-venue-id'],
+        'x-correlation-id': req.headers?.['x-correlation-id'],
         'user-agent': req.headers?.['user-agent'],
+        'content-type': req.headers?.['content-type'],
       },
+      // Get venueId from trusted source (venueContext), not from headers
+      venueId: req.venueContext?.venueId || req.user?.venueId,
       remoteAddress: req.ip,
       remotePort: req.socket?.remotePort || 0,
     }),
     response: (res) => ({
       statusCode: res.statusCode,
-      headers: res.getHeaders(),
+      // Don't log all headers - could contain sensitive data
+      contentType: res.getHeader?.('content-type'),
     }),
   },
 
@@ -152,8 +208,10 @@ export const logError = (
 };
 
 // Request/Response logging helpers
+// SECURITY: Get venueId from trusted request context, not headers
 export const logRequest = (req: any) => {
-  const requestLogger = createRequestLogger(req.id, req.headers?.['x-venue-id']);
+  const venueId = req.venueContext?.venueId || req.user?.venueId;
+  const requestLogger = createRequestLogger(req.id, venueId);
 
   requestLogger.info({
     request: req,
@@ -162,7 +220,8 @@ export const logRequest = (req: any) => {
 };
 
 export const logResponse = (req: any, reply: FastifyReply, responseTime: number) => {
-  const requestLogger = createRequestLogger(req.id, req.headers?.['x-venue-id']);
+  const venueId = req.venueContext?.venueId || req.user?.venueId;
+  const requestLogger = createRequestLogger(req.id, venueId);
 
   const logData = {
     request: req,

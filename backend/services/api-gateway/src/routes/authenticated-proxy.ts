@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import axios from 'axios';
+import { generateInternalAuthHeaders } from '../utils/internal-auth';
 
 interface ProxyOptions {
   serviceUrl: string;
@@ -10,8 +11,12 @@ interface ProxyOptions {
 
 // Headers that should never be forwarded to backend services
 const BLOCKED_HEADERS = [
-  'x-internal-service',
+  'x-gateway-internal',  // Block spoofed gateway auth
+  'x-gateway-forwarded', // Block spoofed gateway marker
+  'x-venue-id',          // Block external venue headers - must come from JWT or route params
+  'x-internal-service',  // Block spoofed internal service headers
   'x-internal-signature',
+  'x-internal-timestamp',
   'x-internal-key',
   'x-admin-token',
   'x-privileged',
@@ -44,7 +49,6 @@ const ALLOWED_HEADERS = [
   'origin',
   'x-request-id',
   'x-correlation-id',
-  // Removed x-tenant-id from allowed list
   'x-api-key',
   'idempotency-key'
 ];
@@ -56,7 +60,7 @@ function filterHeaders(headers: any): any {
   for (const [key, value] of Object.entries(headers)) {
     const lowerKey = key.toLowerCase();
 
-    // Skip blocked headers (including x-tenant-id)
+    // Skip blocked headers
     if (BLOCKED_HEADERS.includes(lowerKey)) {
       continue;
     }
@@ -75,24 +79,40 @@ export function createAuthenticatedProxy(server: FastifyInstance, options: Proxy
 
   const proxyHandler = async (request: FastifyRequest, reply: FastifyReply, path: string = '') => {
     try {
-      const targetUrl = path ? `${serviceUrl}/${path}` : serviceUrl;
+      const targetPath = path ? `/${path}` : '';
+      const targetUrl = `${serviceUrl}${targetPath}`;
 
       // Filter headers before forwarding
       const filteredHeaders = filterHeaders(request.headers);
 
-      // Add service identification for internal requests
+      // Always propagate correlation ID for distributed tracing
+      filteredHeaders['x-request-id'] = request.id;
+      filteredHeaders['x-correlation-id'] = request.id;
+
+      // Add gateway identification
       filteredHeaders['x-gateway-forwarded'] = 'true';
       filteredHeaders['x-original-ip'] = request.ip;
 
       // Extract tenant_id from JWT and add as internal header
-      // This is secure because it comes from the verified JWT, not from the client
       if (request.user) {
         const user = request.user as any;
         if (user.tenant_id) {
           filteredHeaders['x-tenant-id'] = user.tenant_id;
-          filteredHeaders['x-tenant-source'] = 'jwt';  // Mark that this came from JWT
+          filteredHeaders['x-tenant-source'] = 'jwt';
+        }
+        if (user.id) {
+          filteredHeaders['x-user-id'] = user.id;
         }
       }
+
+      // Generate internal service authentication headers (HMAC signed)
+      // This allows downstream services to verify the request came from the gateway
+      const internalAuthHeaders = generateInternalAuthHeaders(
+        request.method,
+        targetPath || '/',
+        request.body
+      );
+      Object.assign(filteredHeaders, internalAuthHeaders);
 
       const response = await axios({
         method: request.method as any,
@@ -107,15 +127,17 @@ export function createAuthenticatedProxy(server: FastifyInstance, options: Proxy
         maxBodyLength: 50 * 1024 * 1024
       });
 
-      // Filter response headers too
+      // Filter response headers
       const responseHeaders: any = {};
       for (const [key, value] of Object.entries(response.headers)) {
         const lowerKey = key.toLowerCase();
-        // Don't forward internal response headers
         if (!lowerKey.startsWith('x-internal-') && !BLOCKED_HEADERS.includes(lowerKey)) {
           responseHeaders[key] = value;
         }
       }
+
+      // Always include correlation ID in response
+      responseHeaders['x-correlation-id'] = request.id;
 
       return reply
         .code(response.status)
@@ -127,27 +149,30 @@ export function createAuthenticatedProxy(server: FastifyInstance, options: Proxy
         error: error.message,
         code: error.code,
         service: serviceName,
-        url: path
+        url: path,
+        correlationId: request.id
       }, `Proxy error to ${serviceName}`);
 
-      // Handle specific error types
       if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {
         return reply.code(504).send({
           error: 'Gateway Timeout',
-          message: `${serviceName} service timeout after ${timeout}ms`
+          message: `${serviceName} service timeout after ${timeout}ms`,
+          correlationId: request.id
         });
       }
 
       if (error.code === 'ECONNREFUSED') {
         return reply.code(503).send({
           error: 'Service Unavailable',
-          message: `${serviceName} service is down`
+          message: `${serviceName} service is down`,
+          correlationId: request.id
         });
       }
 
       return reply.code(502).send({
         error: 'Bad Gateway',
-        message: `${serviceName} service error: ${error.message}`
+        message: `${serviceName} service error: ${error.message}`,
+        correlationId: request.id
       });
     }
   };
@@ -171,7 +196,6 @@ export function createAuthenticatedProxy(server: FastifyInstance, options: Proxy
         const wildcardPath = (request.params as any)['*'] || '';
         const fullPath = '/' + wildcardPath;
 
-        // Check if this is a public path
         const isPublic = publicPaths.some(publicPath => {
           if (publicPath.includes('*')) {
             const regex = new RegExp('^' + publicPath.replace('*', '.*') + '$');

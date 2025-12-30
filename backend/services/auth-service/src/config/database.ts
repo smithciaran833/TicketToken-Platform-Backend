@@ -1,8 +1,10 @@
 import { Pool } from 'pg';
 import knex from 'knex';
+import { logger } from '../utils/logger';
+import { env } from './env';
 
 // SSL/TLS configuration for secure database connections
-const sslConfig = process.env.NODE_ENV === 'production'
+const sslConfig = env.NODE_ENV === 'production'
   ? {
       rejectUnauthorized: true,
       ca: process.env.DB_CA_CERT,  // For cloud providers (AWS RDS, Azure, etc.)
@@ -20,7 +22,6 @@ const dbConfig = {
   ssl: sslConfig,
 };
 
-// Reduced from max: 20 to max: 5 to prevent connection spikes
 export const pool = new Pool({
   ...dbConfig,
   max: 5,
@@ -28,22 +29,27 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10000,
 });
 
-// Set search_path to public schema only
+// Set search_path and statement timeout on each new connection
 pool.on('connect', async (client) => {
-  console.log('Setting search_path to public');
   await client.query('SET search_path TO public');
-  console.log('New client connected to database with search_path = public');
+  await client.query('SET statement_timeout = 30000'); // 30 second timeout
+  logger.info('Database client connected', { searchPath: 'public', statementTimeout: '30s' });
 });
 
-// IMPORTANT: Remove all existing connections on startup
-pool.on('error', (err) => {
-  console.error('Unexpected pool error:', err);
+// Pool error handler - log and monitor, don't crash
+pool.on('error', (err, client) => {
+  logger.error('Unexpected database pool error', {
+    error: err.message,
+    stack: env.NODE_ENV !== 'production' ? err.stack : undefined,
+    code: (err as any).code,
+  });
+  // Don't exit - pool will remove the errored client automatically
+  // But emit metric/alert for monitoring
 });
 
-// Reduced from max: 10, min: 2 to max: 5, min: 1 to prevent connection spikes
 export const db = knex({
   client: 'pg',
   connection: dbConfig,
-  pool: { min: 1, max: 5 },
+  pool: { min: 0, max: 5 }, // min: 0 for better resource usage (MIG-KF6)
   searchPath: ['public']
 });

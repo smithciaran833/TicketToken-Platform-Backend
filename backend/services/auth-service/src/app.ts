@@ -3,9 +3,13 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import csrf from '@fastify/csrf-protection';
 import rateLimit from '@fastify/rate-limit';
+import underPressure from '@fastify/under-pressure';
 import { createDependencyContainer } from './config/dependencies';
 import { authRoutes } from './routes/auth.routes';
 import { env } from './config/env';
+import { setupHealthRoutes } from './services/monitoring.service';
+import { pool } from './config/database';
+import { getRedis } from './config/redis';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -22,6 +26,56 @@ export async function buildApp(): Promise<FastifyInstance> {
     trustProxy: true,
     requestIdHeader: 'x-request-id',
     disableRequestLogging: false,
+    // GD-F9: Request/connection timeouts
+    connectionTimeout: 10000,
+    keepAliveTimeout: 72000,
+    requestTimeout: 30000,
+    // GD-F10: Body size limit (1MB)
+    bodyLimit: 1048576,
+  });
+
+  // HC-F7: Under pressure - automatic load shedding
+  await app.register(underPressure, {
+    maxEventLoopDelay: 1000, // 1 second
+    maxHeapUsedBytes: 500 * 1024 * 1024, // 500MB
+    maxRssBytes: 1024 * 1024 * 1024, // 1GB
+    maxEventLoopUtilization: 0.98,
+    pressureHandler: (_req, rep, type, value) => {
+      rep
+        .status(503)
+        .header('Content-Type', 'application/problem+json')
+        .header('Retry-After', '30')
+        .send({
+          type: 'https://httpstatuses.com/503',
+          title: 'Service Unavailable',
+          status: 503,
+          detail: `Server under pressure: ${type} at ${value}`,
+          code: 'SERVICE_OVERLOADED',
+        });
+    },
+    healthCheck: async () => {
+      // Check database and Redis connectivity
+      try {
+        const redis = getRedis();
+        await Promise.all([
+          pool.query('SELECT 1'),
+          redis.ping()
+        ]);
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    healthCheckInterval: 5000,
+    exposeStatusRoute: {
+      routeOpts: {
+        logLevel: 'warn',
+      },
+      routeSchemaOpts: {
+        hide: true,
+      },
+      url: '/health/pressure',
+    },
   });
 
   // Register plugins
@@ -30,8 +84,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     credentials: true,
   });
 
+  // SEC-R14: HSTS header enabled
   await app.register(helmet, {
     contentSecurityPolicy: false,
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
   });
 
   // CSRF Protection
@@ -44,116 +104,198 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // Rate limiting
+  // Rate limiting with standard headers
   await app.register(rateLimit, {
     global: false,
     max: 100,
     timeWindow: '15 minutes',
+    // CRITICAL: Add rate limit headers
+    addHeaders: {
+      'x-ratelimit-limit': true,
+      'x-ratelimit-remaining': true,
+      'x-ratelimit-reset': true,
+      'retry-after': true,
+    },
+    addHeadersOnExceeding: {
+      'x-ratelimit-limit': true,
+      'x-ratelimit-remaining': true,
+      'x-ratelimit-reset': true,
+    },
   });
 
   // Create and attach dependency container
   const container = createDependencyContainer();
   app.decorate('container', container);
 
-  // Health check
-  app.get('/health', async () => {
-    return {
-      status: 'healthy',
-      service: 'auth-service',
-      timestamp: new Date().toISOString(),
-    };
+  // 404 Not Found handler (RFC 7807)
+  app.setNotFoundHandler((request, reply) => {
+    reply
+      .status(404)
+      .header('Content-Type', 'application/problem+json')
+      .send({
+        type: 'https://httpstatuses.com/404',
+        title: 'Not Found',
+        status: 404,
+        detail: `Route ${request.method} ${request.url} not found`,
+        instance: request.url,
+        correlationId: request.id,
+      });
   });
 
-  // Metrics endpoint
-  app.get('/metrics', async (request, reply) => {
-    const { register } = await import('./utils/metrics');
-    reply.type(register.contentType);
-    return register.metrics();
+  // Global error handler (RFC 7807) - registered BEFORE routes
+  app.setErrorHandler((error: any, request, reply) => {
+    request.log.error(error);
+
+    const statusCode = error.statusCode || 500;
+    const correlationId = request.id;
+
+    // Under pressure errors
+    if (error.code === 'FST_UNDER_PRESSURE') {
+      return reply
+        .status(503)
+        .header('Content-Type', 'application/problem+json')
+        .header('Retry-After', '30')
+        .send({
+          type: 'https://httpstatuses.com/503',
+          title: 'Service Unavailable',
+          status: 503,
+          detail: 'Service is under heavy load. Please retry later.',
+          instance: request.url,
+          correlationId,
+          code: 'SERVICE_OVERLOADED',
+        });
+    }
+
+    // CSRF token errors
+    if (error.code === 'FST_CSRF_INVALID_TOKEN' || error.code === 'FST_CSRF_MISSING_TOKEN') {
+      return reply
+        .status(403)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/403',
+          title: 'Forbidden',
+          status: 403,
+          detail: 'Invalid or missing CSRF token',
+          instance: request.url,
+          correlationId,
+          code: 'CSRF_ERROR',
+        });
+    }
+
+    // Rate limiting
+    if (statusCode === 429) {
+      return reply
+        .status(429)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/429',
+          title: 'Too Many Requests',
+          status: 429,
+          detail: 'Too many requests. Please try again later.',
+          instance: request.url,
+          correlationId,
+        });
+    }
+
+    const errorMessage = error.message || '';
+
+    // 422 Unprocessable Entity
+    if (statusCode === 422) {
+      return reply
+        .status(422)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/422',
+          title: 'Unprocessable Entity',
+          status: 422,
+          detail: error.message,
+          instance: request.url,
+          correlationId,
+          ...(error.errors && { errors: error.errors }),
+        });
+    }
+
+    // 409 Conflict
+    if (errorMessage.includes('already registered') || errorMessage.includes('already exists')) {
+      return reply
+        .status(409)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/409',
+          title: 'Conflict',
+          status: 409,
+          detail: error.message,
+          instance: request.url,
+          correlationId,
+        });
+    }
+
+    // 401 Unauthorized
+    if (errorMessage.includes('Invalid credentials') ||
+        errorMessage.includes('Invalid password') ||
+        errorMessage.includes('Invalid refresh token') ||
+        statusCode === 401) {
+      return reply
+        .status(401)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/401',
+          title: 'Unauthorized',
+          status: 401,
+          detail: error.message || 'Unauthorized',
+          instance: request.url,
+          correlationId,
+        });
+    }
+
+    // 400 Bad Request - validation errors
+    if (statusCode === 400 || error.validation) {
+      const detail = error.validation
+        ? 'Validation error'
+        : (error.errors && Array.isArray(error.errors) && error.errors.length > 0)
+          ? (typeof error.errors[0] === 'string' ? error.errors[0] : error.errors[0].message || error.message)
+          : error.message;
+
+      return reply
+        .status(400)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/400',
+          title: 'Bad Request',
+          status: 400,
+          detail,
+          instance: request.url,
+          correlationId,
+          ...(error.validation && { errors: error.validation }),
+          ...(error.errors && { errors: error.errors }),
+        });
+    }
+
+    // Default 500 - hide internal details in production
+    const detail = env.NODE_ENV === 'production'
+      ? 'Internal server error'
+      : error.message || 'Internal server error';
+
+    return reply
+      .status(statusCode)
+      .header('Content-Type', 'application/problem+json')
+      .send({
+        type: `https://httpstatuses.com/${statusCode}`,
+        title: 'Internal Server Error',
+        status: statusCode,
+        detail,
+        instance: request.url,
+        correlationId,
+      });
   });
+
+  // Setup health check routes (/health, /health/live, /health/ready, /health/startup, /metrics)
+  await setupHealthRoutes(app);
 
   // Register auth routes
   await app.register(authRoutes, {
     prefix: '/auth',
     container
-  });
-
-  // Global error handler
-  app.setErrorHandler((error: any, request, reply) => {
-    request.log.error(error);
-
-    // CSRF token errors
-    if (error.code === 'FST_CSRF_INVALID_TOKEN' || error.code === 'FST_CSRF_MISSING_TOKEN') {
-      return reply.status(403).send({
-        error: 'Invalid or missing CSRF token',
-        code: 'CSRF_ERROR'
-      });
-    }
-
-    // Rate limiting
-    if (error.statusCode === 429) {
-      return reply.status(429).send({
-        error: 'Too many requests. Please try again later.',
-      });
-    }
-
-    // Map error messages to status codes
-    const errorMessage = error.message || '';
-
-    // 422 Unprocessable Entity - validation errors from our ValidationError class
-    if (error.statusCode === 422) {
-      return reply.status(422).send({
-        error: error.message,
-        ...(error.errors && { errors: error.errors })
-      });
-    }
-
-    // 409 Conflict - duplicate resources
-    if (errorMessage.includes('already registered') || errorMessage.includes('already exists')) {
-      return reply.status(409).send({
-        error: error.message
-      });
-    }
-
-    // 401 Unauthorized - authentication failures
-    if (errorMessage.includes('Invalid credentials') ||
-        errorMessage.includes('Invalid password') ||
-        errorMessage.includes('Invalid refresh token') ||
-        error.statusCode === 401) {
-      return reply.status(401).send({
-        error: error.message || 'Unauthorized',
-      });
-    }
-
-    // 400 Bad Request - validation errors (includes errors array with field details)
-    if (error.statusCode === 400) {
-      // If we have validation errors array with details, use the detailed message
-      if (error.errors && Array.isArray(error.errors) && error.errors.length > 0) {
-        // Use the first error message which should contain field info
-        const firstError = error.errors[0];
-        const errorText = typeof firstError === 'string' ? firstError : 
-                         firstError.message || error.message;
-        return reply.status(400).send({
-          error: errorText,
-          ...(error.errors && { errors: error.errors })
-        });
-      }
-      return reply.status(400).send({
-        error: error.message,
-      });
-    }
-
-    // 400 Bad Request - Fastify validation
-    if (error.validation) {
-      return reply.status(400).send({
-        error: 'Validation error',
-        details: error.validation,
-      });
-    }
-
-    // Default 500
-    return reply.status(error.statusCode || 500).send({
-      error: error.message || 'Internal server error',
-    });
   });
 
   return app;

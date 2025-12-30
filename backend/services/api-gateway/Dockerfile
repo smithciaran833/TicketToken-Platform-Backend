@@ -24,7 +24,11 @@ WORKDIR /app
 
 # Copy built shared module and api-gateway
 COPY --from=builder /app/backend/shared /app/backend/shared
-COPY --from=builder /app/backend/services/api-gateway /app
+COPY --from=builder /app/backend/services/api-gateway/dist ./dist
+COPY --from=builder /app/backend/services/api-gateway/package*.json ./
+
+# Install production dependencies only (no devDependencies, no node_modules bloat)
+RUN npm ci --only=production && npm cache clean --force
 
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -34,4 +38,8 @@ USER nodejs
 
 EXPOSE 3000
 
-CMD ["node", "dist/services/api-gateway/src/server.js"]
+# Health check - hits the liveness endpoint
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health/live || exit 1
+
+CMD ["node", "dist/server.js"]

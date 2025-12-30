@@ -26,8 +26,9 @@ export interface EnvConfig {
   JWT_ISSUER: string;
   JWT_ACCESS_EXPIRES_IN: string;
   JWT_REFRESH_EXPIRES_IN: string;
-  JWT_PRIVATE_KEY_PATH: string;
-  JWT_PUBLIC_KEY_PATH: string;
+  // File paths only used in development
+  JWT_PRIVATE_KEY_PATH?: string;
+  JWT_PUBLIC_KEY_PATH?: string;
 
   // Encryption
   ENCRYPTION_KEY: string;
@@ -36,12 +37,12 @@ export interface EnvConfig {
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_REDIRECT_URI?: string;
-  
+
   // OAuth - GitHub
   GITHUB_CLIENT_ID?: string;
   GITHUB_CLIENT_SECRET?: string;
   GITHUB_REDIRECT_URI?: string;
-  
+
   // OAuth - Apple
   APPLE_CLIENT_ID?: string;
   APPLE_TEAM_ID?: string;
@@ -70,9 +71,11 @@ export interface EnvConfig {
 }
 
 function validateEnv(): EnvConfig {
-  const required = [
-    'DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'
-  ];
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  const isProduction = nodeEnv === 'production';
+
+  // Required in all environments
+  const required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD'];
 
   for (const key of required) {
     if (!process.env[key]) {
@@ -80,32 +83,42 @@ function validateEnv(): EnvConfig {
     }
   }
 
-  // Validate email configuration in production
-  if (process.env.NODE_ENV === 'production' && !process.env.RESEND_API_KEY) {
-    throw new Error('RESEND_API_KEY is required in production');
+  // Production-only requirements
+  if (isProduction) {
+    const productionRequired = [
+      'ENCRYPTION_KEY',
+      'RESEND_API_KEY',
+      'JWT_PRIVATE_KEY',
+      'JWT_PUBLIC_KEY',
+    ];
+
+    for (const key of productionRequired) {
+      if (!process.env[key]) {
+        throw new Error(`Missing required production environment variable: ${key}`);
+      }
+    }
   }
 
-  // Set default JWT key paths
-  const defaultKeyPath = path.join(process.env.HOME!, 'tickettoken-secrets');
-  const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem');
-  const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem');
-
-  // Encryption key validation (32 bytes for AES-256)
+  // Encryption key validation
   const encryptionKey = process.env.ENCRYPTION_KEY;
-  
+
   if (!encryptionKey) {
-    if (process.env.NODE_ENV === 'production') {
+    if (isProduction) {
       throw new Error('ENCRYPTION_KEY is required in production environment');
     }
-    console.warn('⚠️  WARNING: Using insecure default ENCRYPTION_KEY in development. Set ENCRYPTION_KEY env var for production.');
+    console.warn('⚠️  WARNING: ENCRYPTION_KEY not set. Using insecure default for development only.');
   } else if (encryptionKey.length < 32) {
     throw new Error('ENCRYPTION_KEY must be at least 32 characters for AES-256 encryption');
   }
-  
+
+  // Development-only fallback (will fail in production due to check above)
   const finalEncryptionKey = encryptionKey || 'dev-only-insecure-key-not-for-prod-32chars';
 
+  // JWT key paths (development only)
+  const defaultKeyPath = path.join(process.env.HOME || '/tmp', 'tickettoken-secrets');
+
   return {
-    NODE_ENV: (process.env.NODE_ENV as any) || 'development',
+    NODE_ENV: nodeEnv as EnvConfig['NODE_ENV'],
     PORT: parseInt(process.env.PORT || '3001', 10),
     LOG_LEVEL: process.env.LOG_LEVEL || 'info',
 
@@ -122,22 +135,21 @@ function validateEnv(): EnvConfig {
     JWT_ISSUER: process.env.JWT_ISSUER || 'tickettoken-auth',
     JWT_ACCESS_EXPIRES_IN: process.env.JWT_ACCESS_EXPIRES_IN || '15m',
     JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
-    JWT_PRIVATE_KEY_PATH: privateKeyPath,
-    JWT_PUBLIC_KEY_PATH: publicKeyPath,
+    // Only used in development - production loads from secrets manager
+    JWT_PRIVATE_KEY_PATH: process.env.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem'),
+    JWT_PUBLIC_KEY_PATH: process.env.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem'),
 
     ENCRYPTION_KEY: finalEncryptionKey,
 
-    // OAuth - Google
+    // OAuth - loaded from secrets manager in production
     GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI: process.env.GOOGLE_REDIRECT_URI,
-    
-    // OAuth - GitHub
+
     GITHUB_CLIENT_ID: process.env.GITHUB_CLIENT_ID,
     GITHUB_CLIENT_SECRET: process.env.GITHUB_CLIENT_SECRET,
     GITHUB_REDIRECT_URI: process.env.GITHUB_REDIRECT_URI,
-    
-    // OAuth - Apple
+
     APPLE_CLIENT_ID: process.env.APPLE_CLIENT_ID,
     APPLE_TEAM_ID: process.env.APPLE_TEAM_ID,
     APPLE_KEY_ID: process.env.APPLE_KEY_ID,
@@ -149,7 +161,7 @@ function validateEnv(): EnvConfig {
     MFA_ISSUER: process.env.MFA_ISSUER || 'TicketToken',
     MFA_WINDOW: parseInt(process.env.MFA_WINDOW || '2', 10),
 
-    // Email configuration
+    // Email - required in production
     RESEND_API_KEY: process.env.RESEND_API_KEY || '',
     EMAIL_FROM: process.env.EMAIL_FROM || 'TicketToken <noreply@tickettoken.com>',
 
@@ -157,7 +169,7 @@ function validateEnv(): EnvConfig {
 
     API_GATEWAY_URL: process.env.API_GATEWAY_URL || 'http://api-gateway:3000',
     VENUE_SERVICE_URL: process.env.VENUE_SERVICE_URL || 'http://venue-service:3002',
-    NOTIFICATION_SERVICE_URL: process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3008'
+    NOTIFICATION_SERVICE_URL: process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3008',
   };
 }
 

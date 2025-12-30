@@ -2,8 +2,15 @@ import { FastifyInstance } from 'fastify';
 import { AuthServiceClient } from '../clients/AuthServiceClient';
 import { VenueServiceClient } from '../clients/VenueServiceClient';
 
+// Track initialization state for startup probe
+let isInitialized = false;
+
+export function markInitialized() {
+  isInitialized = true;
+}
+
 export default async function healthRoutes(server: FastifyInstance) {
-  // Basic health check
+  // Basic health check (legacy - keep for backwards compatibility)
   server.get('/health', {
     schema: {
       response: {
@@ -23,8 +30,7 @@ export default async function healthRoutes(server: FastifyInstance) {
     },
   }, async (_request) => {
     const circuitBreakers: any = {};
-    
-    // Access circuit breakers with type assertion
+
     const serverWithBreakers = server as any;
     if (serverWithBreakers.circuitBreakers) {
       for (const [service, breaker] of serverWithBreakers.circuitBreakers) {
@@ -34,7 +40,7 @@ export default async function healthRoutes(server: FastifyInstance) {
         };
       }
     }
-    
+
     return {
       status: 'ok',
       timestamp: new Date().toISOString(),
@@ -46,8 +52,25 @@ export default async function healthRoutes(server: FastifyInstance) {
     };
   });
 
-  // Detailed readiness check with downstream service verification
-  server.get('/ready', {
+  // ==========================================================================
+  // Kubernetes probe endpoints (under /health/*)
+  // ==========================================================================
+
+  /**
+   * Liveness probe - Is the process running and not deadlocked?
+   * Should be fast and simple - just confirms the event loop is responsive
+   * Kubernetes restarts the pod if this fails
+   */
+  server.get('/health/live', async () => {
+    return { status: 'ok' };
+  });
+
+  /**
+   * Readiness probe - Can this instance serve traffic?
+   * Checks critical dependencies (Redis, auth-service, venue-service)
+   * Kubernetes removes pod from load balancer if this fails
+   */
+  server.get('/health/ready', {
     schema: {
       response: {
         200: {
@@ -79,9 +102,12 @@ export default async function healthRoutes(server: FastifyInstance) {
     // Check Redis connectivity (critical dependency)
     try {
       const pingStart = Date.now();
-      await server.redis.ping();
+      await Promise.race([
+        server.redis.ping(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+      ]);
       const pingTime = Date.now() - pingStart;
-      checks.redis = pingTime < 100 ? 'ok' : 'warning';
+      checks.redis = pingTime < 100 ? 'ok' : 'slow';
     } catch (error) {
       checks.redis = 'error';
       allHealthy = false;
@@ -91,21 +117,20 @@ export default async function healthRoutes(server: FastifyInstance) {
     // Check critical circuit breakers
     checks.circuitBreakers = {};
     const serverWithBreakers = server as any;
-    const criticalServices = ['auth-service', 'venue-service']; // Critical for authentication
-    
+    const criticalServices = ['auth-service', 'venue-service'];
+
     if (serverWithBreakers.circuitBreakers) {
       for (const [service, breaker] of serverWithBreakers.circuitBreakers) {
         const state = breaker.opened ? 'OPEN' : 'CLOSED';
         checks.circuitBreakers[service] = state;
-        
-        // Only fail readiness if CRITICAL services have circuits open
+
         if (state === 'OPEN' && criticalServices.includes(service)) {
           allHealthy = false;
         }
       }
     }
 
-    // Check auth-service reachability (critical dependency)
+    // Check auth-service reachability
     try {
       const authClient = new AuthServiceClient(server);
       const authHealthy = await Promise.race([
@@ -122,7 +147,7 @@ export default async function healthRoutes(server: FastifyInstance) {
       server.log.error({ error }, 'Auth service health check failed');
     }
 
-    // Check venue-service reachability (critical dependency)
+    // Check venue-service reachability
     try {
       const venueClient = new VenueServiceClient(server);
       const venueHealthy = await Promise.race([
@@ -153,7 +178,37 @@ export default async function healthRoutes(server: FastifyInstance) {
     };
   });
 
-  // Liveness check
+  /**
+   * Startup probe - Has initialization completed?
+   * Used by Kubernetes to know when the container has started
+   * Prevents liveness/readiness checks from running during slow startups
+   */
+  server.get('/health/startup', async (_request, reply) => {
+    if (!isInitialized) {
+      return reply.code(503).send({
+        status: 'starting',
+        message: 'Service is still initializing',
+        initialized: false
+      });
+    }
+
+    return {
+      status: 'ok',
+      initialized: true,
+      uptime: process.uptime()
+    };
+  });
+
+  // ==========================================================================
+  // Legacy endpoints (keep for backwards compatibility)
+  // ==========================================================================
+
+  // Legacy readiness (redirects to new path)
+  server.get('/ready', async (_request, reply) => {
+    return reply.redirect('/health/ready');
+  });
+
+  // Legacy liveness
   server.get('/live', async () => {
     return { status: 'alive' };
   });

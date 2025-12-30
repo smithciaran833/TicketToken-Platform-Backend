@@ -1,12 +1,13 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { AuthenticatedRequest } from '../types';
+import { pool } from '../config/database';
 
 /**
  * Tenant Validation Middleware
- * 
+ *
  * Ensures all authenticated requests include valid tenant context.
- * Prevents cross-tenant data access by validating tenant_id.
- * 
+ * Prevents cross-tenant data access by validating tenant_id and setting RLS context.
+ *
  * Usage: Apply to all authenticated routes that access tenant-specific data
  */
 export async function validateTenant(
@@ -38,16 +39,40 @@ export async function validateTenant(
     });
   }
 
+  // Set RLS context for this request
+  try {
+    await pool.query('SELECT set_config($1, $2, true)', [
+      'app.current_tenant_id',
+      authRequest.user.tenant_id
+    ]);
+    await pool.query('SELECT set_config($1, $2, true)', [
+      'app.current_user_id',
+      authRequest.user.id
+    ]);
+  } catch (error) {
+    request.log.error({
+      userId: authRequest.user.id,
+      tenantId: authRequest.user.tenant_id,
+      error
+    }, 'Failed to set RLS context');
+
+    return reply.status(500).send({
+      success: false,
+      error: 'Internal server error',
+      code: 'RLS_CONTEXT_ERROR'
+    });
+  }
+
   // Tenant context is valid - request can proceed
   request.log.debug({
     userId: authRequest.user.id,
     tenantId: authRequest.user.tenant_id
-  }, 'Tenant validation passed');
+  }, 'Tenant validation passed with RLS context set');
 }
 
 /**
  * Validates that a resource belongs to the user's tenant
- * 
+ *
  * @param userTenantId - tenant_id from JWT
  * @param resourceTenantId - tenant_id from database resource
  * @returns true if tenant matches, false otherwise
@@ -61,7 +86,7 @@ export function validateResourceTenant(
 
 /**
  * Helper to add tenant filter to database queries
- * 
+ *
  * Usage:
  * ```typescript
  * const users = await db('users')

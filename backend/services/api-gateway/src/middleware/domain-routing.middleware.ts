@@ -9,6 +9,9 @@ interface VenueBranding {
 /**
  * Domain routing middleware for Fastify
  * Checks if request comes from a custom domain and loads venue branding
+ * 
+ * SECURITY: Venue context is attached to request object, NOT headers.
+ * This prevents header spoofing attacks.
  */
 export async function domainRoutingMiddleware(
   request: FastifyRequest,
@@ -41,17 +44,24 @@ export async function domainRoutingMiddleware(
       );
 
       if (response.data) {
-        // Attach venue and branding to request
+        // Attach venue and branding to request object (trusted internal state)
         (request as any).venue = response.data.venue;
         (request as any).branding = response.data.branding;
         (request as any).isWhiteLabel = response.data.venue.hide_platform_branding;
 
-        // Add custom headers for downstream services
-        request.headers['x-venue-id'] = response.data.venue.id;
-        request.headers['x-white-label'] = response.data.venue.hide_platform_branding ? 'true' : 'false';
-        request.headers['x-pricing-tier'] = response.data.venue.pricing_tier;
+        // Store venue context on request object - NOT in headers
+        // This is the trusted source for downstream middleware
+        (request as any).domainVenueContext = {
+          venueId: response.data.venue.id,
+          isWhiteLabel: response.data.venue.hide_platform_branding,
+          pricingTier: response.data.venue.pricing_tier,
+          source: 'domain-lookup'
+        };
 
-        request.log.info({ venueId: response.data.venue.id, domain: hostname }, 'White-label domain detected');
+        request.log.info({ 
+          venueId: response.data.venue.id, 
+          domain: hostname 
+        }, 'White-label domain detected');
       }
     } catch (error: any) {
       // If venue lookup fails, continue without white-label

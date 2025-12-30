@@ -179,19 +179,24 @@ export async function setupAuthMiddleware(server: FastifyInstance) {
           userPermissions: user.permissions,
         }, 'Authorization failed - insufficient permissions');
 
+        // Get venue ID from trusted sources only (route params or user's JWT)
+        const params = request.params as Record<string, string>;
+        const venueId = params.venueId || user.venueId;
+
         logSecurityEvent('unauthorized_access_attempt', {
           userId: user.id,
           permission,
           path: request.url,
-          venueId: request.headers['x-venue-id'],
+          venueId,  // From trusted source only
         }, 'medium');
 
         throw new AuthorizationError(`Insufficient permissions: ${permission} required`);
       }
 
       // Check venue scope if applicable
+      // SECURITY: Only use route params or user's venueId from JWT - never from headers
       const params = request.params as Record<string, string>;
-      const venueId = params.venueId || request.headers['x-venue-id'] as string;
+      const venueId = params.venueId || user.venueId;
 
       if (venueId && RBAC_CONFIG[user.role].venueScoped) {
         const hasVenueAccess = await checkVenueAccess(server, user.id, venueId, permission);

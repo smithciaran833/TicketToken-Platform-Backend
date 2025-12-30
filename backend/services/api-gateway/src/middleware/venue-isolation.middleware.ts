@@ -24,8 +24,8 @@ export async function setupVenueIsolationMiddleware(server: FastifyInstance) {
       return; // Auth middleware will handle this
     }
 
-    const hasAccess = await checkUserVenueAccess(server, user.id, requestedVenueId);
-    if (!hasAccess) {
+    const accessResult = await checkUserVenueAccess(server, user.id, requestedVenueId);
+    if (!accessResult.hasAccess) {
       // Log security violation
       await logSecurityViolation({
         userId: user.id,
@@ -40,7 +40,19 @@ export async function setupVenueIsolationMiddleware(server: FastifyInstance) {
       throw new NotFoundError('Venue');
     }
 
-    // Inject venue context
+    // Log admin bypass for audit trail
+    if (accessResult.isAdminBypass) {
+      await logSecurityEvent('admin_venue_bypass', {
+        userId: user.id,
+        userRole: 'admin',
+        venueId: requestedVenueId,
+        endpoint: request.url,
+        method: request.method,
+        ip: request.ip,
+      }, 'medium');
+    }
+
+    // Inject venue context for downstream use
     request.venueContext = {
       venueId: requestedVenueId,
       userId: user.id,
@@ -48,11 +60,10 @@ export async function setupVenueIsolationMiddleware(server: FastifyInstance) {
       permissions: user.permissions || []
     };
 
-    // TODO: Set PostgreSQL row-level security context when DB is available
-    // if (server.db) {
-    //   await server.db.query('SET LOCAL app.current_venue_id = $1', [requestedVenueId]);
-    //   await server.db.query('SET LOCAL app.current_user_id = $1', [user.id]);
-    // }
+    // NOTE: PostgreSQL RLS context (SET LOCAL app.current_venue_id) is NOT set here.
+    // The API Gateway is a stateless proxy with no database connection.
+    // RLS context is set by downstream services that have DB connections.
+    // The gateway passes tenant context via x-tenant-id header (set in authenticated-proxy.ts).
   });
 
   // API key venue validation
@@ -71,63 +82,71 @@ export async function setupVenueIsolationMiddleware(server: FastifyInstance) {
   });
 }
 
-// Check user's venue access
+// Check user's venue access - returns whether access was via admin bypass
 async function checkUserVenueAccess(
   server: FastifyInstance,
   userId: string,
   venueId: string
-): Promise<boolean> {
+): Promise<{ hasAccess: boolean; isAdminBypass: boolean }> {
   // Check cache first
   const cacheKey = `${REDIS_KEYS.CACHE_VENUE}access:${userId}:${venueId}`;
   const cached = await server.redis.get(cacheKey);
-  
+
   if (cached) {
-    return cached === 'true';
+    // Cache stores "true", "false", or "admin"
+    return {
+      hasAccess: cached === 'true' || cached === 'admin',
+      isAdminBypass: cached === 'admin'
+    };
   }
 
-  // TODO: Check with venue service
-  // For now, allow access if user's venueId matches
+  // Check user data from session cache
   const user = await server.redis.get(`${REDIS_KEYS.SESSION}user:${userId}`);
   if (!user) {
-    return false;
+    return { hasAccess: false, isAdminBypass: false };
   }
 
   const userData = JSON.parse(user);
-  const hasAccess = userData.venueId === venueId || userData.role === 'admin';
+  
+  // Check if admin bypass
+  if (userData.role === 'admin') {
+    // Cache as admin bypass
+    await server.redis.setex(cacheKey, REDIS_TTL.CACHE_MEDIUM, 'admin');
+    return { hasAccess: true, isAdminBypass: true };
+  }
+
+  // Check venue membership
+  const hasAccess = userData.venueId === venueId;
 
   // Cache result
   await server.redis.setex(cacheKey, REDIS_TTL.CACHE_MEDIUM, hasAccess.toString());
 
-  return hasAccess;
+  return { hasAccess, isAdminBypass: false };
 }
 
-// Extract venue ID from various sources
+// Extract venue ID from TRUSTED sources only
+// SECURITY: Never extract from request body or untrusted headers
 function extractVenueId(request: FastifyRequest): string | null {
-  // Priority order:
-  // 1. Route parameter
+  // Priority order (trusted sources only):
+
+  // 1. Route parameter (from URL path - trusted)
   const params = request.params as Record<string, string>;
   const routeVenueId = params?.venueId;
   if (routeVenueId) return routeVenueId;
 
-  // 2. Query parameter
+  // 2. Query parameter (visible in URL - acceptable for reads)
   const query = request.query as Record<string, string>;
   const queryVenueId = query?.venueId;
   if (queryVenueId) return queryVenueId;
 
-  // 3. Request body
-  const body = request.body as Record<string, any>;
-  const bodyVenueId = body?.venueId;
-  if (bodyVenueId) return bodyVenueId;
-
-  // 4. Header (for API key requests)
-  const headerVenueId = request.headers['x-venue-id'];
-  if (headerVenueId && typeof headerVenueId === 'string') return headerVenueId;
-
-  // 5. User's default venue
+  // 3. User's venue from JWT (verified token - trusted)
   const user = request.user as AuthUser | undefined;
   if (user?.venueId) {
     return user.venueId;
   }
+
+  // REMOVED: request.body?.venueId - untrusted, attacker controlled
+  // REMOVED: request.headers['x-venue-id'] - untrusted, attacker controlled
 
   return null;
 }
@@ -135,7 +154,7 @@ function extractVenueId(request: FastifyRequest): string | null {
 // Log security violations
 async function logSecurityViolation(violation: any) {
   const logger = createRequestLogger('venue-isolation');
-  
+
   logger.error({
     violation,
   }, 'Venue access violation detected');
@@ -150,14 +169,21 @@ export async function checkVenuePermission(
   venueId: string,
   permission: string
 ): Promise<boolean> {
-  // Admin bypass
   const user = await server.redis.get(`${REDIS_KEYS.SESSION}user:${userId}`);
   if (!user) {
     return false;
   }
 
   const userData = JSON.parse(user);
+  
+  // Admin bypass with audit logging
   if (userData.role === 'admin') {
+    await logSecurityEvent('admin_permission_bypass', {
+      userId,
+      venueId,
+      permission,
+      userRole: 'admin',
+    }, 'low');
     return true;
   }
 
@@ -175,7 +201,7 @@ export async function checkVenuePermission(
   };
 
   const permissions = rolePermissions[userData.role] || [];
-  
+
   if (permissions.includes('*')) {
     return true;
   }
@@ -198,7 +224,6 @@ export async function getUserVenues(
   server: FastifyInstance,
   userId: string
 ): Promise<string[]> {
-  // TODO: Implement with venue service
   const user = await server.redis.get(`${REDIS_KEYS.SESSION}user:${userId}`);
   if (!user) {
     return [];
@@ -230,7 +255,7 @@ export async function validateAPIKeyVenueAccess(
 ): Promise<boolean> {
   // Get API key data
   const keyData = await server.redis.get(`api:key:${apiKey}`);
-  
+
   if (!keyData) {
     return false;
   }
@@ -272,7 +297,7 @@ export async function getVenueRateLimit(
   venueId: string
 ): Promise<number> {
   const venueData = await server.redis.get(`${REDIS_KEYS.CACHE_VENUE}${venueId}`);
-  
+
   if (!venueData) {
     return config.rateLimit.global.max;
   }

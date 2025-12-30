@@ -9,6 +9,8 @@ import { setupSwagger } from './plugins/swagger';
 import { gracefulShutdown } from './utils/graceful-shutdown';
 import { nanoid } from 'nanoid';
 import { initRedis, getRedis } from './config/redis';
+import { markInitialized } from './routes/health.routes';
+import { loadSecrets } from './config/secrets';
 
 // Create Fastify instance with custom logger
 const server: FastifyInstance = fastify({
@@ -40,13 +42,17 @@ process.on('unhandledRejection', (reason, promise) => {
 // Start server
 async function start() {
   try {
+    // Load secrets from AWS Secrets Manager (production) or .env (development)
+    await loadSecrets();
+    logger.info('Secrets loaded');
+
     // Initialize Redis clients
     await initRedis();
     logger.info('Redis initialized');
-    
+
     // Decorate Fastify with Redis
     server.decorate('redis', getRedis());
-    
+
     // Setup dependency injection and services
     await setupServices(server);
 
@@ -65,15 +71,19 @@ async function start() {
       host: config.server.host,
     });
 
+    // Mark as initialized for startup probe
+    markInitialized();
+
     logger.info(
       `API Gateway running at http://${config.server.host}:${config.server.port}`
     );
     logger.info(
-      `📚 API Documentation available at http://${config.server.host}:${config.server.port}/documentation`
+      `Documentation available at http://${config.server.host}:${config.server.port}/documentation`
     );
 
     // Setup graceful shutdown
     gracefulShutdown(server);
+
   } catch (error) {
     logger.fatal({ error }, 'Failed to start server');
     process.exit(1);
