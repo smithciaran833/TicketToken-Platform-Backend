@@ -15,7 +15,7 @@ import { pool } from './config/database';
 import { getRedis } from './config/redis';
 import { correlationMiddleware } from './middleware/correlation.middleware';
 import { registerIdempotencyHooks } from './middleware/idempotency.middleware';
-import { withCorrelation } from './utils/logger';
+import { withCorrelation, logger } from './utils/logger';
 import { RateLimitError } from './errors';
 import { swaggerOptions, swaggerUiOptions } from './config/swagger';
 
@@ -31,7 +31,11 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
       } : undefined
     },
-    trustProxy: true,
+    // SEC-R13: Trust proxy for X-Forwarded-* headers
+    // In production, configure explicit trusted proxy IPs
+    trustProxy: env.NODE_ENV === 'production' 
+      ? (process.env.TRUSTED_PROXIES?.split(',') || true)
+      : true,
     requestIdHeader: 'x-request-id',
     disableRequestLogging: false,
     connectionTimeout: 10000,
@@ -45,8 +49,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
 
+  // SEC-R13: HTTPS enforcement in production
+  if (env.NODE_ENV === 'production') {
+    app.addHook('onRequest', async (request, reply) => {
+      const proto = request.headers['x-forwarded-proto'];
+      if (proto === 'http') {
+        const host = request.headers['host'] || '';
+        return reply.redirect(301, `https://${host}${request.url}`);
+      }
+    });
+  }
+
   // Register correlation ID middleware first
-  // Then register idempotency hooks for state-changing operations
   await correlationMiddleware(app);
 
   // Register idempotency hooks for state-changing operations
@@ -131,11 +145,28 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // Rate limiting with standard headers
+  // SEC-R12: Global rate limiting with Redis store
+  const redis = getRedis();
   await app.register(rateLimit, {
-    global: false,
-    max: 100,
-    timeWindow: '15 minutes',
+    global: true, // Apply to all routes as catch-all
+    max: 1000, // 1000 requests per window (generous global limit)
+    timeWindow: '1 minute',
+    redis: redis,
+    skipOnError: true, // Fail-open if Redis is down
+    keyGenerator: (request) => {
+      // Use IP + user ID if authenticated for more accurate limiting
+      const userId = (request as any).user?.id;
+      return userId ? `${request.ip}:${userId}` : request.ip;
+    },
+    onExceeded: (request) => {
+      logger.warn('Global rate limit exceeded', {
+        ip: request.ip,
+        path: request.url,
+        method: request.method,
+        userId: (request as any).user?.id,
+        correlationId: request.correlationId || request.id,
+      });
+    },
     addHeaders: {
       'x-ratelimit-limit': true,
       'x-ratelimit-remaining': true,
@@ -208,7 +239,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Rate limiting with proper headers (CRITICAL fix)
+    // Rate limiting with proper headers
     if (error instanceof RateLimitError || error.name === 'RateLimitError' || error.constructor?.name === 'RateLimitError') {
       const ttl = error.ttl || 60;
       const limit = error.limit || 100;
@@ -233,14 +264,15 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Generic 429 fallback
-    if (statusCode === 429) {
+    // Fastify rate-limit plugin errors
+    if (error.code === 'FST_ERR_RATE_LIMIT_EXCEEDED' || statusCode === 429) {
+      const retryAfter = error.retryAfter || 60;
       return reply
         .status(429)
         .header('Content-Type', 'application/problem+json')
-        .header('RateLimit-Limit', '100')
+        .header('RateLimit-Limit', '1000')
         .header('RateLimit-Remaining', '0')
-        .header('Retry-After', '60')
+        .header('Retry-After', String(retryAfter))
         .send({
           type: 'https://httpstatuses.com/429',
           title: 'Too Many Requests',
@@ -249,6 +281,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           instance: request.url,
           correlationId,
           code: 'RATE_LIMIT_EXCEEDED',
+          retryAfter,
         });
     }
 
@@ -326,7 +359,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Default 500
+    // Default 500 - hide stack traces in production (RH7)
     const detail = env.NODE_ENV === 'production'
       ? 'Internal server error'
       : error.message || 'Internal server error';
