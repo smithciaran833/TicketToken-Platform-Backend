@@ -29,11 +29,18 @@ export const pool = new Pool({
   connectionTimeoutMillis: 10000,
 });
 
-// Set search_path and statement timeout on each new connection
+// Set search_path, statement timeout, and transaction timeout on each new connection
 pool.on('connect', async (client) => {
   await client.query('SET search_path TO public');
-  await client.query('SET statement_timeout = 30000'); // 30 second timeout
-  logger.info('Database client connected', { searchPath: 'public', statementTimeout: '30s' });
+  await client.query('SET statement_timeout = 30000'); // 30 second statement timeout
+  await client.query('SET idle_in_transaction_session_timeout = 60000'); // 60 second transaction timeout
+  await client.query('SET lock_timeout = 10000'); // 10 second lock timeout
+  logger.info('Database client connected', {
+    searchPath: 'public',
+    statementTimeout: '30s',
+    transactionTimeout: '60s',
+    lockTimeout: '10s',
+  });
 });
 
 // Pool error handler - log and monitor, don't crash
@@ -44,12 +51,11 @@ pool.on('error', (err, client) => {
     code: (err as any).code,
   });
   // Don't exit - pool will remove the errored client automatically
-  // But emit metric/alert for monitoring
 });
 
 export const db = knex({
   client: 'pg',
   connection: dbConfig,
-  pool: { min: 0, max: 5 }, // min: 0 for better resource usage (MIG-KF6)
+  pool: { min: 0, max: 5 },
   searchPath: ['public']
 });
