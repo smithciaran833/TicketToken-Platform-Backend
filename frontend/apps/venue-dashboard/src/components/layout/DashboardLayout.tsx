@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { useState } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { useState, useRef, useEffect } from "react";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   LayoutDashboard,
   Calendar,
@@ -20,6 +20,11 @@ import {
   ChevronDown,
   Check,
   Plus,
+  User,
+  Key,
+  Shield,
+  LogOut,
+  HelpCircle,
 } from "lucide-react";
 
 interface DashboardLayoutProps {
@@ -49,8 +54,22 @@ const navigation = [
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [venueDropdownOpen, setVenueDropdownOpen] = useState(false);
+  const [userDropdownOpen, setUserDropdownOpen] = useState(false);
   const [currentVenue, setCurrentVenue] = useState(venues[0]);
   const location = useLocation();
+  const navigate = useNavigate();
+  const userDropdownRef = useRef<HTMLDivElement>(null);
+
+  // Close user dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (userDropdownRef.current && !userDropdownRef.current.contains(event.target as Node)) {
+        setUserDropdownOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const isActive = (href: string) => {
     if (href === "/venue") {
@@ -62,6 +81,11 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const switchVenue = (venue: typeof venues[0]) => {
     setCurrentVenue(venue);
     setVenueDropdownOpen(false);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("auth_token");
+    navigate("/login");
   };
 
   return (
@@ -172,16 +196,83 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
           })}
         </nav>
 
-        {/* User */}
-        <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-gray-800">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
-              JD
-            </div>
-            <div>
-              <p className="text-sm font-medium text-white">John Doe</p>
-              <p className="text-xs text-gray-500">Venue Manager</p>
-            </div>
+        {/* User Profile */}
+        <div className="absolute bottom-0 left-0 right-0 p-3 border-t border-gray-800" ref={userDropdownRef}>
+          <div className="relative">
+            <button
+              onClick={() => setUserDropdownOpen(!userDropdownOpen)}
+              className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-800 transition-colors"
+            >
+              <div className="w-9 h-9 bg-purple-600 rounded-full flex items-center justify-center text-white text-sm font-medium flex-shrink-0">
+                JD
+              </div>
+              <div className="text-left flex-1 min-w-0">
+                <p className="text-sm font-medium text-white truncate">John Doe</p>
+                <p className="text-xs text-gray-500 truncate">Venue Manager</p>
+              </div>
+              <ChevronDown className={`w-4 h-4 text-gray-400 flex-shrink-0 transition-transform ${userDropdownOpen ? "rotate-180" : ""}`} />
+            </button>
+
+            {/* User Dropdown */}
+            {userDropdownOpen && (
+              <div className="absolute bottom-full left-0 right-0 mb-1 bg-gray-800 rounded-lg shadow-lg border border-gray-700 overflow-hidden z-50">
+                <div className="px-3 py-3 border-b border-gray-700">
+                  <p className="text-sm font-medium text-white">John Doe</p>
+                  <p className="text-xs text-gray-400">john@thegrandtheater.com</p>
+                </div>
+                <div className="py-1">
+                  <Link
+                    to="/account/settings"
+                    onClick={() => setUserDropdownOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <User className="w-4 h-4" />
+                    Account Settings
+                  </Link>
+                  <Link
+                    to="/account/profile"
+                    onClick={() => setUserDropdownOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <User className="w-4 h-4" />
+                    Edit Profile
+                  </Link>
+                  <Link
+                    to="/account/password"
+                    onClick={() => setUserDropdownOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <Key className="w-4 h-4" />
+                    Change Password
+                  </Link>
+                  <Link
+                    to="/account/2fa"
+                    onClick={() => setUserDropdownOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <Shield className="w-4 h-4" />
+                    Two-Factor Auth
+                  </Link>
+                </div>
+                <div className="border-t border-gray-700 py-1">
+                  <Link
+                    to="/venue/support"
+                    onClick={() => setUserDropdownOpen(false)}
+                    className="flex items-center gap-3 px-3 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+                  >
+                    <HelpCircle className="w-4 h-4" />
+                    Help & Support
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-3 px-3 py-2 text-sm text-red-400 hover:bg-gray-700 hover:text-red-300 transition-colors"
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Sign Out
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </aside>

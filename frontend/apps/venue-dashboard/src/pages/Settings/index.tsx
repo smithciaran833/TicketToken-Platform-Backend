@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { 
+import {
   Building2, Camera, Share2, Clock, MapPin, Car, Train, Truck, Volume2,
   DoorOpen, DoorClosed, RotateCcw, Users, Grid, Armchair, Accessibility,
   Crown, Key, Gift, ClipboardList, CreditCard, IdCard,
@@ -7,12 +7,26 @@ import {
   Palette, Ticket, Mail, Eye, Globe,
   MessageSquare, Bell, RefreshCw,
   Baby, Briefcase, FileEdit,
-  AlertTriangle, Route, Cross
+  AlertTriangle, Route, Cross, ChevronRight
 } from "lucide-react";
 
-const settingsSections = [
+interface SettingsItem {
+  name: string;
+  description: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+interface SettingsSection {
+  title: string;
+  id: string;
+  items: SettingsItem[];
+}
+
+const settingsSections: SettingsSection[] = [
   {
     title: "Profile & Media",
+    id: "profile-media",
     items: [
       { name: "Venue Profile", description: "Basic venue information", href: "/venue/settings/profile", icon: Building2 },
       { name: "Photos & Videos", description: "Manage venue media", href: "/venue/settings/media", icon: Camera },
@@ -23,6 +37,7 @@ const settingsSections = [
   },
   {
     title: "Location & Access",
+    id: "location-access",
     items: [
       { name: "Location", description: "Address and map", href: "/venue/settings/location", icon: MapPin },
       { name: "Parking", description: "Parking information", href: "/venue/settings/parking", icon: Car },
@@ -33,25 +48,28 @@ const settingsSections = [
   },
   {
     title: "Entry & Capacity",
+    id: "entry-capacity",
     items: [
       { name: "Entry Points", description: "Manage entrances", href: "/venue/settings/entry", icon: DoorOpen },
       { name: "Exit Points", description: "Manage exits", href: "/venue/settings/exit", icon: DoorClosed },
       { name: "Re-Entry Policy", description: "Re-entry rules", href: "/venue/settings/reentry", icon: RotateCcw },
       { name: "Capacity", description: "Venue capacity settings", href: "/venue/settings/capacity", icon: Users },
-      { name: "Age Restrictions", description: "Age requirements", href: "/venue/settings/age", icon: Baby },
     ]
   },
   {
     title: "Seating",
+    id: "seating",
     items: [
       { name: "Configurations", description: "Seating layouts", href: "/venue/settings/seating/configs", icon: Grid },
       { name: "Map Builder", description: "Build seating maps", href: "/venue/settings/seating/builder", icon: Armchair },
       { name: "Sections & Zones", description: "Manage sections", href: "/venue/settings/seating/sections", icon: Grid },
       { name: "Accessibility", description: "ADA seating", href: "/venue/settings/seating/accessibility", icon: Accessibility },
+      { name: "Preview Map", description: "View seating map", href: "/venue/settings/seating/preview", icon: Eye },
     ]
   },
   {
     title: "VIP & Guest Services",
+    id: "vip-guest",
     items: [
       { name: "VIP Areas", description: "Manage VIP spaces", href: "/venue/settings/vip/areas", icon: Crown },
       { name: "Access Rules", description: "VIP access control", href: "/venue/settings/vip/access", icon: Key },
@@ -63,6 +81,7 @@ const settingsSections = [
   },
   {
     title: "Legal & Compliance",
+    id: "legal-compliance",
     items: [
       { name: "Tax Information", description: "Tax settings", href: "/venue/settings/legal/tax", icon: FileText },
       { name: "Insurance", description: "Insurance certificates", href: "/venue/settings/legal/insurance", icon: Shield },
@@ -73,6 +92,7 @@ const settingsSections = [
   },
   {
     title: "Branding",
+    id: "branding",
     items: [
       { name: "Logo & Colors", description: "Brand identity", href: "/venue/settings/branding/logo", icon: Palette },
       { name: "Ticket Design", description: "Customize tickets", href: "/venue/settings/branding/tickets", icon: Ticket },
@@ -82,6 +102,7 @@ const settingsSections = [
   },
   {
     title: "Communication",
+    id: "communication",
     items: [
       { name: "Email Templates", description: "Manage emails", href: "/venue/settings/communication/email", icon: Mail },
       { name: "SMS Templates", description: "Text messages", href: "/venue/settings/communication/sms", icon: MessageSquare },
@@ -90,6 +111,7 @@ const settingsSections = [
   },
   {
     title: "Policies",
+    id: "policies",
     items: [
       { name: "Refund Policy", description: "Refund rules", href: "/venue/settings/policies/refund", icon: RefreshCw },
       { name: "Age Policy", description: "Age requirements", href: "/venue/settings/policies/age", icon: Baby },
@@ -99,6 +121,7 @@ const settingsSections = [
   },
   {
     title: "Safety",
+    id: "safety",
     items: [
       { name: "Emergency Contacts", description: "Emergency info", href: "/venue/settings/safety/emergency", icon: AlertTriangle },
       { name: "Evacuation Plan", description: "Emergency routes", href: "/venue/settings/safety/evacuation", icon: Route },
@@ -108,43 +131,76 @@ const settingsSections = [
   },
 ];
 
+function SideNav() {
+  return (
+    <div className="w-56 flex-shrink-0">
+      <div className="sticky top-6">
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">Settings</h1>
+        <p className="text-sm text-gray-500 mb-6">Configure your venue</p>
+        <nav className="space-y-1">
+          {settingsSections.map(function(section) {
+            return (
+              
+                key={section.id}
+                href={"#" + section.id}
+                className="block px-3 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
+              >
+                {section.title}
+              </a>
+            );
+          })}
+        </nav>
+      </div>
+    </div>
+  );
+}
+
+function SettingsContent() {
+  return (
+    <div className="flex-1 min-w-0">
+      <div className="space-y-8">
+        {settingsSections.map(function(section) {
+          return (
+            <div key={section.id} id={section.id}>
+              <h2 className="text-base font-semibold text-gray-900 mb-3 pb-2 border-b border-gray-200">
+                {section.title}
+              </h2>
+              <div className="bg-white rounded-xl border border-gray-200 divide-y divide-gray-100 overflow-hidden">
+                {section.items.map(function(item) {
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.name}
+                      to={item.href}
+                      className="flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors group"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 bg-gray-100 group-hover:bg-purple-100 rounded-lg flex items-center justify-center flex-shrink-0 transition-colors">
+                          <Icon className="w-4 h-4 text-gray-500 group-hover:text-purple-600 transition-colors" />
+                        </div>
+                        <div>
+                          <p className="font-medium text-gray-900 text-sm">{item.name}</p>
+                          <p className="text-xs text-gray-500">{item.description}</p>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-gray-600 transition-colors" />
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function SettingsIndex() {
   return (
-    <div>
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold text-gray-900">Settings</h1>
-        <p className="text-gray-500">Configure your venue</p>
-      </div>
-
-      <div className="space-y-8">
-        {settingsSections.map((section) => (
-          <div key={section.title}>
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">{section.title}</h2>
-            <div className="grid grid-cols-3 gap-4">
-              {section.items.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <Link
-                    key={item.name}
-                    to={item.href}
-                    className="bg-white rounded-lg border border-gray-200 p-4 hover:border-purple-300 hover:shadow-sm transition-all"
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center flex-shrink-0">
-                        <Icon className="w-5 h-5 text-gray-600" />
-                      </div>
-                      <div>
-                        <p className="font-medium text-gray-900">{item.name}</p>
-                        <p className="text-sm text-gray-500">{item.description}</p>
-                      </div>
-                    </div>
-                  </Link>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
+    <div className="flex gap-8">
+      <SideNav />
+      <SettingsContent />
     </div>
   );
 }

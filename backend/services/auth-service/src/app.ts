@@ -8,6 +8,7 @@ import swagger from '@fastify/swagger';
 import swaggerUi from '@fastify/swagger-ui';
 import { createDependencyContainer } from './config/dependencies';
 import { authRoutes } from './routes/auth.routes';
+import { internalRoutes } from './routes/internal.routes';
 import { env } from './config/env';
 import { setupHealthRoutes } from './services/monitoring.service';
 import { pool } from './config/database';
@@ -36,7 +37,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     keepAliveTimeout: 72000,
     requestTimeout: 30000,
     bodyLimit: 1048576,
-    // Generate request IDs if not provided
     genReqId: (req) => {
       return (req.headers['x-correlation-id'] as string) ||
              (req.headers['x-request-id'] as string) ||
@@ -49,7 +49,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Wrap request handling with correlation context
   app.addHook('preHandler', async (request) => {
-    // This ensures all async operations within the request have access to correlation ID
     const correlationId = request.correlationId || request.id;
     return withCorrelation(correlationId, () => {});
   });
@@ -205,7 +204,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
 
     // Rate limiting with proper headers (CRITICAL fix)
-    // Handle both custom RateLimitError and generic 429 errors
     if (error instanceof RateLimitError || error.name === 'RateLimitError' || error.constructor?.name === 'RateLimitError') {
       const ttl = error.ttl || 60;
       const limit = error.limit || 100;
@@ -230,7 +228,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Generic 429 fallback (for errors without RateLimitError type)
+    // Generic 429 fallback
     if (statusCode === 429) {
       return reply
         .status(429)
@@ -344,10 +342,15 @@ export async function buildApp(): Promise<FastifyInstance> {
   // Setup health check routes
   await setupHealthRoutes(app);
 
-  // Register auth routes
+  // Register auth routes (public + authenticated user routes)
   await app.register(authRoutes, {
     prefix: '/auth',
     container
+  });
+
+  // Register internal routes (S2S authenticated only)
+  await app.register(internalRoutes, {
+    prefix: '/auth/internal'
   });
 
   return app;
