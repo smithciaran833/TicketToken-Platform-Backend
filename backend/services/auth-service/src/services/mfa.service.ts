@@ -6,6 +6,7 @@ import { getRedis } from '../config/redis';
 import { env } from '../config/env';
 import { AuthenticationError } from '../errors';
 import { redisKeys } from '../utils/redisKeys';
+import { otpRateLimiter, mfaSetupRateLimiter, backupCodeRateLimiter } from '../utils/rateLimiter';
 
 export class MFAService {
   async setupTOTP(userId: string, tenantId?: string): Promise<{
@@ -13,6 +14,9 @@ export class MFAService {
     qrCode: string;
   }> {
     try {
+      // Rate limit MFA setup attempts
+      await mfaSetupRateLimiter.consume(userId, 1, tenantId);
+
       const user = await db('users').withSchema('public').where('users.id', userId).first();
       if (!user) {
         throw new Error('User not found');
@@ -55,14 +59,17 @@ export class MFAService {
 
   async verifyAndEnableTOTP(userId: string, token: string, tenantId?: string): Promise<{ backupCodes: string[] }> {
     try {
+      // Rate limit OTP verification
+      await otpRateLimiter.consume(userId, 1, tenantId);
+
       const redis = getRedis();
-      
+
       // Try tenant-prefixed key first, then fall back
       let setupData = await redis.get(redisKeys.mfaSetup(userId, tenantId));
       if (!setupData && tenantId) {
         setupData = await redis.get(`mfa:setup:${userId}`);
       }
-      
+
       if (!setupData) {
         throw new Error('MFA setup expired or not found');
       }
@@ -92,6 +99,9 @@ export class MFAService {
       await redis.del(redisKeys.mfaSetup(userId, effectiveTenantId));
       await redis.del(`mfa:setup:${userId}`);
 
+      // Reset rate limiter on success
+      await otpRateLimiter.reset(userId, tenantId);
+
       return { backupCodes: plainBackupCodes };
     } catch (error: any) {
       console.error('MFA verifyAndEnableTOTP error:', error.message, error.stack);
@@ -101,6 +111,9 @@ export class MFAService {
 
   async verifyTOTP(userId: string, token: string, tenantId?: string): Promise<boolean> {
     try {
+      // Rate limit OTP verification - strict limits
+      await otpRateLimiter.consume(userId, 1, tenantId);
+
       const user = await db('users').withSchema('public').where('users.id', userId).first();
 
       if (!user || !user.mfa_enabled || !user.mfa_secret) {
@@ -131,6 +144,8 @@ export class MFAService {
 
       if (verified) {
         await redis.setex(recentKey, 90, '1');
+        // Reset rate limiter on successful verification
+        await otpRateLimiter.reset(userId, tenantId);
       }
 
       return verified;
@@ -140,8 +155,11 @@ export class MFAService {
     }
   }
 
-  async verifyBackupCode(userId: string, code: string): Promise<boolean> {
+  async verifyBackupCode(userId: string, code: string, tenantId?: string): Promise<boolean> {
     try {
+      // Rate limit backup code verification - very strict
+      await backupCodeRateLimiter.consume(userId, 1, tenantId);
+
       const user = await db('users').withSchema('public').where('users.id', userId).first();
 
       if (!user || !user.backup_codes) {
@@ -165,6 +183,9 @@ export class MFAService {
       await db('users').withSchema('public').where('users.id', userId).update({
         backup_codes: backupCodes,
       });
+
+      // Reset rate limiter on success
+      await backupCodeRateLimiter.reset(userId, tenantId);
 
       return true;
     } catch (error: any) {
@@ -300,7 +321,7 @@ export class MFAService {
 
       const redis = getRedis();
       const effectiveTenantId = tenantId || user.tenant_id;
-      
+
       // Clean up both old and new key patterns
       await redis.del(redisKeys.mfaSecret(userId, effectiveTenantId));
       await redis.del(redisKeys.mfaVerified(userId, effectiveTenantId));

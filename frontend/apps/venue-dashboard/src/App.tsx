@@ -80,6 +80,8 @@ import RefundsList from "./pages/Financials/RefundsList";
 import Chargebacks from "./pages/Financials/Chargebacks";
 import ChargebackResponse from "./pages/Financials/ChargebackResponse";
 import TaxDocuments from "./pages/Financials/TaxDocuments";
+import FailedPayouts from "./pages/Financials/FailedPayouts";
+import RefundDetail from "./pages/Financials/RefundDetail";
 
 // Marketing Section
 import MarketingDashboard from "./pages/Marketing";
@@ -336,7 +338,9 @@ function AppContent() {
         <Route path="/venue/financials/payouts" element={<PayoutsList />} />
         <Route path="/venue/financials/payouts/:id" element={<PayoutDetail />} />
         <Route path="/venue/financials/settings" element={<PayoutSettings />} />
+        <Route path="/venue/financials/payouts/failed" element={<FailedPayouts />} />
         <Route path="/venue/financials/refunds" element={<RefundsList />} />
+        <Route path="/venue/financials/refunds/:id" element={<RefundDetail />} />
         <Route path="/venue/financials/chargebacks" element={<Chargebacks />} />
         <Route path="/venue/financials/chargebacks/:id" element={<ChargebackResponse />} />
         <Route path="/venue/financials/tax" element={<TaxDocuments />} />

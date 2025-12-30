@@ -1,9 +1,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Plus, Search, MoreVertical, Edit, Trash2, UserX, Shield, ClipboardList, Bell, UserCheck } from "lucide-react";
-import { Button, Dropdown } from "../../components/ui";
+import { Button, Dropdown, Modal, ModalFooter, useToast, ToastContainer } from "../../components/ui";
 
-const staffMembers = [
+const initialStaffMembers = [
   { id: 1, name: "Sarah Johnson", email: "sarah@venue.com", role: "Manager", status: "active", lastActive: "2 hours ago" },
   { id: 2, name: "Mike Chen", email: "mike@venue.com", role: "Box Office", status: "active", lastActive: "1 hour ago" },
   { id: 3, name: "Emily Davis", email: "emily@venue.com", role: "Security", status: "active", lastActive: "30 min ago" },
@@ -31,8 +31,12 @@ function getStatusBadge(status: string) {
 }
 
 export default function StaffList() {
+  const toast = useToast();
+  const [staffMembers, setStaffMembers] = useState(initialStaffMembers);
   const [searchQuery, setSearchQuery] = useState("");
   const [roleFilter, setRoleFilter] = useState("all");
+  const [showRemoveModal, setShowRemoveModal] = useState(false);
+  const [selectedMember, setSelectedMember] = useState<typeof initialStaffMembers[0] | null>(null);
 
   const filteredStaff = staffMembers.filter(staff => {
     if (searchQuery && !staff.name.toLowerCase().includes(searchQuery.toLowerCase()) && !staff.email.toLowerCase().includes(searchQuery.toLowerCase())) return false;
@@ -40,16 +44,39 @@ export default function StaffList() {
     return true;
   });
 
-  const getDropdownItems = (staff: typeof staffMembers[0]) => [
+  const handleRemove = (staff: typeof initialStaffMembers[0]) => {
+    setSelectedMember(staff);
+    setShowRemoveModal(true);
+  };
+
+  const confirmRemove = () => {
+    if (selectedMember) {
+      setStaffMembers(staffMembers.filter(s => s.id !== selectedMember.id));
+      toast.success(`${selectedMember.name} has been removed from the team.`);
+      setShowRemoveModal(false);
+      setSelectedMember(null);
+    }
+  };
+
+  const handleToggleStatus = (staff: typeof initialStaffMembers[0]) => {
+    const newStatus = staff.status === "active" ? "inactive" : "active";
+    setStaffMembers(staffMembers.map(s => 
+      s.id === staff.id ? { ...s, status: newStatus } : s
+    ));
+    toast.success(`${staff.name} has been ${newStatus === "active" ? "activated" : "deactivated"}.`);
+  };
+
+  const getDropdownItems = (staff: typeof initialStaffMembers[0]) => [
     { label: "Edit", icon: <Edit className="w-4 h-4" />, onClick: () => {} },
-    { label: staff.status === "active" ? "Deactivate" : "Activate", icon: <UserX className="w-4 h-4" />, onClick: () => {} },
+    { label: staff.status === "active" ? "Deactivate" : "Activate", icon: <UserX className="w-4 h-4" />, onClick: () => handleToggleStatus(staff) },
     { divider: true, label: "", onClick: () => {} },
-    { label: "Remove", icon: <Trash2 className="w-4 h-4" />, onClick: () => {}, danger: true },
+    { label: "Remove", icon: <Trash2 className="w-4 h-4" />, onClick: () => handleRemove(staff), danger: true },
   ];
 
   return (
     <div>
-      {/* Header */}
+      <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Team</h1>
@@ -63,7 +90,6 @@ export default function StaffList() {
         </Link>
       </div>
 
-      {/* Quick Links */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <Link to="/venue/team/roles" className="bg-white rounded-lg border border-gray-200 p-4 hover:border-purple-300 transition-colors">
           <div className="flex items-center gap-3">
@@ -114,7 +140,6 @@ export default function StaffList() {
         </Link>
       </div>
 
-      {/* Filters */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
         <div className="flex items-center gap-4">
           <div className="relative flex-1">
@@ -137,7 +162,6 @@ export default function StaffList() {
         </div>
       </div>
 
-      {/* Staff Table */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -175,9 +199,47 @@ export default function StaffList() {
                 </td>
               </tr>
             ))}
+            {filteredStaff.length === 0 && (
+              <tr>
+                <td colSpan={5} className="px-6 py-12 text-center text-gray-500">
+                  No team members found matching your filters.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* Remove Member Modal */}
+      <Modal
+        isOpen={showRemoveModal}
+        onClose={() => setShowRemoveModal(false)}
+        title="Remove Team Member"
+        size="sm"
+      >
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg">
+            <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center text-purple-600 font-medium">
+              {selectedMember?.name.split(" ").map(n => n[0]).join("")}
+            </div>
+            <div>
+              <p className="font-medium text-gray-900">{selectedMember?.name}</p>
+              <p className="text-sm text-gray-500">{selectedMember?.email}</p>
+            </div>
+          </div>
+
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <p className="text-sm text-red-800 font-medium">Warning: This action cannot be undone</p>
+            <p className="text-sm text-red-700 mt-1">
+              This will immediately revoke their access to the venue dashboard. Any assigned tasks will need to be reassigned.
+            </p>
+          </div>
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setShowRemoveModal(false)}>Cancel</Button>
+          <Button variant="danger" onClick={confirmRemove}>Remove Member</Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }

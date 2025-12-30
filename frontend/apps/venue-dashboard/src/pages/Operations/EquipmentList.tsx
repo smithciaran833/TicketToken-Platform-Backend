@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowLeft, Plus, Search, Wrench, MoreVertical, CheckCircle, AlertTriangle, XCircle, ClipboardCheck } from "lucide-react";
-import { Button, Dropdown } from "../../components/ui";
+import { ArrowLeft, Plus, Search, Wrench, MoreVertical, CheckCircle, AlertTriangle, XCircle, ClipboardCheck, Camera } from "lucide-react";
+import { Button, Dropdown, Modal, ModalFooter, Select, Textarea, useToast, ToastContainer } from "../../components/ui";
 
 const equipment = [
   { id: 1, name: "Main PA System", category: "Audio", location: "Main Stage", status: "working", lastCheck: "2025-01-10" },
@@ -31,10 +31,33 @@ const statusOptions = [
   { value: "out_of_service", label: "Out of Service" },
 ];
 
+const issueTypes = [
+  { value: "not_working", label: "Not Working" },
+  { value: "damaged", label: "Damaged" },
+  { value: "missing", label: "Missing" },
+  { value: "intermittent", label: "Intermittent Issue" },
+  { value: "other", label: "Other" },
+];
+
+const priorityOptions = [
+  { value: "low", label: "Low - Can wait" },
+  { value: "medium", label: "Medium - Should fix soon" },
+  { value: "high", label: "High - Urgent" },
+  { value: "critical", label: "Critical - Blocks event" },
+];
+
 export default function EquipmentList() {
+  const toast = useToast();
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [showIssueModal, setShowIssueModal] = useState(false);
+  const [selectedEquipment, setSelectedEquipment] = useState<typeof equipment[0] | null>(null);
+  const [issueForm, setIssueForm] = useState({
+    type: "not_working",
+    priority: "medium",
+    description: "",
+  });
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -54,14 +77,33 @@ export default function EquipmentList() {
     }
   };
 
-  const getDropdownItems = () => [
-    { label: "Run Check", icon: <ClipboardCheck className="w-4 h-4" />, onClick: () => {} },
-    { label: "Report Issue", icon: <AlertTriangle className="w-4 h-4" />, onClick: () => {} },
+  const handleReportIssue = (item: typeof equipment[0]) => {
+    setSelectedEquipment(item);
+    setIssueForm({ type: "not_working", priority: "medium", description: "" });
+    setShowIssueModal(true);
+  };
+
+  const submitIssue = () => {
+    toast.success(`Issue reported for ${selectedEquipment?.name}. Equipment status updated.`);
+    setShowIssueModal(false);
+  };
+
+  const getDropdownItems = (item: typeof equipment[0]) => [
+    { label: "Run Check", icon: <ClipboardCheck className="w-4 h-4" />, onClick: () => toast.success(`Check started for ${item.name}`) },
+    { label: "Report Issue", icon: <AlertTriangle className="w-4 h-4" />, onClick: () => handleReportIssue(item) },
   ];
+
+  const filteredEquipment = equipment.filter(item => {
+    if (search && !item.name.toLowerCase().includes(search.toLowerCase())) return false;
+    if (categoryFilter !== "all" && item.category.toLowerCase() !== categoryFilter) return false;
+    if (statusFilter !== "all" && item.status !== statusFilter) return false;
+    return true;
+  });
 
   return (
     <div>
-      {/* Header */}
+      <ToastContainer toasts={toast.toasts} onRemove={toast.removeToast} />
+
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-4">
           <Link to="/venue/operations" className="text-gray-400 hover:text-gray-600">
@@ -88,27 +130,25 @@ export default function EquipmentList() {
         </div>
       </div>
 
-      {/* Stats */}
       <div className="grid grid-cols-4 gap-4 mb-6">
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Total Equipment</p>
-          <p className="text-2xl font-bold text-gray-900">47</p>
+          <p className="text-2xl font-bold text-gray-900">{equipment.length}</p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Working</p>
-          <p className="text-2xl font-bold text-green-600">44</p>
+          <p className="text-2xl font-bold text-green-600">{equipment.filter(e => e.status === "working").length}</p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Needs Repair</p>
-          <p className="text-2xl font-bold text-yellow-600">2</p>
+          <p className="text-2xl font-bold text-yellow-600">{equipment.filter(e => e.status === "needs_repair").length}</p>
         </div>
         <div className="bg-white rounded-lg border border-gray-200 p-4">
           <p className="text-sm text-gray-500">Out of Service</p>
-          <p className="text-2xl font-bold text-red-600">1</p>
+          <p className="text-2xl font-bold text-red-600">{equipment.filter(e => e.status === "out_of_service").length}</p>
         </div>
       </div>
 
-      {/* Filters */}
       <div className="bg-white rounded-lg border border-gray-200 p-4 mb-6">
         <div className="flex items-center gap-4">
           <div className="relative flex-1 max-w-md">
@@ -142,7 +182,6 @@ export default function EquipmentList() {
         </div>
       </div>
 
-      {/* Equipment Table */}
       <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
@@ -156,7 +195,7 @@ export default function EquipmentList() {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
-            {equipment.map((item) => (
+            {filteredEquipment.map((item) => (
               <tr key={item.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
@@ -176,13 +215,74 @@ export default function EquipmentList() {
                 </td>
                 <td className="px-6 py-4 text-sm text-gray-600">{item.lastCheck}</td>
                 <td className="px-6 py-4 text-right">
-                  <Dropdown trigger={<MoreVertical className="w-5 h-5" />} items={getDropdownItems()} />
+                  <Dropdown trigger={<MoreVertical className="w-5 h-5" />} items={getDropdownItems(item)} />
                 </td>
               </tr>
             ))}
+            {filteredEquipment.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-6 py-12 text-center text-gray-500">
+                  No equipment found matching your filters.
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
+
+      {/* Report Issue Modal */}
+      <Modal
+        isOpen={showIssueModal}
+        onClose={() => setShowIssueModal(false)}
+        title="Report Equipment Issue"
+      >
+        <div className="space-y-4">
+          <div className="bg-gray-50 rounded-lg p-4">
+            <div className="flex items-center gap-3">
+              <Wrench className="w-5 h-5 text-gray-400" />
+              <div>
+                <p className="font-medium text-gray-900">{selectedEquipment?.name}</p>
+                <p className="text-sm text-gray-500">{selectedEquipment?.category} • {selectedEquipment?.location}</p>
+              </div>
+            </div>
+          </div>
+
+          <Select
+            label="Issue Type"
+            options={issueTypes}
+            value={issueForm.type}
+            onChange={(e) => setIssueForm({ ...issueForm, type: e.target.value })}
+          />
+
+          <Select
+            label="Priority"
+            options={priorityOptions}
+            value={issueForm.priority}
+            onChange={(e) => setIssueForm({ ...issueForm, priority: e.target.value })}
+          />
+
+          <Textarea
+            label="Description"
+            placeholder="Describe the issue in detail..."
+            value={issueForm.description}
+            onChange={(e) => setIssueForm({ ...issueForm, description: e.target.value })}
+            rows={4}
+          />
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Photos (optional)</label>
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 cursor-pointer">
+              <Camera className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+              <p className="text-sm text-gray-600">Click to upload photos</p>
+              <p className="text-xs text-gray-500">PNG, JPG up to 10MB</p>
+            </div>
+          </div>
+        </div>
+        <ModalFooter>
+          <Button variant="secondary" onClick={() => setShowIssueModal(false)}>Cancel</Button>
+          <Button onClick={submitIssue}>Report Issue</Button>
+        </ModalFooter>
+      </Modal>
     </div>
   );
 }

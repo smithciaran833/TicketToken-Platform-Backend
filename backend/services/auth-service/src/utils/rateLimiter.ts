@@ -29,7 +29,7 @@ export class RateLimiter {
     const redis = getRedis();
     
     // Build key with tenant prefix for multi-tenant isolation
-    const fullKey = tenantId 
+    const fullKey = tenantId
       ? `tenant:${tenantId}:${this.keyPrefix}:${key}`
       : `${this.keyPrefix}:${key}`;
     const blockKey = `${fullKey}:block`;
@@ -62,7 +62,7 @@ export class RateLimiter {
 
   async reset(key: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
-    const fullKey = tenantId 
+    const fullKey = tenantId
       ? `tenant:${tenantId}:${this.keyPrefix}:${key}`
       : `${this.keyPrefix}:${key}`;
     const blockKey = `${fullKey}:block`;
@@ -73,20 +73,45 @@ export class RateLimiter {
 }
 
 // Pre-configured rate limiters
+
+// Login - 5 attempts per 15 minutes
 export const loginRateLimiter = new RateLimiter('login', {
-  points: 5,        // 5 attempts
-  duration: 900,    // per 15 minutes
-  blockDuration: 900 // block for 15 minutes
+  points: 5,
+  duration: 900,
+  blockDuration: 900
 });
 
+// Registration - 3 per hour
 export const registrationRateLimiter = new RateLimiter('register', {
-  points: 3,        // 3 registrations
-  duration: 3600,   // per hour
+  points: 3,
+  duration: 3600,
   blockDuration: 3600
 });
 
+// Password reset - 3 per hour
 export const passwordResetRateLimiter = new RateLimiter('password-reset', {
-  points: 3,        // 3 attempts
-  duration: 3600,   // per hour
+  points: 3,
+  duration: 3600,
   blockDuration: 3600
+});
+
+// OTP/MFA verification - strict: 5 attempts per 5 minutes
+export const otpRateLimiter = new RateLimiter('otp-verify', {
+  points: 5,
+  duration: 300,
+  blockDuration: 900
+});
+
+// MFA setup - 3 attempts per hour
+export const mfaSetupRateLimiter = new RateLimiter('mfa-setup', {
+  points: 3,
+  duration: 3600,
+  blockDuration: 3600
+});
+
+// Backup code - very strict: 3 attempts per hour, 2 hour block
+export const backupCodeRateLimiter = new RateLimiter('backup-code', {
+  points: 3,
+  duration: 3600,
+  blockDuration: 7200
 });

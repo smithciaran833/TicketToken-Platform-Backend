@@ -1,5 +1,6 @@
 import { AuthService } from '../services/auth.service';
 import { MFAService } from '../services/mfa.service';
+import { captchaService } from '../services/captcha.service';
 import { db } from '../config/database';
 import { userCache, sessionCache, getCacheStats } from '../services/cache-integration';
 
@@ -34,8 +35,35 @@ export class AuthController {
   }
 
   async login(request: any, reply: any) {
+    const ipAddress = request.ip;
+    const identifier = request.body.email?.toLowerCase() || ipAddress;
+
     try {
-      const ipAddress = request.ip;
+      // Check if CAPTCHA is required (after N failed attempts)
+      const captchaRequired = await captchaService.isCaptchaRequired(identifier);
+      
+      if (captchaRequired) {
+        const captchaToken = request.body.captchaToken;
+        
+        if (!captchaToken) {
+          return reply.status(428).send({
+            error: 'CAPTCHA required',
+            code: 'CAPTCHA_REQUIRED',
+            requiresCaptcha: true,
+          });
+        }
+
+        const captchaResult = await captchaService.verify(captchaToken, ipAddress);
+        
+        if (!captchaResult.success) {
+          return reply.status(400).send({
+            error: 'CAPTCHA verification failed',
+            code: 'CAPTCHA_FAILED',
+            requiresCaptcha: true,
+          });
+        }
+      }
+
       const userAgent = request.headers['user-agent'] || 'unknown';
 
       const result = await this.authService.login({
@@ -44,6 +72,9 @@ export class AuthController {
         ipAddress,
         userAgent,
       });
+
+      // Clear CAPTCHA failures on successful login
+      await captchaService.clearFailures(identifier);
 
       console.log('[LOGIN] Auth service returned:', {
         hasUser: !!result.user,
@@ -72,14 +103,14 @@ export class AuthController {
 
           if (!mfaValid) {
             console.log('[LOGIN] TOTP returned false, trying backup code');
-            mfaValid = await this.mfaService.verifyBackupCode(result.user.id!, request.body.mfaToken);
+            mfaValid = await this.mfaService.verifyBackupCode(result.user.id!, request.body.mfaToken, tenantId);
             usedBackupCode = mfaValid;
             console.log('[LOGIN] Backup code verification result:', mfaValid);
           }
         } catch (error) {
           console.log('[LOGIN] TOTP error, trying backup code:', error);
           try {
-            mfaValid = await this.mfaService.verifyBackupCode(result.user.id!, request.body.mfaToken);
+            mfaValid = await this.mfaService.verifyBackupCode(result.user.id!, request.body.mfaToken, tenantId);
             usedBackupCode = mfaValid;
             console.log('[LOGIN] Backup code verification result:', mfaValid);
           } catch (backupError) {
@@ -119,9 +150,13 @@ export class AuthController {
         tokens: result.tokens,
       });
     } catch (error: any) {
+      // Record failure for CAPTCHA threshold
+      const failureResult = await captchaService.recordFailure(identifier);
+      
       if (error.message?.includes('Invalid') || error.message?.includes('not found') || error.message?.includes('password')) {
         return reply.status(401).send({
-          error: 'Invalid credentials'
+          error: 'Invalid credentials',
+          requiresCaptcha: failureResult.requiresCaptcha,
         });
       }
       console.error('Login error:', error);
