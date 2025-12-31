@@ -4,34 +4,57 @@ import { pool } from '../config/database';
 import { AuthenticatedRequest } from '../types';
 import { stripHtml } from '../utils/sanitize';
 import { auditService } from '../services/audit.service';
+import { cacheFallbackService } from '../services/cache-fallback.service';
 
 export class ProfileController {
   async getProfile(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    const tenantId = request.user.tenant_id;
+    const tenantId = request.user.tenant_id as string;
 
     try {
-      const result = await pool.query(
-        `SELECT
-          id,
-          email,
-          first_name,
-          last_name,
-          phone,
-          email_verified,
-          mfa_enabled,
-          role,
-          tenant_id,
-          created_at,
-          updated_at,
-          last_login_at,
-          password_changed_at
-        FROM users
-        WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
-        [userId, tenantId]
+      const { data: profile, fromCache } = await cacheFallbackService.withFallback(
+        'getProfile',
+        // DB operation
+        async () => {
+          const result = await pool.query(
+            `SELECT
+              id,
+              email,
+              first_name,
+              last_name,
+              phone,
+              email_verified,
+              mfa_enabled,
+              role,
+              tenant_id,
+              created_at,
+              updated_at,
+              last_login_at,
+              password_changed_at
+            FROM users
+            WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+            [userId, tenantId]
+          );
+
+          if (result.rows.length === 0) {
+            return null;
+          }
+
+          const user = result.rows[0];
+
+          // Cache the result for future fallback
+          await cacheFallbackService.cacheUserProfile(userId, tenantId, user);
+
+          return user;
+        },
+        // Cache fallback operation
+        async () => {
+          return cacheFallbackService.getCachedUserProfile(userId, tenantId);
+        },
+        userId
       );
 
-      if (result.rows.length === 0) {
+      if (!profile) {
         return reply.status(404).send({
           success: false,
           error: 'User not found',
@@ -39,9 +62,15 @@ export class ProfileController {
         });
       }
 
+      // Add cache indicator header
+      if (fromCache) {
+        reply.header('X-Cache', 'fallback');
+        reply.header('X-Cache-Age', cacheFallbackService.getCacheAge(profile.cached_at).toString());
+      }
+
       return reply.send({
         success: true,
-        user: result.rows[0]
+        user: profile
       });
     } catch (error) {
       request.log.error({ error, userId }, 'Failed to get profile');
@@ -55,7 +84,7 @@ export class ProfileController {
 
   async updateProfile(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    const tenantId = request.user.tenant_id;
+    const tenantId = request.user.tenant_id as string;
     const updates = request.body as {
       firstName?: string;
       lastName?: string;
@@ -94,6 +123,9 @@ export class ProfileController {
          WHERE id = $1 AND tenant_id = $2`,
         [userId, tenantId, ...values]
       );
+
+      // Invalidate cache after update
+      await cacheFallbackService.invalidateUserCache(userId, tenantId);
 
       await auditService.log({
         userId,
@@ -134,12 +166,12 @@ export class ProfileController {
    */
   async exportData(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    const tenantId = request.user.tenant_id;
+    const tenantId = request.user.tenant_id as string;
 
     try {
       // Fetch user profile
       const userResult = await pool.query(
-        `SELECT 
+        `SELECT
           id, email, username, display_name, first_name, last_name,
           phone, email_verified, phone_verified, country_code, city,
           state_province, postal_code, timezone, preferred_language,
@@ -148,7 +180,7 @@ export class ProfileController {
           privacy_accepted_at, privacy_version, marketing_consent,
           marketing_consent_date, preferences, notification_preferences,
           privacy_settings
-        FROM users 
+        FROM users
         WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [userId, tenantId]
       );
@@ -164,9 +196,9 @@ export class ProfileController {
       // Fetch sessions
       const sessionsResult = await pool.query(
         `SELECT id, started_at, ended_at, ip_address, user_agent
-         FROM user_sessions 
-         WHERE user_id = $1 
-         ORDER BY started_at DESC 
+         FROM user_sessions
+         WHERE user_id = $1
+         ORDER BY started_at DESC
          LIMIT 100`,
         [userId]
       );
@@ -174,7 +206,7 @@ export class ProfileController {
       // Fetch wallet connections
       const walletsResult = await pool.query(
         `SELECT wallet_address, network, verified, created_at, last_login_at
-         FROM wallet_connections 
+         FROM wallet_connections
          WHERE user_id = $1`,
         [userId]
       );
@@ -182,7 +214,7 @@ export class ProfileController {
       // Fetch OAuth connections
       const oauthResult = await pool.query(
         `SELECT provider, created_at, updated_at
-         FROM oauth_connections 
+         FROM oauth_connections
          WHERE user_id = $1`,
         [userId]
       );
@@ -190,16 +222,16 @@ export class ProfileController {
       // Fetch venue roles
       const rolesResult = await pool.query(
         `SELECT venue_id, role, is_active, created_at, expires_at
-         FROM user_venue_roles 
+         FROM user_venue_roles
          WHERE user_id = $1`,
         [userId]
       );
 
       // Fetch addresses
       const addressesResult = await pool.query(
-        `SELECT address_type, address_line1, address_line2, city, 
+        `SELECT address_type, address_line1, address_line2, city,
                 state_province, postal_code, country_code, is_default, created_at
-         FROM user_addresses 
+         FROM user_addresses
          WHERE user_id = $1`,
         [userId]
       );
@@ -207,9 +239,9 @@ export class ProfileController {
       // Fetch recent audit logs (user's own actions)
       const auditResult = await pool.query(
         `SELECT action, resource_type, resource_id, ip_address, created_at, success
-         FROM audit_logs 
-         WHERE user_id = $1 
-         ORDER BY created_at DESC 
+         FROM audit_logs
+         WHERE user_id = $1
+         ORDER BY created_at DESC
          LIMIT 500`,
         [userId]
       );
@@ -253,7 +285,7 @@ export class ProfileController {
    */
   async updateConsent(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    const tenantId = request.user.tenant_id;
+    const tenantId = request.user.tenant_id as string;
     const body = request.body as {
       marketingConsent?: boolean;
     };
@@ -268,13 +300,16 @@ export class ProfileController {
       }
 
       await pool.query(
-        `UPDATE users 
+        `UPDATE users
          SET marketing_consent = $3,
              marketing_consent_date = CURRENT_TIMESTAMP,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [userId, tenantId, body.marketingConsent]
       );
+
+      // Invalidate cache after update
+      await cacheFallbackService.invalidateUserCache(userId, tenantId);
 
       await auditService.log({
         userId,
@@ -313,7 +348,7 @@ export class ProfileController {
    */
   async requestDeletion(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    const tenantId = request.user.tenant_id;
+    const tenantId = request.user.tenant_id as string;
     const body = request.body as {
       confirmEmail: string;
       reason?: string;
@@ -345,7 +380,7 @@ export class ProfileController {
 
       // Begin deletion process - soft delete first
       await pool.query(
-        `UPDATE users 
+        `UPDATE users
          SET deleted_at = CURRENT_TIMESTAMP,
              status = 'DELETED',
              updated_at = CURRENT_TIMESTAMP
@@ -355,11 +390,14 @@ export class ProfileController {
 
       // Revoke all sessions
       await pool.query(
-        `UPDATE user_sessions 
+        `UPDATE user_sessions
          SET revoked_at = CURRENT_TIMESTAMP, ended_at = CURRENT_TIMESTAMP
          WHERE user_id = $1 AND revoked_at IS NULL`,
         [userId]
       );
+
+      // Invalidate all caches
+      await cacheFallbackService.invalidateUserCache(userId, tenantId);
 
       // Audit the deletion request
       await auditService.log({
@@ -371,7 +409,7 @@ export class ProfileController {
         resourceId: userId,
         ipAddress: request.ip,
         userAgent: request.headers['user-agent'] as string,
-        metadata: { 
+        metadata: {
           reason: body.reason || 'not provided',
           scheduledAnonymization: '30 days'
         },
@@ -402,18 +440,18 @@ export class ProfileController {
    */
   async getConsent(request: AuthenticatedRequest, reply: FastifyReply) {
     const userId = request.user.id;
-    const tenantId = request.user.tenant_id;
+    const tenantId = request.user.tenant_id as string;
 
     try {
       const result = await pool.query(
-        `SELECT 
+        `SELECT
           marketing_consent,
           marketing_consent_date,
           terms_accepted_at,
           terms_version,
           privacy_accepted_at,
           privacy_version
-         FROM users 
+         FROM users
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [userId, tenantId]
       );

@@ -2,6 +2,7 @@ import { OAuth2Client } from 'google-auth-library';
 import axios from 'axios';
 import { pool } from '../config/database';
 import { JWTService } from './jwt.service';
+import { auditService } from './audit.service';
 import { AuthenticationError, ValidationError } from '../errors';
 import crypto from 'crypto';
 import { env } from '../config/env';
@@ -259,7 +260,7 @@ export class OAuthService {
     }
   }
 
-  private async createSession(userId: string, ipAddress?: string, userAgent?: string): Promise<string> {
+  private async createSession(userId: string, ipAddress?: string, userAgent?: string, tenantId?: string): Promise<string> {
     const sessionId = crypto.randomUUID();
 
     await pool.query(
@@ -267,6 +268,9 @@ export class OAuthService {
        VALUES ($1, $2, CURRENT_TIMESTAMP, $3, $4, $5)`,
       [sessionId, userId, ipAddress, userAgent, JSON.stringify({})]
     );
+
+    // Audit session creation
+    await auditService.logSessionCreated(userId, sessionId, ipAddress, userAgent, tenantId);
 
     return sessionId;
   }
@@ -283,7 +287,7 @@ export class OAuthService {
     }
 
     const user = await this.findOrCreateUser(profile, tenantId);
-    const sessionId = await this.createSession(user.id, ipAddress, userAgent);
+    const sessionId = await this.createSession(user.id, ipAddress, userAgent, user.tenant_id);
     const tokens = await this.jwtService.generateTokenPair(user);
 
     return {

@@ -2,6 +2,100 @@ import Stripe from 'stripe';
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
 
+/**
+ * SECURITY FIX (ST8): Lock Stripe API version to prevent breaking changes
+ * Update this when explicitly upgrading Stripe API compatibility
+ */
+export const STRIPE_API_VERSION = '2024-11-20.acacia' as const;
+
+/**
+ * SECURITY FIX (DS4): Simple circuit breaker for Stripe API calls
+ */
+class StripeCircuitBreaker {
+  private failures = 0;
+  private lastFailure = 0;
+  private isOpen = false;
+  private readonly threshold: number;
+  private readonly resetTimeout: number;
+
+  constructor(threshold = 5, resetTimeoutMs = 30000) {
+    this.threshold = threshold;
+    this.resetTimeout = resetTimeoutMs;
+  }
+
+  async execute<T>(operation: () => Promise<T>, operationName: string): Promise<T> {
+    // Check if circuit should be reset
+    if (this.isOpen && Date.now() - this.lastFailure > this.resetTimeout) {
+      logger.info({ operationName }, 'Stripe circuit breaker half-open, attempting reset');
+      this.isOpen = false;
+      this.failures = 0;
+    }
+
+    // Check if circuit is open
+    if (this.isOpen) {
+      logger.warn({ operationName, failures: this.failures }, 'Stripe circuit breaker open, rejecting request');
+      throw new Error('Stripe service temporarily unavailable (circuit breaker open)');
+    }
+
+    try {
+      const result = await operation();
+      // Success - reset failure count
+      if (this.failures > 0) {
+        logger.info({ operationName }, 'Stripe circuit breaker: operation succeeded, resetting failures');
+        this.failures = 0;
+      }
+      return result;
+    } catch (error: any) {
+      this.failures++;
+      this.lastFailure = Date.now();
+
+      // Check if we should open the circuit
+      if (this.failures >= this.threshold) {
+        this.isOpen = true;
+        logger.error({ 
+          operationName, 
+          failures: this.failures, 
+          threshold: this.threshold 
+        }, 'Stripe circuit breaker opened after threshold reached');
+      }
+
+      logger.warn({ 
+        operationName, 
+        failures: this.failures,
+        error: error.message 
+      }, 'Stripe operation failed');
+
+      throw error;
+    }
+  }
+
+  getState(): { isOpen: boolean; failures: number; lastFailure: Date | null } {
+    return {
+      isOpen: this.isOpen,
+      failures: this.failures,
+      lastFailure: this.lastFailure ? new Date(this.lastFailure) : null,
+    };
+  }
+}
+
+// Shared circuit breaker instance for Stripe calls
+export const stripeCircuitBreaker = new StripeCircuitBreaker(5, 30000);
+
+// Export for webhook handler consistency
+export function createStripeClient(): Stripe {
+  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  if (!stripeKey) {
+    throw new Error('STRIPE_SECRET_KEY not configured');
+  }
+  return new Stripe(stripeKey, {
+    apiVersion: STRIPE_API_VERSION,
+    // SECURITY: Set reasonable timeout
+    timeout: 30000,
+    // SECURITY: Set max network retries
+    maxNetworkRetries: 2,
+  });
+}
+
 interface OnboardingResult {
   accountId: string;
   onboardingUrl: string;
@@ -26,13 +120,8 @@ export class VenueStripeOnboardingService {
   private log = logger.child({ component: 'VenueStripeOnboardingService' });
 
   constructor() {
-    const stripeKey = process.env.STRIPE_SECRET_KEY;
-    if (!stripeKey) {
-      throw new Error('STRIPE_SECRET_KEY not configured');
-    }
-    this.stripe = new Stripe(stripeKey, {
-      apiVersion: '2025-11-17.clover',
-    });
+    // SECURITY FIX (ST8): Use centralized Stripe client with locked API version
+    this.stripe = createStripeClient();
   }
 
   /**
@@ -57,6 +146,9 @@ export class VenueStripeOnboardingService {
 
       // Create new Connect account if needed
       if (!accountId) {
+        // SECURITY FIX (PF4): Add idempotencyKey to prevent duplicate account creation
+        const idempotencyKey = `connect-create:${venueId}`;
+        
         const account = await this.stripe.accounts.create({
           type: 'express',
           country: 'US',
@@ -69,6 +161,8 @@ export class VenueStripeOnboardingService {
           metadata: {
             venue_id: venueId,
           },
+        }, {
+          idempotencyKey,
         });
 
         accountId = account.id;
@@ -86,11 +180,14 @@ export class VenueStripeOnboardingService {
       }
 
       // Generate account link for onboarding
+      // Note: accountLinks are short-lived so we include timestamp for uniqueness
       const accountLink = await this.stripe.accountLinks.create({
         account: accountId,
         refresh_url: refreshUrl,
         return_url: returnUrl,
         type: 'account_onboarding',
+      }, {
+        idempotencyKey: `connect-link:${venueId}:${Date.now()}`,
       });
 
       this.log.info('Generated onboarding link for venue', { venueId, accountId });
@@ -183,6 +280,8 @@ export class VenueStripeOnboardingService {
         refresh_url: refreshUrl,
         return_url: returnUrl,
         type: 'account_onboarding',
+      }, {
+        idempotencyKey: `connect-refresh:${venueId}:${Date.now()}`,
       });
 
       this.log.info('Refreshed onboarding link for venue', { venueId });

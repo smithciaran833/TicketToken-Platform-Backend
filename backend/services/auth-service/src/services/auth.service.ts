@@ -2,10 +2,14 @@ import bcrypt from 'bcrypt';
 import { pool } from '../config/database';
 import { JWTService } from './jwt.service';
 import { EmailService } from './email.service';
+import { auditService } from './audit.service';
 import { logger } from '../utils/logger';
 import * as crypto from 'crypto';
 import { stripHtml } from '../utils/sanitize';
 import { normalizeEmail, normalizePhone, normalizeText } from '../utils/normalize';
+
+// Idempotency window for password reset (15 minutes)
+const PASSWORD_RESET_IDEMPOTENCY_WINDOW = 15 * 60 * 1000;
 
 export class AuthService {
   private log = logger.child({ component: 'AuthService' });
@@ -67,6 +71,7 @@ export class AuthService {
       const client = await pool.connect();
       let user;
       let tokens;
+      let sessionId;
 
       try {
         await client.query('BEGIN');
@@ -87,11 +92,13 @@ export class AuthService {
 
         tokens = await this.jwtService.generateTokenPair(user);
 
-        await client.query(
+        const sessionResult = await client.query(
           `INSERT INTO user_sessions (user_id, ip_address, user_agent, started_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id`,
           [user.id, data.ipAddress || null, data.userAgent || null]
         );
+        sessionId = sessionResult.rows[0].id;
 
         await client.query('COMMIT');
         this.log.info('Transaction committed successfully');
@@ -102,6 +109,9 @@ export class AuthService {
       } finally {
         client.release();
       }
+
+      // Audit session creation
+      await auditService.logSessionCreated(user.id, sessionId, data.ipAddress, data.userAgent, user.tenant_id);
 
       await this.emailService.sendVerificationEmail(user.id, user.email, user.first_name, user.tenant_id);
 
@@ -211,14 +221,15 @@ export class AuthService {
 
       const client = await pool.connect();
       let tokens;
+      let sessionId;
 
       try {
         await client.query('BEGIN');
 
         // Atomic update: reset failed attempts, increment login_count, update last_login
         await client.query(
-          `UPDATE users SET 
-            failed_login_attempts = 0, 
+          `UPDATE users SET
+            failed_login_attempts = 0,
             locked_until = NULL,
             login_count = login_count + 1,
             last_login_at = NOW(),
@@ -230,11 +241,13 @@ export class AuthService {
 
         tokens = await this.jwtService.generateTokenPair(user);
 
-        await client.query(
+        const sessionResult = await client.query(
           `INSERT INTO user_sessions (user_id, ip_address, user_agent, started_at)
-           VALUES ($1, $2, $3, NOW())`,
+           VALUES ($1, $2, $3, NOW())
+           RETURNING id`,
           [user.id, data.ipAddress || null, data.userAgent || null]
         );
+        sessionId = sessionResult.rows[0].id;
 
         await client.query('COMMIT');
       } catch (error) {
@@ -244,6 +257,9 @@ export class AuthService {
       } finally {
         client.release();
       }
+
+      // Audit session creation
+      await auditService.logSessionCreated(user.id, sessionId, data.ipAddress, data.userAgent, user.tenant_id);
 
       const elapsed = Date.now() - startTime;
       if (elapsed < MIN_RESPONSE_TIME) {
@@ -374,6 +390,11 @@ export class AuthService {
     return { success: true };
   }
 
+  /**
+   * Password reset with idempotency
+   * If a valid reset token exists within the idempotency window, reuse it
+   * instead of generating a new one and sending a new email
+   */
   async forgotPassword(email: string) {
     this.log.info('Password reset request');
 
@@ -382,23 +403,45 @@ export class AuthService {
 
     try {
       const result = await pool.query(
-        'SELECT id, email FROM users WHERE email = $1 AND deleted_at IS NULL',
+        `SELECT id, email, password_reset_token, password_reset_expires 
+         FROM users WHERE email = $1 AND deleted_at IS NULL`,
         [normalizeEmail(email)]
       );
 
       if (result.rows.length > 0) {
         const user = result.rows[0];
-        const resetToken = crypto.randomBytes(32).toString('hex');
-        const resetExpiry = new Date(Date.now() + 3600000);
 
-        await pool.query(
-          'UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3',
-          [resetToken, resetExpiry, user.id]
-        );
+        // Idempotency check: if a valid token exists and was created recently, don't send another email
+        const hasValidToken = user.password_reset_token && 
+          user.password_reset_expires && 
+          new Date(user.password_reset_expires) > new Date();
 
-        this.sendPasswordResetEmail(user.email, resetToken).catch(err =>
-          this.log.error('Failed to send password reset email', err)
-        );
+        const tokenAge = user.password_reset_expires 
+          ? (new Date(user.password_reset_expires).getTime() - Date.now() - 3600000 + PASSWORD_RESET_IDEMPOTENCY_WINDOW)
+          : Infinity;
+
+        const isWithinIdempotencyWindow = tokenAge < PASSWORD_RESET_IDEMPOTENCY_WINDOW;
+
+        if (hasValidToken && isWithinIdempotencyWindow) {
+          // Token was recently created, don't spam the user
+          this.log.info('Password reset token already exists within idempotency window', {
+            userId: user.id,
+            tokenExpiresIn: Math.round((new Date(user.password_reset_expires).getTime() - Date.now()) / 1000 / 60) + ' minutes'
+          });
+        } else {
+          // Generate new token
+          const resetToken = crypto.randomBytes(32).toString('hex');
+          const resetExpiry = new Date(Date.now() + 3600000); // 1 hour
+
+          await pool.query(
+            'UPDATE users SET password_reset_token = $1, password_reset_expires = $2 WHERE id = $3',
+            [resetToken, resetExpiry, user.id]
+          );
+
+          this.sendPasswordResetEmail(user.email, resetToken).catch(err =>
+            this.log.error('Failed to send password reset email', err)
+          );
+        }
       }
 
       const elapsed = Date.now() - startTime;

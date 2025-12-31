@@ -3,7 +3,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticate, requireVenueAccess, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import { updateSettingsSchema } from '../schemas/settings.schema';
-import { NotFoundError, ForbiddenError } from '../utils/errors';
+import { NotFoundError, ForbiddenError, UnauthorizedError } from '../utils/errors';
 import { venueOperations } from '../utils/metrics';
 import { auditService } from '@tickettoken/shared';
 
@@ -12,8 +12,10 @@ interface VenueParams {
 }
 
 async function addTenantContext(request: any, reply: any) {
-  const user = request.user;
-  const tenantId = user?.tenant_id || '00000000-0000-0000-0000-000000000001';
+  const tenantId = request.user?.tenant_id;
+  if (!tenantId) {
+    throw new UnauthorizedError('Missing tenant context');
+  }
   request.tenantId = tenantId;
 }
 
@@ -53,9 +55,10 @@ export async function settingsRoutes(fastify: FastifyInstance) {
     }
   );
 
+  // SECURITY FIX (RD1): Add schema validation to PUT endpoint
   fastify.put('/',
     {
-      preHandler: [authenticate, addTenantContext]
+      preHandler: [authenticate, addTenantContext, validate(updateSettingsSchema)]
     },
     async (request: any, reply: FastifyReply) => {
       try {

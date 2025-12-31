@@ -2,6 +2,16 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { AuthenticatedRequest } from '../types';
 import { pool } from '../config/database';
 
+// UUID v4 format regex
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Validate UUID format
+ */
+function isValidUUID(value: string): boolean {
+  return UUID_REGEX.test(value);
+}
+
 /**
  * Tenant Validation Middleware
  *
@@ -39,12 +49,40 @@ export async function validateTenant(
     });
   }
 
+  // Validate tenant_id is a valid UUID format
+  if (!isValidUUID(authRequest.user.tenant_id)) {
+    request.log.error({
+      userId: authRequest.user.id,
+      tenantId: authRequest.user.tenant_id
+    }, 'Invalid tenant_id format in JWT');
+
+    return reply.status(403).send({
+      success: false,
+      error: 'Invalid tenant_id format',
+      code: 'INVALID_TENANT_ID_FORMAT'
+    });
+  }
+
+  // Validate user_id is a valid UUID format
+  if (!isValidUUID(authRequest.user.id)) {
+    request.log.error({
+      userId: authRequest.user.id
+    }, 'Invalid user_id format in JWT');
+
+    return reply.status(403).send({
+      success: false,
+      error: 'Invalid user_id format',
+      code: 'INVALID_USER_ID_FORMAT'
+    });
+  }
+
   // Set RLS context for this request
   try {
     await pool.query('SELECT set_config($1, $2, true)', [
       'app.current_tenant_id',
       authRequest.user.tenant_id
     ]);
+
     await pool.query('SELECT set_config($1, $2, true)', [
       'app.current_user_id',
       authRequest.user.id

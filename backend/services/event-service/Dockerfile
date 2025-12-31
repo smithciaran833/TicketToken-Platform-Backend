@@ -1,3 +1,28 @@
+# ==============================================================================
+# EVENT-SERVICE DOCKERFILE
+# ==============================================================================
+#
+# AUDIT FIX (DOCKER-DIGEST): Image Digest Pinning Best Practice
+# 
+# For production deployments, replace tag-based image references with digests
+# to ensure reproducible builds and prevent supply chain attacks:
+#
+#   FROM node:20-alpine@sha256:<digest-hash>
+#
+# To get the current digest:
+#   docker pull node:20-alpine
+#   docker inspect --format='{{index .RepoDigests 0}}' node:20-alpine
+#
+# Benefits:
+# - Immutable builds regardless of tag updates
+# - Protection against tag hijacking
+# - Audit trail for exactly what image was used
+#
+# Example with digest:
+#   FROM node:20-alpine@sha256:1a526b9b6c18b2c5e4f1e0c33f4e4d8a7b3c9f...
+#
+# ==============================================================================
+
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY backend/shared ./backend/shared

@@ -1,33 +1,44 @@
-# ADR-002: PostgreSQL with RLS for Multi-tenancy
+# ADR 002: Use PostgreSQL as Primary Database
 
 ## Status
+
 Accepted
 
 ## Context
-The auth-service requires:
-- ACID transactions for user operations
-- Multi-tenant data isolation
-- Complex queries for user search and filtering
-- Strong data integrity constraints
+
+We needed a database for storing user data, sessions, and authentication state.
+
+Options considered:
+- PostgreSQL
+- MySQL
+- MongoDB
+- CockroachDB
 
 ## Decision
-Use PostgreSQL with Row-Level Security (RLS) for multi-tenant data isolation.
+
+We chose **PostgreSQL** for the following reasons:
+
+1. **ACID Compliance**: Strong transactional guarantees
+2. **Row-Level Security**: Native RLS for multi-tenancy
+3. **JSON Support**: JSONB for flexible metadata storage
+4. **Maturity**: Battle-tested, widely used
+5. **Extensions**: Rich ecosystem (uuid-ossp, pgcrypto)
+6. **Team Expertise**: Team has PostgreSQL experience
 
 ## Consequences
 
 ### Positive
-- Database-enforced tenant isolation (defense in depth)
-- No risk of forgetting tenant filters in queries
-- Works transparently with existing queries
-- Excellent performance with proper indexing
-- Strong ecosystem and tooling (pg, Knex)
+- Strong data integrity
+- RLS simplifies multi-tenant isolation
+- Excellent tooling and documentation
+- Easy to find developers with experience
 
 ### Negative
-- Requires setting session variables for each connection
-- RLS policies must be carefully designed and tested
-- Slight performance overhead for RLS checks
-- More complex debugging when RLS blocks access
+- Horizontal scaling requires more effort than NoSQL
+- Schema migrations needed for changes
+- More complex setup than document stores
 
-### Neutral
-- Requires PostgreSQL (not portable to other databases)
-- Connection pooling requires careful handling of session variables
+## References
+
+- [PostgreSQL Documentation](https://www.postgresql.org/docs/)
+- [RLS Documentation](https://www.postgresql.org/docs/current/ddl-rowsecurity.html)

@@ -8,6 +8,9 @@ export class CacheService {
   private redis: Redis;
   private defaultTTL: number = 3600; // 1 hour default
   private keyPrefix: string = 'venue:';
+  
+  // SECURITY FIX (SR1): Current tenant context for cache key prefixing
+  private currentTenantId: string | null = null;
 
   // Wrapped Redis operations with circuit breakers and retry
   private getWithBreaker: (key: string) => Promise<string | null>;
@@ -66,15 +69,31 @@ export class CacheService {
     );
   }
 
-  // Generate cache key with prefix
-  private getCacheKey(key: string): string {
-    return `${this.keyPrefix}${key}`;
+  // SECURITY FIX (SR1): Set current tenant context for cache operations
+  setTenantContext(tenantId: string | null): void {
+    this.currentTenantId = tenantId;
   }
 
-  // Get from cache
-  async get(key: string): Promise<any | null> {
+  // SECURITY FIX (SR1): Generate cache key with tenant prefix for isolation
+  private getCacheKey(key: string, tenantId?: string): string {
+    const tenant = tenantId || this.currentTenantId;
+    if (tenant) {
+      // Include tenant ID in key to prevent cross-tenant cache pollution
+      return `${this.keyPrefix}tenant:${tenant}:${key}`;
+    }
+    // Fallback for system/global cache (should be rare)
+    return `${this.keyPrefix}global:${key}`;
+  }
+
+  // Get cache key for a specific tenant (for invalidation)
+  private getTenantCacheKey(tenantId: string, key: string): string {
+    return `${this.keyPrefix}tenant:${tenantId}:${key}`;
+  }
+
+  // SECURITY FIX (SR1): Get from cache with tenant isolation
+  async get(key: string, tenantId?: string): Promise<any | null> {
     try {
-      const cacheKey = this.getCacheKey(key);
+      const cacheKey = this.getCacheKey(key, tenantId);
       const data = await this.getWithBreaker(cacheKey);
       
       if (data) {
@@ -90,10 +109,10 @@ export class CacheService {
     }
   }
 
-  // Set in cache
-  async set(key: string, value: any, ttl: number = this.defaultTTL): Promise<void> {
+  // SECURITY FIX (SR1): Set in cache with tenant isolation
+  async set(key: string, value: any, ttl: number = this.defaultTTL, tenantId?: string): Promise<void> {
     try {
-      const cacheKey = this.getCacheKey(key);
+      const cacheKey = this.getCacheKey(key, tenantId);
       const data = JSON.stringify(value);
       await this.setWithBreaker(cacheKey, data, ttl);
       logger.debug({ key: cacheKey, ttl }, 'Cache set');
@@ -103,10 +122,10 @@ export class CacheService {
     }
   }
 
-  // Delete from cache
-  async del(key: string): Promise<void> {
+  // SECURITY FIX (SR1/SR4): Delete from cache with tenant isolation
+  async del(key: string, tenantId?: string): Promise<void> {
     try {
-      const cacheKey = this.getCacheKey(key);
+      const cacheKey = this.getCacheKey(key, tenantId);
       await this.delWithBreaker(cacheKey);
       logger.debug({ key: cacheKey }, 'Cache deleted');
     } catch (error) {
@@ -115,21 +134,33 @@ export class CacheService {
     }
   }
 
-  // Clear venue cache with pattern matching
-  async clearVenueCache(venueId: string): Promise<void> {
+  // SECURITY FIX (SR4): Clear venue cache with tenant scoping
+  async clearVenueCache(venueId: string, tenantId?: string): Promise<void> {
     try {
-      const patterns = [
-        `${this.keyPrefix}${venueId}`,
-        `${this.keyPrefix}${venueId}:*`,
-        `${this.keyPrefix}list:*${venueId}*`,
-        `${this.keyPrefix}tenant:*:${venueId}`
-      ];
+      const tenant = tenantId || this.currentTenantId;
+      
+      if (!tenant) {
+        logger.warn({ venueId }, 'clearVenueCache called without tenant context - clearing global pattern');
+      }
+      
+      const patterns = tenant
+        ? [
+            // Tenant-scoped patterns
+            `${this.keyPrefix}tenant:${tenant}:${venueId}`,
+            `${this.keyPrefix}tenant:${tenant}:${venueId}:*`,
+            `${this.keyPrefix}tenant:${tenant}:venues:*${venueId}*`,
+          ]
+        : [
+            // Legacy patterns (for backward compatibility during migration)
+            `${this.keyPrefix}${venueId}`,
+            `${this.keyPrefix}${venueId}:*`,
+          ];
 
       for (const pattern of patterns) {
         await this.clearByPattern(pattern);
       }
 
-      logger.info({ venueId }, 'Venue cache cleared');
+      logger.info({ venueId, tenantId: tenant }, 'Venue cache cleared');
     } catch (error) {
       logger.error({ error, venueId }, 'Failed to clear venue cache');
       throw new CacheError('clear', error);
@@ -227,10 +258,10 @@ export class CacheService {
     logger.debug({ count: keys.length }, 'Keys invalidated');
   }
 
-  // Check if key exists
-  async exists(key: string): Promise<boolean> {
+  // Check if key exists with tenant isolation
+  async exists(key: string, tenantId?: string): Promise<boolean> {
     try {
-      const cacheKey = this.getCacheKey(key);
+      const cacheKey = this.getCacheKey(key, tenantId);
       const exists = await this.existsWithBreaker(cacheKey);
       return exists === 1;
     } catch (error) {
@@ -239,10 +270,10 @@ export class CacheService {
     }
   }
 
-  // Get remaining TTL for a key
-  async ttl(key: string): Promise<number> {
+  // Get remaining TTL for a key with tenant isolation
+  async ttl(key: string, tenantId?: string): Promise<number> {
     try {
-      const cacheKey = this.getCacheKey(key);
+      const cacheKey = this.getCacheKey(key, tenantId);
       return await this.redis.ttl(cacheKey);
     } catch (error) {
       logger.error({ error, key }, 'Failed to get TTL');

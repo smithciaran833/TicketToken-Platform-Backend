@@ -515,6 +515,169 @@ export async function createTestSchedule(
 }
 
 // ============================================================================
+// TRANSACTION ISOLATION (AUDIT FIX Test-2)
+// ============================================================================
+
+/**
+ * AUDIT FIX (Test-2): Transaction isolation for tests
+ * 
+ * Wraps test execution in a database transaction that is rolled back after each test.
+ * This is faster and more reliable than DELETE-based cleanup.
+ * 
+ * Usage:
+ *   describe('My Test Suite', () => {
+ *     let trx: Knex.Transaction;
+ *     
+ *     beforeEach(async () => {
+ *       trx = await beginTestTransaction();
+ *     });
+ *     
+ *     afterEach(async () => {
+ *       await rollbackTestTransaction(trx);
+ *     });
+ *     
+ *     it('creates data that gets rolled back', async () => {
+ *       await trx('events').insert({ ... });
+ *       // Data is automatically rolled back after test
+ *     });
+ *   });
+ */
+
+let testTransaction: Knex.Transaction | null = null;
+
+/**
+ * Begin a test transaction for isolation
+ * All database operations within this transaction will be rolled back
+ */
+export async function beginTestTransaction(): Promise<Knex.Transaction> {
+  const trx = await db.transaction();
+  testTransaction = trx;
+  return trx;
+}
+
+/**
+ * Rollback test transaction to restore database state
+ */
+export async function rollbackTestTransaction(trx?: Knex.Transaction): Promise<void> {
+  const transaction = trx || testTransaction;
+  if (transaction) {
+    try {
+      await transaction.rollback();
+    } catch (error) {
+      // Transaction may already be rolled back
+      console.warn('Transaction rollback warning:', error);
+    }
+    testTransaction = null;
+  }
+}
+
+/**
+ * Execute a test function within a transaction that auto-rolls back
+ * 
+ * Usage:
+ *   it('test with auto rollback', async () => {
+ *     await withTestTransaction(async (trx) => {
+ *       await trx('events').insert({ ... });
+ *       const events = await trx('events').select('*');
+ *       expect(events).toHaveLength(1);
+ *       // Automatically rolled back after function completes
+ *     });
+ *   });
+ */
+export async function withTestTransaction<T>(
+  fn: (trx: Knex.Transaction) => Promise<T>
+): Promise<T> {
+  const trx = await db.transaction();
+  try {
+    const result = await fn(trx);
+    await trx.rollback(); // Always rollback, even on success
+    return result;
+  } catch (error) {
+    await trx.rollback();
+    throw error;
+  }
+}
+
+/**
+ * Create beforeEach/afterEach hooks for transaction isolation
+ * 
+ * Usage:
+ *   describe('My Test Suite', () => {
+ *     const { getTransaction, setupHooks } = useTransactionIsolation();
+ *     
+ *     beforeEach(setupHooks.beforeEach);
+ *     afterEach(setupHooks.afterEach);
+ *     
+ *     it('uses isolated transaction', async () => {
+ *       const trx = getTransaction();
+ *       await trx('events').insert({ ... });
+ *       // Rolled back automatically
+ *     });
+ *   });
+ */
+export function useTransactionIsolation(): {
+  getTransaction: () => Knex.Transaction;
+  setupHooks: {
+    beforeEach: () => Promise<void>;
+    afterEach: () => Promise<void>;
+  };
+} {
+  let trx: Knex.Transaction | null = null;
+
+  return {
+    getTransaction: () => {
+      if (!trx) {
+        throw new Error('Transaction not initialized. Did you call beforeEach?');
+      }
+      return trx;
+    },
+    setupHooks: {
+      beforeEach: async () => {
+        trx = await db.transaction();
+      },
+      afterEach: async () => {
+        if (trx) {
+          try {
+            await trx.rollback();
+          } catch (e) {
+            // Ignore rollback errors
+          }
+          trx = null;
+        }
+      },
+    },
+  };
+}
+
+/**
+ * Pool-based transaction isolation using savepoints
+ * 
+ * For use with the raw pg.Pool when Knex transactions aren't suitable.
+ * Creates a savepoint at the start and rolls back to it at the end.
+ * 
+ * Usage:
+ *   const { savepoint, rollbackToSavepoint } = await createTestSavepoint();
+ *   // ... run tests ...
+ *   await rollbackToSavepoint();
+ */
+export async function createTestSavepoint(): Promise<{
+  savepoint: string;
+  rollbackToSavepoint: () => Promise<void>;
+}> {
+  const savepoint = `test_sp_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  await pool.query('BEGIN');
+  await pool.query(`SAVEPOINT ${savepoint}`);
+  
+  return {
+    savepoint,
+    rollbackToSavepoint: async () => {
+      await pool.query(`ROLLBACK TO SAVEPOINT ${savepoint}`);
+      await pool.query('ROLLBACK'); // End the transaction
+    },
+  };
+}
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 

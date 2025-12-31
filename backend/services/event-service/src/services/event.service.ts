@@ -1,13 +1,15 @@
 import { Knex } from 'knex';
 import { NotFoundError, ValidationError, ForbiddenError } from '../types';
 import { VenueServiceClient } from './venue-service.client';
-import { EventSecurityValidator } from '../validations/event-security';
+import { EventSecurityValidator, EventValidationOptions } from '../validations/event-security';
+import { isAdmin } from '../middleware/auth';
 import { EventAuditLogger } from '../utils/audit-logger';
 import { publishSearchSync } from '@tickettoken/shared';
 import { pino } from 'pino';
 import Redis from 'ioredis';
 import { validateTimezoneOrThrow } from '../utils/timezone-validator';
 import { EventBlockchainService, EventBlockchainData } from './blockchain.service';
+import { validateTransition, EventState, EventTransition } from './event-state-machine';
 import {
   EventModel,
   IEvent,
@@ -20,6 +22,26 @@ import {
 } from '../models';
 
 const logger = pino({ name: 'event-service' });
+
+/**
+ * CRITICAL FIX SL6: Conflict error for optimistic locking failures
+ */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
+
+/**
+ * Custom error for event state conflicts
+ */
+export class EventStateError extends Error {
+  constructor(message: string, public currentState: string, public targetState?: string) {
+    super(message);
+    this.name = 'EventStateError';
+  }
+}
 
 export class EventService {
   private eventModel: EventModel;
@@ -366,7 +388,15 @@ export class EventService {
     };
   }
 
-  async updateEvent(eventId: string, data: any, authToken: string, userId: string, tenantId: string, requestInfo?: any): Promise<any> {
+  async updateEvent(
+    eventId: string, 
+    data: any, 
+    authToken: string, 
+    userId: string, 
+    tenantId: string, 
+    requestInfo?: any,
+    user?: any  // User object with role for admin check
+  ): Promise<any> {
     const event = await this.db('events')
       .where({ id: eventId, tenant_id: tenantId })
       .whereNull('deleted_at')
@@ -376,7 +406,9 @@ export class EventService {
       throw new NotFoundError('Event');
     }
 
-    if (event.created_by !== userId) {
+    // CRITICAL FIX: Admin bypass for ownership check
+    const userIsAdmin = isAdmin(user);
+    if (event.created_by !== userId && !userIsAdmin) {
       throw new ForbiddenError('You do not have permission to update this event');
     }
 
@@ -385,7 +417,35 @@ export class EventService {
       throw new ValidationError([{ field: 'venue_id', message: 'No access to this venue' }]);
     }
 
-    await this.securityValidator.validateEventModification(eventId, data);
+    // Get sold ticket count for validation
+    const soldTicketCount = await this.getSoldTicketCount(eventId, tenantId);
+
+    // Get schedule for validation context
+    const schedule = await this.db('event_schedules')
+      .where({ event_id: eventId, tenant_id: tenantId })
+      .first();
+
+    // CRITICAL FIX: Pass sold ticket count and admin status to validator
+    const validationOptions: EventValidationOptions = {
+      event: {
+        id: eventId,
+        status: event.status,
+        starts_at: schedule?.starts_at
+      },
+      soldTicketCount,
+      isAdmin: userIsAdmin,
+      forceAdminOverride: data.forceAdminOverride === true && userIsAdmin
+    };
+
+    await this.securityValidator.validateEventModification(eventId, data, validationOptions);
+
+    // CRITICAL FIX: State validation for status changes
+    if (data.status && data.status !== event.status) {
+      await this.validateStateTransition(event.status, data.status, eventId, tenantId);
+    }
+
+    // CRITICAL FIX SL6: Optimistic locking - check version if provided
+    const expectedVersion = data.version ?? data.expectedVersion;
 
     const result = await this.db.transaction(async (trx) => {
       const updateData: any = {
@@ -394,20 +454,44 @@ export class EventService {
         updated_at: new Date()
       };
 
+      // CRITICAL FIX SL6: Increment version for optimistic locking
+      updateData.version = trx.raw('COALESCE(version, 0) + 1');
+
       if (data.image_url) updateData.banner_image_url = data.image_url;
       if (data.category) updateData.primary_category_id = data.category;
 
-      const [updatedEvent] = await trx('events')
-        .where({ id: eventId, tenant_id: tenantId })
+      // Remove version from updateData to prevent overwriting the raw expression
+      delete updateData.expectedVersion;
+
+      // CRITICAL FIX SL6: Optimistic locking - include version in WHERE clause
+      let updateQuery = trx('events')
+        .where({ id: eventId, tenant_id: tenantId });
+
+      // If client provided expected version, check it
+      if (expectedVersion !== undefined && expectedVersion !== null) {
+        updateQuery = updateQuery.where('version', expectedVersion);
+      }
+
+      const updatedRows = await updateQuery
         .update(updateData)
         .returning('*');
+
+      // CRITICAL FIX SL6: Check if update succeeded (version matched)
+      if (updatedRows.length === 0) {
+        // Version mismatch - concurrent modification detected
+        throw new ConflictError(
+          `Event ${eventId} was modified by another process. ` +
+          `Expected version ${expectedVersion}, but current version has changed. ` +
+          `Please refresh and try again.`
+        );
+      }
 
       await this.auditLogger.logEventUpdate(userId, eventId, data, {
         previousData: event,
         ...requestInfo
       });
 
-      return updatedEvent;
+      return updatedRows[0];
     });
 
     if (this.redis) {
@@ -435,7 +519,15 @@ export class EventService {
     return this.getEvent(eventId, tenantId);
   }
 
-  async deleteEvent(eventId: string, authToken: string, userId: string, tenantId: string, requestInfo?: any): Promise<void> {
+  async deleteEvent(
+    eventId: string, 
+    authToken: string, 
+    userId: string, 
+    tenantId: string, 
+    requestInfo?: any,
+    user?: any,  // User object with role for admin check
+    forceDelete?: boolean  // Admin override flag
+  ): Promise<void> {
     const event = await this.db('events')
       .where({ id: eventId, tenant_id: tenantId })
       .whereNull('deleted_at')
@@ -445,7 +537,9 @@ export class EventService {
       throw new NotFoundError('Event');
     }
 
-    if (event.created_by !== userId) {
+    // CRITICAL FIX: Admin bypass for ownership check
+    const userIsAdmin = isAdmin(user);
+    if (event.created_by !== userId && !userIsAdmin) {
       throw new ForbiddenError('You do not have permission to delete this event');
     }
 
@@ -454,7 +548,27 @@ export class EventService {
       throw new ValidationError([{ field: 'venue_id', message: 'No access to this venue' }]);
     }
 
-    await this.securityValidator.validateEventDeletion(eventId);
+    // Get sold ticket count for validation
+    const soldTicketCount = await this.getSoldTicketCount(eventId, tenantId);
+
+    // Get schedule for validation context
+    const schedule = await this.db('event_schedules')
+      .where({ event_id: eventId, tenant_id: tenantId })
+      .first();
+
+    // CRITICAL FIX: Pass sold ticket count and admin status to validator
+    const validationOptions: EventValidationOptions = {
+      event: {
+        id: eventId,
+        status: event.status,
+        starts_at: schedule?.starts_at
+      },
+      soldTicketCount,
+      isAdmin: userIsAdmin,
+      forceAdminOverride: forceDelete === true && userIsAdmin
+    };
+
+    await this.securityValidator.validateEventDeletion(eventId, validationOptions);
 
     await this.db.transaction(async (trx) => {
       await trx('events')
@@ -522,6 +636,41 @@ export class EventService {
     return events;
   }
 
+  /**
+   * Get the total count of sold tickets for an event
+   * CRITICAL: Used to validate event modification/deletion rules
+   */
+  private async getSoldTicketCount(eventId: string, tenantId: string): Promise<number> {
+    try {
+      // Get sold count from event_capacity table
+      const capacities = await this.db('event_capacity')
+        .where({ event_id: eventId, tenant_id: tenantId })
+        .select('sold_count');
+
+      const totalSold = capacities.reduce((sum: number, c: any) => sum + (c.sold_count || 0), 0);
+
+      // Also check tickets table if it exists (in case sold_count isn't updated)
+      try {
+        const ticketCount = await this.db('tickets')
+          .where({ event_id: eventId, tenant_id: tenantId })
+          .whereIn('status', ['SOLD', 'USED', 'TRANSFERRED'])
+          .count('* as count')
+          .first();
+
+        const ticketsSold = parseInt(ticketCount?.count as string) || 0;
+        
+        // Return the higher of the two counts to be safe
+        return Math.max(totalSold, ticketsSold);
+      } catch {
+        // Tickets table might not exist in this service
+        return totalSold;
+      }
+    } catch (error) {
+      logger.warn({ eventId, tenantId, error }, 'Failed to get sold ticket count, defaulting to 0');
+      return 0;
+    }
+  }
+
   private enrichEventWithRelations(event: IEvent, schedule?: IEventSchedule | null, capacity?: any): any {
     return {
       ...event,
@@ -532,6 +681,107 @@ export class EventService {
       schedule,
       capacity_info: capacity
     };
+  }
+
+  /**
+   * CRITICAL FIX: Validate state transition using event-state-machine
+   * 
+   * Ensures only valid state transitions are allowed.
+   * 
+   * @param currentStatus - Current event status
+   * @param targetStatus - Target event status
+   * @param eventId - Event ID for logging
+   * @param tenantId - Tenant ID
+   * @throws EventStateError if transition is invalid
+   */
+  private async validateStateTransition(
+    currentStatus: string,
+    targetStatus: string,
+    eventId: string,
+    tenantId: string
+  ): Promise<void> {
+    // Map status changes to transitions
+    // Using string type for flexibility - validated by state machine
+    const transitionMap: Record<string, Record<string, string>> = {
+      'DRAFT': {
+        'REVIEW': 'SUBMIT_FOR_REVIEW',
+        'PUBLISHED': 'PUBLISH',
+      },
+      'REVIEW': {
+        'APPROVED': 'APPROVE',
+        'DRAFT': 'REJECT',
+      },
+      'APPROVED': {
+        'PUBLISHED': 'PUBLISH',
+      },
+      'PUBLISHED': {
+        'ON_SALE': 'START_SALES',
+        'CANCELLED': 'CANCEL',
+        'POSTPONED': 'POSTPONE',
+      },
+      'ON_SALE': {
+        'SOLD_OUT': 'SELL_OUT',
+        'SALES_PAUSED': 'PAUSE_SALES',
+        'IN_PROGRESS': 'START_EVENT',
+        'CANCELLED': 'CANCEL',
+        'POSTPONED': 'POSTPONE',
+      },
+      'SALES_PAUSED': {
+        'ON_SALE': 'RESUME_SALES',
+        'CANCELLED': 'CANCEL',
+      },
+      'SOLD_OUT': {
+        'IN_PROGRESS': 'START_EVENT',
+        'CANCELLED': 'CANCEL',
+      },
+      'IN_PROGRESS': {
+        'COMPLETED': 'END_EVENT',
+        'CANCELLED': 'CANCEL',
+      },
+      'POSTPONED': {
+        'PUBLISHED': 'RESCHEDULE',
+        'CANCELLED': 'CANCEL',
+      },
+    };
+
+    // Check if transition is defined
+    const allowedTransitions = transitionMap[currentStatus];
+    if (!allowedTransitions) {
+      throw new EventStateError(
+        `Cannot transition from '${currentStatus}' - status is terminal or unknown`,
+        currentStatus,
+        targetStatus
+      );
+    }
+
+    const transition = allowedTransitions[targetStatus];
+    if (!transition) {
+      const allowedTargets = Object.keys(allowedTransitions);
+      throw new EventStateError(
+        `Invalid status transition from '${currentStatus}' to '${targetStatus}'. ` +
+        `Allowed transitions from '${currentStatus}': ${allowedTargets.join(', ')}`,
+        currentStatus,
+        targetStatus
+      );
+    }
+
+    // Validate using the state machine
+    const validation = validateTransition(currentStatus as EventState, transition as EventTransition);
+    if (!validation.valid) {
+      throw new EventStateError(
+        validation.error || `Invalid transition: ${transition}`,
+        currentStatus,
+        targetStatus
+      );
+    }
+
+    logger.info({
+      eventId,
+      tenantId,
+      currentStatus,
+      targetStatus,
+      transition,
+    }, 'Event state transition validated');
   }
 
   private async checkForDuplicateEvent(

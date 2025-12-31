@@ -24,7 +24,7 @@ const envSchema = z.object({
   REDIS_PORT: z.coerce.number().int().min(1).max(65535).default(6379),
   REDIS_PASSWORD: z.string().optional(),
 
-  // JWT (RS256)
+  // JWT (RS256) - User tokens
   JWT_ISSUER: z.string().default('tickettoken-auth'),
   JWT_ACCESS_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Invalid duration format (e.g., 15m, 1h, 7d)').default('15m'),
   JWT_REFRESH_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Invalid duration format').default('7d'),
@@ -32,6 +32,13 @@ const envSchema = z.object({
   JWT_PUBLIC_KEY: z.string().optional(),
   JWT_PRIVATE_KEY_PATH: z.string().optional(),
   JWT_PUBLIC_KEY_PATH: z.string().optional(),
+
+  // S2S (RS256) - Service-to-service tokens (separate from user JWT keys)
+  S2S_PRIVATE_KEY: z.string().optional(),
+  S2S_PUBLIC_KEY: z.string().optional(),
+  S2S_PRIVATE_KEY_PATH: z.string().optional(),
+  S2S_PUBLIC_KEY_PATH: z.string().optional(),
+  S2S_TOKEN_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Invalid duration format').default('24h'),
 
   // Encryption - optional in schema, handled in validation
   ENCRYPTION_KEY: z.string().optional(),
@@ -85,6 +92,9 @@ const productionEnvSchema = envSchema.extend({
   RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required in production'),
   JWT_PRIVATE_KEY: z.string().min(1, 'JWT_PRIVATE_KEY is required in production'),
   JWT_PUBLIC_KEY: z.string().min(1, 'JWT_PUBLIC_KEY is required in production'),
+  // S2S keys required in production for proper isolation
+  S2S_PRIVATE_KEY: z.string().min(1, 'S2S_PRIVATE_KEY is required in production'),
+  S2S_PUBLIC_KEY: z.string().min(1, 'S2S_PUBLIC_KEY is required in production'),
 });
 
 // Explicit type with ENCRYPTION_KEY as required string (we guarantee it in validateEnv)
@@ -107,6 +117,12 @@ export interface EnvConfig {
   JWT_PUBLIC_KEY?: string;
   JWT_PRIVATE_KEY_PATH: string;
   JWT_PUBLIC_KEY_PATH: string;
+  // S2S keys - separate from user JWT keys
+  S2S_PRIVATE_KEY?: string;
+  S2S_PUBLIC_KEY?: string;
+  S2S_PRIVATE_KEY_PATH: string;
+  S2S_PUBLIC_KEY_PATH: string;
+  S2S_TOKEN_EXPIRES_IN: string;
   ENCRYPTION_KEY: string; // Always set (dev fallback or prod required)
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
@@ -186,6 +202,12 @@ function validateEnv(): EnvConfig {
     JWT_PUBLIC_KEY: parsed.JWT_PUBLIC_KEY,
     JWT_PRIVATE_KEY_PATH: parsed.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem'),
     JWT_PUBLIC_KEY_PATH: parsed.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem'),
+    // S2S keys - fall back to JWT keys in dev if not set
+    S2S_PRIVATE_KEY: parsed.S2S_PRIVATE_KEY,
+    S2S_PUBLIC_KEY: parsed.S2S_PUBLIC_KEY,
+    S2S_PRIVATE_KEY_PATH: parsed.S2S_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 's2s-private.pem'),
+    S2S_PUBLIC_KEY_PATH: parsed.S2S_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 's2s-public.pem'),
+    S2S_TOKEN_EXPIRES_IN: parsed.S2S_TOKEN_EXPIRES_IN,
     ENCRYPTION_KEY: encryptionKey,
     GOOGLE_CLIENT_ID: parsed.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: parsed.GOOGLE_CLIENT_SECRET,
@@ -225,5 +247,6 @@ if (process.env.NODE_ENV !== 'test') {
     DB_HOST: env.DB_HOST,
     REDIS_HOST: env.REDIS_HOST,
     ENABLE_SWAGGER: env.ENABLE_SWAGGER,
+    S2S_KEYS_CONFIGURED: !!(env.S2S_PRIVATE_KEY && env.S2S_PUBLIC_KEY),
   });
 }

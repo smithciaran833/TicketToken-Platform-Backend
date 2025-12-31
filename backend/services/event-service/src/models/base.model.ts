@@ -3,9 +3,34 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'BaseModel' });
 
+/**
+ * AUDIT FIX (LOW): Standard columns to select instead of SELECT *.
+ * Define explicit columns to prevent:
+ * - Over-fetching data (performance)
+ * - Exposing new columns accidentally (security)
+ * - Breaking queries when columns are added/removed
+ * 
+ * Override in subclass to customize columns for specific tables.
+ */
+const DEFAULT_COLUMNS = [
+  'id',
+  'tenant_id',
+  'created_at',
+  'updated_at',
+  'deleted_at',
+];
+
 export class BaseModel<T = any> {
   protected tableName: string;
   protected db: Knex | Knex.Transaction;
+  
+  /**
+   * Columns to select by default. Override in subclass to customize.
+   * Set to null to use SELECT * (not recommended for production).
+   * 
+   * AUDIT FIX (QS8/DB7): Explicit column selection instead of SELECT *
+   */
+  protected selectColumns: string[] | null = null;
 
   constructor(tableName: string, db: Knex | Knex.Transaction) {
     this.tableName = tableName;
@@ -13,7 +38,23 @@ export class BaseModel<T = any> {
   }
 
   /**
+   * Get columns to select for queries.
+   * Override in subclass for table-specific columns.
+   */
+  protected getSelectColumns(): string[] | '*' {
+    // If subclass defines specific columns, use them
+    if (this.selectColumns && this.selectColumns.length > 0) {
+      return this.selectColumns;
+    }
+    // Fall back to * for backward compatibility
+    // Note: Subclasses should define selectColumns for better practice
+    return '*';
+  }
+
+  /**
    * Find all records with tenant isolation
+   * 
+   * AUDIT FIX (QS8): Uses explicit column selection when selectColumns is defined
    */
   async findAll(conditions: Partial<T> = {}, options: any = {}): Promise<T[]> {
     try {
@@ -34,7 +75,8 @@ export class BaseModel<T = any> {
         query = query.offset(options.offset);
       }
       
-      return await query.select('*');
+      const columns = options.columns || this.getSelectColumns();
+      return await query.select(columns) as T[];
     } catch (error) {
       log.error('Error in findAll', { table: this.tableName, error });
       throw error;

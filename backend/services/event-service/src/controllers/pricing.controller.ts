@@ -1,50 +1,43 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { db } from '../config/database';
 import { PricingService } from '../services/pricing.service';
+import { createProblemError } from '../middleware/error-handler';
+
+/**
+ * Pricing Controller
+ * 
+ * CRITICAL FIX for RH5: All errors use createProblemError() 
+ * to ensure consistent RFC 7807 format via the global error handler.
+ */
 
 export async function getEventPricing(
   request: FastifyRequest<{ Params: { eventId: string } }>,
   reply: FastifyReply
 ) {
-  try {
-    const { eventId } = request.params;
-    const tenantId = (request as any).tenantId;
+  const { eventId } = request.params;
+  const tenantId = (request as any).tenantId;
 
-    const pricingService = new PricingService(db);
-    const pricing = await pricingService.getEventPricing(eventId, tenantId);
+  const pricingService = new PricingService(db);
+  const pricing = await pricingService.getEventPricing(eventId, tenantId);
 
-    return reply.send({ pricing });
-  } catch (error: any) {
-    request.log.error({ error: error.message, stack: error.stack }, 'Error getting event pricing');
-    return reply.status(500).send({ 
-      error: 'Failed to get pricing',
-      message: error.message 
-    });
-  }
+  return reply.send({ pricing });
 }
 
 export async function getPricingById(
   request: FastifyRequest<{ Params: { id: string } }>,
   reply: FastifyReply
 ) {
-  try {
-    const { id } = request.params;
-    const tenantId = (request as any).tenantId;
+  const { id } = request.params;
+  const tenantId = (request as any).tenantId;
 
-    const pricingService = new PricingService(db);
-    const pricing = await pricingService.getPricingById(id, tenantId);
+  const pricingService = new PricingService(db);
+  const pricing = await pricingService.getPricingById(id, tenantId);
 
-    return reply.send({ pricing });
-  } catch (error: any) {
-    if (error.message === 'Pricing not found') {
-      return reply.status(404).send({ error: 'Pricing not found' });
-    }
-    request.log.error({ error: error.message, stack: error.stack }, 'Error getting pricing');
-    return reply.status(500).send({ 
-      error: 'Failed to get pricing',
-      message: error.message 
-    });
+  if (!pricing) {
+    throw createProblemError(404, 'NOT_FOUND', 'Pricing not found');
   }
+
+  return reply.send({ pricing });
 }
 
 export async function createPricing(
@@ -63,25 +56,17 @@ export async function createPricing(
   }>,
   reply: FastifyReply
 ) {
-  try {
-    const { eventId } = request.params;
-    const tenantId = (request as any).tenantId;
-    const data = request.body;
+  const { eventId } = request.params;
+  const tenantId = (request as any).tenantId;
+  const data = request.body;
 
-    const pricingService = new PricingService(db);
-    const pricing = await pricingService.createPricing(
-      { ...data, event_id: eventId },
-      tenantId
-    );
+  const pricingService = new PricingService(db);
+  const pricing = await pricingService.createPricing(
+    { ...data, event_id: eventId },
+    tenantId
+  );
 
-    return reply.status(201).send({ pricing });
-  } catch (error: any) {
-    request.log.error({ error: error.message, stack: error.stack }, 'Error creating pricing');
-    return reply.status(500).send({ 
-      error: 'Failed to create pricing',
-      message: error.message 
-    });
-  }
+  return reply.status(201).send({ pricing });
 }
 
 export async function updatePricing(
@@ -99,25 +84,18 @@ export async function updatePricing(
   }>,
   reply: FastifyReply
 ) {
-  try {
-    const { id } = request.params;
-    const tenantId = (request as any).tenantId;
-    const data = request.body;
+  const { id } = request.params;
+  const tenantId = (request as any).tenantId;
+  const data = request.body;
 
-    const pricingService = new PricingService(db);
-    const pricing = await pricingService.updatePricing(id, data, tenantId);
+  const pricingService = new PricingService(db);
+  const pricing = await pricingService.updatePricing(id, data, tenantId);
 
-    return reply.send({ pricing });
-  } catch (error: any) {
-    if (error.message === 'Pricing not found') {
-      return reply.status(404).send({ error: 'Pricing not found' });
-    }
-    request.log.error({ error: error.message, stack: error.stack }, 'Error updating pricing');
-    return reply.status(500).send({ 
-      error: 'Failed to update pricing',
-      message: error.message 
-    });
+  if (!pricing) {
+    throw createProblemError(404, 'NOT_FOUND', 'Pricing not found');
   }
+
+  return reply.send({ pricing });
 }
 
 export async function calculatePrice(
@@ -127,48 +105,33 @@ export async function calculatePrice(
   }>,
   reply: FastifyReply
 ) {
-  try {
-    const { id } = request.params;
-    const { quantity } = request.body;
-    const tenantId = (request as any).tenantId;
+  const { id } = request.params;
+  const { quantity } = request.body;
+  const tenantId = (request as any).tenantId;
 
-    if (!quantity || quantity < 1) {
-      return reply.status(400).send({ error: 'Invalid quantity' });
-    }
-
-    const pricingService = new PricingService(db);
-    const calculation = await pricingService.calculatePrice(id, quantity, tenantId);
-
-    return reply.send(calculation);
-  } catch (error: any) {
-    if (error.message === 'Pricing not found') {
-      return reply.status(404).send({ error: 'Pricing not found' });
-    }
-    request.log.error({ error: error.message, stack: error.stack }, 'Error calculating price');
-    return reply.status(500).send({ 
-      error: 'Failed to calculate price',
-      message: error.message 
-    });
+  if (!quantity || quantity < 1) {
+    throw createProblemError(400, 'INVALID_QUANTITY', 'Quantity must be at least 1');
   }
+
+  const pricingService = new PricingService(db);
+  const calculation = await pricingService.calculatePrice(id, quantity, tenantId);
+
+  if (!calculation) {
+    throw createProblemError(404, 'NOT_FOUND', 'Pricing not found');
+  }
+
+  return reply.send(calculation);
 }
 
 export async function getActivePricing(
   request: FastifyRequest<{ Params: { eventId: string } }>,
   reply: FastifyReply
 ) {
-  try {
-    const { eventId } = request.params;
-    const tenantId = (request as any).tenantId;
+  const { eventId } = request.params;
+  const tenantId = (request as any).tenantId;
 
-    const pricingService = new PricingService(db);
-    const pricing = await pricingService.getActivePricing(eventId, tenantId);
+  const pricingService = new PricingService(db);
+  const pricing = await pricingService.getActivePricing(eventId, tenantId);
 
-    return reply.send({ pricing });
-  } catch (error: any) {
-    request.log.error({ error: error.message, stack: error.stack }, 'Error getting active pricing');
-    return reply.status(500).send({ 
-      error: 'Failed to get active pricing',
-      message: error.message 
-    });
-  }
+  return reply.send({ pricing });
 }

@@ -7,6 +7,7 @@ import { getRedis } from '../config/redis';
 import { AuthenticationError } from '../errors';
 import crypto from 'crypto';
 import { JWTService } from './jwt.service';
+import { auditService } from './audit.service';
 import { redisKeys } from '../utils/redisKeys';
 
 export class WalletService {
@@ -73,7 +74,7 @@ export class WalletService {
 
   private async getNonceData(nonce: string, tenantId?: string): Promise<{ data: any; key: string } | null> {
     const redis = getRedis();
-    
+
     // Try tenant-prefixed key first
     if (tenantId) {
       const data = await redis.get(redisKeys.walletNonce(nonce, tenantId));
@@ -81,13 +82,13 @@ export class WalletService {
         return { data: JSON.parse(data), key: redisKeys.walletNonce(nonce, tenantId) };
       }
     }
-    
+
     // Fall back to non-prefixed key
     const data = await redis.get(`wallet-nonce:${nonce}`);
     if (data) {
       return { data: JSON.parse(data), key: `wallet-nonce:${nonce}` };
     }
-    
+
     return null;
   }
 
@@ -131,6 +132,7 @@ export class WalletService {
     const client = await pool.connect();
     let user;
     let tokens;
+    let sessionId;
 
     try {
       await client.query('BEGIN');
@@ -153,11 +155,13 @@ export class WalletService {
         [user.id, publicKey, network, true, new Date()]
       );
 
-      await client.query(
+      const sessionResult = await client.query(
         `INSERT INTO user_sessions (user_id, started_at)
-         VALUES ($1, NOW())`,
+         VALUES ($1, NOW())
+         RETURNING id`,
         [user.id]
       );
+      sessionId = sessionResult.rows[0].id;
 
       await client.query('COMMIT');
     } catch (error) {
@@ -166,6 +170,9 @@ export class WalletService {
     } finally {
       client.release();
     }
+
+    // Audit session creation
+    await auditService.logSessionCreated(user.id, sessionId, undefined, undefined, tenantId);
 
     await this.deleteNonce(nonce, tenantId);
 
@@ -253,15 +260,18 @@ export class WalletService {
 
     const client = await pool.connect();
     let tokens;
+    let sessionId;
 
     try {
       await client.query('BEGIN');
 
-      await client.query(
+      const sessionResult = await client.query(
         `INSERT INTO user_sessions (user_id, started_at)
-         VALUES ($1, NOW())`,
+         VALUES ($1, NOW())
+         RETURNING id`,
         [user.id]
       );
+      sessionId = sessionResult.rows[0].id;
 
       await client.query(
         'UPDATE users SET last_login_at = NOW() WHERE id = $1',
@@ -275,6 +285,9 @@ export class WalletService {
     } finally {
       client.release();
     }
+
+    // Audit session creation
+    await auditService.logSessionCreated(user.id, sessionId, undefined, undefined, user.tenant_id);
 
     await this.deleteNonce(nonce, user.tenant_id);
 

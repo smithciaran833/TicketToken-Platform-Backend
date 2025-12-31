@@ -5,9 +5,14 @@ dotenv.config();
 import { validateEnv } from './config/env-validation';
 validateEnv();
 
+// SI4: Validate service identity at startup (fail fast if invalid)
+import { validateServiceIdentity, getServiceIdentity } from './config/service-auth';
+validateServiceIdentity();
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import underPressure from '@fastify/under-pressure';
 import { DatabaseService } from './services/databaseService';
 import { initRedis, getRedis, closeRedisConnections } from './config/redis';
 import { initializeMongoDB, closeMongoDB } from './config/mongodb';
@@ -20,6 +25,13 @@ import { register } from './utils/metrics';
 import { logger } from './utils/logger';
 import { registerRateLimiting } from './middleware/rate-limit';
 import { registerErrorHandler } from './middleware/error-handler';
+import { registerResponseMiddleware } from './middleware/response.middleware';
+import { closeAllQueues, getQueueStats, QUEUE_NAMES } from './jobs';
+import { initializeEventTransitionsProcessor } from './jobs/event-transitions.job';
+
+// AUDIT FIX (LOW-BODY): Configurable body size limit
+// Default: 1MB (1048576 bytes), configurable via BODY_LIMIT env var
+const BODY_LIMIT = parseInt(process.env.BODY_LIMIT || '1048576', 10);
 
 const app = Fastify({
   logger: {
@@ -34,7 +46,11 @@ const app = Fastify({
   },
   requestTimeout: 30000, // 30 second timeout for all requests
   connectionTimeout: 10000, // 10 second connection timeout
-  keepAliveTimeout: 72000 // 72 seconds (longer than AWS ALB idle timeout)
+  keepAliveTimeout: 72000, // 72 seconds (longer than AWS ALB idle timeout)
+  
+  // AUDIT FIX (LOW-BODY): Limit request body size to prevent DoS
+  // Prevents memory exhaustion from large payloads
+  bodyLimit: BODY_LIMIT
 });
 
 const PORT = parseInt(process.env.PORT || '3003', 10);
@@ -83,11 +99,40 @@ async function start(): Promise<void> {
       credentials: true
     });
 
+    // CRITICAL FIX: Event loop monitoring with @fastify/under-pressure
+    // Prevents server from becoming unresponsive under load
+    await app.register(underPressure, {
+      maxEventLoopDelay: 1000, // 1 second max event loop delay
+      maxHeapUsedBytes: 1073741824, // 1GB max heap
+      maxRssBytes: 2147483648, // 2GB max RSS
+      maxEventLoopUtilization: 0.98, // 98% max event loop utilization
+      retryAfter: 50, // Retry-After header value (ms)
+      exposeStatusRoute: {
+        routeOpts: {
+          logLevel: 'debug',
+        },
+        routeSchemaOpts: {
+          hide: true, // Hide from OpenAPI
+        },
+        url: '/health/pressure', // Expose pressure status at this URL
+      },
+      healthCheck: async function () {
+        // Basic health check that runs on every request
+        return true;
+      },
+      healthCheckInterval: 5000, // Check every 5 seconds
+    });
+    logger.info('Event loop monitoring (under-pressure) enabled');
+
     // Register rate limiting (Redis-backed, fail-open)
     await registerRateLimiting(app);
 
     // Register error handler (production-safe error responses)
     registerErrorHandler(app);
+
+    // AUDIT FIX (LOW): Register response middleware for X-Request-ID and Cache-Control headers
+    registerResponseMiddleware(app);
+    logger.info('Response middleware enabled (X-Request-ID, Cache-Control)');
 
     // Register health and metrics routes (no prefix, no auth)
     app.get('/health', async (_request, reply) => {
@@ -159,17 +204,29 @@ async function start(): Promise<void> {
     cleanupService = new ReservationCleanupService(db, cleanupIntervalMinutes);
     cleanupService.start();
     logger.info({ intervalMinutes: cleanupIntervalMinutes }, 'Reservation cleanup job started');
+
+    // Initialize Bull job queues for event transitions
+    await initializeEventTransitionsProcessor();
+    logger.info('Event transitions job processor initialized');
   } catch (error) {
     logger.error({ error }, 'Failed to start event service');
     process.exit(1);
   }
 }
 
+// AUDIT FIX (GD-3): Pre-stop sleep for load balancer drain delay
+const PRESTOP_DELAY_MS = parseInt(process.env.PRESTOP_DELAY_MS || '5000', 10);
+
 // Enhanced graceful shutdown with complete resource cleanup
 const gracefulShutdown = async (signal: string) => {
   logger.info({ signal }, 'Shutdown signal received, shutting down gracefully');
   
   try {
+    // AUDIT FIX (GD-3): Wait for load balancer to drain connections
+    // This gives the LB time to stop sending new requests before we close
+    logger.info({ delayMs: PRESTOP_DELAY_MS }, 'PreStop delay: waiting for LB to drain connections');
+    await new Promise(resolve => setTimeout(resolve, PRESTOP_DELAY_MS));
+
     // 1. Stop accepting new requests
     await app.close();
     logger.info('HTTP server closed, no longer accepting new requests');
@@ -179,6 +236,10 @@ const gracefulShutdown = async (signal: string) => {
       cleanupService.stop();
       logger.info('Reservation cleanup job stopped');
     }
+
+    // 2.5 Close job queues
+    await closeAllQueues();
+    logger.info('Job queues closed');
 
     // 3. Close database connections
     const pool = DatabaseService.getPool();

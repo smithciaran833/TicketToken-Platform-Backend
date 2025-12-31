@@ -8,7 +8,14 @@ import { AuthenticationError } from '../errors';
 import { redisKeys } from '../utils/redisKeys';
 import { otpRateLimiter, mfaSetupRateLimiter, backupCodeRateLimiter } from '../utils/rateLimiter';
 
+// Idempotency window for MFA setup (5 minutes)
+const MFA_SETUP_IDEMPOTENCY_WINDOW = 5 * 60;
+
 export class MFAService {
+  /**
+   * Setup TOTP with idempotency
+   * If setup was initiated within the idempotency window, return the same secret
+   */
   async setupTOTP(userId: string, tenantId?: string): Promise<{
     secret: string;
     qrCode: string;
@@ -26,6 +33,31 @@ export class MFAService {
         throw new Error('MFA is already enabled for this account');
       }
 
+      const redis = getRedis();
+      const setupKey = redisKeys.mfaSetup(userId, tenantId || user.tenant_id);
+
+      // Idempotency check: return existing setup if within window
+      const existingSetup = await redis.get(setupKey);
+      if (existingSetup) {
+        const setupData = JSON.parse(existingSetup);
+        const decryptedSecret = this.decrypt(setupData.secret);
+
+        // Regenerate QR code (it's deterministic based on secret)
+        const otpauthUrl = speakeasy.otpauthURL({
+          secret: decryptedSecret,
+          label: user.email,
+          issuer: env.MFA_ISSUER || 'TicketToken',
+          encoding: 'base32'
+        });
+        const qrCode = await QRCode.toDataURL(otpauthUrl);
+
+        return {
+          secret: decryptedSecret,
+          qrCode,
+        };
+      }
+
+      // Generate new secret
       const secret = speakeasy.generateSecret({
         name: `TicketToken (${user.email})`,
         issuer: env.MFA_ISSUER || 'TicketToken',
@@ -35,15 +67,16 @@ export class MFAService {
       const qrCode = await QRCode.toDataURL(secret.otpauth_url || "");
       const backupCodes = this.generateBackupCodes();
 
-      const redis = getRedis();
+      // Store in Redis with TTL
       await redis.setex(
-        redisKeys.mfaSetup(userId, tenantId || user.tenant_id),
-        600,
+        setupKey,
+        600, // 10 minutes total TTL
         JSON.stringify({
           secret: this.encrypt(secret.base32),
           backupCodes: backupCodes.map(code => this.hashBackupCode(code)),
           plainBackupCodes: backupCodes,
           tenantId: tenantId || user.tenant_id,
+          createdAt: Date.now(),
         })
       );
 

@@ -245,3 +245,56 @@ export const searchSyncFailuresTotal = new Counter({
   labelNames: ['event_type', 'error_type'],
   registers: [register]
 });
+
+// Error tracking metrics
+export const errorsTotal = new Counter({
+  name: 'errors_total',
+  help: 'Total errors by type and status code',
+  labelNames: ['error_type', 'status_code', 'endpoint'],
+  registers: [register]
+});
+
+/**
+ * Increment error metric for tracking error patterns.
+ * Call this from error handlers to track errors by type, status code, and endpoint.
+ * 
+ * @param errorType - The type of error (validation, auth, not_found, conflict, internal, etc.)
+ * @param statusCode - HTTP status code (400, 401, 403, 404, 409, 500, etc.)
+ * @param endpoint - The endpoint that generated the error (e.g., '/events', '/capacity')
+ */
+export function incrementErrorMetric(
+  errorType: string,
+  statusCode: number | string,
+  endpoint: string
+): void {
+  try {
+    errorsTotal.inc({
+      error_type: errorType,
+      status_code: String(statusCode),
+      endpoint: normalizeEndpoint(endpoint),
+    });
+  } catch (err) {
+    // Don't let metrics failures break error handling
+    console.error('Failed to increment error metric:', err);
+  }
+}
+
+/**
+ * Normalize endpoint path for consistent metric labels.
+ * Removes path parameters to avoid high cardinality.
+ */
+function normalizeEndpoint(path: string): string {
+  if (!path) return 'unknown';
+  
+  // Remove query strings
+  const basePath = path.split('?')[0];
+  
+  // Replace UUIDs with placeholder
+  const normalized = basePath.replace(
+    /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
+    ':id'
+  );
+  
+  // Replace numeric IDs with placeholder
+  return normalized.replace(/\/\d+/g, '/:id');
+}

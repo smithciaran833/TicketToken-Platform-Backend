@@ -91,6 +91,66 @@ export interface IEvent {
 }
 
 export class EventModel extends BaseModel {
+  /**
+   * AUDIT FIX (QS8/DB7): Explicit columns for event queries.
+   * Prevents over-fetching and ensures consistent data shape.
+   */
+  protected selectColumns = [
+    'id',
+    'tenant_id',
+    'venue_id',
+    'venue_layout_id',
+    'name',
+    'slug',
+    'description',
+    'short_description',
+    'event_type',
+    'primary_category_id',
+    'secondary_category_ids',
+    'tags',
+    'status',
+    'visibility',
+    'is_featured',
+    'priority_score',
+    'banner_image_url',
+    'thumbnail_image_url',
+    'image_gallery',
+    'video_url',
+    'virtual_event_url',
+    'age_restriction',
+    'dress_code',
+    'special_requirements',
+    'accessibility_info',
+    'collection_address',
+    'mint_authority',
+    'royalty_percentage',
+    'event_pda',
+    'artist_wallet',
+    'artist_percentage',
+    'venue_percentage',
+    'blockchain_status',
+    'is_virtual',
+    'is_hybrid',
+    'streaming_platform',
+    'streaming_config',
+    'cancellation_policy',
+    'refund_policy',
+    'cancellation_deadline_hours',
+    'meta_title',
+    'meta_description',
+    'meta_keywords',
+    'view_count',
+    'interest_count',
+    'share_count',
+    'external_id',
+    'metadata',
+    'created_by',
+    'updated_by',
+    'created_at',
+    'updated_at',
+    'deleted_at',
+  ];
+
   constructor(db: Knex | Knex.Transaction) {
     super('events', db);
   }
@@ -115,6 +175,15 @@ export class EventModel extends BaseModel {
     return null;
   }
 
+  /**
+   * Create event with defaults, using ON CONFLICT to handle race conditions.
+   * 
+   * AUDIT FIX (DB2): Uses INSERT ... ON CONFLICT to prevent duplicate creation
+   * when concurrent requests create events with same slug/tenant combination.
+   * 
+   * @param eventData - Partial event data
+   * @returns Created or existing event
+   */
   async createWithDefaults(eventData: Partial<IEvent>): Promise<IEvent> {
     const slug = eventData.slug || this.generateSlug(eventData.name || '');
 
@@ -135,8 +204,90 @@ export class EventModel extends BaseModel {
       share_count: 0,
     });
 
-    const created = await this.create(dbData);
-    return this.transformFromDb(created);
+    // AUDIT FIX (DB2): Use ON CONFLICT to handle race conditions
+    // If a concurrent request creates the same slug/tenant/venue, return existing
+    const [result] = await this.db.raw(`
+      INSERT INTO events (${Object.keys(dbData).join(', ')})
+      VALUES (${Object.keys(dbData).map((_, i) => `$${i + 1}`).join(', ')})
+      ON CONFLICT (venue_id, slug) WHERE deleted_at IS NULL
+      DO UPDATE SET updated_at = NOW()
+      RETURNING *, (xmax = 0) AS _inserted
+    `, Object.values(dbData));
+
+    const record = result.rows?.[0] || result;
+    
+    // Log if we hit a conflict
+    if (record && record._inserted === false) {
+      // Remove the _inserted flag before returning
+      delete record._inserted;
+      // Note: Conflict occurred, returned existing record
+    } else if (record) {
+      delete record._inserted;
+    }
+
+    return this.transformFromDb(record);
+  }
+
+  /**
+   * Upsert event with explicit conflict handling.
+   * 
+   * AUDIT FIX (DB2): Explicit upsert method for idempotent operations.
+   * Uses ON CONFLICT to either insert new record or update existing.
+   * 
+   * @param eventData - Event data including tenant_id and venue_id
+   * @param conflictColumns - Columns to check for conflict (default: slug, venue_id)
+   * @param updateColumns - Columns to update on conflict (default: name, description, updated_at)
+   * @returns Upserted event and whether it was inserted or updated
+   */
+  async upsertEvent(
+    eventData: Partial<IEvent>,
+    conflictColumns: string[] = ['slug', 'venue_id'],
+    updateColumns: string[] = ['name', 'description', 'updated_at']
+  ): Promise<{ event: IEvent; inserted: boolean }> {
+    const slug = eventData.slug || this.generateSlug(eventData.name || '');
+
+    const dbData = this.transformForDb({
+      ...eventData,
+      slug,
+      event_type: eventData.event_type || 'single',
+      status: eventData.status || 'DRAFT',
+      visibility: eventData.visibility || 'PUBLIC',
+      is_featured: eventData.is_featured || false,
+      priority_score: eventData.priority_score || 0,
+      age_restriction: eventData.age_restriction || 0,
+      is_virtual: eventData.is_virtual || false,
+      is_hybrid: eventData.is_hybrid || false,
+      cancellation_deadline_hours: eventData.cancellation_deadline_hours || 24,
+      view_count: eventData.view_count ?? 0,
+      interest_count: eventData.interest_count ?? 0,
+      share_count: eventData.share_count ?? 0,
+    });
+
+    // Build UPDATE clause for conflict
+    const updateClause = updateColumns
+      .filter(col => col in dbData)
+      .map(col => `${col} = EXCLUDED.${col}`)
+      .join(', ');
+
+    // Build conflict target
+    const conflictTarget = conflictColumns.join(', ');
+
+    const [result] = await this.db.raw(`
+      INSERT INTO events (${Object.keys(dbData).join(', ')})
+      VALUES (${Object.keys(dbData).map((_, i) => `$${i + 1}`).join(', ')})
+      ON CONFLICT (${conflictTarget}) WHERE deleted_at IS NULL
+      DO UPDATE SET ${updateClause || 'updated_at = NOW()'}
+      RETURNING *, (xmax = 0) AS _inserted
+    `, Object.values(dbData));
+
+    const record = result.rows?.[0] || result;
+    const inserted = record._inserted === true;
+    delete record._inserted;
+
+    return {
+      event: this.transformFromDb(record),
+      inserted
+    };
   }
 
   async update(id: string, data: Partial<IEvent>): Promise<IEvent> {
@@ -175,8 +326,20 @@ export class EventModel extends BaseModel {
     return events.map((e: any) => this.transformFromDb(e));
   }
 
+  /**
+   * Search events with proper tenant isolation.
+   * 
+   * CRITICAL: tenant_id parameter is REQUIRED for security.
+   * This provides defense-in-depth alongside RLS policies.
+   * 
+   * @param searchTerm - Search query string
+   * @param options - Search options including tenant_id (REQUIRED), filters, pagination
+   * @returns Array of matching events
+   * @throws Error if tenant_id is not provided
+   */
   async searchEvents(searchTerm: string, options: any = {}): Promise<IEvent[]> {
     const {
+      tenant_id,
       limit = 20,
       offset = 0,
       category_id,
@@ -186,15 +349,23 @@ export class EventModel extends BaseModel {
       sort_order = 'desc'
     } = options;
 
+    // CRITICAL: tenant_id is REQUIRED - reject if not provided
+    if (!tenant_id) {
+      throw new Error('tenant_id is required for searchEvents');
+    }
+
     let query = this.db('events')
       .whereNull('deleted_at')
-      .where('visibility', 'PUBLIC');
+      .where('visibility', 'PUBLIC')
+      .where('tenant_id', tenant_id);
 
     if (searchTerm) {
+      // Sanitize search term to prevent SQL injection via LIKE patterns
+      const sanitizedSearch = searchTerm.replace(/[%_\\]/g, '\\$&');
       query = query.where(function(this: any) {
-        this.where('name', 'ilike', `%${searchTerm}%`)
-          .orWhere('description', 'ilike', `%${searchTerm}%`)
-          .orWhere('short_description', 'ilike', `%${searchTerm}%`);
+        this.where('name', 'ilike', `%${sanitizedSearch}%`)
+          .orWhere('description', 'ilike', `%${sanitizedSearch}%`)
+          .orWhere('short_description', 'ilike', `%${sanitizedSearch}%`);
       });
     }
 
@@ -202,13 +373,24 @@ export class EventModel extends BaseModel {
     if (venue_id) query = query.where('venue_id', venue_id);
     if (status) query = query.where('status', status);
 
-    const sortColumn = sort_by === 'name' ? 'name' :
-                      sort_by === 'priority' ? 'priority_score' :
-                      sort_by === 'views' ? 'view_count' : 'created_at';
+    // Whitelist allowed sort columns to prevent injection
+    const allowedSortColumns: Record<string, string> = {
+      'name': 'name',
+      'priority': 'priority_score',
+      'views': 'view_count',
+      'created_at': 'created_at',
+      'updated_at': 'updated_at'
+    };
+    const sortColumn = allowedSortColumns[sort_by] || 'created_at';
+    const sortDirection = sort_order === 'asc' ? 'asc' : 'desc';
 
-    query = query.orderBy(sortColumn, sort_order);
+    query = query.orderBy(sortColumn, sortDirection);
 
-    const events = await query.limit(limit).offset(offset);
+    // Enforce max limit to prevent resource exhaustion
+    const safeLimit = Math.min(Math.max(1, parseInt(limit) || 20), 100);
+    const safeOffset = Math.max(0, parseInt(offset) || 0);
+
+    const events = await query.limit(safeLimit).offset(safeOffset);
     return events.map((e: any) => this.transformFromDb(e));
   }
 

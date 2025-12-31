@@ -1,91 +1,95 @@
-# Contributing to Auth-Service
+# Contributing to Auth Service
 
-## Development Setup
+## Getting Started
 
-### Prerequisites
-- Node.js 20+
-- Docker & Docker Compose
-- PostgreSQL 15+
-- Redis 7+
+1. Clone the repository
+2. Install dependencies: `npm install`
+3. Copy `.env.example` to `.env` and configure
+4. Start dependencies: `docker-compose up -d postgres redis`
+5. Run migrations: `npm run migrate`
+6. Start dev server: `npm run dev`
 
-### Local Development
-```bash
-# Install dependencies
-npm install
+## Development Workflow
 
-# Start dependencies
-docker-compose up -d postgres redis
+### Branch Naming
 
-# Run migrations
-npm run migrate
-
-# Start development server
-npm run dev
-```
-
-### Code Style
-
-- Use TypeScript strict mode
-- Follow ESLint configuration
-- Use Prettier for formatting
-- Write JSDoc comments for public functions
+- `feature/` - New features
+- `fix/` - Bug fixes
+- `docs/` - Documentation updates
+- `refactor/` - Code refactoring
+- `test/` - Test additions/updates
 
 ### Commit Messages
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 ```
-feat: add user profile endpoint
-fix: correct password reset token expiry
+feat: add MFA backup codes
+fix: handle expired refresh tokens
 docs: update API documentation
-test: add MFA verification tests
-refactor: simplify token generation
-chore: update dependencies
+test: add jwt.service tests
 ```
 
 ### Pull Request Process
 
-1. Create a feature branch from `main`
-2. Write tests for new functionality
-3. Ensure all tests pass: `npm test`
-4. Ensure linting passes: `npm run lint`
+1. Create a feature branch from `develop`
+2. Make your changes
+3. Ensure tests pass: `npm test`
+4. Ensure build passes: `npm run build`
 5. Update documentation if needed
-6. Request review from at least one team member
+6. Submit PR to `develop`
+7. Request review from at least one team member
+
+## Code Standards
+
+### TypeScript
+
+- Use strict mode
+- Prefer `interface` over `type` for object shapes
+- Use explicit return types on public functions
+- No `any` without justification
 
 ### Testing
+
+- Unit tests for all services
+- Integration tests for API endpoints
+- Minimum 80% coverage for new code
+- Name tests descriptively: `should return 401 when token expired`
+
+### Security
+
+- Never log sensitive data (passwords, tokens, PII)
+- Use parameterized queries (no string concatenation)
+- Validate all inputs
+- Follow OWASP guidelines
+
+## Project Structure
+```
+src/
+├── config/        # Configuration files
+├── controllers/   # Route handlers
+├── middleware/    # Express middleware
+├── services/      # Business logic
+├── utils/         # Utility functions
+├── validators/    # Input validation schemas
+├── errors/        # Custom error classes
+└── routes/        # Route definitions
+```
+
+## Running Tests
 ```bash
-# Run all tests
+# All tests
 npm test
 
-# Run with coverage
+# With coverage
 npm run test:coverage
 
-# Run specific test file
-npm test -- auth.service.test.ts
-
-# Run in watch mode
-npm run test:watch
+# Specific service
+npm run test:auth
+npm run test:jwt
 ```
-
-### Database Migrations
-
-See [MIGRATION_GUIDE.md](./docs/MIGRATION_GUIDE.md) for best practices.
-```bash
-# Create new migration
-npm run migrate:make migration_name
-
-# Run migrations
-npm run migrate
-
-# Rollback last migration
-npm run migrate:rollback
-```
-
-## Architecture
-
-See [SERVICE_OVERVIEW.md](./docs/SERVICE_OVERVIEW.md) for detailed architecture documentation.
 
 ## Questions?
 
-- Check existing issues and PRs
+- Check existing issues and discussions
 - Ask in #auth-service Slack channel
-- Contact the platform team
+- Tag @auth-team in your PR

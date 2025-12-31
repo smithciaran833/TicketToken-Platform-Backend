@@ -1,6 +1,18 @@
 import Joi from 'joi';
 
 // ============================================
+// CUSTOM VALIDATORS
+// ============================================
+
+// E.164 phone format: +[country code][number], 8-15 digits
+const e164Phone = Joi.string()
+  .pattern(/^\+?[1-9]\d{7,14}$/)
+  .max(20)
+  .messages({
+    'string.pattern.base': 'Phone must be in E.164 format (e.g., +14155551234)'
+  });
+
+// ============================================
 // AUTHENTICATION SCHEMAS
 // ============================================
 
@@ -9,7 +21,7 @@ export const registerSchema = Joi.object({
   password: Joi.string().min(8).max(128).required(),
   firstName: Joi.string().max(50).required(),
   lastName: Joi.string().max(50).required(),
-  phone: Joi.string().max(20).optional(),
+  phone: e164Phone.optional(),
   tenant_id: Joi.string().uuid().required().messages({
     'string.guid': 'Invalid tenant_id format - must be a valid UUID',
     'string.base': 'tenant_id must be a string',
@@ -125,20 +137,17 @@ export const biometricAuthenticateSchema = Joi.object({
 // OAUTH SCHEMAS
 // ============================================
 
-// OAuth Callback Schema (for authorization code flow)
 export const oauthCallbackSchema = Joi.object({
   code: Joi.string().max(2048).required(),
   state: Joi.string().max(256).optional(),
   tenant_id: Joi.string().uuid().optional(),
 }).unknown(false);
 
-// OAuth Link Schema (for linking accounts)
 export const oauthLinkSchema = Joi.object({
   code: Joi.string().max(2048).required(),
   state: Joi.string().max(256).optional(),
 }).unknown(false);
 
-// OAuth Login Schema (legacy - kept for backward compatibility)
 export const oauthLoginSchema = Joi.object({
   code: Joi.string().max(2048).required(),
   state: Joi.string().max(256).optional(),
@@ -151,7 +160,7 @@ export const oauthLoginSchema = Joi.object({
 export const updateProfileSchema = Joi.object({
   firstName: Joi.string().max(50).optional(),
   lastName: Joi.string().max(50).optional(),
-  phone: Joi.string().max(20).optional(),
+  phone: e164Phone.optional(),
   email: Joi.string().email().max(255).optional(),
 }).unknown(false);
 
@@ -203,7 +212,7 @@ export const publicKeyParamSchema = Joi.object({
   publicKey: Joi.string()
     .min(32)
     .max(128)
-    .pattern(/^[1-9A-HJ-NP-Za-km-z]+$/)  // Base58 for Solana/Bitcoin
+    .pattern(/^[1-9A-HJ-NP-Za-km-z]+$/)
     .required()
 }).unknown(false);
 
@@ -211,10 +220,8 @@ export const publicKeyParamSchema = Joi.object({
 // EMPTY BODY & QUERY SCHEMAS
 // ============================================
 
-// For endpoints that accept no body
 export const emptyBodySchema = Joi.object({}).unknown(false);
 
-// For optional pagination on GET requests
 export const paginationQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
   limit: Joi.number().integer().min(1).max(100).default(20),

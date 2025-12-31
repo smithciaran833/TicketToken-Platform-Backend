@@ -106,15 +106,22 @@ export class VenueOnboardingIncompleteError extends AppError {
 }
 
 // Infrastructure errors
+// SECURITY FIX (RH7): Include documentation link in 429 responses
+const RATE_LIMIT_DOCS_URL = 'https://docs.tickettoken.io/api/rate-limits';
+
 export class RateLimitError extends AppError {
   constructor(resource?: string, retryAfter?: number) {
     const message = resource 
       ? `Rate limit exceeded for ${resource}` 
       : 'Rate limit exceeded';
     super(message, 429, 'RATE_LIMIT_EXCEEDED');
-    if (retryAfter) {
-      this.details = { retryAfter };
-    }
+    // SECURITY FIX (RH7): Always include docs link and retry info
+    this.details = { 
+      retryAfter: retryAfter || 60,
+      resource: resource || 'global',
+      documentation: RATE_LIMIT_DOCS_URL,
+      help: 'See documentation for rate limit tiers and how to request limit increases',
+    };
   }
 }
 

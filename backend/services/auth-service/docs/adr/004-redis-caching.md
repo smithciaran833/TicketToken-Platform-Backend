@@ -1,34 +1,58 @@
-# ADR-004: Redis for Session and Rate Limiting
+# ADR 004: Use Redis for Caching and Sessions
 
 ## Status
+
 Accepted
 
 ## Context
-The auth-service needs:
-- Fast session/token lookups
-- Distributed rate limiting across instances
-- Token blacklist for logout/revocation
-- Temporary storage for MFA setup
+
+We needed a solution for:
+- Session storage
+- Rate limiting state
+- Token blacklisting
+- Temporary data (nonces, verification codes)
+
+Options considered:
+- Redis
+- Memcached
+- In-memory (Node.js)
+- Database
 
 ## Decision
-Use Redis as the caching and rate limiting store.
+
+We chose **Redis** for the following reasons:
+
+1. **Speed**: Sub-millisecond latency
+2. **Data Structures**: Lists, sets, sorted sets for various use cases
+3. **TTL Support**: Automatic expiration for temporary data
+4. **Pub/Sub**: Future use for real-time features
+5. **Persistence**: Optional durability
+6. **Clustering**: Horizontal scaling when needed
 
 ## Consequences
 
 ### Positive
-- Sub-millisecond latency for lookups
-- Built-in TTL support for automatic expiration
-- Atomic operations for rate limiting counters
-- Pub/sub for real-time token revocation
-- Cluster support for high availability
+- Excellent performance
+- Rich data structure support
+- Built-in expiration
+- Well-understood by team
 
 ### Negative
-- Additional infrastructure dependency
-- Data loss risk if not configured for persistence
-- Memory constraints for large datasets
-- Requires connection pooling management
+- Additional infrastructure to manage
+- Data loss possible without persistence
+- Memory-bound (cost consideration)
 
-### Neutral
-- Well-supported by ioredis library
-- Standard choice for this use case
-- Can be replaced with Redis-compatible alternatives (KeyDB, Dragonfly)
+## Usage Patterns
+
+| Use Case | Key Pattern | TTL |
+|----------|-------------|-----|
+| Rate limiting | `ratelimit:{ip}:{endpoint}` | 1 min |
+| Refresh tokens | `refresh:{token}` | 7 days |
+| Blacklisted tokens | `blacklist:{token}` | Token expiry |
+| Wallet nonces | `wallet-nonce:{nonce}` | 15 min |
+| MFA codes | `mfa:{userId}` | 5 min |
+
+## References
+
+- [Redis Documentation](https://redis.io/documentation)
+- [Redis Best Practices](https://redis.io/docs/management/optimization/)

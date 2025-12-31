@@ -9,6 +9,7 @@ import { createAuthMiddleware } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import { validateTenant } from '../middleware/tenant.middleware';
 import * as schemas from '../validators/auth.validators';
+import { responseSchemas } from '../validators/response.schemas';
 import { loginRateLimiter, registrationRateLimiter } from '../utils/rateLimiter';
 
 export async function authRoutes(fastify: FastifyInstance, options: { container: Container }) {
@@ -38,8 +39,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   // PUBLIC ROUTES (Still need rate limiting)
   // ============================================
 
-  // These routes are legitimately public but rate-limited
   fastify.post('/register', {
+    schema: { response: responseSchemas.register },
     preHandler: async (request: any, reply: any) => {
       await registrationRateLimiter.consume(request.ip);
       await validate(schemas.registerSchema)(request, reply);
@@ -49,11 +50,12 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   });
 
   fastify.post('/login', {
+    schema: { response: responseSchemas.login },
     preHandler: async (request: any, reply: any) => {
       try {
         await rateLimitService.consume('login', null, request.ip);
       } catch (error) {
-        throw error; // Let the global error handler add rate limit headers
+        throw error;
       }
       await loginRateLimiter.consume(request.ip);
       await validate(schemas.loginSchema)(request, reply);
@@ -62,8 +64,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     return await controller.login(request, reply);
   });
 
-  // Password reset routes (public but rate-limited)
   fastify.post('/forgot-password', {
+    schema: { response: responseSchemas.forgotPassword },
     preHandler: async (request: any, reply: any) => {
       await rateLimitService.consume('forgot-password', null, request.ip);
       await validate(schemas.forgotPasswordSchema)(request, reply);
@@ -73,12 +75,12 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   });
 
   fastify.post('/reset-password', {
+    schema: { response: responseSchemas.resetPassword },
     preHandler: async (request: any, reply: any) => {
-      // Rate limit password reset attempts to prevent brute force
       try {
         await rateLimitService.consume('reset-password', null, request.ip);
       } catch (error) {
-        throw error; // Let the global error handler add rate limit headers
+        throw error;
       }
       await validate(schemas.resetPasswordSchema)(request, reply);
     }
@@ -86,8 +88,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     return await extendedController.resetPassword(request, reply);
   });
 
-  // Email verification (public with token validation)
   fastify.get('/verify-email', {
+    schema: { response: responseSchemas.verifyEmail },
     preHandler: async (request: any, reply: any) => {
       await validate(schemas.verifyEmailSchema, 'query')(request, reply);
     }
@@ -95,8 +97,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     return await extendedController.verifyEmail(request, reply);
   });
 
-  // Token refresh (requires refresh token)
   fastify.post('/refresh', {
+    schema: { response: responseSchemas.refresh },
     preHandler: async (request: any, reply: any) => {
       await validate(schemas.refreshTokenSchema)(request, reply);
     }
@@ -108,8 +110,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   // OAUTH ROUTES (Public - special auth flow)
   // ============================================
 
-  // OAuth callback endpoints (for login/registration)
   fastify.post('/oauth/:provider/callback', {
+    schema: { response: responseSchemas.oauthCallback },
     preHandler: async (request: any, reply: any) => {
       await validate(schemas.providerParamSchema, 'params')(request, reply);
       await rateLimitService.consume('oauth-callback', null, request.ip);
@@ -137,8 +139,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     }
   });
 
-  // Legacy OAuth login endpoint (keep for backward compatibility)
   fastify.post('/oauth/:provider/login', {
+    schema: { response: responseSchemas.oauthCallback },
     preHandler: async (request: any, reply: any) => {
       await validate(schemas.providerParamSchema, 'params')(request, reply);
       await rateLimitService.consume('oauth-login', null, request.ip);
@@ -164,6 +166,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   // ============================================
 
   fastify.post('/wallet/nonce', {
+    schema: { response: responseSchemas.walletNonce },
     preHandler: async (request: any, reply: any) => {
       await rateLimitService.consume('wallet-nonce', null, request.ip);
       await validate(schemas.walletNonceSchema)(request, reply);
@@ -171,6 +174,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   }, walletController.requestNonce.bind(walletController));
 
   fastify.post('/wallet/register', {
+    schema: { response: responseSchemas.walletRegister },
     preHandler: async (request: any, reply: any) => {
       await rateLimitService.consume('wallet-register', null, request.ip);
       await validate(schemas.walletRegisterSchema)(request, reply);
@@ -178,6 +182,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   }, walletController.register.bind(walletController));
 
   fastify.post('/wallet/login', {
+    schema: { response: responseSchemas.walletLogin },
     preHandler: async (request: any, reply: any) => {
       await rateLimitService.consume('wallet-login', null, request.ip);
       await validate(schemas.walletLoginSchema)(request, reply);
@@ -188,8 +193,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   // PUBLIC BIOMETRIC ROUTES (For passwordless login)
   // ============================================
 
-  // Generate challenge for biometric login (public - needs userId)
   fastify.post('/biometric/challenge', {
+    schema: { response: responseSchemas.biometricChallenge },
     preHandler: async (request: any, reply: any) => {
       await validate(schemas.biometricChallengeSchema)(request, reply);
     }
@@ -199,8 +204,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     return { challenge };
   });
 
-  // Authenticate with biometric (public - passwordless login)
   fastify.post('/biometric/authenticate', {
+    schema: { response: responseSchemas.biometricAuthenticate },
     preHandler: async (request: any, reply: any) => {
       await validate(schemas.biometricAuthenticateSchema)(request, reply);
     }
@@ -215,7 +220,6 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       );
 
       if (result.valid) {
-        // Generate tokens for the user
         const tokens = await jwtService.generateTokens({ id: userId });
         return { success: true, tokens };
       }
@@ -230,17 +234,14 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   // AUTHENTICATED ROUTES (Require valid JWT)
   // ============================================
 
-  // Register authenticated routes group
   fastify.register(async function authenticatedRoutes(fastify) {
-    // Add authentication and RLS context to ALL routes in this group
     fastify.addHook('preHandler', async (request: any, reply: any) => {
       await authMiddleware.authenticate(request, reply);
-      // Set RLS context for multi-tenant security (CRITICAL fix)
       await validateTenant(request, reply);
     });
 
-    // User verification status
     fastify.get('/verify', {
+      schema: { response: responseSchemas.verifyToken },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -248,8 +249,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return controller.verifyToken(request, reply);
     });
 
-    // Current user info
     fastify.get('/me', {
+      schema: { response: responseSchemas.getCurrentUser },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -257,8 +258,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return controller.getCurrentUser(request, reply);
     });
 
-    // Logout
     fastify.post('/logout', {
+      schema: { response: responseSchemas.logout },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.logoutSchema)(request, reply);
       }
@@ -266,8 +267,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return controller.logout(request, reply);
     });
 
-    // Resend verification email
     fastify.post('/resend-verification', {
+      schema: { response: responseSchemas.resendVerification },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -275,8 +276,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return extendedController.resendVerification(request, reply);
     });
 
-    // Change password (requires current password)
     fastify.put('/change-password', {
+      schema: { response: responseSchemas.changePassword },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.changePasswordSchema)(request, reply);
       }
@@ -289,6 +290,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // ============================================
 
     fastify.post('/mfa/setup', {
+      schema: { response: responseSchemas.setupMFA },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.setupMFASchema)(request, reply);
       }
@@ -297,6 +299,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.post('/mfa/verify-setup', {
+      schema: { response: responseSchemas.verifyMFASetup },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.verifyMFASchema)(request, reply);
       }
@@ -305,6 +308,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.post('/mfa/verify', {
+      schema: { response: responseSchemas.verifyMFA },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.verifyMFASchema)(request, reply);
       }
@@ -313,6 +317,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.post('/mfa/regenerate-backup-codes', {
+      schema: { response: responseSchemas.regenerateBackupCodes },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -321,6 +326,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.delete('/mfa/disable', {
+      schema: { response: responseSchemas.disableMFA },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.disableMFASchema)(request, reply);
       }
@@ -333,6 +339,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // ============================================
 
     fastify.post('/wallet/link', {
+      schema: { response: responseSchemas.walletLink },
       preHandler: async (request: any, reply: any) => {
         await rateLimitService.consume('wallet-link', null, request.ip);
         await validate(schemas.walletLinkSchema)(request, reply);
@@ -340,6 +347,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     }, walletController.linkWallet.bind(walletController));
 
     fastify.delete('/wallet/unlink/:publicKey', {
+      schema: { response: responseSchemas.walletUnlink },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.publicKeyParamSchema, 'params')(request, reply);
         await rateLimitService.consume('wallet-unlink', null, request.ip);
@@ -351,8 +359,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // BIOMETRIC ROUTES (Authenticated)
     // ============================================
 
-    // Register a new biometric credential
     fastify.post('/biometric/register', {
+      schema: { response: responseSchemas.biometricRegister },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.biometricRegisterSchema)(request, reply);
       }
@@ -374,20 +382,22 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       }
     });
 
-    // Generate a challenge for biometric setup verification
-    fastify.get('/biometric/challenge', async (request: any, reply: any) => {
+    fastify.get('/biometric/challenge', {
+      schema: { response: responseSchemas.biometricChallenge },
+    }, async (request: any, reply: any) => {
       const challenge = await biometricService.generateChallenge(request.user.id);
       return { challenge };
     });
 
-    // List registered biometric devices
-    fastify.get('/biometric/devices', async (request: any, reply: any) => {
+    fastify.get('/biometric/devices', {
+      schema: { response: responseSchemas.biometricDevices },
+    }, async (request: any, reply: any) => {
       const devices = await biometricService.listBiometricDevices(request.user.id);
       return { devices };
     });
 
-    // Remove a biometric device
     fastify.delete('/biometric/devices/:credentialId', {
+      schema: { response: responseSchemas.deleteBiometricDevice },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.credentialIdParamSchema, 'params')(request, reply);
         await validate(schemas.emptyBodySchema)(request, reply);
@@ -410,6 +420,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // ============================================
 
     fastify.post('/oauth/:provider/link', {
+      schema: { response: responseSchemas.oauthLink },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.providerParamSchema, 'params')(request, reply);
         await validate(schemas.oauthLinkSchema)(request, reply);
@@ -421,6 +432,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.delete('/oauth/:provider/unlink', {
+      schema: { response: responseSchemas.oauthUnlink },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.providerParamSchema, 'params')(request, reply);
         await validate(schemas.emptyBodySchema)(request, reply);
@@ -435,6 +447,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // ============================================
 
     fastify.get('/sessions', {
+      schema: { response: responseSchemas.listSessions },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.paginationQuerySchema, 'query')(request, reply);
       }
@@ -442,9 +455,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return sessionController.listSessions(request, reply);
     });
 
-    // IMPORTANT: /sessions/all must come BEFORE /sessions/:sessionId
-    // or "all" will be captured as a sessionId parameter
     fastify.delete('/sessions/all', {
+      schema: { response: responseSchemas.invalidateAllSessions },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -453,6 +465,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.delete('/sessions/:sessionId', {
+      schema: { response: responseSchemas.revokeSession },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.sessionIdParamSchema, 'params')(request, reply);
         await validate(schemas.emptyBodySchema)(request, reply);
@@ -466,6 +479,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // ============================================
 
     fastify.get('/profile', {
+      schema: { response: responseSchemas.getProfile },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -474,6 +488,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.put('/profile', {
+      schema: { response: responseSchemas.updateProfile },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.updateProfileSchema)(request, reply);
       }
@@ -485,8 +500,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // GDPR / DATA RIGHTS (Authenticated)
     // ============================================
 
-    // CL-ACC1, CL-ACC2, CL-PORT1, CL-PORT2: Export all user data (GDPR Article 15 & 20)
     fastify.get('/gdpr/export', {
+      schema: { response: responseSchemas.exportData },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -494,8 +509,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return profileController.exportData(request, reply);
     });
 
-    // CL-CONW1: Get current consent status
     fastify.get('/consent', {
+      schema: { response: responseSchemas.getConsent },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.emptyBodySchema)(request, reply);
       }
@@ -503,13 +518,15 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       return profileController.getConsent(request, reply);
     });
 
-    // CL-CONW1: Update consent preferences (withdraw/grant marketing consent)
-    fastify.put('/consent', async (request: any, reply: any) => {
+    fastify.put('/consent', {
+      schema: { response: responseSchemas.updateConsent },
+    }, async (request: any, reply: any) => {
       return profileController.updateConsent(request, reply);
     });
 
-    // CL-ERA1, CL-ERA2: Request account deletion (GDPR Article 17 - Right to Erasure)
-    fastify.post('/gdpr/delete', async (request: any, reply: any) => {
+    fastify.post('/gdpr/delete', {
+      schema: { response: responseSchemas.requestDeletion },
+    }, async (request: any, reply: any) => {
       return profileController.requestDeletion(request, reply);
     });
 
@@ -518,6 +535,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     // ============================================
 
     fastify.post('/venues/:venueId/roles', {
+      schema: { response: responseSchemas.grantVenueRole },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.venueIdParamSchema, 'params')(request, reply);
         await authMiddleware.requirePermission('roles:manage')(request, reply);
@@ -536,6 +554,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.delete('/venues/:venueId/roles/:userId', {
+      schema: { response: responseSchemas.revokeVenueRole },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.venueIdAndUserIdParamSchema, 'params')(request, reply);
         await authMiddleware.requirePermission('roles:manage')(request, reply);
@@ -553,6 +572,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     });
 
     fastify.get('/venues/:venueId/roles', {
+      schema: { response: responseSchemas.getVenueRoles },
       preHandler: async (request: any, reply: any) => {
         await validate(schemas.venueIdParamSchema, 'params')(request, reply);
         await authMiddleware.requireVenueAccess(request, reply);

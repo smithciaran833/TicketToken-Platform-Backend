@@ -1,0 +1,1102 @@
+openapi: 3.1.0
+info:
+  title: Event Service API
+  version: 1.0.0
+  description: |
+    Event management service for TicketToken platform.
+    Handles event lifecycle, capacity management, pricing, and scheduling.
+  contact:
+    name: TicketToken Platform Team
+    email: platform@tickettoken.io
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:3003/api/v1
+    description: Local development
+  - url: https://api.tickettoken.io/events/v1
+    description: Production
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Events
+    description: Event CRUD operations
+  - name: Capacity
+    description: Capacity and seating management
+  - name: Pricing
+    description: Pricing tiers and dynamic pricing
+  - name: Health
+    description: Health check endpoints
+
+paths:
+  # Health Endpoints
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness check
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  # Event Endpoints
+  /events:
+    get:
+      tags: [Events]
+      summary: List events
+      description: List all events for the authenticated tenant
+      parameters:
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/OffsetParam'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/EventStatus'
+      responses:
+        '200':
+          description: List of events
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    
+    post:
+      tags: [Events]
+      summary: Create event
+      description: Create a new event
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEventRequest'
+      responses:
+        '201':
+          description: Event created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /events/{eventId}:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    
+    get:
+      tags: [Events]
+      summary: Get event
+      description: Get event by ID
+      responses:
+        '200':
+          description: Event details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    patch:
+      tags: [Events]
+      summary: Update event
+      description: Update event details
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateEventRequest'
+      responses:
+        '200':
+          description: Event updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    delete:
+      tags: [Events]
+      summary: Delete event
+      description: Soft delete an event
+      parameters:
+        - name: forceDelete
+          in: query
+          description: Admin override to force delete (requires admin role)
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '204':
+          description: Event deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /events/{eventId}/publish:
+    post:
+      tags: [Events]
+      summary: Publish event
+      description: Transition event to PUBLISHED status
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      responses:
+        '200':
+          description: Event published
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Event'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /venues/{venueId}/events:
+    get:
+      tags: [Events]
+      summary: Get venue events
+      description: List all events for a specific venue
+      parameters:
+        - name: venueId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of venue events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Event'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  # Capacity Endpoints
+  /events/{eventId}/capacity:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    
+    get:
+      tags: [Capacity]
+      summary: List capacity sections
+      responses:
+        '200':
+          description: List of capacity sections
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Capacity'
+    
+    post:
+      tags: [Capacity]
+      summary: Create capacity section
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCapacityRequest'
+      responses:
+        '201':
+          description: Capacity section created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capacity'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /capacity/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    
+    get:
+      tags: [Capacity]
+      summary: Get capacity section
+      responses:
+        '200':
+          description: Capacity section details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capacity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    patch:
+      tags: [Capacity]
+      summary: Update capacity section
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateCapacityRequest'
+      responses:
+        '200':
+          description: Capacity updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capacity'
+    
+    delete:
+      tags: [Capacity]
+      summary: Delete capacity section
+      responses:
+        '204':
+          description: Capacity deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /capacity/{id}/check:
+    post:
+      tags: [Capacity]
+      summary: Check availability
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckAvailabilityRequest'
+      responses:
+        '200':
+          description: Availability result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailabilityResponse'
+
+  /capacity/{id}/reserve:
+    post:
+      tags: [Capacity]
+      summary: Reserve capacity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReserveCapacityRequest'
+      responses:
+        '200':
+          description: Reservation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+
+  # Pricing Endpoints
+  /events/{eventId}/pricing:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    
+    get:
+      tags: [Pricing]
+      summary: List pricing tiers
+      responses:
+        '200':
+          description: List of pricing tiers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Pricing'
+    
+    post:
+      tags: [Pricing]
+      summary: Create pricing tier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePricingRequest'
+      responses:
+        '201':
+          description: Pricing tier created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pricing'
+
+  /pricing/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    
+    get:
+      tags: [Pricing]
+      summary: Get pricing tier
+      responses:
+        '200':
+          description: Pricing tier details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pricing'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    patch:
+      tags: [Pricing]
+      summary: Update pricing tier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdatePricingRequest'
+      responses:
+        '200':
+          description: Pricing updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pricing'
+    
+    delete:
+      tags: [Pricing]
+      summary: Delete pricing tier
+      responses:
+        '204':
+          description: Pricing deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /pricing/{id}/calculate:
+    post:
+      tags: [Pricing]
+      summary: Calculate price
+      description: Calculate final price including fees and discounts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CalculatePriceRequest'
+      responses:
+        '200':
+          description: Price calculation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PriceCalculationResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from auth-service
+
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Service-to-service API key
+
+  parameters:
+    EventIdParam:
+      name: eventId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Event ID
+
+    LimitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+
+    OffsetParam:
+      name: offset
+      in: query
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  schemas:
+    EventStatus:
+      type: string
+      enum:
+        - DRAFT
+        - REVIEW
+        - APPROVED
+        - PUBLISHED
+        - ON_SALE
+        - SOLD_OUT
+        - IN_PROGRESS
+        - COMPLETED
+        - CANCELLED
+        - POSTPONED
+
+    Event:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        tenant_id:
+          type: string
+          format: uuid
+        venue_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        short_description:
+          type: string
+          maxLength: 500
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        event_type:
+          type: string
+          enum: [single, recurring, series]
+        banner_image_url:
+          type: string
+          format: uri
+        event_date:
+          type: string
+          format: date-time
+        doors_open:
+          type: string
+          format: date-time
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        available_capacity:
+          type: integer
+          minimum: 0
+        tags:
+          type: array
+          items:
+            type: string
+        is_featured:
+          type: boolean
+        age_restriction:
+          type: string
+        blockchain_status:
+          type: string
+          enum: [pending, synced, failed]
+        event_pda:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        version:
+          type: integer
+          description: Optimistic locking version
+
+    CreateEventRequest:
+      type: object
+      required:
+        - name
+        - venue_id
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        short_description:
+          type: string
+          maxLength: 500
+        venue_id:
+          type: string
+          format: uuid
+        event_date:
+          type: string
+          format: date-time
+        ends_at:
+          type: string
+          format: date-time
+        doors_open:
+          type: string
+          format: date-time
+        capacity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        event_type:
+          type: string
+          enum: [single, recurring, series]
+          default: single
+        image_url:
+          type: string
+          format: uri
+        tags:
+          type: array
+          items:
+            type: string
+        is_featured:
+          type: boolean
+          default: false
+        age_restriction:
+          type: string
+        artist_wallet:
+          type: string
+          description: Solana wallet address for artist royalties
+        artist_percentage:
+          type: number
+          minimum: 0
+          maximum: 100
+        venue_percentage:
+          type: number
+          minimum: 0
+          maximum: 100
+
+    UpdateEventRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 5000
+        short_description:
+          type: string
+          maxLength: 500
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        image_url:
+          type: string
+          format: uri
+        tags:
+          type: array
+          items:
+            type: string
+        is_featured:
+          type: boolean
+        forceAdminOverride:
+          type: boolean
+          description: Admin override for locked fields
+        version:
+          type: integer
+          description: Current version for optimistic locking
+
+    EventListResponse:
+      type: object
+      properties:
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/Event'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    Pagination:
+      type: object
+      properties:
+        limit:
+          type: integer
+        offset:
+          type: integer
+        total:
+          type: integer
+
+    Capacity:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_id:
+          type: string
+          format: uuid
+        section_name:
+          type: string
+          maxLength: 100
+        section_code:
+          type: string
+          maxLength: 20
+        tier:
+          type: string
+          maxLength: 50
+        total_capacity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        available_capacity:
+          type: integer
+          minimum: 0
+        sold_count:
+          type: integer
+        pending_count:
+          type: integer
+        is_active:
+          type: boolean
+        is_visible:
+          type: boolean
+
+    CreateCapacityRequest:
+      type: object
+      required:
+        - section_name
+        - total_capacity
+      properties:
+        section_name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        section_code:
+          type: string
+          maxLength: 20
+        tier:
+          type: string
+          maxLength: 50
+        total_capacity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        row_config:
+          type: object
+          properties:
+            rows:
+              type: integer
+              minimum: 1
+              maximum: 1000
+            seats_per_row:
+              type: integer
+              minimum: 1
+              maximum: 1000
+
+    UpdateCapacityRequest:
+      type: object
+      properties:
+        section_name:
+          type: string
+          maxLength: 100
+        total_capacity:
+          type: integer
+          minimum: 1
+          maximum: 1000000
+        is_active:
+          type: boolean
+        is_visible:
+          type: boolean
+
+    CheckAvailabilityRequest:
+      type: object
+      required:
+        - quantity
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 100
+        seat_ids:
+          type: array
+          items:
+            type: string
+
+    AvailabilityResponse:
+      type: object
+      properties:
+        available:
+          type: boolean
+        available_count:
+          type: integer
+        requested_count:
+          type: integer
+
+    ReserveCapacityRequest:
+      type: object
+      required:
+        - quantity
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 100
+        seat_ids:
+          type: array
+          items:
+            type: string
+        reservation_duration_minutes:
+          type: integer
+          minimum: 1
+          maximum: 60
+          default: 15
+        pricing_id:
+          type: string
+          format: uuid
+
+    ReservationResponse:
+      type: object
+      properties:
+        reservation_id:
+          type: string
+          format: uuid
+        expires_at:
+          type: string
+          format: date-time
+        quantity:
+          type: integer
+
+    Pricing:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        event_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        tier:
+          type: string
+          maxLength: 50
+        base_price:
+          type: number
+          minimum: 0
+          maximum: 9999999.99
+        service_fee:
+          type: number
+          minimum: 0
+        facility_fee:
+          type: number
+          minimum: 0
+        tax_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+          default: USD
+        is_dynamic:
+          type: boolean
+        is_active:
+          type: boolean
+
+    CreatePricingRequest:
+      type: object
+      required:
+        - name
+        - base_price
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        tier:
+          type: string
+          maxLength: 50
+        base_price:
+          type: number
+          minimum: 0
+          maximum: 9999999.99
+        service_fee:
+          type: number
+          minimum: 0
+        facility_fee:
+          type: number
+          minimum: 0
+        tax_rate:
+          type: number
+          minimum: 0
+          maximum: 1
+        currency:
+          type: string
+          pattern: '^[A-Z]{3}$'
+        max_per_order:
+          type: integer
+          minimum: 1
+          maximum: 100
+        max_per_customer:
+          type: integer
+          minimum: 1
+          maximum: 1000
+
+    UpdatePricingRequest:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 500
+        base_price:
+          type: number
+          minimum: 0
+          maximum: 9999999.99
+        is_active:
+          type: boolean
+        is_visible:
+          type: boolean
+
+    CalculatePriceRequest:
+      type: object
+      required:
+        - quantity
+      properties:
+        quantity:
+          type: integer
+          minimum: 1
+          maximum: 100
+        apply_group_discount:
+          type: boolean
+        promo_code:
+          type: string
+          maxLength: 50
+
+    PriceCalculationResponse:
+      type: object
+      properties:
+        base_total:
+          type: number
+        service_fee_total:
+          type: number
+        facility_fee_total:
+          type: number
+        tax_total:
+          type: number
+        discount_total:
+          type: number
+        grand_total:
+          type: number
+        currency:
+          type: string
+        breakdown:
+          type: array
+          items:
+            type: object
+            properties:
+              label:
+                type: string
+              amount:
+                type: number
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+        timestamp:
+          type: string
+          format: date-time
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+        service:
+          type: string
+        version:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [UP, DOWN]
+            redis:
+              type: string
+              enum: [UP, DOWN]
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        message:
+          type: string
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+        requestId:
+          type: string
+
+  responses:
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Validation Error
+            code: VALIDATION_ERROR
+            details:
+              - field: name
+                message: Name is required
+
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Authentication required
+            code: UNAUTHORIZED
+
+    Forbidden:
+      description: Access denied
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: You do not have permission to access this resource
+            code: FORBIDDEN
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Event not found
+            code: NOT_FOUND
+
+    Conflict:
+      description: Resource conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Event with this name already exists at this venue on this date
+            code: CONFLICT
+
+    ServiceUnavailable:
+      description: Service unavailable
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: Database unavailable
+            code: DATABASE_CONNECTION_ERROR

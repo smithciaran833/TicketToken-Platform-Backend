@@ -1,8 +1,40 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { venueStripeOnboardingService } from '../services/venue-stripe-onboarding.service';
+import { venueStripeOnboardingService, createStripeClient, STRIPE_API_VERSION } from '../services/venue-stripe-onboarding.service';
 import { logger } from '../utils/logger';
+import { db } from '../config/database';
 
 const log = logger.child({ component: 'VenueStripeController' });
+
+// SECURITY FIX (ST8): Use centralized Stripe client with locked API version
+const stripe = createStripeClient();
+
+// SECURITY FIX (WH2-WH3): Webhook deduplication helper
+async function isWebhookProcessed(eventId: string): Promise<boolean> {
+  try {
+    const existing = await db('webhook_events')
+      .where('event_id', eventId)
+      .first();
+    return !!existing;
+  } catch (error) {
+    // Table might not exist yet, allow processing
+    log.warn('webhook_events table check failed, allowing processing', { eventId });
+    return false;
+  }
+}
+
+async function markWebhookProcessed(eventId: string, eventType: string, tenantId?: string): Promise<void> {
+  try {
+    await db('webhook_events').insert({
+      event_id: eventId,
+      event_type: eventType,
+      tenant_id: tenantId || null,
+      processed_at: new Date(),
+    }).onConflict('event_id').ignore();
+  } catch (error) {
+    // Log but don't fail - deduplication is best effort
+    log.warn('Failed to record webhook event', { eventId, eventType });
+  }
+}
 
 interface VenueParams {
   venueId: string;
@@ -184,14 +216,13 @@ export async function handleWebhook(
       });
     }
 
-    // Verify webhook signature
-    const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+    // SECURITY FIX (ST8): Use centralized Stripe client (already initialized above)
     let event;
 
     try {
       event = stripe.webhooks.constructEvent(
-        req.body,
-        sig,
+        req.body as string | Buffer,
+        sig as string,
         webhookSecret
       );
     } catch (err: any) {
@@ -201,20 +232,85 @@ export async function handleWebhook(
       });
     }
 
-    // Handle the event
+    // SECURITY FIX (WH2-WH3): Check for duplicate webhook events
+    const eventId = event.id;
+    if (await isWebhookProcessed(eventId)) {
+      log.info('Webhook event already processed, skipping', { eventId, eventType: event.type });
+      return reply.status(200).send({ received: true, duplicate: true });
+    }
+
+    // SECURITY FIX (AE7): Validate tenant context from webhook metadata
+    const venueId = event.data.object?.metadata?.venue_id;
+    const tenantId = event.data.object?.metadata?.tenant_id;
+    
     if (event.type === 'account.updated') {
+      // Validate venue_id exists in metadata for account events
+      if (!venueId) {
+        log.warn({
+          eventId,
+          accountId: event.data.object.id,
+          eventType: event.type,
+        }, 'Webhook event missing venue_id in metadata - security warning');
+        // Don't process events without proper venue context
+        return reply.status(200).send({ 
+          received: true, 
+          processed: false, 
+          reason: 'Missing venue_id in metadata' 
+        });
+      }
+
+      // Validate venue exists and belongs to expected tenant (if tenant_id provided)
+      if (tenantId) {
+        try {
+          const venue = await db('venues')
+            .where({ id: venueId, tenant_id: tenantId })
+            .first();
+          
+          if (!venue) {
+            log.error({
+              eventId,
+              venueId,
+              tenantId,
+              eventType: event.type,
+            }, 'Webhook tenant validation failed - venue not found or tenant mismatch');
+            return reply.status(200).send({ 
+              received: true, 
+              processed: false, 
+              reason: 'Tenant validation failed' 
+            });
+          }
+        } catch (dbError: any) {
+          log.error({ error: dbError.message, eventId }, 'Webhook tenant validation DB error');
+        }
+      }
+
       await venueStripeOnboardingService.handleAccountUpdated(event.data.object);
       log.info('Processed account.updated webhook for venue', {
+        eventId,
         accountId: event.data.object.id,
+        venueId,
+        tenantId,
       });
     }
 
+    // Mark event as processed with tenant context
+    await markWebhookProcessed(eventId, event.type, tenantId || venueId);
+
     return reply.status(200).send({ received: true });
   } catch (error: any) {
-    log.error('Failed to process venue webhook', { error: error.message });
-    return reply.status(500).send({
-      error: 'Failed to process webhook',
-      message: error.message,
+    // SECURITY FIX (ST2): Return 200 on processing errors after logging
+    // This prevents webhook retries for non-retryable errors and doesn't
+    // expose internal state. Stripe will keep retrying 4xx/5xx responses.
+    log.error('Failed to process venue webhook', { 
+      error: error.message,
+      stack: error.stack,
+    });
+    
+    // Return 200 so Stripe doesn't retry - we've logged the error for investigation
+    return reply.status(200).send({ 
+      received: true,
+      processed: false,
+      error: 'Internal processing error - logged for investigation',
     });
   }
 }

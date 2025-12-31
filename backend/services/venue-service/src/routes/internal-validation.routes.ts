@@ -2,7 +2,13 @@ import { FastifyPluginAsync } from 'fastify';
 import { db } from '../config/database';
 import * as crypto from 'crypto';
 
-const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET || 'internal-service-secret-change-in-production';
+// SECURITY FIX (SC2/SM2): Remove hardcoded default secret
+// Service will fail to start if INTERNAL_SERVICE_SECRET is not set
+const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
+
+if (!INTERNAL_SECRET) {
+  throw new Error('CRITICAL: INTERNAL_SERVICE_SECRET environment variable is required but not set');
+}
 
 const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
   // ISSUE #25 FIX: Add authentication hook for internal routes
@@ -30,14 +36,19 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
       return;
     }
 
-    // Verify signature
+    // Verify signature using constant-time comparison (HM18 fix)
     const payload = `${serviceName}:${timestamp}:${request.method}:${request.url}`;
     const expectedSignature = crypto
       .createHmac('sha256', INTERNAL_SECRET)
       .update(payload)
       .digest('hex');
 
-    if (signature !== expectedSignature) {
+    // SECURITY FIX (HM18): Use constant-time comparison to prevent timing attacks
+    const signatureBuffer = Buffer.from(signature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    
+    if (signatureBuffer.length !== expectedBuffer.length || 
+        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
       return reply.status(401).send({ error: 'Invalid signature' });
     }
 

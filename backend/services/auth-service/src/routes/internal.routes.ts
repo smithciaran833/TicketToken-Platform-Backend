@@ -1,6 +1,6 @@
 /**
  * Internal Routes - For service-to-service communication only
- * 
+ *
  * These endpoints are protected by S2S authentication and are not
  * accessible to end users.
  */
@@ -8,6 +8,7 @@
 import { FastifyInstance } from 'fastify';
 import { verifyServiceToken } from '../middleware/s2s.middleware';
 import { pool } from '../config/database';
+import { responseSchemas } from '../validators/response.schemas';
 
 export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   // Apply S2S authentication to all routes in this group
@@ -17,7 +18,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Validate user permissions for a specific action
    * Called by other services to check if a user can perform an action
    */
-  fastify.post('/validate-permissions', async (request, reply) => {
+  fastify.post('/validate-permissions', {
+    schema: { response: responseSchemas.validatePermissions },
+  }, async (request, reply) => {
     const { userId, permissions, venueId } = request.body as {
       userId: string;
       permissions: string[];
@@ -27,8 +30,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       // Get user with permissions
       const userResult = await pool.query(
-        `SELECT id, role, permissions, tenant_id 
-         FROM users 
+        `SELECT id, role, permissions, tenant_id
+         FROM users
          WHERE id = $1 AND deleted_at IS NULL`,
         [userId]
       );
@@ -44,8 +47,8 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       const userPermissions: string[] = user.permissions || [];
 
       // Check if user has all required permissions
-      const hasPermissions = permissions.every(perm => 
-        userPermissions.includes(perm) || 
+      const hasPermissions = permissions.every(perm =>
+        userPermissions.includes(perm) ||
         userPermissions.includes('*') ||
         user.role === 'admin' ||
         user.role === 'superadmin'
@@ -55,12 +58,12 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       let venueRole = null;
       if (venueId) {
         const venueRoleResult = await pool.query(
-          `SELECT role FROM user_venue_roles 
+          `SELECT role FROM user_venue_roles
            WHERE user_id = $1 AND venue_id = $2 AND is_active = true
            AND (expires_at IS NULL OR expires_at > NOW())`,
           [userId, venueId]
         );
-        
+
         if (venueRoleResult.rows.length > 0) {
           venueRole = venueRoleResult.rows[0].role;
         }
@@ -85,7 +88,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * Bulk validate multiple users (for batch operations)
    */
-  fastify.post('/validate-users', async (request, reply) => {
+  fastify.post('/validate-users', {
+    schema: { response: responseSchemas.validateUsers },
+  }, async (request, reply) => {
     const { userIds } = request.body as { userIds: string[] };
 
     if (!userIds || userIds.length === 0) {
@@ -101,7 +106,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       const result = await pool.query(
         `SELECT id, email, role, tenant_id, email_verified, mfa_enabled
-         FROM users 
+         FROM users
          WHERE id = ANY($1) AND deleted_at IS NULL`,
         [userIds]
       );
@@ -122,7 +127,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * Get user's tenant context (for multi-tenant operations)
    */
-  fastify.get('/user-tenant/:userId', async (request, reply) => {
+  fastify.get('/user-tenant/:userId', {
+    schema: { response: responseSchemas.userTenant },
+  }, async (request, reply) => {
     const { userId } = request.params as { userId: string };
 
     try {
@@ -152,7 +159,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   /**
    * Health check for service mesh
    */
-  fastify.get('/health', async (request, reply) => {
+  fastify.get('/health', {
+    schema: { response: responseSchemas.internalHealth },
+  }, async (request, reply) => {
     return reply.send({
       status: 'healthy',
       service: 'auth-service',

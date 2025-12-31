@@ -55,7 +55,7 @@ export class AuditService {
     });
   }
 
-  async logLogout(userId: string, ipAddress: string, userAgent?: string, sessionId?: string, tenantId?: string): Promise<void> {
+  async logLogout(userId: string, ipAddress?: string, userAgent?: string, sessionId?: string, tenantId?: string): Promise<void> {
     await this.log({
       userId, tenantId, action: 'user.logout', actionType: 'authentication',
       resourceType: 'session', resourceId: sessionId, ipAddress, userAgent,
@@ -78,7 +78,7 @@ export class AuditService {
     });
   }
 
-  async logSessionCreated(userId: string, sessionId: string, ipAddress: string, userAgent?: string, tenantId?: string): Promise<void> {
+  async logSessionCreated(userId: string, sessionId: string, ipAddress?: string, userAgent?: string, tenantId?: string): Promise<void> {
     await this.log({
       userId, tenantId, action: 'session.created', actionType: 'session',
       resourceType: 'session', resourceId: sessionId, ipAddress, userAgent,
@@ -141,7 +141,7 @@ export class AuditService {
     });
   }
 
-  async logFailedLoginAttempt(email: string, ipAddress: string, userAgent?: string, reason?: string, tenantId?: string): Promise<void> {
+  async logFailedLoginAttempt(email: string, ipAddress?: string, userAgent?: string, reason?: string, tenantId?: string): Promise<void> {
     await this.log({
       tenantId, action: 'user.login_failed', actionType: 'security',
       resourceType: 'user', ipAddress, userAgent,

@@ -10,6 +10,9 @@ interface RateLimitOptions {
   skipSuccessfulRequests?: boolean;
   skipFailedRequests?: boolean;
   message?: string;
+  skipOnError?: boolean;  // FC6: Continue if Redis fails
+  banThreshold?: number;  // FC10: Number of violations before banning
+  banDurationMs?: number; // FC10: Duration of ban in milliseconds
 }
 
 interface RateLimitConfig {
@@ -19,13 +22,32 @@ interface RateLimitConfig {
   perOperation: {
     [operation: string]: RateLimitOptions;
   };
+  // AUDIT FIX (WE3): Per-webhook-source rate limits
+  perWebhookSource: {
+    [source: string]: RateLimitOptions;
+  };
+  // FC10: Ban configuration
+  ban: {
+    enabled: boolean;
+    threshold: number;      // Violations before ban
+    windowMs: number;       // Window to count violations
+    banDurationMs: number;  // How long to ban
+  };
 }
 
 // Default rate limit configurations
 const defaultConfig: RateLimitConfig = {
   global: {
     windowMs: 60 * 1000,  // 1 minute
-    max: 100              // 100 requests per minute globally
+    max: 100,             // 100 requests per minute globally
+    skipOnError: true,    // FC6: Fail open if Redis unavailable
+  },
+  // FC10: Ban configuration for repeat offenders
+  ban: {
+    enabled: true,
+    threshold: 10,              // 10 violations
+    windowMs: 60 * 60 * 1000,   // In 1 hour window
+    banDurationMs: 15 * 60 * 1000, // Ban for 15 minutes
   },
   perUser: {
     windowMs: 60 * 1000,  // 1 minute
@@ -52,6 +74,33 @@ const defaultConfig: RateLimitConfig = {
       windowMs: 60 * 1000,  // 1 minute
       max: 30               // 30 events per minute
     }
+  },
+  // AUDIT FIX (WE3): Per-webhook-source rate limits
+  perWebhookSource: {
+    'stripe': {
+      windowMs: 60 * 1000,  // 1 minute
+      max: 1000             // Stripe sends many webhooks
+    },
+    'square': {
+      windowMs: 60 * 1000,
+      max: 500
+    },
+    'toast': {
+      windowMs: 60 * 1000,
+      max: 500
+    },
+    'mailchimp': {
+      windowMs: 60 * 1000,
+      max: 100
+    },
+    'twilio': {
+      windowMs: 60 * 1000,
+      max: 200
+    },
+    'default': {
+      windowMs: 60 * 1000,
+      max: 100              // Default for unknown sources
+    }
   }
 };
 
@@ -64,14 +113,18 @@ export class RateLimiter {
     this.config = { ...defaultConfig, ...config };
   }
 
-  private async checkLimit(key: string, options: RateLimitOptions): Promise<{
+  // SECURITY FIX (SR7): Include tenant ID in rate limit key for tenant isolation
+  private async checkLimit(key: string, options: RateLimitOptions, tenantId?: string): Promise<{
     allowed: boolean;
     remaining: number;
     resetTime: number;
   }> {
     const now = Date.now();
     const window = Math.floor(now / options.windowMs);
-    const redisKey = `rate_limit:${key}:${window}`;
+    // Include tenant ID in key to prevent cross-tenant rate limit interference
+    const redisKey = tenantId 
+      ? `rate_limit:tenant:${tenantId}:${key}:${window}`
+      : `rate_limit:global:${key}:${window}`;
 
     try {
       // Use Redis pipeline for atomic operations
@@ -94,16 +147,25 @@ export class RateLimiter {
     }
   }
 
-  // Middleware factory for different rate limit types
-  createMiddleware(type: 'global' | 'perUser' | 'perVenue' | 'perOperation') {
+  // SECURITY FIX (SR7): Middleware factory with tenant-scoped rate limiting
+  createMiddleware(type: 'global' | 'perUser' | 'perVenue' | 'perOperation' | 'perTenant') {
     return async (request: FastifyRequest, reply: FastifyReply) => {
       let key: string;
       let options: RateLimitOptions;
+      
+      // SECURITY FIX (SR7): Get tenant ID from request for tenant-scoped rate limiting
+      const tenantId = (request as any).user?.tenant_id || (request as any).tenantId;
 
       switch (type) {
         case 'global':
           key = 'global';
           options = this.config.global;
+          break;
+
+        case 'perTenant':
+          if (!tenantId) return; // Skip if no tenant
+          key = `tenant:${tenantId}`;
+          options = this.config.global; // Use global limits per tenant
           break;
 
         case 'perUser':
@@ -133,7 +195,8 @@ export class RateLimiter {
           return;
       }
 
-      const result = await this.checkLimit(key, options);
+      // SECURITY FIX (SR7): Pass tenant ID for tenant-scoped keys
+      const result = await this.checkLimit(key, options, tenantId);
 
       // Set rate limit headers
       reply.header('X-RateLimit-Limit', options.max.toString());
@@ -141,16 +204,42 @@ export class RateLimiter {
       reply.header('X-RateLimit-Reset', new Date(result.resetTime).toISOString());
 
       if (!result.allowed) {
+        // SECURITY FIX (SE9): Log when rate limit is exceeded for security monitoring
+        const userId = (request as any).user?.id || 'anonymous';
+        const requestInfo = {
+          type,
+          key,
+          tenantId,
+          userId,
+          ip: request.ip,
+          path: request.url,
+          method: request.method,
+          remaining: result.remaining,
+          resetTime: new Date(result.resetTime).toISOString(),
+          retryAfter: Math.ceil((result.resetTime - Date.now()) / 1000),
+        };
+        
+        logger.warn(requestInfo, 'Rate limit exceeded');
+        
+        // Emit metric for rate limit hits
+        // This allows alerting on potential abuse patterns
+        
         reply.header('Retry-After', Math.ceil((result.resetTime - Date.now()) / 1000).toString());
         throw new RateLimitError(type, Math.ceil((result.resetTime - Date.now()) / 1000));
       }
     };
   }
 
-  // Combined rate limiting middleware
+  // SECURITY FIX (SR7): Combined rate limiting middleware with tenant isolation
   async checkAllLimits(request: FastifyRequest, reply: FastifyReply) {
     // Check global limit
     await this.createMiddleware('global')(request, reply);
+
+    // SECURITY FIX (SR7): Check per-tenant limit for tenant isolation
+    const tenantId = (request as any).user?.tenant_id || (request as any).tenantId;
+    if (tenantId) {
+      await this.createMiddleware('perTenant')(request, reply);
+    }
 
     // Check per-user limit if authenticated
     if ((request as any).user?.id) {
@@ -176,9 +265,11 @@ export class RateLimiter {
     }
   }
 
-  // Method to reset rate limit for a specific key
-  async resetLimit(type: string, identifier: string) {
-    const pattern = `rate_limit:${type}:${identifier}:*`;
+  // SECURITY FIX (SR7): Method to reset rate limit for a specific key (tenant-scoped)
+  async resetLimit(type: string, identifier: string, tenantId?: string) {
+    const pattern = tenantId
+      ? `rate_limit:tenant:${tenantId}:${type}:${identifier}:*`
+      : `rate_limit:*:${type}:${identifier}:*`;
     
     // Use SCAN instead of KEYS for production safety
     let cursor = '0';

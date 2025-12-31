@@ -4,10 +4,31 @@ module.exports = {
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
+  
+  // AUDIT FIX (TEST-SETUP): Run setup file before each test suite
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  
+  // AUDIT FIX (TEST-WORKERS): Limit workers for CI stability
+  // Use 50% of available CPUs to prevent CI resource exhaustion
+  maxWorkers: process.env.CI ? '50%' : undefined,
+  
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
     '!src/**/*.d.ts',
+    '!src/migrations/**',
+    '!src/**/*.spec.ts',
+    '!src/**/*.test.ts',
   ],
+  // CRITICAL FIX: Coverage thresholds for audit compliance
+  coverageThreshold: {
+    global: {
+      branches: 80,
+      functions: 80,
+      lines: 80,
+      statements: 80,
+    },
+  },
+  coverageReporters: ['text', 'lcov', 'html'],
   testTimeout: 30000,
   transformIgnorePatterns: [
     'node_modules/(?!(node-fetch|data-uri-to-buffer|fetch-blob|formdata-polyfill)/)',

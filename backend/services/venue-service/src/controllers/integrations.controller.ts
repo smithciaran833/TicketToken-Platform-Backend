@@ -3,7 +3,7 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { authenticate, requireVenueAccess, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import { createIntegrationSchema, updateIntegrationSchema } from '../schemas/integration.schema';
-import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors';
+import { NotFoundError, ConflictError, ForbiddenError, UnauthorizedError } from '../utils/errors';
 import { venueOperations } from '../utils/metrics';
 
 interface VenueParams {
@@ -28,8 +28,10 @@ interface UpdateIntegrationBody {
 
 // Helper middleware for tenant context
 async function addTenantContext(request: any, reply: any) {
-  const user = request.user;
-  const tenantId = user?.tenant_id || '00000000-0000-0000-0000-000000000001';
+  const tenantId = request.user?.tenant_id;
+  if (!tenantId) {
+    throw new UnauthorizedError('Missing tenant context');
+  }
   request.tenantId = tenantId;
 }
 

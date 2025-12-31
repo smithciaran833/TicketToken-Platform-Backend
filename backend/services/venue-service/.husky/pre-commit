@@ -1,0 +1,42 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Pre-commit hook for venue-service (RV4)
+# Ensures code quality before commits
+
+echo "🔍 Running pre-commit checks..."
+
+# Navigate to service directory
+cd backend/services/venue-service || exit 1
+
+# Run linting
+echo "📝 Running linter..."
+npm run lint || {
+  echo "❌ Linting failed. Please fix the errors before committing."
+  exit 1
+}
+
+# Run type checking
+echo "🔎 Running type check..."
+npm run typecheck || {
+  echo "❌ Type checking failed. Please fix the errors before committing."
+  exit 1
+}
+
+# Run unit tests (fast tests only)
+echo "🧪 Running unit tests..."
+npm run test:unit -- --passWithNoTests || {
+  echo "❌ Unit tests failed. Please fix the errors before committing."
+  exit 1
+}
+
+# Check for secrets in staged files
+echo "🔐 Checking for secrets..."
+if command -v detect-secrets &> /dev/null; then
+  git diff --cached --name-only | xargs detect-secrets scan --baseline .secrets.baseline || {
+    echo "⚠️  Potential secrets detected. Please review."
+    exit 1
+  }
+fi
+
+echo "✅ All pre-commit checks passed!"

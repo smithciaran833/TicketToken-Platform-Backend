@@ -4,7 +4,7 @@ import { ErrorResponseBuilder } from '../utils/error-response';
 import { authenticate, requireVenueAccess, AuthenticatedRequest } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import { createVenueSchema, updateVenueSchema, venueQuerySchema } from '../schemas/venue.schema';
-import { NotFoundError, ConflictError, ForbiddenError } from '../utils/errors';
+import { NotFoundError, ConflictError, ForbiddenError, UnauthorizedError } from '../utils/errors';
 import { venueOperations } from '../utils/metrics';
 import { settingsRoutes } from './settings.controller';
 import { integrationRoutes } from './integrations.controller';
@@ -43,8 +43,10 @@ interface VenueParams {
 
 // Helper middleware for tenant context
 async function addTenantContext(request: any, reply: any) {
-  const user = request.user;
-  const tenantId = user?.tenant_id || '00000000-0000-0000-0000-000000000001';
+  const tenantId = request.user?.tenant_id;
+  if (!tenantId) {
+    throw new UnauthorizedError('Missing tenant context');
+  }
   request.tenantId = tenantId;
 }
 

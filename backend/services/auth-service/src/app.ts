@@ -15,9 +15,11 @@ import { pool } from './config/database';
 import { getRedis } from './config/redis';
 import { correlationMiddleware } from './middleware/correlation.middleware';
 import { registerIdempotencyHooks } from './middleware/idempotency.middleware';
+import { registerLoadShedding } from './middleware/load-shedding.middleware';
 import { withCorrelation, logger } from './utils/logger';
 import { RateLimitError } from './errors';
 import { swaggerOptions, swaggerUiOptions } from './config/swagger';
+import { httpRequestsTotal, httpRequestDurationSeconds } from './utils/metrics';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -33,7 +35,7 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     // SEC-R13: Trust proxy for X-Forwarded-* headers
     // In production, configure explicit trusted proxy IPs
-    trustProxy: env.NODE_ENV === 'production' 
+    trustProxy: env.NODE_ENV === 'production'
       ? (process.env.TRUSTED_PROXIES?.split(',') || true)
       : true,
     requestIdHeader: 'x-request-id',
@@ -72,11 +74,33 @@ export async function buildApp(): Promise<FastifyInstance> {
     return withCorrelation(correlationId, () => {});
   });
 
+  // ============================================
+  // M2: HTTP Metrics - Track all requests
+  // ============================================
+  app.addHook('onRequest', async (request) => {
+    (request as any).metricsStartTime = process.hrtime.bigint();
+  });
+
+  app.addHook('onResponse', async (request, reply) => {
+    const startTime = (request as any).metricsStartTime;
+    if (startTime) {
+      const duration = Number(process.hrtime.bigint() - startTime) / 1e9;
+      const route = request.routeOptions?.url || request.url.split('?')[0];
+      const labels = {
+        method: request.method,
+        route: route,
+        status_code: reply.statusCode.toString(),
+      };
+      httpRequestsTotal.inc(labels);
+      httpRequestDurationSeconds.observe(labels, duration);
+    }
+  });
+
   // DOC-API1, DOC-API2: OpenAPI/Swagger documentation
   await app.register(swagger, swaggerOptions);
   await app.register(swaggerUi, swaggerUiOptions);
 
-  // HC-F7: Under pressure - automatic load shedding
+  // HC-F7: Under pressure - automatic load shedding (basic)
   await app.register(underPressure, {
     maxEventLoopDelay: 1000,
     maxHeapUsedBytes: 500 * 1024 * 1024,
@@ -148,13 +172,12 @@ export async function buildApp(): Promise<FastifyInstance> {
   // SEC-R12: Global rate limiting with Redis store
   const redis = getRedis();
   await app.register(rateLimit, {
-    global: true, // Apply to all routes as catch-all
-    max: 1000, // 1000 requests per window (generous global limit)
+    global: true,
+    max: 1000,
     timeWindow: '1 minute',
     redis: redis,
-    skipOnError: true, // Fail-open if Redis is down
+    skipOnError: true,
     keyGenerator: (request) => {
-      // Use IP + user ID if authenticated for more accurate limiting
       const userId = (request as any).user?.id;
       return userId ? `${request.ip}:${userId}` : request.ip;
     },
@@ -179,6 +202,11 @@ export async function buildApp(): Promise<FastifyInstance> {
       'x-ratelimit-reset': true,
     },
   });
+
+  // ============================================
+  // PRIORITY-BASED LOAD SHEDDING
+  // ============================================
+  registerLoadShedding(app);
 
   // Create and attach dependency container
   const container = createDependencyContainer();
@@ -206,7 +234,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     const statusCode = error.statusCode || 500;
     const correlationId = request.correlationId || request.id;
 
-    // Under pressure errors
     if (error.code === 'FST_UNDER_PRESSURE') {
       return reply
         .status(503)
@@ -223,7 +250,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // CSRF token errors
     if (error.code === 'FST_CSRF_INVALID_TOKEN' || error.code === 'FST_CSRF_MISSING_TOKEN') {
       return reply
         .status(403)
@@ -239,7 +265,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Rate limiting with proper headers
     if (error instanceof RateLimitError || error.name === 'RateLimitError' || error.constructor?.name === 'RateLimitError') {
       const ttl = error.ttl || 60;
       const limit = error.limit || 100;
@@ -264,7 +289,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Fastify rate-limit plugin errors
     if (error.code === 'FST_ERR_RATE_LIMIT_EXCEEDED' || statusCode === 429) {
       const retryAfter = error.retryAfter || 60;
       return reply
@@ -287,7 +311,6 @@ export async function buildApp(): Promise<FastifyInstance> {
 
     const errorMessage = error.message || '';
 
-    // 422 Unprocessable Entity
     if (statusCode === 422) {
       return reply
         .status(422)
@@ -303,7 +326,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // 409 Conflict
     if (errorMessage.includes('already registered') || errorMessage.includes('already exists')) {
       return reply
         .status(409)
@@ -318,7 +340,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // 401 Unauthorized
     if (errorMessage.includes('Invalid credentials') ||
         errorMessage.includes('Invalid password') ||
         errorMessage.includes('Invalid refresh token') ||
@@ -336,7 +357,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // 400 Bad Request - validation errors
     if (statusCode === 400 || error.validation) {
       const detail = error.validation
         ? 'Validation error'
@@ -359,7 +379,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
-    // Default 500 - hide stack traces in production (RH7)
     const detail = env.NODE_ENV === 'production'
       ? 'Internal server error'
       : error.message || 'Internal server error';
