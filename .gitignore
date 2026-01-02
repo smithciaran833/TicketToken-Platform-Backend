@@ -36,3 +36,4 @@ coverage/
 money_migration_backup_20250930_132830.sql
 smart-contracts/target/
 smart-contracts/target/
+backend/services/minting-service/devnet-wallet.json
