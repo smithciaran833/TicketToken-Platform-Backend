@@ -558,7 +558,7 @@ describe('Tenant Middleware', () => {
         [validTenantId]
       );
       expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining("set_config('app.tenant_id'"),
+        expect.stringContaining("set_config('app.current_tenant_id'"),
         [validTenantId]
       );
     });
@@ -595,7 +595,7 @@ describe('Tenant Middleware', () => {
       expect(result).toBe('result');
       expect(mockClient.query).toHaveBeenCalledWith('BEGIN');
       expect(mockClient.query).toHaveBeenCalledWith(
-        expect.stringContaining("set_config('app.tenant_id'"),
+        expect.stringContaining("set_config('app.current_tenant_id'"),
         [validTenantId]
       );
       expect(mockClient.query).toHaveBeenCalledWith('COMMIT');

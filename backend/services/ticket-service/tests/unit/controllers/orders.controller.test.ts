@@ -200,7 +200,7 @@ describe('OrdersController', () => {
       await controller.getOrderById(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockClient.query).toHaveBeenCalledWith(
-        `SELECT set_config('app.current_tenant', $1, true)`,
+        `SELECT set_config('app.current_tenant_id', $1, true)`,
         ['tenant-456']
       );
     });
@@ -234,7 +234,7 @@ describe('OrdersController', () => {
       await controller.getOrderById(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockClient.query).toHaveBeenCalledWith(
-        `SELECT set_config('app.current_tenant', $1, true)`,
+        `SELECT set_config('app.current_tenant_id', $1, true)`,
         ['user-tenant-789']
       );
     });

@@ -49,7 +49,7 @@ describe('tenantMiddleware', () => {
     await tenantMiddleware(mockRequest, mockReply);
 
     expect(mockQuery).toHaveBeenCalledWith(
-      'SET app.current_tenant = $1',
+      'SET app.current_tenant_id = $1',
       ['tenant-456']
     );
   });

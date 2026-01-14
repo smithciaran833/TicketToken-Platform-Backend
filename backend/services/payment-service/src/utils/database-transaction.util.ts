@@ -353,7 +353,7 @@ export class TransactionManager {
     // Set tenant context for RLS
     if (options.tenantId) {
       await client.query(
-        `SELECT set_config('app.tenant_id', $1, true)`,
+        `SELECT set_config('app.current_tenant_id', $1, true)`,
         [options.tenantId]
       );
     }

@@ -479,7 +479,7 @@ export class RefundController {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
-        await client.query("SELECT set_config('app.tenant_id', $1, false)", [tenantId]);
+        await client.query("SELECT set_config('app.current_tenant_id', $1, false)", [tenantId]);
 
         // Store refund with REAL Stripe refund ID
         await client.query(
@@ -882,7 +882,7 @@ export class RefundController {
       const client = await db.connect();
       try {
         await client.query('BEGIN');
-        await client.query("SELECT set_config('app.tenant_id', $1, false)", [tenantId]);
+        await client.query("SELECT set_config('app.current_tenant_id', $1, false)", [tenantId]);
 
         // Insert main refund record
         await client.query(

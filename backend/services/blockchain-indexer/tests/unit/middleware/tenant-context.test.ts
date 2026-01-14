@@ -45,7 +45,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
       await setTenantContext(mockRequest, mockReply);
 
       expect(mockRequest.tenantId).toBe('tenant-123');
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', ['tenant-123']);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', ['tenant-123']);
     });
 
     it('should extract tenant ID from user.tenantId', async () => {
@@ -54,7 +54,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
       await setTenantContext(mockRequest, mockReply);
 
       expect(mockRequest.tenantId).toBe('tenant-456');
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', ['tenant-456']);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', ['tenant-456']);
     });
 
     it('should prefer user.tenant_id over user.tenantId', async () => {
@@ -80,7 +80,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
       await setTenantContext(mockRequest, mockReply);
 
       expect(mockRequest.tenantId).toBe(DEFAULT_TENANT_ID);
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', [DEFAULT_TENANT_ID]);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', [DEFAULT_TENANT_ID]);
     });
 
     it('should prioritize user.tenant_id over request.tenantId', async () => {
@@ -103,7 +103,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
 
       await setTenantContext(mockRequest, mockReply);
 
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', ['tenant-123']);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', ['tenant-123']);
     });
 
     it('should use db from request.server', async () => {
@@ -155,7 +155,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
 
       await setTenantContext(mockRequest, mockReply);
 
-      expect(pgDb.query).toHaveBeenCalledWith('SET LOCAL app.current_tenant = $1', ['tenant-123']);
+      expect(pgDb.query).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = $1', ['tenant-123']);
     });
 
     it('should prefer db.raw over db.query', async () => {
@@ -329,7 +329,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
       await setTenantContext(mockRequest, mockReply);
 
       expect(mockRequest.tenantId).toBe(uuid);
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', [uuid]);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', [uuid]);
     });
 
     it('should handle numeric tenant ID', async () => {
@@ -389,7 +389,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
       await setTenantContext(mockRequest, mockReply);
 
       expect(mockRequest.tenantId).toBe('tenant-456');
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', ['tenant-456']);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', ['tenant-456']);
       expect(mockRequest.log.debug).toHaveBeenCalled();
     });
 
@@ -409,7 +409,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
       await setTenantContext(mockRequest, mockReply);
 
       expect(mockRequest.tenantId).toBe(DEFAULT_TENANT_ID);
-      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', [DEFAULT_TENANT_ID]);
+      expect(mockDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', [DEFAULT_TENANT_ID]);
     });
 
     it('should work with Knex database connection', async () => {
@@ -422,7 +422,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
 
       await setTenantContext(mockRequest, mockReply);
 
-      expect(knexDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant = ?', ['tenant-knex']);
+      expect(knexDb.raw).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = ?', ['tenant-knex']);
     });
 
     it('should work with pg database connection', async () => {
@@ -435,7 +435,7 @@ describe('src/middleware/tenant-context.ts - Comprehensive Unit Tests', () => {
 
       await setTenantContext(mockRequest, mockReply);
 
-      expect(pgDb.query).toHaveBeenCalledWith('SET LOCAL app.current_tenant = $1', ['tenant-pg']);
+      expect(pgDb.query).toHaveBeenCalledWith('SET LOCAL app.current_tenant_id = $1', ['tenant-pg']);
     });
   });
 

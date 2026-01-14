@@ -252,7 +252,7 @@ export async function setDatabaseTenantContext(
   }
 
   // Set the tenant_id for row-level security
-  await db.raw(`SET LOCAL app.tenant_id = ?`, [tenantId]);
+  await db.raw(`SET LOCAL app.current_tenant_id = ?`, [tenantId]);
   
   logger.debug({
     event: 'database_tenant_context_set',

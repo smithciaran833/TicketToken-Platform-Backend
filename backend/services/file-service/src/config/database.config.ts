@@ -181,7 +181,7 @@ export async function withTenantContext<T>(
     
     try {
       // Set tenant context for RLS
-      await client.query(`SET LOCAL app.tenant_id = '${tenantId}'`);
+      await client.query(`SET LOCAL app.current_tenant_id = '${tenantId}'`);
       const result = await callback(client);
       return result;
     } finally {

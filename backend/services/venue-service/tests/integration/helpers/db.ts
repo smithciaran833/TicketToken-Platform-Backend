@@ -163,7 +163,7 @@ export async function checkDbConnection(): Promise<boolean> {
  */
 export async function setTenantContext(tenantId: string): Promise<void> {
   const db = getTestDb();
-  await db.raw(`SET app.tenant_id = '${tenantId}'`);
+  await db.raw(`SET app.current_tenant_id = '${tenantId}'`);
 }
 
 /**
@@ -171,5 +171,5 @@ export async function setTenantContext(tenantId: string): Promise<void> {
  */
 export async function clearTenantContext(): Promise<void> {
   const db = getTestDb();
-  await db.raw('RESET app.tenant_id');
+  await db.raw('RESET app.current_tenant_id');
 }

@@ -268,9 +268,9 @@ export async function setRlsContext(
       [tenantId]
     );
     
-    // Also set the standard app.tenant_id for RLS policies
+    // Also set the standard app.current_tenant_id for RLS policies
     await db.query(
-      `SELECT set_config('app.tenant_id', $1, true)`,
+      `SELECT set_config('app.current_tenant_id', $1, true)`,
       [tenantId]
     );
   } catch (error) {
@@ -307,7 +307,7 @@ export async function bypassRlsForAdmin(
     try {
       const db = DatabaseService.getPool();
       await db.query(
-        `SELECT set_config('app.bypass_rls', 'true', true)`
+        `SELECT set_config('app.is_system_user', 'true', true)`
       );
     } catch (error) {
       log.error({ error }, 'Failed to set RLS bypass');
@@ -362,7 +362,7 @@ export async function withTenantContext<T>(
     
     // QRY-2: Set tenant context using SET LOCAL (transaction-scoped)
     await client.query(
-      `SELECT set_config('app.tenant_id', $1, true)`,
+      `SELECT set_config('app.current_tenant_id', $1, true)`,
       [tenantId]
     );
     await client.query(
@@ -417,7 +417,7 @@ export async function withTenantReadContext<T>(
     
     // QRY-2: Set tenant context
     await client.query(
-      `SELECT set_config('app.tenant_id', $1, true)`,
+      `SELECT set_config('app.current_tenant_id', $1, true)`,
       [tenantId]
     );
     
