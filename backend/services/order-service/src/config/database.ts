@@ -25,7 +25,9 @@ export async function initializeDatabase(): Promise<Pool> {
       const dbIp = dbIps[0];
       logger.info(`Resolved ${dbHost} to ${dbIp}`);
 
-      // Create pool using resolved IP and individual config vars
+      // SEC-DB1, CP7: Create pool with TLS configuration
+      const isProduction = process.env.NODE_ENV === 'production';
+      
       pool = new Pool({
         host: dbIp, // Use resolved IP instead of hostname
         port: parseInt(process.env.DB_PORT || '6432', 10),
@@ -35,6 +37,19 @@ export async function initializeDatabase(): Promise<Pool> {
         max: parseInt(process.env.DB_POOL_MAX || '10', 10),
         idleTimeoutMillis: 30000,
         connectionTimeoutMillis: 5000,
+        // HIGH: Statement timeout to prevent long-running queries
+        statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000', 10),
+        // HIGH: Query timeout
+        query_timeout: parseInt(process.env.DB_QUERY_TIMEOUT || '30000', 10),
+        // SEC-DB1, CP7: SSL/TLS configuration for production
+        ssl: isProduction ? {
+          rejectUnauthorized: true,
+          ca: process.env.DB_SSL_CA || undefined,
+          cert: process.env.DB_SSL_CERT || undefined,
+          key: process.env.DB_SSL_KEY || undefined,
+        } : process.env.DB_SSL_ENABLED === 'true' ? {
+          rejectUnauthorized: false,
+        } : false,
       });
 
       pool.on('error', (err) => {

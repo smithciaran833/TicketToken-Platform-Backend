@@ -1,10 +1,25 @@
-import Fastify, { FastifyInstance } from 'fastify';
+/**
+ * Fastify Application Setup
+ * 
+ * AUDIT FIX: ERR-4 - RFC 7807 compliant error handling
+ */
+
+import Fastify, { FastifyInstance, FastifyError } from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { config } from './config';
 import { connectDatabases } from './config/database';
-import { logger } from './utils/logger';
+import { 
+  AppError, 
+  BadRequestError, 
+  UnauthorizedError, 
+  ForbiddenError, 
+  NotFoundError,
+  TooManyRequestsError,
+  InternalServerError,
+  toRFC7807Response 
+} from './errors';
 
 // Import routes
 import healthRoutes from './routes/health.routes';
@@ -73,7 +88,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   }
 
   // Register routes
-  await app.register(healthRoutes);
+  await healthRoutes.registerHealthRoutes(app);
   await app.register(analyticsRoutes, { prefix: '/api/analytics' });
   await app.register(metricsRoutes, { prefix: '/api/metrics' });
   await app.register(dashboardRoutes, { prefix: '/api/dashboards' });
@@ -87,21 +102,119 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(realtimeRoutes, { prefix: '/api/realtime' });
   await app.register(widgetRoutes, { prefix: '/api/widgets' });
 
-  // Global error handler
-  app.setErrorHandler((error, request, reply) => {
-    app.log.error(error);
+  // =============================================================================
+  // AUDIT FIX: ERR-4 - RFC 7807 Compliant Global Error Handler
+  // =============================================================================
+  app.setErrorHandler((error: FastifyError | AppError | Error, request, reply) => {
+    const requestId = request.id || request.headers['x-request-id'] as string;
+    
+    // Log error with context (but not in response)
+    app.log.error({
+      err: error,
+      requestId,
+      method: request.method,
+      url: request.url,
+      // Don't log request body in production - may contain PII
+      ...(config.env === 'development' && { body: request.body }),
+    }, 'Request error');
 
-    const statusCode = error.statusCode || 500;
-    const message = error.message || 'Internal Server Error';
+    // Handle AppError (our custom errors) - already RFC 7807 compliant
+    if (error instanceof AppError) {
+      const rfc7807Response = toRFC7807Response(error, request.url, requestId);
+      return reply
+        .status(error.statusCode)
+        .header('Content-Type', 'application/problem+json')
+        .send(rfc7807Response);
+    }
 
-    reply.status(statusCode).send({
-      error: {
-        message,
-        statusCode,
-        timestamp: new Date().toISOString(),
-        path: request.url,
-      },
-    });
+    // Handle Fastify validation errors
+    if ('validation' in error && error.validation) {
+      const validationError = new BadRequestError(
+        'Validation failed',
+        'VALIDATION_ERROR',
+        {
+          errors: error.validation.map((v: any) => ({
+            field: v.instancePath || v.dataPath || 'unknown',
+            message: v.message,
+            keyword: v.keyword,
+          })),
+        }
+      );
+      const rfc7807Response = toRFC7807Response(validationError, request.url, requestId);
+      return reply
+        .status(400)
+        .header('Content-Type', 'application/problem+json')
+        .send(rfc7807Response);
+    }
+
+    // Handle known HTTP errors from Fastify
+    if ('statusCode' in error && typeof error.statusCode === 'number') {
+      let appError: AppError;
+      
+      switch (error.statusCode) {
+        case 400:
+          appError = new BadRequestError(error.message || 'Bad Request');
+          break;
+        case 401:
+          appError = new UnauthorizedError(error.message || 'Unauthorized');
+          break;
+        case 403:
+          appError = new ForbiddenError(error.message || 'Forbidden');
+          break;
+        case 404:
+          appError = new NotFoundError(error.message || 'Not Found');
+          break;
+        case 429:
+          appError = new TooManyRequestsError(error.message || 'Too Many Requests');
+          break;
+        default:
+          if (error.statusCode >= 500) {
+            // Don't expose internal error details in production
+            appError = new InternalServerError(
+              config.env === 'production' 
+                ? 'An internal error occurred' 
+                : error.message || 'Internal Server Error'
+            );
+          } else {
+            appError = new BadRequestError(error.message || 'Request Error');
+            appError.statusCode = error.statusCode;
+          }
+      }
+      
+      const rfc7807Response = toRFC7807Response(appError, request.url, requestId);
+      return reply
+        .status(appError.statusCode)
+        .header('Content-Type', 'application/problem+json')
+        .send(rfc7807Response);
+    }
+
+    // Handle unexpected errors - never expose internal details in production
+    const internalError = new InternalServerError(
+      config.env === 'production'
+        ? 'An unexpected error occurred. Please try again later.'
+        : error.message || 'Internal Server Error'
+    );
+    
+    const rfc7807Response = toRFC7807Response(internalError, request.url, requestId);
+    return reply
+      .status(500)
+      .header('Content-Type', 'application/problem+json')
+      .send(rfc7807Response);
+  });
+
+  // Not Found handler for unmatched routes
+  app.setNotFoundHandler((request, reply) => {
+    const requestId = request.id || request.headers['x-request-id'] as string;
+    const notFoundError = new NotFoundError(
+      `Route ${request.method} ${request.url} not found`,
+      'ROUTE_NOT_FOUND'
+    );
+    
+    const rfc7807Response = toRFC7807Response(notFoundError, request.url, requestId);
+    return reply
+      .status(404)
+      .header('Content-Type', 'application/problem+json')
+      .send(rfc7807Response);
   });
 
   return app;

@@ -1,496 +1,369 @@
-# Scanning Service - Master Audit Findings
+# Scanning-Service - Master Audit Findings
 
-**Generated:** 2024-12-29
+**Generated:** 2025-12-27
+**Last Updated:** 2025-01-03
 **Service:** scanning-service
 **Port:** 3000
-**Audits Reviewed:** 17 files
+**Audits Reviewed:** 16 files
 
 ---
 
 ## Executive Summary
 
-| Severity | Count |
-|----------|-------|
-| 🔴 CRITICAL | 56 |
-| 🟠 HIGH | 31 |
-| 🟡 MEDIUM | 0 |
-| ✅ PASS | 334 |
+| Severity | Count | Fixed | Remaining |
+|----------|-------|-------|-----------|
+| 🔴 CRITICAL | 56 | 0 | 56 |
+| 🟠 HIGH | 46 | 0 | 46 |
+| 🟡 MEDIUM | ~10 | 0 | ~10 |
+| 🔵 LOW | ~5 | 0 | ~5 |
+| **TOTAL** | **~117** | **0** | **~117** |
 
-**Overall Risk Level:** 🔴 HIGH - Service has strong foundations but critical security gaps on auxiliary routes.
+**Progress: 0% Complete**
+**Risk Level:** 🟠 HIGH
+**Average Audit Score: 58/100**
 
 **Key Concerns:**
 - 10+ routes lack authentication (QR, devices, offline, policies)
-- No input validation on auxiliary routes (schemas exist but unused)
-- No circuit breakers for external service calls
-- Zero test files exist despite good test infrastructure
-- Dockerfile runs as root with no HEALTHCHECK
+- No schema validation on auxiliary routes (only scan endpoint has it)
 - RLS missing FORCE and WITH CHECK clauses
-- No correlation ID implementation
-
-**Key Strengths:**
-- Excellent security on main scan endpoint (auth, validation, rate limiting)
-- Outstanding Prometheus metrics coverage (30+ metrics)
-- Robust QR code security (HMAC-SHA256, timing-safe, nonce tracking)
-- Comprehensive RLS on all 7 tables
-- Strong offline fallback capability
-- Excellent configuration validation with Joi
-
----
-
-## Audit Scores by Category
-
-| Audit | CRITICAL | HIGH | MEDIUM | PASS | Score |
-|-------|----------|------|--------|------|-------|
-| 01-security | 3 | 0 | 0 | 17 | 85/100 |
-| 02-input-validation | 3 | 0 | 0 | 24 | 65/100 |
-| 03-error-handling | 3 | 0 | 0 | 24 | 62/100 |
-| 04-logging-observability | 3 | 0 | 0 | 19 | 50/100 |
-| 05-s2s-auth | 4 | 0 | 0 | 32 | 59/100 |
-| 06-database-integrity | 3 | 0 | 0 | 20 | 67/100 |
-| 07-idempotency | 3 | 0 | 0 | 18 | 62/100 |
-| 08-rate-limiting | 4 | 4 | 0 | 21 | 51/100 |
-| 09-multi-tenancy | 4 | 4 | 0 | 22 | 59/100 |
-| 10-testing | 4 | 4 | 0 | 10 | 20/100 |
-| 11-documentation | 4 | 4 | 0 | 25 | 55/100 |
-| 12-health-checks | 2 | 0 | 0 | 26 | 74/100 |
-| 13-graceful-degradation | 4 | 3 | 0 | 11 | 37/100 |
-| 19-configuration-management | 4 | 4 | 0 | 27 | 68/100 |
-| 20-deployment-cicd | 4 | 4 | 0 | 19 | 58/100 |
-| 21-database-migrations | 4 | 4 | 0 | 19 | 55/100 |
-
----
-
-## 🔴 All CRITICAL Issues (56)
-
-### 01-security (3 CRITICAL)
-
-1. **SEC-001 | Unauthenticated QR routes**
-   - File: `src/routes/qr.ts`
-   - Issue: No auth middleware on generate/validate endpoints
-
-2. **SEC-002 | Unauthenticated device routes**
-   - File: `src/routes/devices.ts`
-   - Issue: No auth on register/list endpoints
-
-3. **SEC-003 | Unauthenticated offline routes**
-   - File: `src/routes/offline.ts`
-   - Issue: No auth on manifest/reconcile endpoints
-
-### 02-input-validation (3 CRITICAL)
-
-1. **RD1 | 10 routes without schema validation**
-   - Files: `qr.ts, devices.ts, policies.ts, offline.ts`
-   - Issue: Joi schemas exist but not applied to routes
-
-2. **RD2 | 5 POST/PUT routes without body validation**
-   - Files: All except scan.ts
-   - Issue: No body schema validation
-
-3. **RD3 | 5 routes with unvalidated UUID params**
-   - Files: `qr.ts, policies.ts, offline.ts`
-   - Issue: SQL injection risk from unvalidated params
-
-### 03-error-handling (3 CRITICAL)
-
-1. **RH2 | Error handler registered AFTER routes**
-   - File: `src/index.ts:158`
-   - Issue: Routes may not catch errors properly
-
-2. **DS1-3 | No correlation ID implementation**
-   - File: Entire service
-   - Issue: Cannot trace requests across services
-
-3. **SL4 | No custom error class hierarchy**
-   - Issue: Inconsistent error handling patterns
-
-### 04-logging-observability (3 CRITICAL)
-
-1. **LC3 | No sensitive data redaction**
-   - File: `src/utils/logger.ts`
-   - Issue: PII/credential exposure in logs
-
-2. **LC4 | No correlation ID middleware**
-   - File: `src/index.ts`
-   - Issue: Cannot trace requests
-
-3. **DT5 | No context propagation**
-   - File: Entire service
-   - Issue: Cannot trace across services
-
-### 05-s2s-auth (4 CRITICAL)
-
-1. **AUTH-1 | 10+ routes without authentication**
-   - Files: `qr.ts, devices.ts, offline.ts, policies.ts`
-   - Issue: Unauthorized access possible
-
-2. **AUTH-2 | No JWT issuer/audience validation**
-   - File: `src/middleware/auth.middleware.ts`
-   - Issue: Token forgery risk
-
-3. **AUTH-3 | Uses HS256 symmetric signing**
-   - File: `src/middleware/auth.middleware.ts`
-   - Issue: Shared secret vulnerability
-
-4. **AUTH-4 | No service-level identity verification**
-   - File: Entire service
-   - Issue: Cannot distinguish service callers
-
-### 06-database-integrity (3 CRITICAL)
-
-1. **DB-1 | No FOR UPDATE locking on ticket queries**
-   - File: `src/services/QRValidator.ts`
-   - Issue: Double-scan race condition
-
-2. **DB-2 | No serialization failure retry**
-   - File: `src/services/QRValidator.ts`
-   - Issue: Transaction failures not handled
-
-3. **DB-3 | Missing statement_timeout**
-   - File: `src/config/database.ts`
-   - Issue: Queries could hang indefinitely
-
-### 07-idempotency (3 CRITICAL)
-
-1. **IDP-1 | No Idempotency-Key header support**
-   - Files: `scan.ts, routes/*.ts`
-   - Issue: Client retry creates duplicates
-
-2. **IDP-2 | No recovery point tracking**
-   - File: `src/services/QRValidator.ts`
-   - Issue: Cannot resume failed multi-step operations
-
-3. **IDP-3 | No 409 Conflict for concurrent requests**
-   - File: `src/services/QRValidator.ts`
-   - Issue: Race conditions possible
-
-### 08-rate-limiting (4 CRITICAL)
-
-1. **RL-1 | No rate limiting on QR generation**
-   - File: `src/routes/qr.ts`
-   - Issue: DoS on QR generation
-
-2. **RL-2 | No rate limiting on device registration**
-   - File: `src/routes/devices.ts`
-   - Issue: Device enumeration attack
-
-3. **RL-3 | No rate limiting on offline manifest**
-   - File: `src/routes/offline.ts`
-   - Issue: Resource exhaustion
-
-4. **RL-4 | trustProxy: true without explicit proxy list**
-   - File: `src/index.ts`
-   - Issue: X-Forwarded-For spoofing
-
-### 09-multi-tenancy (4 CRITICAL)
-
-1. **MT-1 | Missing FORCE ROW LEVEL SECURITY**
-   - File: `src/migrations/001_baseline_scanning.ts`
-   - Issue: Table owner can bypass RLS
-
-2. **MT-2 | RLS policy missing WITH CHECK**
-   - File: `src/migrations/001_baseline_scanning.ts`
-   - Issue: INSERT/UPDATE not validated
-
-3. **MT-3 | Missing tenant returns 500, not 401**
-   - File: `src/middleware/tenant-context.ts`
-   - Issue: Confusing error response
-
-4. **MT-4 | No tenant ID format validation**
-   - File: middleware
-   - Issue: Potential injection
-
-### 10-testing (4 CRITICAL)
-
-1. **TEST-1 | No test files exist**
-   - File: `tests/`
-   - Issue: Zero test coverage
-
-2. **TEST-2 | No coverage thresholds**
-   - File: `jest.config.js`
-   - Issue: Quality regression undetected
-
-3. **TEST-3 | No critical path tests**
-   - File: Entire service
-   - Issue: Bugs not caught before prod
-
-4. **TEST-4 | No security tests**
-   - File: Entire service
-   - Issue: Vulnerabilities undetected
-
-### 11-documentation (4 CRITICAL)
-
-1. **DOC-1 | No README.md**
-   - File: Root
-   - Issue: Poor developer experience
-
-2. **DOC-2 | No OpenAPI specification**
-   - File: Entire service
-   - Issue: Integration difficulty
-
-3. **DOC-3 | No runbooks**
-   - File: `docs/`
-   - Issue: Incident response impaired
-
-4. **DOC-4 | No service-level .env.example**
-   - File: Root
-   - Issue: Configuration confusion
-
-### 12-health-checks (2 CRITICAL)
-
-1. **HC-1 | No startup probe endpoint**
-   - File: `src/routes/health.routes.ts`
-   - Issue: Slow startup not handled
-
-2. **HC-2 | No explicit timeouts on checks**
-   - File: `src/routes/health.routes.ts`
-   - Issue: Could hang indefinitely
-
-### 13-graceful-degradation (4 CRITICAL)
-
-1. **GD-1 | No circuit breakers**
-   - File: Entire service
-   - Issue: Cascading failures
-
-2. **GD-2 | No explicit timeouts on DB/Redis**
-   - File: `src/config/*.ts`
-   - Issue: Hung connections
-
-3. **GD-3 | No retry logic**
-   - File: `src/services/*.ts`
-   - Issue: Single failure = request failure
-
-4. **GD-4 | No LB drain delay in shutdown**
-   - File: `src/index.ts`
-   - Issue: Dropped requests during deploy
-
-### 19-configuration-management (4 CRITICAL)
-
-1. **CFG-1 | Secrets in env vars only**
-   - File: All configs
-   - Issue: Security risk in production
-
-2. **CFG-2 | No .env.example at service level**
-   - File: Root
-   - Issue: Developer confusion
-
-3. **CFG-3 | No log redaction configured**
-   - File: `src/utils/logger.ts`
-   - Issue: PII/secret leakage
-
-4. **CFG-4 | Secrets manager not implemented**
-   - File: `src/config/secrets.ts`
-   - Issue: Production security risk
-
-### 20-deployment-cicd (4 CRITICAL)
-
-1. **DEP-1 | Running as root**
-   - File: `Dockerfile`
-   - Issue: Container escape risk
-
-2. **DEP-2 | No HEALTHCHECK**
-   - File: `Dockerfile`
-   - Issue: K8s can't detect unhealthy
-
-3. **DEP-3 | No CI/CD pipeline**
-   - File: Service
-   - Issue: No automated security
-
-4. **DEP-4 | No image digest**
-   - File: `Dockerfile`
-   - Issue: Non-reproducible builds
-
-### 21-database-migrations (4 CRITICAL)
-
-1. **MIG-1 | All tables in single migration**
-   - File: `001_baseline_scanning.ts`
-   - Issue: Hard to rollback
-
-2. **MIG-2 | RLS missing FORCE and WITH CHECK**
-   - File: `001_baseline_scanning.ts`
-   - Issue: Security gap
-
-3. **MIG-3 | No migration tests**
-   - File: `tests/`
-   - Issue: Untested schema
-
-4. **MIG-4 | Sequential naming, not timestamps**
-   - File: `migrations/`
-   - Issue: Merge conflicts
-
----
-
-## 🟠 All HIGH Issues (31)
-
-### 08-rate-limiting (4 HIGH)
-1. RL-5 | No global baseline rate limit - `index.ts`
-2. RL-6 | No skipOnError for Redis failures - middleware
-3. RL-7 | 429 response missing retry timing - `rate-limit.middleware.ts`
-4. RL-8 | In-memory storage by default - middleware
-
-### 09-multi-tenancy (4 HIGH)
-1. MT-5 | Some queries rely solely on RLS - `devices.ts, routes/*.ts`
-2. MT-6 | Redis keys missing tenant prefix - `QRValidator.ts`
-3. MT-7 | RLS policy doesn't handle NULL - migration
-4. MT-8 | No query wrapper enforcing tenant - Entire service
-
-### 10-testing (4 HIGH)
-1. TEST-5 | No tenant isolation tests - Entire service
-2. TEST-6 | No rate limit tests - Entire service
-3. TEST-7 | No transaction isolation - `tests/setup.ts`
-4. TEST-8 | No test data factories - `tests/`
-
-### 11-documentation (4 HIGH)
-1. DOC-5 | No ADRs - `docs/decisions/`
-2. DOC-6 | Incomplete JSDoc - `src/services/`
-3. DOC-7 | No rate limit documentation - API docs
-4. DOC-8 | No CONTRIBUTING.md - Root
-
-### 13-graceful-degradation (3 HIGH)
-1. GD-5 | No Redis error handler - `redis.ts`
-2. GD-6 | No statement timeout - `database.ts`
-3. GD-7 | No Redis command timeout - `redis.ts`
-
-### 19-configuration-management (4 HIGH)
-1. CFG-5 | No pre-commit secret scanning - Git
-2. CFG-6 | No secret rotation procedure - Docs
-3. CFG-7 | JWT key length not validated - `env.validator.ts`
-4. CFG-8 | SSL not enforced for DB - `database.ts`
-
-### 20-deployment-cicd (4 HIGH)
-1. DEP-5 | No .dockerignore - Service root
-2. DEP-6 | No npm audit in CI - CI/CD
-3. DEP-7 | No typecheck script - `package.json`
-4. DEP-8 | No rollback procedure - Docs
-
-### 21-database-migrations (4 HIGH)
-1. MIG-5 | No lock_timeout - migrations
-2. MIG-6 | No CONCURRENTLY for indexes - migrations
-3. MIG-7 | FKs without explicit cascade - migrations
-4. MIG-8 | String enums, not DB enums - Schema
-
----
-
-## ✅ What's Working Well (334 PASS items)
-
-### Security (Scan Endpoint)
-- JWT authentication fully implemented with jwt.verify()
-- Token expiration properly validated
-- Role-based access control with requireRole() middleware
-- HMAC-SHA256 for QR codes with nonces
-- Timing-safe comparison prevents timing attacks
-- Replay attack prevention with Redis nonce tracking
-- Helmet security headers applied
-- Request timeouts configured (30s request, 10s connection)
-- No secrets hardcoded in source
-
-### QR Code Security
-- SHA-256 HMAC with minimum 32-char secret
-- 30-second QR expiration window
-- Nonce-based replay prevention
-- Duplicate scan detection with configurable window
-
-### Database
+- No circuit breakers for external services
+- Zero test files exist
+- Running as root in Docker container
+- No correlation ID tracking
+
+**Service Strengths:**
+- Excellent QR code security (HMAC-SHA256, timing-safe, nonces)
+- Strong tenant/venue isolation in QRValidator
+- Good graceful shutdown implementation
+- Comprehensive Prometheus metrics (30+)
 - RLS enabled on all 7 tables
-- UUID primary keys throughout
-- Parameterized queries prevent SQL injection
-- Comprehensive indexing strategy
-- Proper up/down migrations
-- JSONB for flexible metadata
+- Good offline fallback capability
+- Excellent config validation with Joi
 
-### Metrics & Observability
-- 30+ Prometheus metrics
-- Security event tracking (tenant/venue violations)
-- Business metrics (scans allowed/denied)
-- Infrastructure metrics (DB connections, Redis cache)
-- Default Node.js metrics collection
+---
 
-### Configuration
-- Excellent Joi-based validation
-- Fail-fast on invalid config
-- Type-safe configuration
-- Centralized config access
-- Clean multi-stage Dockerfile
+## 🔴 CRITICAL Issues (56)
 
-### Health & Resilience
-- Liveness/readiness separation
-- Proper dependency checks (DB, Redis)
-- Graceful shutdown with SIGTERM/SIGINT
-- Offline fallback mode for scanning
-- OfflineCache with Redis→DB fallback
+### SEC - Security (3)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| SEC-1 | Unauthenticated QR routes | `routes/qr.ts` | /generate/:ticketId, /validate no auth |
+| SEC-2 | Unauthenticated device routes | `routes/devices.ts` | /register, / no auth |
+| SEC-3 | Unauthenticated offline routes | `routes/offline.ts` | /manifest, /reconcile no auth |
 
-### Documentation
-- Excellent SERVICE_OVERVIEW.md (250+ lines)
-- Thorough GAP_ANALYSIS.md with prioritized fixes
-- Error code catalog documented
+### INP - Input Validation (3)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| INP-1 | 10 routes without schema validation | `qr.ts`, `devices.ts`, `policies.ts`, `offline.ts` | Only scan.ts has validation |
+| INP-2 | 5 POST/PUT routes without body validation | Multiple routes | Mass assignment risk |
+| INP-3 | UUID params not validated | All routes except scan | No format: 'uuid' |
+
+### ERR - Error Handling (3)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| ERR-1 | Error handler registered AFTER routes | `index.ts:158` | Should be before |
+| ERR-2 | No correlation ID implementation | Entire service | Cannot trace requests |
+| ERR-3 | No RFC 7807 error format | Error responses | Non-standard format |
+
+### LOG - Logging (3)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| LOG-1 | No sensitive data redaction | `logger.ts` | PII can leak |
+| LOG-2 | No correlation ID middleware | `index.ts` | Not implemented |
+| LOG-3 | No context propagation | Entire service | Cannot trace across services |
+
+### S2S - Service Auth (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| S2S-1 | 10+ routes without authentication | Multiple routes | Unauthorized access risk |
+| S2S-2 | No JWT issuer validation | `auth.middleware.ts` | Token forgery risk |
+| S2S-3 | No JWT audience validation | `auth.middleware.ts` | Token misuse risk |
+| S2S-4 | Uses HS256 symmetric signing | `auth.middleware.ts` | Shared secret vulnerability |
+
+### DB - Database (3)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| DB-1 | No FOR UPDATE locking | `QRValidator.ts` | Double-scan race condition |
+| DB-2 | No serialization failure retry | `QRValidator.ts` | Transaction failures not handled |
+| DB-3 | Missing statement_timeout | `database.ts` | Queries can hang |
+
+### IDP - Idempotency (3)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| IDP-1 | No Idempotency-Key header support | All routes | Client retry creates duplicates |
+| IDP-2 | No recovery point tracking | `QRValidator.ts` | Cannot resume failed multi-step |
+| IDP-3 | No 409 Conflict for concurrent requests | `QRValidator.ts` | Race conditions |
+
+### RL - Rate Limiting (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| RL-1 | No rate limiting on QR generation | `qr.ts` | DoS risk |
+| RL-2 | No rate limiting on device registration | `devices.ts` | Device enumeration |
+| RL-3 | No rate limiting on offline manifest | `offline.ts` | Resource exhaustion |
+| RL-4 | trustProxy: true without explicit list | `index.ts` | X-Forwarded-For spoofing |
+
+### MT - Multi-Tenancy (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| MT-1 | Missing FORCE ROW LEVEL SECURITY | Migrations | Table owner can bypass RLS |
+| MT-2 | RLS policy missing WITH CHECK | Migrations | INSERT/UPDATE not validated |
+| MT-3 | Missing tenant returns 500 not 401 | `tenant-context.ts` | Confusing error |
+| MT-4 | No tenant ID format validation | Middleware | Potential injection |
+
+### TST - Testing (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| TST-1 | No test files exist | `tests/` | Zero test coverage |
+| TST-2 | No coverage thresholds | `jest.config.js` | Quality regression undetected |
+| TST-3 | No critical path tests | Entire service | Bugs not caught |
+| TST-4 | No security tests | Entire service | Vulnerabilities undetected |
+
+### DOC - Documentation (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| DOC-1 | No README.md | Root | Poor developer experience |
+| DOC-2 | No OpenAPI specification | Entire service | Integration difficulty |
+| DOC-3 | No runbooks | `docs/` | Incident response impaired |
+| DOC-4 | No service-level .env.example | Root | Configuration confusion |
+
+### HEALTH - Health Checks (2)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| HEALTH-1 | No startup probe endpoint | `health.routes.ts` | Slow startup not handled |
+| HEALTH-2 | No explicit timeouts on health checks | `health.routes.ts` | Could hang |
+
+### GD - Graceful Degradation (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| GD-1 | No circuit breakers | Entire service | Cascading failures |
+| GD-2 | No explicit timeouts on DB/Redis | `config/*.ts` | Hung connections |
+| GD-3 | No retry logic | `services/*.ts` | Single failure = request failure |
+| GD-4 | No LB drain delay in shutdown | `index.ts` | Dropped requests during deploy |
+
+### CFG - Configuration (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| CFG-1 | Secrets in env vars only | All configs | Should use secrets manager |
+| CFG-2 | No .env.example at service level | Root | Developer confusion |
+| CFG-3 | No log redaction configured | `logger.ts` | PII/secret leakage |
+| CFG-4 | Secrets manager not implemented | `secrets.ts` | Production risk |
+
+### DEP - Deployment (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| DEP-1 | Running as root in container | `Dockerfile` | Container escape risk |
+| DEP-2 | No HEALTHCHECK in Dockerfile | `Dockerfile` | K8s can't detect unhealthy |
+| DEP-3 | No CI/CD pipeline | Service | No automated security |
+| DEP-4 | No image digest pinning | `Dockerfile` | Non-reproducible builds |
+
+### MIG - Migrations (4)
+| ID | Issue | File | Evidence |
+|----|-------|------|----------|
+| MIG-1 | All tables in single migration | `001_baseline_scanning.ts` | Hard to rollback |
+| MIG-2 | RLS missing FORCE and WITH CHECK | Migrations | Security gap |
+| MIG-3 | No migration tests | `tests/` | Untested schema |
+| MIG-4 | Sequential naming not timestamps | Migrations | Merge conflicts |
+
+---
+
+## 🟠 HIGH Issues (46)
+
+### Security (SEC-H)
+| ID | Issue | File |
+|----|-------|------|
+| SEC-H1 | Unauthenticated policy routes | `routes/policies.ts` |
+
+### Input Validation (INP-H)
+| ID | Issue | File |
+|----|-------|------|
+| INP-H1 | QR validation POST no body schema | `qr.ts` |
+| INP-H2 | Device registration no body schema | `devices.ts` |
+| INP-H3 | Policy application no body schema | `policies.ts` |
+| INP-H4 | Offline reconciliation no body schema | `offline.ts` |
+
+### Error Handling (ERR-H)
+| ID | Issue | File |
+|----|-------|------|
+| ERR-H1 | No custom error class hierarchy | Entire service |
+| ERR-H2 | Stack traces possible in errors | Error handler |
+| ERR-H3 | No database pool error handler | `database.ts` |
+
+### Logging (LOG-H)
+| ID | Issue | File |
+|----|-------|------|
+| LOG-H1 | No log rotation | `logger.ts` |
+| LOG-H2 | No OpenTelemetry tracing | Entire service |
+
+### S2S Auth (S2S-H)
+| ID | Issue | File |
+|----|-------|------|
+| S2S-H1 | No service-level identity verification | Entire service |
+| S2S-H2 | No credential rotation procedure | Docs |
+
+### Database (DB-H)
+| ID | Issue | File |
+|----|-------|------|
+| DB-H1 | No pool acquire timeout configured | `database.ts` |
+| DB-H2 | Indexes not created CONCURRENTLY | Migrations |
+
+### Idempotency (IDP-H)
+| ID | Issue | File |
+|----|-------|------|
+| IDP-H1 | No idempotency_keys table | Migrations |
+
+### Rate Limiting (RL-H)
+| ID | Issue | File |
+|----|-------|------|
+| RL-H1 | No global baseline rate limit | `index.ts` |
+| RL-H2 | No skipOnError for Redis failures | Middleware |
+| RL-H3 | 429 response missing retry timing | `rate-limit.middleware.ts` |
+| RL-H4 | In-memory storage by default | Middleware |
+
+### Multi-Tenancy (MT-H)
+| ID | Issue | File |
+|----|-------|------|
+| MT-H1 | Some queries rely solely on RLS | `devices.ts`, routes |
+| MT-H2 | Redis keys missing tenant prefix | `QRValidator.ts` |
+| MT-H3 | RLS policy doesn't handle NULL | Migrations |
+| MT-H4 | No query wrapper enforcing tenant | Entire service |
+
+### Testing (TST-H)
+| ID | Issue | File |
+|----|-------|------|
+| TST-H1 | No tenant isolation tests | `tests/` |
+| TST-H2 | No rate limit tests | `tests/` |
+| TST-H3 | No transaction isolation | `tests/setup.ts` |
+| TST-H4 | No test data factories | `tests/` |
+
+### Documentation (DOC-H)
+| ID | Issue | File |
+|----|-------|------|
+| DOC-H1 | No ADRs | `docs/decisions/` |
+| DOC-H2 | Incomplete JSDoc | `src/services/` |
+| DOC-H3 | No rate limit documentation | API docs |
+| DOC-H4 | No CONTRIBUTING.md | Root |
+
+### Graceful Degradation (GD-H)
+| ID | Issue | File |
+|----|-------|------|
+| GD-H1 | No Redis error handler | `redis.ts` |
+| GD-H2 | No statement timeout | `database.ts` |
+| GD-H3 | No Redis command timeout | `redis.ts` |
+
+### Configuration (CFG-H)
+| ID | Issue | File |
+|----|-------|------|
+| CFG-H1 | No pre-commit secret scanning | Git |
+| CFG-H2 | No secret rotation procedure | Docs |
+| CFG-H3 | JWT key length not validated | `env.validator.ts` |
+| CFG-H4 | SSL not enforced for DB | `database.ts` |
+
+### Deployment (DEP-H)
+| ID | Issue | File |
+|----|-------|------|
+| DEP-H1 | No .dockerignore | Service root |
+| DEP-H2 | No npm audit in CI | CI/CD |
+| DEP-H3 | No typecheck script | `package.json` |
+| DEP-H4 | No rollback procedure | Docs |
+
+### Migrations (MIG-H)
+| ID | Issue | File |
+|----|-------|------|
+| MIG-H1 | No lock_timeout | Migrations |
+| MIG-H2 | FKs without explicit cascade behavior | Migrations |
+| MIG-H3 | String enums not DB enums | Schema |
+| MIG-H4 | No CONCURRENTLY for indexes | Migrations |
+
+---
+
+## 🟡 MEDIUM Issues (~10)
+
+| ID | Issue | File |
+|----|-------|------|
+| SEC-M1 | HTTPS redirect not enforced | Server |
+| INP-M1 | Response schemas not defined | All routes |
+| LOG-M1 | Timestamps not explicitly ISO 8601 | `logger.ts` |
+| MT-M1 | Rate limits per-device not per-tenant | Rate limiting |
+| HEALTH-M1 | No Kubernetes probe manifests | K8s/ |
+| GD-M1 | No bulkhead pattern | Services |
+| CFG-M1 | Environment indicator not in logs | Logger |
+| DEP-M1 | npm install instead of npm ci | Dockerfile |
+| MIG-M1 | Using timestamps() not timestamptz | Schema |
+| DOC-M1 | No CHANGELOG.md | Root |
 
 ---
 
 ## Priority Fix Order
 
-### P0: Fix Immediately (Security Risk)
+### P0 - Fix Immediately (Authentication & Security)
+1. SEC-1,2,3: Add authentication to ALL routes (qr, devices, offline, policies)
+2. INP-1,2,3: Add schema validation to all routes
+3. MT-1,2: Fix RLS - add FORCE and WITH CHECK
+4. DEP-1: Add non-root user to Dockerfile
+5. DEP-2: Add HEALTHCHECK to Dockerfile
+6. ERR-1: Move error handler before routes
 
-1. **Add authentication to all routes**
-   - `qr.ts`: Add `authenticateRequest` + `requireRole('TICKET_HOLDER', 'VENUE_STAFF')`
-   - `devices.ts`: Add `authenticateRequest` + `requireRole('VENUE_MANAGER', 'ADMIN')`
-   - `offline.ts`: Add `authenticateRequest` + `requireRole('VENUE_STAFF')`
-   - `policies.ts`: Add `authenticateRequest` + `requireRole('VENUE_MANAGER', 'ADMIN')`
+### P1 - Fix This Week (Reliability)
+1. S2S-2,3: Add JWT issuer/audience validation
+2. LOG-1,2: Add redaction and correlation ID
+3. GD-1: Add circuit breakers
+4. RL-1,2,3: Add rate limiting to unprotected routes
+5. CFG-3: Add log redaction
+6. DB-1: Add FOR UPDATE locking
 
-2. **Add validation schemas to all routes**
-   - Create `qr.validator.ts`, `device.validator.ts`, `policy.validator.ts`, `offline.validator.ts`
-   - Apply validation middleware to all routes
-
-3. **Fix Dockerfile security**
-   - Add non-root user
-   - Add HEALTHCHECK
-   - Create .dockerignore
-
-4. **Fix RLS policies**
-   - Add FORCE ROW LEVEL SECURITY
-   - Add WITH CHECK clause
-   - Handle NULL tenant context
-
-### P1: Fix This Week (Reliability)
-
-1. Add rate limiting to all routes
-2. Add correlation ID middleware
-3. Add log redaction for sensitive data
-4. Add circuit breakers (opossum)
-5. Add statement_timeout to database
-6. Add FOR UPDATE locking on ticket queries
-7. Implement secrets manager integration
-8. Add JWT issuer/audience validation
-
-### P2: Fix This Sprint (Quality)
-
-1. Create actual test files
-2. Add coverage thresholds
-3. Add OpenAPI specification
-4. Create README.md
-5. Add .env.example at service level
-6. Create operational runbooks
-7. Add CI/CD pipeline
-8. Split migration into smaller files
+### P2 - Fix This Sprint (Quality)
+1. TST-1-4: Create actual test files
+2. DOC-1-4: Add README, OpenAPI, runbooks
+3. IDP-1: Add Idempotency-Key support
+4. ERR-3: Implement RFC 7807 errors
 
 ---
 
-## Remediation Effort Estimate
+## Files to Create
 
-| Priority | Items | Estimated Hours |
-|----------|-------|-----------------|
-| P0 | 4 | 24 hours |
-| P1 | 8 | 48 hours |
-| P2 | 8 | 64 hours |
-| **Total** | **20** | **136 hours** |
+| File | Purpose | Fixes |
+|------|---------|-------|
+| `src/middleware/correlation-id.ts` | Request tracing | ERR-2, LOG-2 |
+| `src/errors/index.ts` | RFC 7807 errors | ERR-3 |
+| `src/utils/circuit-breaker.ts` | External resilience | GD-1 |
+| `src/middleware/idempotency.ts` | Request deduplication | IDP-1 |
+| `migrations/002_fix_rls.ts` | RLS hardening | MT-1,2 |
+| `.dockerignore` | Build optimization | DEP-H1 |
+| `.env.example` | Config documentation | CFG-2 |
+| `README.md` | Developer docs | DOC-1 |
 
-**Timeline:** ~3.5 weeks with 1 engineer dedicated full-time
+## Files to Modify
+
+| File | Changes | Fixes |
+|------|---------|-------|
+| `routes/qr.ts` | Add auth + validation | SEC-1, INP-1 |
+| `routes/devices.ts` | Add auth + validation | SEC-2, INP-1 |
+| `routes/offline.ts` | Add auth + validation | SEC-3, INP-1 |
+| `routes/policies.ts` | Add auth + validation | SEC-H1, INP-1 |
+| `middleware/auth.middleware.ts` | Add issuer/audience | S2S-2,3 |
+| `index.ts` | Move error handler, add correlation | ERR-1, LOG-2 |
+| `utils/logger.ts` | Add redaction | LOG-1, CFG-3 |
+| `Dockerfile` | Non-root user, HEALTHCHECK | DEP-1,2 |
 
 ---
 
-## Next Steps
+## Changelog
 
-1. **Immediate:** Add authentication to qr.ts, devices.ts, offline.ts, policies.ts
-2. **Immediate:** Fix Dockerfile (non-root user, HEALTHCHECK)
-3. **This Week:** Add validation schemas to all routes
-4. **This Week:** Fix RLS policies with FORCE and WITH CHECK
-5. **Next Sprint:** Create test suite with coverage thresholds
-6. **Ongoing:** Implement observability improvements (correlation IDs, tracing)
+| Date | Author | Changes |
+|------|--------|---------|
+| 2025-12-27 | Audit | Initial findings |
+| 2025-01-03 | Claude | Consolidated 117 issues |
+
+---
+
+## Service Status: 0% Complete
+
+**0/117 issues fixed**
+**117 issues remaining**
+
+### Key Risks
+- ⚠️ 10+ routes have NO authentication - anyone can generate QR codes
+- ⚠️ RLS incomplete - table owner can bypass, INSERT not validated
+- ⚠️ Zero tests exist - no confidence in service correctness
+- ⚠️ Running as root - container escape vulnerability
+- ⚠️ No circuit breakers - cascading failure risk

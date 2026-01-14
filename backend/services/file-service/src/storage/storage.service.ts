@@ -22,12 +22,12 @@ export class StorageService {
       // Production MUST use S3 - fail fast
       const errorMsg = 'FATAL: Production environment REQUIRES STORAGE_PROVIDER=s3. ' +
         'Local storage would result in data loss on container restarts.';
-      logger.error(errorMsg);
+      logger.error({}, errorMsg);
       throw new Error(errorMsg);
     } else {
       // Development/staging can use local storage
       this.provider = new LocalStorageProvider();
-      logger.warn('⚠️  Using local storage provider - NOT suitable for production! ' +
+      logger.warn({}, '⚠️  Using local storage provider - NOT suitable for production! ' +
         'Files will be lost on container restart. Set STORAGE_PROVIDER=s3 for persistence.');
     }
   }

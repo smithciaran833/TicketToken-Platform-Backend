@@ -1,5 +1,5 @@
 import { PublicKey } from '@solana/web3.js';
-import { Metaplex, Nft } from '@metaplex-foundation/js';
+import { Metaplex, Nft as _Nft } from '@metaplex-foundation/js';
 import { solanaConfig, getExplorerUrl } from '../config/solana.config';
 import logger from '../utils/logger';
 

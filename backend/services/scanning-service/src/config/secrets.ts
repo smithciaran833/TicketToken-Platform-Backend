@@ -4,10 +4,10 @@ import path from 'path';
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
-import { secretsManager } from '../../../../shared/utils/secrets-manager';
-import { SECRETS_CONFIG } from '../../../../shared/config/secrets.config';
+import { secretsManager } from '../utils/secrets-manager';
+import { SECRETS_CONFIG } from './secrets.config';
 
-export async function loadSecrets() {
+export async function loadSecrets(): Promise<Record<string, string>> {
   const serviceName = process.env.SERVICE_NAME || 'unknown-service';
   console.log(`[${serviceName}] Loading secrets...`);
   
@@ -25,8 +25,9 @@ export async function loadSecrets() {
     console.log(`[${serviceName}] ✅ Secrets loaded successfully`);
     
     return secrets;
-  } catch (error: any) {
-    console.error(`[${serviceName}] ❌ Failed to load secrets:`, error.message);
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error(`[${serviceName}] ❌ Failed to load secrets:`, errorMessage);
     throw new Error('Cannot start service without required secrets');
   }
 }

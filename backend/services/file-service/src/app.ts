@@ -5,7 +5,7 @@ import multipart from '@fastify/multipart';
 import jwt from '@fastify/jwt';
 import fastifyStatic from '@fastify/static';
 import path from 'path';
-import { logger } from './utils/logger';
+import { logger as _logger } from './utils/logger';
 import { errorHandler } from './middleware/error.middleware';
 import { setupRoutes } from './routes';
 import { registerRateLimiting } from './middleware/rate-limit.middleware';

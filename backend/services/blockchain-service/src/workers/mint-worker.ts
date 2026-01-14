@@ -1,14 +1,37 @@
 import { Pool } from 'pg';
-import { Connection, Keypair, Transaction, PublicKey } from '@solana/web3.js';
+import { Connection, Keypair, PublicKey } from '@solana/web3.js';
 import amqp, { Channel, Connection as AMQPConnection } from 'amqplib';
 import { logger } from '../utils/logger';
 import MetaplexService from '../services/MetaplexService';
 import TransactionConfirmationService from '../services/TransactionConfirmationService';
+import { ticketServiceClient, venueServiceClient, orderServiceClient, eventServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+
+/**
+ * MINT WORKER
+ * 
+ * Background worker for NFT minting operations.
+ * 
+ * PHASE 5c REFACTORED:
+ * - Replaced direct venues table query with venueServiceClient
+ * - Replaced direct tickets/orders/events JOIN with service clients
+ * - Replaced direct tickets UPDATE with ticketServiceClient.updateNft()
+ */
 
 const QUEUES = {
   TICKET_MINT: 'ticket.mint',
   BLOCKCHAIN_MINT: 'blockchain.mint'
 };
+
+/**
+ * Helper to create request context for service calls
+ */
+function createRequestContext(tenantId: string = 'system'): RequestContext {
+  return {
+    tenantId,
+    traceId: `mint-worker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  };
+}
 
 interface MintJob {
   id?: string;
@@ -17,6 +40,7 @@ interface MintJob {
   userId?: string;
   eventId?: string;
   venueId?: string;
+  tenantId?: string;
   metadata?: any;
 }
 
@@ -113,6 +137,7 @@ export class MintWorker {
   async startPolling(): Promise<void> {
     setInterval(async () => {
       try {
+        // mint_jobs is blockchain-service owned table
         const result = await this.pool.query(`
           SELECT * FROM mint_jobs
           WHERE status = 'pending'
@@ -136,39 +161,30 @@ export class MintWorker {
     });
   }
 
-  private async getVenueWallet(venueId: string): Promise<string | null> {
+  /**
+   * REFACTORED: Get venue wallet address via venueServiceClient
+   * Replaces direct venue_marketplace_settings and venues table queries
+   */
+  private async getVenueWallet(venueId: string, tenantId: string): Promise<string | null> {
+    const ctx = createRequestContext(tenantId);
+
     try {
-      const settingsResult = await this.pool.query(
-        'SELECT royalty_wallet_address FROM venue_marketplace_settings WHERE venue_id = $1',
-        [venueId]
-      );
+      // REFACTORED: Get venue with blockchain info via venueServiceClient
+      const venue = await venueServiceClient.getVenue(venueId, ctx);
 
-      if (settingsResult.rows.length > 0 && settingsResult.rows[0].royalty_wallet_address) {
-        logger.info('Found venue royalty wallet', { 
+      if (venue && venue.walletAddress) {
+        logger.info('Found venue wallet via service', { 
           venueId, 
-          wallet: settingsResult.rows[0].royalty_wallet_address 
+          wallet: venue.walletAddress 
         });
-        return settingsResult.rows[0].royalty_wallet_address;
-      }
-
-      const venueResult = await this.pool.query(
-        'SELECT wallet_address FROM venues WHERE id = $1',
-        [venueId]
-      );
-
-      if (venueResult.rows.length > 0 && venueResult.rows[0].wallet_address) {
-        logger.info('Found venue wallet', { 
-          venueId, 
-          wallet: venueResult.rows[0].wallet_address 
-        });
-        return venueResult.rows[0].wallet_address;
+        return venue.walletAddress;
       }
 
       logger.warn('No wallet address found for venue', { venueId });
       return null;
 
     } catch (error: any) {
-      logger.error('Failed to fetch venue wallet', { 
+      logger.error('Failed to fetch venue wallet via service', { 
         venueId, 
         error: error.message 
       });
@@ -180,31 +196,88 @@ export class MintWorker {
     return process.env.PLATFORM_TREASURY_WALLET || this.mintWallet.publicKey.toString();
   }
 
+  /**
+   * REFACTORED: Process mint job using service clients
+   * Replaces direct database JOINs with service client calls
+   */
   async processMintJob(job: MintJob): Promise<void> {
-    try {
-      // Get ticket details for metadata
-      const ticketResult = await this.pool.query(`
-        SELECT t.*, e.name as event_name, e.description as event_description,
-               v.name as venue_name
-        FROM tickets t
-        JOIN order_items oi ON t.id = oi.ticket_id
-        JOIN orders o ON oi.order_id = o.id
-        JOIN events e ON t.event_id = e.id
-        LEFT JOIN venues v ON e.venue_id = v.id
-        WHERE o.id = $1
-        LIMIT 1
-      `, [job.orderId]);
+    const tenantId = job.tenantId || 'system';
+    const ctx = createRequestContext(tenantId);
 
-      if (ticketResult.rows.length === 0) {
-        throw new Error(`No ticket found for order ${job.orderId}`);
+    try {
+      // REFACTORED: Get ticket details via ticketServiceClient
+      let ticket: any;
+      let eventInfo: any;
+      let venueInfo: any;
+
+      // Get order info to find ticket
+      if (job.orderId) {
+        try {
+          const orderItems = await orderServiceClient.getOrderItems(job.orderId, ctx);
+          if (!orderItems || orderItems.items.length === 0) {
+            throw new Error(`No items found for order ${job.orderId}`);
+          }
+          
+          // Get first ticket from order
+          const firstItem = orderItems.items.find((item: any) => item.ticketId);
+          if (!firstItem?.ticketId) {
+            throw new Error(`No ticket found for order ${job.orderId}`);
+          }
+          
+          // Get full ticket info
+          ticket = await ticketServiceClient.getTicketFull(firstItem.ticketId, ctx);
+          
+          if (!ticket) {
+            throw new Error(`Ticket not found: ${firstItem.ticketId}`);
+          }
+          
+          // Event info is included in ticket response
+          eventInfo = ticket.event;
+          
+          // Get venue info if available
+          if (eventInfo?.venueId) {
+            try {
+              venueInfo = await venueServiceClient.getVenue(eventInfo.venueId, ctx);
+            } catch (e) {
+              logger.warn('Failed to get venue info', { venueId: eventInfo.venueId });
+            }
+          }
+        } catch (serviceError: any) {
+          logger.warn('Service client calls failed, falling back to direct query', {
+            error: serviceError.message
+          });
+          
+          // Fallback to direct query for backward compatibility
+          const ticketResult = await this.pool.query(`
+            SELECT t.*, e.name as event_name, e.description as event_description,
+                   v.name as venue_name
+            FROM tickets t
+            JOIN order_items oi ON t.id = oi.ticket_id
+            JOIN orders o ON oi.order_id = o.id
+            JOIN events e ON t.event_id = e.id
+            LEFT JOIN venues v ON e.venue_id = v.id
+            WHERE o.id = $1
+            LIMIT 1
+          `, [job.orderId]);
+
+          if (ticketResult.rows.length === 0) {
+            throw new Error(`No ticket found for order ${job.orderId}`);
+          }
+
+          ticket = ticketResult.rows[0];
+          eventInfo = { name: ticket.event_name, description: ticket.event_description };
+          venueInfo = { name: ticket.venue_name };
+        }
       }
 
-      const ticket = ticketResult.rows[0];
+      if (!ticket) {
+        throw new Error(`No ticket data available for order ${job.orderId}`);
+      }
 
-      // Get venue wallet for royalties
+      // REFACTORED: Get venue wallet via service client
       let venueWallet: string | null = null;
       if (job.venueId) {
-        venueWallet = await this.getVenueWallet(job.venueId);
+        venueWallet = await this.getVenueWallet(job.venueId, tenantId);
       }
 
       const platformWallet = this.getPlatformWallet();
@@ -230,31 +303,38 @@ export class MintWorker {
       });
 
       // Prepare NFT metadata
+      const eventName = eventInfo?.name || ticket.event_name || 'Unknown Event';
+      const eventDescription = eventInfo?.description || ticket.event_description || `Ticket for ${eventName}`;
+      const venueName = venueInfo?.name || ticket.venue_name || 'Unknown';
+      const seatNumber = ticket.seat?.number || ticket.seat_number || 'GA';
+      const section = ticket.seat?.section || ticket.section || 'General Admission';
+      const ticketTypeName = ticket.ticketType?.name || ticket.ticket_type || 'Standard';
+
       const nftMetadata = {
-        name: `${ticket.event_name} - Ticket #${ticket.seat_number || 'GA'}`,
+        name: `${eventName} - Ticket #${seatNumber}`,
         symbol: 'TICKET',
-        description: ticket.event_description || `Ticket for ${ticket.event_name}`,
+        description: eventDescription,
         image: job.metadata?.image || 'https://placeholder.com/ticket.png',
         attributes: [
           {
             trait_type: 'Event',
-            value: ticket.event_name
+            value: eventName
           },
           {
             trait_type: 'Venue',
-            value: ticket.venue_name || 'Unknown'
+            value: venueName
           },
           {
             trait_type: 'Section',
-            value: ticket.section || 'General Admission'
+            value: section
           },
-          ...(ticket.seat_number ? [{
+          ...(seatNumber !== 'GA' ? [{
             trait_type: 'Seat',
-            value: ticket.seat_number
+            value: seatNumber
           }] : []),
           {
             trait_type: 'Ticket Type',
-            value: ticket.ticket_type || 'Standard'
+            value: ticketTypeName
           }
         ]
       };
@@ -272,22 +352,38 @@ export class MintWorker {
         commitment: 'finalized'
       });
 
-      // Update ticket with mint address
-      await this.pool.query(`
-        UPDATE tickets t
-        SET mint_address = $1, 
-            minted_at = NOW(),
-            metadata_uri = $2,
-            transaction_signature = $3
-        FROM order_items oi
-        WHERE t.id = oi.ticket_id
-          AND oi.order_id = $4
-      `, [
-        mintResult.mintAddress, 
-        mintResult.metadataUri,
-        mintResult.transactionSignature,
-        job.orderId
-      ]);
+      // REFACTORED: Update ticket with mint address via ticketServiceClient
+      try {
+        await ticketServiceClient.updateNft(ticket.id, {
+          nftMintAddress: mintResult.mintAddress,
+          metadataUri: mintResult.metadataUri,
+          mintedAt: new Date().toISOString(),
+          isMinted: true,
+        }, ctx);
+        
+        logger.info('Updated ticket NFT via service', { ticketId: ticket.id });
+      } catch (updateError: any) {
+        logger.warn('Failed to update ticket via service client, using fallback', {
+          error: updateError.message
+        });
+        
+        // Fallback to direct update
+        await this.pool.query(`
+          UPDATE tickets t
+          SET mint_address = $1, 
+              minted_at = NOW(),
+              metadata_uri = $2,
+              transaction_signature = $3
+          FROM order_items oi
+          WHERE t.id = oi.ticket_id
+            AND oi.order_id = $4
+        `, [
+          mintResult.mintAddress, 
+          mintResult.metadataUri,
+          mintResult.transactionSignature,
+          job.orderId
+        ]);
+      }
 
       logger.info('NFT minted successfully', { 
         mintAddress: mintResult.mintAddress,
@@ -296,7 +392,7 @@ export class MintWorker {
         metadataUri: mintResult.metadataUri
       });
 
-      // Update job status
+      // Update job status - blockchain-service owned table
       if (job.id) {
         await this.pool.query(`
           UPDATE mint_jobs
@@ -335,7 +431,7 @@ export class MintWorker {
         jobId: job.id
       });
 
-      // Update job with failure status
+      // Update job with failure status - blockchain-service owned table
       if (job.id) {
         await this.pool.query(`
           UPDATE mint_jobs

@@ -68,6 +68,19 @@ export class AlertService {
     this.log.info('Alert monitoring stopped');
   }
 
+  async getAlertById(alertId: string, venueId: string): Promise<Alert | null> {
+    try {
+      const dbAlert = await AlertModel.findById(alertId, venueId);
+      if (!dbAlert) {
+        return null;
+      }
+      return this.mapDBAlertToAlert(dbAlert);
+    } catch (error) {
+      this.log.error('Failed to get alert', error, { alertId });
+      throw error;
+    }
+  }
+
   async createAlert(
     data: Omit<Alert, 'id' | 'createdAt' | 'updatedAt'>
   ): Promise<Alert> {
@@ -103,6 +116,19 @@ export class AlertService {
     }
   }
 
+  async deleteAlert(alertId: string, venueId: string): Promise<boolean> {
+    try {
+      const deleted = await AlertModel.delete(alertId, venueId);
+      if (deleted) {
+        this.log.info('Alert deleted', { alertId });
+      }
+      return deleted;
+    } catch (error) {
+      this.log.error('Failed to delete alert', error, { alertId });
+      throw error;
+    }
+  }
+
   async toggleAlert(alertId: string, enabled: boolean): Promise<Alert> {
     try {
       const dbAlert = await AlertModel.toggleAlert(alertId, enabled);
@@ -114,6 +140,38 @@ export class AlertService {
       return alert;
     } catch (error) {
       this.log.error('Failed to toggle alert', error, { alertId });
+      throw error;
+    }
+  }
+
+  async testAlert(alertId: string, venueId: string): Promise<void> {
+    try {
+      const alert = await this.getAlertById(alertId, venueId);
+      if (!alert) {
+        throw new Error('Alert not found');
+      }
+
+      // Create a test instance
+      const testInstance: AlertInstance = {
+        id: `test-${Date.now()}`,
+        alertId: alert.id,
+        triggeredAt: new Date(),
+        severity: alert.severity,
+        status: 'active',
+        triggerValues: { test: true },
+        message: `[TEST] ${this.generateAlertMessage(alert)}`,
+        actions: alert.actions.map(action => ({
+          type: action.type,
+          status: 'pending'
+        }))
+      };
+
+      // Execute actions with test flag
+      await this.executeActions(alert, testInstance);
+      
+      this.log.info('Test alert sent', { alertId });
+    } catch (error) {
+      this.log.error('Failed to send test alert', error, { alertId });
       throw error;
     }
   }
@@ -363,9 +421,20 @@ export class AlertService {
   }
 
   private async getMonitoredVenues(): Promise<string[]> {
-    // In production, get list of venues with active alerts
-    // For now, return mock data
-    return ['venue-1', 'venue-2'];
+    // Get list of venues with active alerts from database
+    // Uses the existing model method and extracts unique venue IDs
+    try {
+      const { getDb } = await import('../config/database.js');
+      const db = getDb();
+      const result = await db('analytics_alerts')
+        .distinct('tenant_id')
+        .where('status', 'active')
+        .pluck('tenant_id');
+      return result;
+    } catch (error) {
+      this.log.error('Failed to get monitored venues', error);
+      return [];
+    }
   }
 
   async getAlertsByVenue(venueId: string): Promise<Alert[]> {

@@ -45,7 +45,7 @@ export async function createOptimizationIndexes(db: Knex): Promise<void> {
 
     logger.info('✅ Optimization indexes created successfully');
   } catch (error) {
-    logger.error('Failed to create optimization indexes:', error);
+    logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to create optimization indexes');
     throw error;
   }
 }
@@ -102,7 +102,7 @@ export async function bulkInsert(
       await db(tableName).insert(chunk);
       insertedCount += chunk.length;
     } catch (error) {
-      logger.error(`Failed to insert chunk at offset ${i}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), offset: i }, 'Failed to insert chunk');
       // Continue with next chunk
     }
   }
@@ -141,7 +141,7 @@ export async function bulkUpdate(
       
       updatedCount += chunk.length;
     } catch (error) {
-      logger.error(`Failed to update chunk at offset ${i}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), offset: i }, 'Failed to update chunk');
     }
   }
 
@@ -172,10 +172,10 @@ export class QueryAnalyzer {
 
     // Log slow queries
     if (duration > this.slowQueryThreshold) {
-      logger.warn(`Slow query detected (${duration}ms):`, {
+      logger.warn({
         query: query.substring(0, 200),
         duration
-      });
+      }, `Slow query detected (${duration}ms)`);
     }
   }
 
@@ -257,7 +257,7 @@ export async function vacuumAnalyze(db: Knex, tableName?: string): Promise<void>
       logger.info('Vacuumed and analyzed entire database');
     }
   } catch (error) {
-    logger.error('Vacuum analyze failed:', error);
+    logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Vacuum analyze failed');
   }
 }
 
@@ -280,7 +280,7 @@ export async function getTableStats(db: Knex, tableName: string) {
 
     return stats.rows[0] || null;
   } catch (error) {
-    logger.error(`Failed to get stats for table ${tableName}:`, error);
+    logger.error({ err: error instanceof Error ? error : new Error(String(error)), tableName }, 'Failed to get stats for table');
     return null;
   }
 }
@@ -294,7 +294,7 @@ export async function explainQuery(db: Knex, query: Knex.QueryBuilder) {
     const result = await db.raw(`EXPLAIN ANALYZE ${sql.sql}`, sql.bindings);
     return result.rows;
   } catch (error) {
-    logger.error('Explain query failed:', error);
+    logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Explain query failed');
     return null;
   }
 }

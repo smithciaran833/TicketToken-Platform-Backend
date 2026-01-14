@@ -28,7 +28,7 @@ export class CleanupService {
         
         cleaned++;
       } catch (error) {
-        logger.error(`Failed to cleanup file ${file.id}:`, error);
+        logger.error({ err: error instanceof Error ? error : new Error(String(error)), fileId: file.id }, 'Failed to cleanup file');
       }
     }
     
@@ -68,7 +68,7 @@ export class CleanupService {
         }
       }
     } catch (error) {
-      logger.error('Temp cleanup failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Temp cleanup failed');
     }
     
     return { cleaned };
@@ -125,7 +125,7 @@ export class CleanupService {
     `);
     
     for (const entity of result.rows) {
-      logger.warn(`Entity ${entity.entity_type}/${entity.entity_id} exceeds storage limit: ${entity.total_bytes}/${entity.max_bytes}`);
+      logger.warn({ entityType: entity.entity_type, entityId: entity.entity_id, totalBytes: entity.total_bytes, maxBytes: entity.max_bytes }, 'Entity exceeds storage limit');
       // Could implement automatic cleanup or notifications here
     }
   }

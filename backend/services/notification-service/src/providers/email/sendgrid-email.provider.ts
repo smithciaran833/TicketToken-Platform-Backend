@@ -5,11 +5,41 @@ import { NotificationResult } from '../base.provider';
 import { logger } from '../../config/logger';
 import { metricsService } from '../../services/metrics.service';
 
+/**
+ * AUDIT FIX EXT-H1: Provider timeout configuration
+ */
+const SENDGRID_TIMEOUT_MS = parseInt(process.env.SENDGRID_TIMEOUT_MS || '30000', 10);
+
+/**
+ * AUDIT FIX EXT-H1: Wrap function with timeout
+ */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout;
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`${operation} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutHandle!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutHandle!);
+    throw error;
+  }
+}
+
 export class SendGridEmailProvider extends BaseEmailProvider {
   private initialized = false;
+  private timeoutMs: number;
 
   constructor(config: any = {}) {
     super(config);
+    // AUDIT FIX EXT-H1: Configurable timeout
+    this.timeoutMs = config.timeout || SENDGRID_TIMEOUT_MS;
   }
 
   async verify(): Promise<boolean> {
@@ -66,7 +96,8 @@ export class SendGridEmailProvider extends BaseEmailProvider {
         })) })
       };
 
-      await sgMail.send(msg);
+      // AUDIT FIX EXT-H1: Send with timeout
+      await withTimeout(sgMail.send(msg), this.timeoutMs, 'SendGrid email send');
       
       // Track provider metrics
       const duration = (Date.now() - startTime) / 1000;

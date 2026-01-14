@@ -1,12 +1,6 @@
-// Load .env.test BEFORE any other code runs
-require('dotenv').config({ path: '.env.test' });
+// Jest setup for auth-service tests
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '..', '.env.test') });
 
-// Verify critical env vars are set
-if (!process.env.DATABASE_URL) {
-  console.error('ERROR: DATABASE_URL not loaded from .env.test');
-  process.exit(1);
-}
-
-console.log('✓ Test environment loaded from .env.test');
-console.log('✓ DATABASE_URL:', process.env.DATABASE_URL);
-console.log('✓ REDIS_URL:', process.env.REDIS_URL);
+// Set test environment variables
+process.env.NODE_ENV = 'test';

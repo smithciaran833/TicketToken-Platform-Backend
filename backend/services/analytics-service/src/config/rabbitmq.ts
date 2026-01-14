@@ -1,5 +1,4 @@
 const amqp = require('amqplib/callback_api');
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
 import { config } from './index';
 import { logger } from '../utils/logger';
 

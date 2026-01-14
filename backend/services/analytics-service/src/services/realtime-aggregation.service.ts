@@ -11,8 +11,16 @@ interface AggregationWindow {
 
 export class RealtimeAggregationService {
   private redis!: Redis;
-  private analyticsDb = getAnalyticsDb();
+  private _analyticsDb: ReturnType<typeof getAnalyticsDb> | null = null;
   private intervalHandles: NodeJS.Timeout[] = [];
+  
+  // Lazy initialization to avoid calling getAnalyticsDb() at class construction time
+  private get analyticsDb() {
+    if (!this._analyticsDb) {
+      this._analyticsDb = getAnalyticsDb();
+    }
+    return this._analyticsDb;
+  }
   
   private aggregationWindows: Record<string, AggregationWindow> = {
     '1min': { interval: 60, retention: 3600 },      // 1 hour retention
@@ -134,9 +142,66 @@ export class RealtimeAggregationService {
   }
 
   private async aggregate5Minutes() {
-    // Similar to 1-minute but with 5-minute window
-    logger.debug('Running 5-minute aggregation');
-    // TODO: Implement 5-minute aggregation logic
+    try {
+      const venues = await this.getActiveVenues();
+      const retention = this.aggregationWindows['5min'].retention;
+
+      for (const venueId of venues) {
+        // Get 5-minute rolling metrics
+        const now = new Date();
+        const fiveMinutesAgo = new Date(now.getTime() - 5 * 60 * 1000);
+        const today = now.toISOString().split('T')[0];
+        
+        const purchaseKey = `metrics:purchase:${venueId}:${today}`;
+        const trafficKey = `metrics:traffic:${venueId}:${today}`;
+
+        const [purchases, traffic] = await Promise.all([
+          this.redis.hgetall(purchaseKey),
+          this.redis.hgetall(trafficKey)
+        ]);
+
+        // Calculate 5-minute aggregates
+        const metrics = {
+          timestamp: now,
+          window: '5min',
+          sales: {
+            count: parseInt(purchases.total_sales || '0'),
+            revenue: parseFloat(purchases.revenue || '0'),
+            averageOrderValue: purchases.total_sales && parseInt(purchases.total_sales) > 0
+              ? parseFloat(purchases.revenue || '0') / parseInt(purchases.total_sales)
+              : 0
+          },
+          traffic: {
+            pageViews: parseInt(traffic.page_views || '0'),
+            uniqueVisitors: parseInt(traffic.unique_visitors || '0')
+          },
+          conversion: {
+            rate: traffic.page_views && parseInt(traffic.page_views) > 0
+              ? parseInt(purchases.total_sales || '0') / parseInt(traffic.page_views)
+              : 0
+          }
+        };
+
+        // Store in database with retention
+        await this.analyticsDb('realtime_metrics')
+          .insert({
+            venue_id: venueId,
+            metric_type: '5min_summary',
+            metric_value: JSON.stringify(metrics),
+            created_at: now,
+            expires_at: new Date(Date.now() + retention * 1000)
+          })
+          .onConflict(['venue_id', 'metric_type'])
+          .merge();
+
+        // Emit to WebSocket for real-time dashboards
+        emitMetricUpdate(venueId, '5min-summary', metrics);
+      }
+      
+      logger.debug('5-minute aggregation completed', { venueCount: venues.length });
+    } catch (error) {
+      logger.error('Failed to run 5-minute aggregation', error);
+    }
   }
 
   private async aggregateHourly() {
@@ -170,11 +235,52 @@ export class RealtimeAggregationService {
   }
 
   private async calculateHourlyMetrics(venueId: string) {
-    // Implementation for hourly metrics
-    return {
-      uniqueCustomers: 0,
-      activeEvents: 0
-    };
+    try {
+      const now = new Date();
+      const today = now.toISOString().split('T')[0];
+      const currentHour = now.getHours();
+      
+      // Get customer data from Redis
+      const customerKey = `metrics:customers:${venueId}:${today}`;
+      const eventKey = `metrics:events:${venueId}:${today}`;
+      
+      const [customerData, eventData] = await Promise.all([
+        this.redis.hgetall(customerKey),
+        this.redis.hgetall(eventKey)
+      ]);
+      
+      // Count unique customers from set
+      const uniqueCustomersKey = `unique:customers:${venueId}:${today}:${currentHour}`;
+      const uniqueCustomerCount = await this.redis.scard(uniqueCustomersKey);
+      
+      // Get active events count from database
+      const activeEventsResult = await this.analyticsDb('events')
+        .where('venue_id', venueId)
+        .where('status', 'active')
+        .whereRaw('start_time <= NOW()')
+        .whereRaw('end_time >= NOW()')
+        .count('* as count')
+        .first();
+      
+      return {
+        uniqueCustomers: uniqueCustomerCount || parseInt(customerData.unique_count || '0'),
+        activeEvents: parseInt(String(activeEventsResult?.count || '0')),
+        totalSessions: parseInt(customerData.sessions || '0'),
+        averageSessionDuration: parseFloat(customerData.avg_duration || '0'),
+        ticketsSold: parseInt(eventData.tickets_sold || '0'),
+        revenue: parseFloat(eventData.revenue || '0')
+      };
+    } catch (error) {
+      logger.error('Failed to calculate hourly metrics', { venueId, error });
+      return {
+        uniqueCustomers: 0,
+        activeEvents: 0,
+        totalSessions: 0,
+        averageSessionDuration: 0,
+        ticketsSold: 0,
+        revenue: 0
+      };
+    }
   }
 
   private async getActiveVenues(): Promise<string[]> {

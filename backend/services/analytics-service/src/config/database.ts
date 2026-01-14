@@ -26,6 +26,15 @@ export async function connectDatabases() {
       const analyticsDbIp = analyticsDbIps[0];
       logger.info(`Resolved ${config.analyticsDatabase.host} to ${analyticsDbIp}`);
       
+      // AUDIT FIX: DB-1 - Add SSL configuration for database connections
+      const sslConfig = config.env === 'production' ? {
+        ssl: {
+          rejectUnauthorized: true,
+          // In production, you may want to specify CA certificate:
+          // ca: fs.readFileSync('/path/to/ca-certificate.crt').toString()
+        }
+      } : {};
+      
       // Main database connection (through PgBouncer) using resolved IP
       db = knex({
         client: 'postgresql',
@@ -35,6 +44,7 @@ export async function connectDatabases() {
           database: config.database.database,
           user: config.database.user,
           password: config.database.password,
+          ...sslConfig,
         },
         pool: {
           min: config.database.pool.min,

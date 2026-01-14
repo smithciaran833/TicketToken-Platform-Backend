@@ -1,0 +1,18 @@
+{
+  "*.ts": [
+    "eslint --fix --max-warnings 0",
+    "prettier --write"
+  ],
+  "*.json": [
+    "prettier --write"
+  ],
+  "*.md": [
+    "prettier --write"
+  ],
+  "*.yml": [
+    "prettier --write"
+  ],
+  "*.yaml": [
+    "prettier --write"
+  ]
+}

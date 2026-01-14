@@ -1,6 +1,6 @@
 import { initializeTracing } from './utils/tracing';
 // Initialize tracing before anything else
-const sdk = initializeTracing('venue-service');
+initializeTracing();
 import { buildApp } from './app';
 import { logger } from './utils/logger';
 import { initializeMongoDB, closeMongoDB } from './config/mongodb';
@@ -131,10 +131,6 @@ async function gracefulShutdown(signal: string): Promise<void> {
       logger.warn({ error: dbError }, 'Error closing database connection');
     }
 
-    // Step 6: Shutdown OpenTelemetry SDK
-    logger.info('Shutting down OpenTelemetry SDK...');
-    await sdk.shutdown();
-    logger.info('OpenTelemetry SDK shut down successfully');
 
     // Mark shutdown as complete
     shutdownComplete = true;

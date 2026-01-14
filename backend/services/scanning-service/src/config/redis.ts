@@ -1,9 +1,11 @@
 import Redis from 'ioredis';
 import logger from '../utils/logger';
 
-let redis: Redis | undefined;
+type RedisClient = InstanceType<typeof Redis>;
 
-export function initializeRedis(): Redis {
+let redis: RedisClient | undefined;
+
+export function initializeRedis(): RedisClient {
   redis = new Redis({
     host: process.env.REDIS_HOST || 'redis',
     port: parseInt(process.env.REDIS_PORT || '6379'),
@@ -25,7 +27,7 @@ export function initializeRedis(): Redis {
   return redis;
 }
 
-export function getRedis(): Redis {
+export function getRedis(): RedisClient {
   if (!redis) {
     throw new Error('Redis not initialized. Call initializeRedis() first.');
   }

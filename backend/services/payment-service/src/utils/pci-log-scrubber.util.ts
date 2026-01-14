@@ -172,6 +172,7 @@ export function scrubObject(obj: any): any {
 
 /**
  * Safe logger that automatically scrubs sensitive data
+ * Supports both standard (msg, meta) and pino-style (obj, msg) calling patterns
  */
 export class SafeLogger {
   private context: string;
@@ -211,20 +212,38 @@ export class SafeLogger {
     }
   }
 
-  info(message: string, meta?: any): void {
-    this.formatMessage('INFO', message, meta);
+  info(msgOrObj: string | object, metaOrMsg?: any): void {
+    if (typeof msgOrObj === 'object') {
+      // Pino-style: (obj, msg)
+      this.formatMessage('INFO', metaOrMsg || '', msgOrObj);
+    } else {
+      // Standard: (msg, meta)
+      this.formatMessage('INFO', msgOrObj, metaOrMsg);
+    }
   }
 
-  warn(message: string, meta?: any): void {
-    this.formatMessage('WARN', message, meta);
+  warn(msgOrObj: string | object, metaOrMsg?: any): void {
+    if (typeof msgOrObj === 'object') {
+      this.formatMessage('WARN', metaOrMsg || '', msgOrObj);
+    } else {
+      this.formatMessage('WARN', msgOrObj, metaOrMsg);
+    }
   }
 
-  error(message: string, meta?: any): void {
-    this.formatMessage('ERROR', message, meta);
+  error(msgOrObj: string | object, metaOrMsg?: any): void {
+    if (typeof msgOrObj === 'object') {
+      this.formatMessage('ERROR', metaOrMsg || '', msgOrObj);
+    } else {
+      this.formatMessage('ERROR', msgOrObj, metaOrMsg);
+    }
   }
 
-  debug(message: string, meta?: any): void {
-    this.formatMessage('DEBUG', message, meta);
+  debug(msgOrObj: string | object, metaOrMsg?: any): void {
+    if (typeof msgOrObj === 'object') {
+      this.formatMessage('DEBUG', metaOrMsg || '', msgOrObj);
+    } else {
+      this.formatMessage('DEBUG', msgOrObj, metaOrMsg);
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 /**
  * CAPTCHA Service
- * 
+ *
  * Verifies CAPTCHA tokens after N failed login attempts.
  * Supports Google reCAPTCHA v2/v3 and hCaptcha.
  */
@@ -26,9 +26,9 @@ export class CaptchaService {
   private minScore: number;
 
   constructor() {
-    this.secretKey = process.env.CAPTCHA_SECRET_KEY || '';
-    this.provider = (process.env.CAPTCHA_PROVIDER as 'recaptcha' | 'hcaptcha') || 'recaptcha';
-    this.minScore = parseFloat(process.env.CAPTCHA_MIN_SCORE || '0.5');
+    this.secretKey = env.CAPTCHA_SECRET_KEY || '';
+    this.provider = env.CAPTCHA_PROVIDER;
+    this.minScore = env.CAPTCHA_MIN_SCORE;
   }
 
   /**
@@ -36,7 +36,7 @@ export class CaptchaService {
    */
   async isCaptchaRequired(identifier: string): Promise<boolean> {
     // Skip in development/test unless explicitly enabled
-    if (env.NODE_ENV !== 'production' && !process.env.CAPTCHA_ENABLED) {
+    if (!env.isProduction && !env.CAPTCHA_ENABLED) {
       return false;
     }
 
@@ -48,7 +48,7 @@ export class CaptchaService {
     const redis = getRedis();
     const key = `captcha:failures:${identifier}`;
     const failures = await redis.get(key);
-    
+
     return parseInt(failures || '0') >= CAPTCHA_THRESHOLD;
   }
 
@@ -58,9 +58,9 @@ export class CaptchaService {
   async recordFailure(identifier: string): Promise<{ requiresCaptcha: boolean; attempts: number }> {
     const redis = getRedis();
     const key = `captcha:failures:${identifier}`;
-    
+
     const attempts = await redis.incr(key);
-    
+
     // Set expiry on first failure
     if (attempts === 1) {
       await redis.expire(key, CAPTCHA_WINDOW);
@@ -116,7 +116,7 @@ export class CaptchaService {
       // For reCAPTCHA v3, check score
       if (this.provider === 'recaptcha' && data.score !== undefined) {
         const passed = data.success && data.score >= this.minScore;
-        
+
         logger.info('reCAPTCHA v3 verification', {
           success: passed,
           score: data.score,
@@ -138,12 +138,12 @@ export class CaptchaService {
       };
     } catch (error) {
       logger.error('CAPTCHA verification failed', { error });
-      
+
       // Fail open in case of network issues (configurable)
-      if (process.env.CAPTCHA_FAIL_OPEN === 'true') {
+      if (env.CAPTCHA_FAIL_OPEN) {
         return { success: true };
       }
-      
+
       return { success: false, errorCodes: ['verification-failed'] };
     }
   }

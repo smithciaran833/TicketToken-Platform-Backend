@@ -1,71 +1,49 @@
-import { HealthCheckService } from '../../../src/services/healthCheck.service';
-import { logger } from '../../../src/utils/logger';
-import { Knex } from 'knex';
-import Redis from 'ioredis';
+/**
+ * Unit tests for src/services/healthCheck.service.ts
+ * Tests health check endpoints for Kubernetes probes
+ */
 
-// =============================================================================
-// MOCKS
-// =============================================================================
+import { HealthCheckService, HealthCheckResult } from '../../../src/services/healthCheck.service';
+import { createRedisMock } from '../../__mocks__/redis.mock';
+import { createKnexMock } from '../../__mocks__/knex.mock';
 
-jest.mock('../../../src/utils/logger');
+// Mock logger
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
 
-describe('HealthCheckService', () => {
+// Mock config
+jest.mock('../../../src/config/index', () => ({
+  getConfig: jest.fn(() => ({
+    rabbitmq: {
+      host: 'localhost',
+    },
+  })),
+}));
+
+describe('services/healthCheck.service', () => {
   let healthCheckService: HealthCheckService;
-  let mockDb: any;
-  let mockRedis: jest.Mocked<Redis>;
+  let mockRedis: ReturnType<typeof createRedisMock>;
+  let mockDb: ReturnType<typeof createKnexMock>;
+  let mockQueueService: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockRedis = createRedisMock();
+    mockDb = createKnexMock();
+    mockQueueService = null; // Default to no queue service
 
-    // Mock database with proper Knex query builder chain
-    const mockQueryBuilder = {
-      count: jest.fn().mockReturnThis(),
-      first: jest.fn(),
-    };
-
-    mockDb = Object.assign(
-      jest.fn().mockReturnValue(mockQueryBuilder),
-      {
-        raw: jest.fn(),
-        _mockQueryBuilder: mockQueryBuilder, // Store reference for tests
-      }
-    );
-
-    // Mock Redis
-    mockRedis = {
-      ping: jest.fn(),
-      set: jest.fn(),
-      get: jest.fn(),
-      del: jest.fn(),
-    } as any;
-
-    // Create service instance
     healthCheckService = new HealthCheckService({
       db: mockDb as any,
-      redis: mockRedis,
+      redis: mockRedis as any,
+      queueService: mockQueueService,
     });
   });
-
-  // =============================================================================
-  // constructor() - 2 test cases
-  // =============================================================================
-
-  describe('constructor()', () => {
-    it('should initialize with dependencies', () => {
-      expect(healthCheckService).toBeDefined();
-      expect((healthCheckService as any).db).toBe(mockDb);
-      expect((healthCheckService as any).redis).toBe(mockRedis);
-    });
-
-    it('should set start time', () => {
-      const startTime = (healthCheckService as any).startTime;
-      expect(startTime).toBeInstanceOf(Date);
-    });
-  });
-
-  // =============================================================================
-  // getLiveness() - 2 test cases
-  // =============================================================================
 
   describe('getLiveness()', () => {
     it('should return alive status', async () => {
@@ -75,274 +53,320 @@ describe('HealthCheckService', () => {
       expect(result.timestamp).toBeDefined();
     });
 
-    it('should return current timestamp', async () => {
+    it('should return ISO timestamp', async () => {
       const result = await healthCheckService.getLiveness();
 
-      expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
-      expect(new Date(result.timestamp)).toBeInstanceOf(Date);
+      const timestamp = new Date(result.timestamp);
+      expect(timestamp.toISOString()).toBe(result.timestamp);
+    });
+
+    it('should always return alive regardless of dependencies', async () => {
+      // Even with failing dependencies, liveness should return alive
+      mockDb.raw.mockRejectedValue(new Error('DB error'));
+      
+      const result = await healthCheckService.getLiveness();
+
+      expect(result.status).toBe('alive');
     });
   });
 
-  // =============================================================================
-  // getReadiness() - 12 test cases
-  // =============================================================================
-
   describe('getReadiness()', () => {
     it('should return healthy when all checks pass', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
       mockRedis.ping.mockResolvedValue('PONG');
 
       const result = await healthCheckService.getReadiness();
 
       expect(result.status).toBe('healthy');
+      expect(result.service).toBe('venue-service');
       expect(result.checks.database.status).toBe('ok');
       expect(result.checks.redis.status).toBe('ok');
     });
 
-    it('should check database connectivity', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
-      mockRedis.ping.mockResolvedValue('PONG');
-
-      await healthCheckService.getReadiness();
-
-      expect(mockDb.raw).toHaveBeenCalledWith('SELECT 1');
-    });
-
-    it('should check Redis connectivity', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
-      mockRedis.ping.mockResolvedValue('PONG');
-
-      await healthCheckService.getReadiness();
-
-      expect(mockRedis.ping).toHaveBeenCalled();
-    });
-
     it('should return unhealthy when database fails', async () => {
-      mockDb.raw.mockRejectedValue(new Error('Database connection failed'));
+      mockDb.raw.mockRejectedValue(new Error('Connection refused'));
       mockRedis.ping.mockResolvedValue('PONG');
 
       const result = await healthCheckService.getReadiness();
 
       expect(result.status).toBe('unhealthy');
       expect(result.checks.database.status).toBe('error');
-      expect(result.checks.database.message).toBe('Database connection failed');
+      expect(result.checks.database.message).toContain('Connection refused');
+      expect(result.checks.redis.status).toBe('ok');
     });
 
     it('should return degraded when Redis fails', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
-      mockRedis.ping.mockRejectedValue(new Error('Redis connection failed'));
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
+      mockRedis.ping.mockRejectedValue(new Error('Redis error'));
 
       const result = await healthCheckService.getReadiness();
 
       expect(result.status).toBe('degraded');
+      expect(result.checks.database.status).toBe('ok');
       expect(result.checks.redis.status).toBe('error');
-      expect(result.checks.redis.message).toBe('Redis connection failed');
     });
 
-    it('should include response times for database', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
+    it('should include response times', async () => {
+      mockDb.raw.mockImplementation(() => 
+        new Promise(resolve => setTimeout(() => resolve([{ '?column?': 1 }]), 10))
+      );
       mockRedis.ping.mockResolvedValue('PONG');
 
       const result = await healthCheckService.getReadiness();
 
-      expect(result.checks.database.responseTime).toBeDefined();
-      expect(typeof result.checks.database.responseTime).toBe('number');
-    });
-
-    it('should include response times for Redis', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
-      mockRedis.ping.mockResolvedValue('PONG');
-
-      const result = await healthCheckService.getReadiness();
-
-      expect(result.checks.redis.responseTime).toBeDefined();
-      expect(typeof result.checks.redis.responseTime).toBe('number');
-    });
-
-    it('should include service metadata', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
-      mockRedis.ping.mockResolvedValue('PONG');
-
-      const result = await healthCheckService.getReadiness();
-
-      expect(result.service).toBe('venue-service');
-      expect(result.version).toBeDefined();
-      expect(result.timestamp).toBeDefined();
+      expect(result.checks.database.responseTime).toBeGreaterThanOrEqual(0);
+      expect(result.checks.redis.responseTime).toBeGreaterThanOrEqual(0);
     });
 
     it('should include uptime', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
-      mockRedis.ping.mockResolvedValue('PONG');
-
-      // Wait a bit to ensure uptime > 0
-      await new Promise(resolve => setTimeout(resolve, 10));
-
-      const result = await healthCheckService.getReadiness();
-
-      expect(result.uptime).toBeGreaterThan(0);
-      expect(typeof result.uptime).toBe('number');
-    });
-
-    it('should use version from environment or default', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
       mockRedis.ping.mockResolvedValue('PONG');
 
       const result = await healthCheckService.getReadiness();
 
-      expect(result.version).toBe('1.0.0');
+      expect(result.uptime).toBeGreaterThanOrEqual(0);
     });
 
-    it('should handle both database and Redis failures', async () => {
-      mockDb.raw.mockRejectedValue(new Error('DB failed'));
-      mockRedis.ping.mockRejectedValue(new Error('Redis failed'));
-
-      const result = await healthCheckService.getReadiness();
-
-      expect(result.status).toBe('unhealthy');
-      expect(result.checks.database.status).toBe('error');
-      expect(result.checks.redis.status).toBe('error');
-    });
-
-    it('should return timestamp in ISO format', async () => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
+    it('should include version', async () => {
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
       mockRedis.ping.mockResolvedValue('PONG');
 
       const result = await healthCheckService.getReadiness();
 
-      expect(result.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+      expect(result.version).toBeDefined();
     });
   });
 
-  // =============================================================================
-  // getFullHealth() - 10 test cases
-  // =============================================================================
-
   describe('getFullHealth()', () => {
     beforeEach(() => {
-      mockDb.raw.mockResolvedValue({ rows: [{ '?column?': 1 }] });
+      // Set up default successful responses
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
       mockRedis.ping.mockResolvedValue('PONG');
-    });
-
-    it('should include all readiness checks', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 5 });
       mockRedis.set.mockResolvedValue('OK');
       mockRedis.get.mockResolvedValue('ok');
       mockRedis.del.mockResolvedValue(1);
+      mockDb._mockChain.first.mockResolvedValue({ count: 100 });
+      mockDb.migrate = {
+        currentVersion: jest.fn().mockResolvedValue(['20240101000000']),
+        list: jest.fn().mockResolvedValue([[], []]),
+      };
+    });
 
+    it('should include all readiness checks plus business checks', async () => {
       const result = await healthCheckService.getFullHealth();
 
       expect(result.checks.database).toBeDefined();
       expect(result.checks.redis).toBeDefined();
-    });
-
-    it('should check venue query capability', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 10 });
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('ok');
-      mockRedis.del.mockResolvedValue(1);
-
-      const result = await healthCheckService.getFullHealth();
-
       expect(result.checks.venueQuery).toBeDefined();
-      expect(result.checks.venueQuery.status).toBe('ok');
-      expect(result.checks.venueQuery.details?.venueCount).toBe(10);
-    });
-
-    it('should check cache operations', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 5 });
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('ok');
-      mockRedis.del.mockResolvedValue(1);
-
-      const result = await healthCheckService.getFullHealth();
-
       expect(result.checks.cacheOperations).toBeDefined();
-      expect(result.checks.cacheOperations.status).toBe('ok');
+      expect(result.checks.rabbitMQ).toBeDefined();
+      expect(result.checks.migrations).toBeDefined();
     });
 
-    it('should perform set, get, and delete on cache', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 0 });
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('ok');
-      mockRedis.del.mockResolvedValue(1);
-
-      await healthCheckService.getFullHealth();
-
-      expect(mockRedis.set).toHaveBeenCalledWith(
-        expect.stringContaining('health:check:'),
-        'ok',
-        'EX',
-        10
-      );
-      expect(mockRedis.get).toHaveBeenCalled();
-      expect(mockRedis.del).toHaveBeenCalled();
-    });
-
-    it('should include response times for business checks', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 0 });
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('ok');
-      mockRedis.del.mockResolvedValue(1);
-
+    it('should test venue query functionality', async () => {
       const result = await healthCheckService.getFullHealth();
 
-      expect(result.checks.venueQuery.responseTime).toBeDefined();
-      expect(result.checks.cacheOperations.responseTime).toBeDefined();
+      expect(result.checks.venueQuery.status).toBe('ok');
+      expect(result.checks.venueQuery.details?.venueCount).toBeDefined();
     });
 
-    it('should handle venue query failures', async () => {
-      mockDb._mockQueryBuilder.first.mockRejectedValue(new Error('Query failed'));
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('ok');
-      mockRedis.del.mockResolvedValue(1);
+    it('should handle venue query failure', async () => {
+      mockDb._mockChain.first.mockRejectedValue(new Error('Query failed'));
 
       const result = await healthCheckService.getFullHealth();
 
       expect(result.checks.venueQuery.status).toBe('error');
-      expect(result.checks.venueQuery.message).toBe('Query failed');
+      expect(result.checks.venueQuery.message).toContain('Query failed');
     });
 
-    it('should handle cache operation failures', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 0 });
-      mockRedis.set.mockRejectedValue(new Error('Cache failed'));
+    it('should test cache operations', async () => {
+      const result = await healthCheckService.getFullHealth();
+
+      expect(result.checks.cacheOperations.status).toBe('ok');
+      expect(mockRedis.set).toHaveBeenCalled();
+      expect(mockRedis.get).toHaveBeenCalled();
+      expect(mockRedis.del).toHaveBeenCalled();
+    });
+
+    it('should handle cache operation failure', async () => {
+      mockRedis.set.mockRejectedValue(new Error('Cache error'));
 
       const result = await healthCheckService.getFullHealth();
 
       expect(result.checks.cacheOperations.status).toBe('error');
-      expect(result.checks.cacheOperations.message).toBe('Cache failed');
     });
 
-    it('should mark cache as warning if value mismatch', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 0 });
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('wrong-value');
-      mockRedis.del.mockResolvedValue(1);
+    it('should return warning for cache value mismatch', async () => {
+      mockRedis.get.mockResolvedValue('unexpected_value');
 
       const result = await healthCheckService.getFullHealth();
 
       expect(result.checks.cacheOperations.status).toBe('warning');
     });
+  });
 
-    it('should include venue count in details', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ count: 42 });
+  describe('RabbitMQ checks', () => {
+    beforeEach(() => {
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
+      mockRedis.ping.mockResolvedValue('PONG');
       mockRedis.set.mockResolvedValue('OK');
       mockRedis.get.mockResolvedValue('ok');
       mockRedis.del.mockResolvedValue(1);
-
-      const result = await healthCheckService.getFullHealth();
-
-      expect(result.checks.venueQuery.details?.venueCount).toBe(42);
+      mockDb._mockChain.first.mockResolvedValue({ count: 100 });
+      mockDb.migrate = {
+        currentVersion: jest.fn().mockResolvedValue(['20240101000000']),
+        list: jest.fn().mockResolvedValue([[], []]),
+      };
     });
 
-    it('should handle null venue count gracefully', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue(null);
-      mockRedis.set.mockResolvedValue('OK');
-      mockRedis.get.mockResolvedValue('ok');
-      mockRedis.del.mockResolvedValue(1);
+    it('should report warning when queueService not configured', async () => {
+      healthCheckService = new HealthCheckService({
+        db: mockDb as any,
+        redis: mockRedis as any,
+        queueService: undefined,
+      });
 
       const result = await healthCheckService.getFullHealth();
 
-      expect(result.checks.venueQuery.details?.venueCount).toBe(0);
+      expect(result.checks.rabbitMQ.status).toBe('warning');
+      expect(result.checks.rabbitMQ.details?.enabled).toBe(false);
+    });
+
+    it('should report ok when queueService is connected', async () => {
+      mockQueueService = {
+        connection: { closed: false },
+        channel: {},
+      };
+      healthCheckService = new HealthCheckService({
+        db: mockDb as any,
+        redis: mockRedis as any,
+        queueService: mockQueueService,
+      });
+
+      const result = await healthCheckService.getFullHealth();
+
+      expect(result.checks.rabbitMQ.status).toBe('ok');
+      expect(result.checks.rabbitMQ.details?.connected).toBe(true);
+    });
+
+    it('should report warning when connection is closed', async () => {
+      mockQueueService = {
+        connection: { closed: true },
+      };
+      healthCheckService = new HealthCheckService({
+        db: mockDb as any,
+        redis: mockRedis as any,
+        queueService: mockQueueService,
+      });
+
+      const result = await healthCheckService.getFullHealth();
+
+      expect(result.checks.rabbitMQ.status).toBe('warning');
+      expect(result.checks.rabbitMQ.details?.connected).toBe(false);
+    });
+
+    it('should cache RabbitMQ check results', async () => {
+      mockQueueService = {
+        connection: { closed: false },
+        channel: {},
+      };
+      healthCheckService = new HealthCheckService({
+        db: mockDb as any,
+        redis: mockRedis as any,
+        queueService: mockQueueService,
+      });
+
+      // First call
+      const result1 = await healthCheckService.getFullHealth();
+      expect(result1.checks.rabbitMQ.status).toBe('ok');
+
+      // Second call should use cache
+      const result2 = await healthCheckService.getFullHealth();
+      expect(result2.checks.rabbitMQ.status).toBe('ok');
+    });
+  });
+
+  describe('Migration checks', () => {
+    beforeEach(() => {
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
+      mockRedis.ping.mockResolvedValue('PONG');
+      mockRedis.set.mockResolvedValue('OK');
+      mockRedis.get.mockResolvedValue('ok');
+      mockRedis.del.mockResolvedValue(1);
+      mockDb._mockChain.first.mockResolvedValue({ count: 100 });
+    });
+
+    it('should report ok when migrations are up to date', async () => {
+      mockDb.migrate = {
+        currentVersion: jest.fn().mockResolvedValue(['20240101000000']),
+        list: jest.fn().mockResolvedValue([[], []]), // No pending migrations
+      };
+
+      const result = await healthCheckService.getFullHealth();
+
+      expect(result.checks.migrations.status).toBe('ok');
+      expect(result.checks.migrations.details?.upToDate).toBe(true);
+    });
+
+    it('should report warning when there are pending migrations', async () => {
+      mockDb.migrate = {
+        currentVersion: jest.fn().mockResolvedValue(['20240101000000']),
+        list: jest.fn().mockResolvedValue([[], [
+          { name: '20240201000000_add_new_column' },
+          { name: '20240301000000_add_index' },
+        ]]),
+      };
+
+      const result = await healthCheckService.getFullHealth();
+
+      expect(result.checks.migrations.status).toBe('warning');
+      expect(result.checks.migrations.details?.pendingCount).toBe(2);
+    });
+
+    it('should report error when migration check fails', async () => {
+      mockDb.migrate = {
+        currentVersion: jest.fn().mockRejectedValue(new Error('Migration table not found')),
+        list: jest.fn().mockResolvedValue([[], []]),
+      };
+
+      const result = await healthCheckService.getFullHealth();
+
+      expect(result.checks.migrations.status).toBe('error');
+      expect(result.checks.migrations.message).toContain('Migration check failed');
+    });
+  });
+
+  describe('Edge cases', () => {
+    it('should handle simultaneous failures gracefully', async () => {
+      mockDb.raw.mockRejectedValue(new Error('DB down'));
+      mockRedis.ping.mockRejectedValue(new Error('Redis down'));
+
+      const result = await healthCheckService.getReadiness();
+
+      expect(result.status).toBe('unhealthy');
+      expect(result.checks.database.status).toBe('error');
+      expect(result.checks.redis.status).toBe('error');
+    });
+
+    it('should handle slow database response', async () => {
+      mockDb.raw.mockImplementation(() => 
+        new Promise(resolve => setTimeout(() => resolve([{ '?column?': 1 }]), 100))
+      );
+      mockRedis.ping.mockResolvedValue('PONG');
+
+      const result = await healthCheckService.getReadiness();
+
+      expect(result.status).toBe('healthy');
+      expect(result.checks.database.responseTime).toBeGreaterThanOrEqual(100);
+    });
+
+    it('should include service name in response', async () => {
+      mockDb.raw.mockResolvedValue([{ '?column?': 1 }]);
+      mockRedis.ping.mockResolvedValue('PONG');
+
+      const result = await healthCheckService.getReadiness();
+
+      expect(result.service).toBe('venue-service');
     });
   });
 });

@@ -1,199 +1,131 @@
-import { LockoutService } from '../../../src/services/lockout.service';
-import { redis } from '../../../src/config/redis';
+import { RateLimitError } from '../../../src/errors';
 
-jest.mock('../../../src/config/redis');
+const mockRedis = {
+  get: jest.fn(),
+  incr: jest.fn(),
+  expire: jest.fn(),
+  del: jest.fn(),
+  ttl: jest.fn(),
+};
+
+jest.mock('../../../src/config/redis', () => ({ getRedis: () => mockRedis }));
+jest.mock('../../../src/config/env', () => ({
+  env: {
+    LOCKOUT_MAX_ATTEMPTS: 5,
+    LOCKOUT_DURATION_MINUTES: 15,
+  },
+}));
+
+import { LockoutService } from '../../../src/services/lockout.service';
 
 describe('LockoutService', () => {
-  let lockoutService: LockoutService;
-  let mockRedis: jest.Mocked<typeof redis>;
+  let service: LockoutService;
 
   beforeEach(() => {
-    lockoutService = new LockoutService();
-    mockRedis = redis as jest.Mocked<typeof redis>;
     jest.clearAllMocks();
+    service = new LockoutService();
   });
 
   describe('recordFailedAttempt', () => {
-    it('should increment failed attempt counter', async () => {
-      mockRedis.incr = jest.fn().mockResolvedValue(1);
-      mockRedis.expire = jest.fn().mockResolvedValue(1);
+    it('increments both user and IP counters', async () => {
+      mockRedis.incr.mockResolvedValue(1);
 
-      await lockoutService.recordFailedAttempt('user-123', '192.168.1.1');
+      await service.recordFailedAttempt('user-123', '127.0.0.1');
 
-      expect(mockRedis.incr).toHaveBeenCalledWith('lockout:user-123');
-      expect(mockRedis.expire).toHaveBeenCalled();
+      expect(mockRedis.incr).toHaveBeenCalledWith('lockout:user:user-123');
+      expect(mockRedis.incr).toHaveBeenCalledWith('lockout:ip:127.0.0.1');
     });
 
-    it('should set expiry on first failed attempt', async () => {
-      mockRedis.incr = jest.fn().mockResolvedValue(1);
-      mockRedis.expire = jest.fn().mockResolvedValue(1);
+    it('sets expiry on first attempt', async () => {
+      mockRedis.incr.mockResolvedValue(1);
 
-      await lockoutService.recordFailedAttempt('user-123', '192.168.1.1');
+      await service.recordFailedAttempt('user-123', '127.0.0.1');
 
-      expect(mockRedis.expire).toHaveBeenCalledWith(
-        'lockout:user-123',
-        expect.any(Number)
-      );
+      expect(mockRedis.expire).toHaveBeenCalledWith('lockout:user:user-123', 15 * 60);
+      expect(mockRedis.expire).toHaveBeenCalledWith('lockout:ip:127.0.0.1', 15 * 60);
     });
 
-    it('should track attempts by IP address', async () => {
-      mockRedis.incr = jest.fn().mockResolvedValue(2);
-      mockRedis.expire = jest.fn().mockResolvedValue(1);
+    it('does not set expiry on subsequent attempts', async () => {
+      mockRedis.incr.mockResolvedValue(2);
 
-      await lockoutService.recordFailedAttempt('user-123', '10.0.0.1');
+      await service.recordFailedAttempt('user-123', '127.0.0.1');
 
-      expect(mockRedis.incr).toHaveBeenCalledWith('lockout:ip:10.0.0.1');
+      expect(mockRedis.expire).not.toHaveBeenCalled();
     });
 
-    it('should handle concurrent failed attempts', async () => {
-      mockRedis.incr = jest.fn().mockResolvedValue(5);
-      mockRedis.expire = jest.fn().mockResolvedValue(1);
+    it('throws RateLimitError when user max attempts reached', async () => {
+      mockRedis.incr
+        .mockResolvedValueOnce(5) // User attempts = max
+        .mockResolvedValueOnce(3); // IP attempts under
+      mockRedis.ttl.mockResolvedValue(600);
 
-      await Promise.all([
-        lockoutService.recordFailedAttempt('user-123', '10.0.0.1'),
-        lockoutService.recordFailedAttempt('user-123', '10.0.0.1'),
-        lockoutService.recordFailedAttempt('user-123', '10.0.0.1'),
-      ]);
+      await expect(service.recordFailedAttempt('user-123', '127.0.0.1'))
+        .rejects.toThrow(RateLimitError);
+    });
 
-      expect(mockRedis.incr).toHaveBeenCalledTimes(6); // 3 for user, 3 for IP
+    it('throws RateLimitError when IP max attempts reached', async () => {
+      mockRedis.incr
+        .mockResolvedValueOnce(3) // User attempts under
+        .mockResolvedValueOnce(10); // IP attempts = max * 2
+      mockRedis.ttl.mockResolvedValue(600);
+
+      await expect(service.recordFailedAttempt('user-123', '127.0.0.1'))
+        .rejects.toThrow(RateLimitError);
+    });
+
+    it('includes TTL in error', async () => {
+      mockRedis.incr.mockResolvedValueOnce(5).mockResolvedValueOnce(1);
+      mockRedis.ttl.mockResolvedValue(300);
+
+      try {
+        await service.recordFailedAttempt('user-123', '127.0.0.1');
+        fail('Should have thrown');
+      } catch (error: any) {
+        expect(error.ttl).toBe(300);
+      }
     });
   });
 
   describe('checkLockout', () => {
-    it('should not lock on first few failed attempts', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('3');
+    it('does not throw when under limits', async () => {
+      mockRedis.get.mockResolvedValue('3');
 
-      await expect(
-        lockoutService.checkLockout('user-123', '10.0.0.1')
-      ).resolves.not.toThrow();
+      await expect(service.checkLockout('user-123', '127.0.0.1')).resolves.toBeUndefined();
     });
 
-    it('should lock account after threshold exceeded', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('6');
+    it('throws when user is locked out', async () => {
+      mockRedis.get
+        .mockResolvedValueOnce('5') // User at max
+        .mockResolvedValueOnce('1'); // IP under
+      mockRedis.ttl.mockResolvedValue(600);
 
-      await expect(
-        lockoutService.checkLockout('user-123', '10.0.0.1')
-      ).rejects.toThrow('Account locked');
+      await expect(service.checkLockout('user-123', '127.0.0.1'))
+        .rejects.toThrow(RateLimitError);
     });
 
-    it('should provide unlock time in error', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('10');
-      mockRedis.ttl = jest.fn().mockResolvedValue(1800); // 30 minutes
+    it('throws when IP is locked out', async () => {
+      mockRedis.get
+        .mockResolvedValueOnce('1') // User under
+        .mockResolvedValueOnce('10'); // IP at max * 2
+      mockRedis.ttl.mockResolvedValue(600);
 
-      try {
-        await lockoutService.checkLockout('user-123', '10.0.0.1');
-        fail('Should have thrown');
-      } catch (error: any) {
-        expect(error.message).toContain('Account locked');
-        expect(error.unlockAt).toBeDefined();
-      }
+      await expect(service.checkLockout('user-123', '127.0.0.1'))
+        .rejects.toThrow(RateLimitError);
     });
 
-    it('should check both user and IP lockout', async () => {
-      mockRedis.get = jest.fn()
-        .mockResolvedValueOnce('3') // user attempts
-        .mockResolvedValueOnce('10'); // IP attempts (high)
+    it('does not throw when no attempts recorded', async () => {
+      mockRedis.get.mockResolvedValue(null);
 
-      await expect(
-        lockoutService.checkLockout('user-123', '10.0.0.1')
-      ).rejects.toThrow();
-    });
-
-    it('should allow login if no failed attempts', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue(null);
-
-      await expect(
-        lockoutService.checkLockout('user-123', '10.0.0.1')
-      ).resolves.not.toThrow();
+      await expect(service.checkLockout('user-123', '127.0.0.1')).resolves.toBeUndefined();
     });
   });
 
   describe('clearFailedAttempts', () => {
-    it('should clear user lockout counter', async () => {
-      mockRedis.del = jest.fn().mockResolvedValue(1);
+    it('deletes both user and IP keys', async () => {
+      await service.clearFailedAttempts('user-123', '127.0.0.1');
 
-      await lockoutService.clearFailedAttempts('user-123', '10.0.0.1');
-
-      expect(mockRedis.del).toHaveBeenCalledWith('lockout:user-123');
-    });
-
-    it('should clear IP lockout counter', async () => {
-      mockRedis.del = jest.fn().mockResolvedValue(1);
-
-      await lockoutService.clearFailedAttempts('user-123', '10.0.0.1');
-
-      expect(mockRedis.del).toHaveBeenCalledWith('lockout:ip:10.0.0.1');
-    });
-
-    it('should clear both counters on successful login', async () => {
-      mockRedis.del = jest.fn().mockResolvedValue(1);
-
-      await lockoutService.clearFailedAttempts('user-123', '192.168.1.1');
-
-      expect(mockRedis.del).toHaveBeenCalledTimes(2);
-    });
-  });
-
-  describe('isLocked', () => {
-    it('should return true if account is locked', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('10');
-
-      const locked = await lockoutService.isLocked('user-123');
-
-      expect(locked).toBe(true);
-    });
-
-    it('should return false if account is not locked', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('2');
-
-      const locked = await lockoutService.isLocked('user-123');
-
-      expect(locked).toBe(false);
-    });
-
-    it('should return false if no attempts recorded', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue(null);
-
-      const locked = await lockoutService.isLocked('user-123');
-
-      expect(locked).toBe(false);
-    });
-  });
-
-  describe('getAttemptCount', () => {
-    it('should return current attempt count', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('4');
-
-      const count = await lockoutService.getAttemptCount('user-123');
-
-      expect(count).toBe(4);
-    });
-
-    it('should return 0 if no attempts', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue(null);
-
-      const count = await lockoutService.getAttemptCount('user-123');
-
-      expect(count).toBe(0);
-    });
-  });
-
-  describe('getRemainingAttempts', () => {
-    it('should calculate remaining attempts', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('2');
-      const MAX_ATTEMPTS = 5;
-
-      const remaining = await lockoutService.getRemainingAttempts('user-123');
-
-      expect(remaining).toBe(MAX_ATTEMPTS - 2);
-    });
-
-    it('should return 0 if account is locked', async () => {
-      mockRedis.get = jest.fn().mockResolvedValue('10');
-
-      const remaining = await lockoutService.getRemainingAttempts('user-123');
-
-      expect(remaining).toBe(0);
+      expect(mockRedis.del).toHaveBeenCalledWith('lockout:user:user-123');
+      expect(mockRedis.del).toHaveBeenCalledWith('lockout:ip:127.0.0.1');
     });
   });
 });

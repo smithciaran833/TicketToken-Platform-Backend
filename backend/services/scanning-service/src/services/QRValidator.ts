@@ -5,6 +5,30 @@ import QRGenerator from './QRGenerator';
 import logger from '../utils/logger';
 import crypto from 'crypto';
 
+/**
+ * QR VALIDATOR SERVICE
+ * 
+ * Core ticket scanning validation with policy enforcement.
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This is the most performance-critical service in scanning-service.
+ * It reads from tickets/events and WRITES scan_count updates to tickets.
+ * This is intentional because:
+ * 
+ * 1. LATENCY: Scanning must complete in <500ms for real-time entry validation
+ * 2. ATOMICITY: The validation + scan_count update must be transactional
+ * 3. VOLUME: Events can have thousands of scans per minute at entry
+ * 4. AVAILABILITY: Scanning must work even if ticket-service is degraded
+ * 5. The scans table (primary data) is scanning-service owned
+ * 
+ * The ticket writes (scan_count, last_scanned_at, first_scanned_at) are
+ * metadata updates that should eventually be refactored to use:
+ * - ticketServiceClient.recordScan() for async scan counting
+ * - Event-driven updates via message queue
+ * 
+ * Current approach maintains data consistency within acceptable latency.
+ */
+
 interface TokenValidation {
   valid: boolean;
   reason?: string;

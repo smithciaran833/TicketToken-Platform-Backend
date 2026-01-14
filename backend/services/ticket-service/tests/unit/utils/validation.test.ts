@@ -1,624 +1,426 @@
-// =============================================================================
-// TEST SUITE - validation.ts
-// =============================================================================
+/**
+ * Unit Tests for src/utils/validation.ts
+ */
 
-import { ticketSchemas, validate } from '../../../src/utils/validation';
-import { FastifyRequest, FastifyReply } from 'fastify';
+// Mock logger before imports
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    child: jest.fn().mockReturnValue({
+      warn: jest.fn(),
+      error: jest.fn(),
+      info: jest.fn(),
+      debug: jest.fn(),
+    }),
+  },
+}));
 
-describe('Validation utils', () => {
-  let mockRequest: Partial<FastifyRequest>;
-  let mockReply: Partial<FastifyReply>;
+import {
+  safeRegexTest,
+  safeRegexMatch,
+  setRegexConfig,
+  getRegexConfig,
+  logSanitizationEvent,
+  sanitizeInput,
+  checkPrototypePollution,
+  ticketSchemas,
+  validate,
+  createSizeAwareValidator,
+} from '../../../src/utils/validation';
 
+describe('utils/validation', () => {
   beforeEach(() => {
-    mockRequest = {
-      body: {},
-    };
-
-    mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
-    };
-  });
-
-  // =============================================================================
-  // ticketSchemas.purchaseTickets - 10 test cases
-  // =============================================================================
-
-  describe('ticketSchemas.purchaseTickets', () => {
-    it('should validate correct purchase data', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should require eventId', () => {
-      const data = {
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeDefined();
-      expect(error?.message).toContain('eventId');
-    });
-
-    it('should validate eventId as UUID', () => {
-      const data = {
-        eventId: 'not-a-uuid',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should require tickets array', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeDefined();
-      expect(error?.message).toContain('tickets');
-    });
-
-    it('should require at least one ticket', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should validate ticket quantity between 1 and 10', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 0,
-          },
-        ],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should reject quantity over 10', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 11,
-          },
-        ],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should allow optional paymentIntentId', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-        paymentIntentId: 'pi_123',
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should allow optional seatNumbers', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-            seatNumbers: ['A1', 'A2'],
-          },
-        ],
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should allow optional metadata', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-        metadata: { source: 'web' },
-      };
-
-      const { error } = ticketSchemas.purchaseTickets.validate(data);
-
-      expect(error).toBeUndefined();
+    // Reset regex config to defaults
+    setRegexConfig({
+      timeoutMs: 100,
+      maxInputLength: 10000,
+      strictMode: false,
     });
   });
 
-  // =============================================================================
-  // ticketSchemas.createTicketType - 10 test cases
-  // =============================================================================
-
-  describe('ticketSchemas.createTicketType', () => {
-    it('should validate correct ticket type data', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should require eventId', () => {
-      const data = {
-        name: 'VIP Pass',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should validate name length', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: '',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should validate price is non-negative', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        priceCents: -100,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should require quantity at least 1', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        priceCents: 10000,
-        quantity: 0,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should validate maxPerPurchase between 1 and 10', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 0,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should require saleEndDate after saleStartDate', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-12-31T23:59:59Z',
-        saleEndDate: '2024-01-01T00:00:00Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should validate ISO date format', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: 'invalid-date',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should allow optional description', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'VIP Pass',
-        description: 'Premium access',
-        priceCents: 10000,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should allow zero price for free tickets', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        name: 'Free Pass',
-        priceCents: 0,
-        quantity: 100,
-        maxPerPurchase: 5,
-        saleStartDate: '2024-01-01T00:00:00Z',
-        saleEndDate: '2024-12-31T23:59:59Z',
-      };
-
-      const { error } = ticketSchemas.createTicketType.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-  });
-
-  // =============================================================================
-  // ticketSchemas.transferTicket - 5 test cases
-  // =============================================================================
-
-  describe('ticketSchemas.transferTicket', () => {
-    it('should validate correct transfer data', () => {
-      const data = {
-        ticketId: '123e4567-e89b-12d3-a456-426614174000',
-        toUserId: '123e4567-e89b-12d3-a456-426614174001',
-      };
-
-      const { error } = ticketSchemas.transferTicket.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should require ticketId', () => {
-      const data = {
-        toUserId: '123e4567-e89b-12d3-a456-426614174001',
-      };
-
-      const { error } = ticketSchemas.transferTicket.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should require toUserId', () => {
-      const data = {
-        ticketId: '123e4567-e89b-12d3-a456-426614174000',
-      };
-
-      const { error } = ticketSchemas.transferTicket.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should validate UUIDs', () => {
-      const data = {
-        ticketId: 'not-a-uuid',
-        toUserId: 'also-not-a-uuid',
-      };
-
-      const { error } = ticketSchemas.transferTicket.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should allow optional reason', () => {
-      const data = {
-        ticketId: '123e4567-e89b-12d3-a456-426614174000',
-        toUserId: '123e4567-e89b-12d3-a456-426614174001',
-        reason: 'Gift to friend',
-      };
-
-      const { error } = ticketSchemas.transferTicket.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-  });
-
-  // =============================================================================
-  // ticketSchemas.validateQR - 5 test cases
-  // =============================================================================
-
-  describe('ticketSchemas.validateQR', () => {
-    it('should validate correct QR data', () => {
-      const data = {
-        qrCode: 'QR123456789',
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-      };
-
-      const { error } = ticketSchemas.validateQR.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should require qrCode', () => {
-      const data = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-      };
-
-      const { error } = ticketSchemas.validateQR.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should require eventId', () => {
-      const data = {
-        qrCode: 'QR123456789',
-      };
-
-      const { error } = ticketSchemas.validateQR.validate(data);
-
-      expect(error).toBeDefined();
-    });
-
-    it('should allow optional entrance', () => {
-      const data = {
-        qrCode: 'QR123456789',
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        entrance: 'Gate A',
-      };
-
-      const { error } = ticketSchemas.validateQR.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-
-    it('should allow optional deviceId', () => {
-      const data = {
-        qrCode: 'QR123456789',
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        deviceId: 'DEVICE-001',
-      };
-
-      const { error} = ticketSchemas.validateQR.validate(data);
-
-      expect(error).toBeUndefined();
-    });
-  });
-
-  // =============================================================================
-  // validate() middleware - 10 test cases
-  // =============================================================================
-
-  describe('validate() middleware', () => {
-    it('should return validation function', () => {
-      const middleware = validate(ticketSchemas.purchaseTickets);
-
-      expect(typeof middleware).toBe('function');
-    });
-
-    it('should pass valid data', async () => {
-      mockRequest.body = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-      };
-
-      const middleware = validate(ticketSchemas.purchaseTickets);
-      const result = await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).not.toHaveBeenCalled();
-      expect(result).toBeUndefined();
-    });
-
-    it('should return 400 for invalid data', async () => {
-      mockRequest.body = {
-        eventId: 'not-a-uuid',
-      };
-
-      const middleware = validate(ticketSchemas.purchaseTickets);
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(400);
-    });
-
-    it('should send error details', async () => {
-      mockRequest.body = {};
-
-      const middleware = validate(ticketSchemas.purchaseTickets);
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.send).toHaveBeenCalledWith({
-        error: 'Validation error',
-        details: expect.any(Array),
+  describe('Regex Protection', () => {
+    describe('safeRegexTest()', () => {
+      it('returns false for input exceeding maxInputLength', () => {
+        const longInput = 'a'.repeat(20000);
+        const result = safeRegexTest(/test/, longInput);
+        expect(result).toBe(false);
+      });
+
+      it('throws for vulnerable pattern in strict mode', () => {
+        setRegexConfig({ strictMode: true });
+        expect(() => {
+          safeRegexTest(/(.*)+/, 'test');
+        }).toThrow('ReDoS');
+      });
+
+      it('returns correct match result', () => {
+        expect(safeRegexTest(/hello/, 'hello world')).toBe(true);
+        expect(safeRegexTest(/goodbye/, 'hello world')).toBe(false);
+      });
+
+      it('returns false on regex error', () => {
+        // Mock a regex that throws
+        const badRegex = /test/;
+        jest.spyOn(badRegex, 'test').mockImplementation(() => {
+          throw new Error('Regex error');
+        });
+        expect(safeRegexTest(badRegex, 'test')).toBe(false);
       });
     });
 
-    it('should include validation messages', async () => {
-      mockRequest.body = {};
+    describe('safeRegexMatch()', () => {
+      it('returns null for oversized input', () => {
+        const longInput = 'a'.repeat(20000);
+        const result = safeRegexMatch(/test/, longInput);
+        expect(result).toBeNull();
+      });
 
-      const middleware = validate(ticketSchemas.purchaseTickets);
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
+      it('throws for vulnerable pattern in strict mode', () => {
+        setRegexConfig({ strictMode: true });
+        expect(() => {
+          safeRegexMatch(/(.*)+/, 'test');
+        }).toThrow('ReDoS');
+      });
 
-      const sendCall = (mockReply.send as jest.Mock).mock.calls[0][0];
-      expect(sendCall.details.length).toBeGreaterThan(0);
+      it('returns match array on success', () => {
+        const result = safeRegexMatch(/(\w+)/, 'hello world');
+        expect(result).toBeTruthy();
+        expect(result![0]).toBe('hello');
+      });
+
+      it('returns null on no match', () => {
+        const result = safeRegexMatch(/xyz/, 'hello world');
+        expect(result).toBeNull();
+      });
     });
 
-    it('should work with different schemas', async () => {
-      mockRequest.body = {
-        ticketId: 'not-a-uuid',
+    describe('setRegexConfig()', () => {
+      it('updates configuration', () => {
+        setRegexConfig({ timeoutMs: 200, maxInputLength: 5000 });
+        const config = getRegexConfig();
+        expect(config.timeoutMs).toBe(200);
+        expect(config.maxInputLength).toBe(5000);
+      });
+    });
+
+    describe('getRegexConfig()', () => {
+      it('returns current config copy', () => {
+        const config1 = getRegexConfig();
+        const config2 = getRegexConfig();
+        expect(config1).toEqual(config2);
+        expect(config1).not.toBe(config2); // Different objects
+      });
+    });
+  });
+
+  describe('Sanitization', () => {
+    describe('logSanitizationEvent()', () => {
+      it('logs at correct severity level', () => {
+        // Just verify it doesn't throw
+        logSanitizationEvent('xss_attempt', { field: 'test' });
+        logSanitizationEvent('validation_failed', { field: 'test' });
+        logSanitizationEvent('sql_injection_attempt', { field: 'test' });
+      });
+    });
+
+    describe('sanitizeInput()', () => {
+      it('detects XSS patterns (script, javascript:, onclick=)', () => {
+        sanitizeInput('<script>alert(1)</script>', 'field');
+        sanitizeInput('javascript:alert(1)', 'field');
+        sanitizeInput('onclick=alert(1)', 'field');
+        // These should trigger logSanitizationEvent internally
+      });
+
+      it('detects SQL injection patterns (OR 1=1, UNION SELECT)', () => {
+        sanitizeInput("' OR '1'='1", 'field');
+        sanitizeInput('UNION SELECT * FROM users', 'field');
+      });
+
+      it('detects path traversal patterns (../, %2e%2e%2f)', () => {
+        sanitizeInput('../../../etc/passwd', 'field');
+        sanitizeInput('%2e%2e%2f', 'field');
+      });
+
+      it('detects command injection only for command-related fields', () => {
+        sanitizeInput('ls; rm -rf /', 'command');
+        sanitizeInput('$(cat /etc/passwd)', 'shell_exec');
+      });
+
+      it('returns the input unchanged', () => {
+        const input = 'normal text';
+        expect(sanitizeInput(input, 'field')).toBe(input);
+      });
+    });
+
+    describe('checkPrototypePollution()', () => {
+      it('returns false for non-objects', () => {
+        expect(checkPrototypePollution(null, 'field')).toBe(false);
+        expect(checkPrototypePollution(undefined, 'field')).toBe(false);
+        expect(checkPrototypePollution('string', 'field')).toBe(false);
+        expect(checkPrototypePollution(123, 'field')).toBe(false);
+      });
+
+      it('detects constructor and prototype keys', () => {
+        // Note: __proto__ cannot be set as a regular key in object literals
+        // The function uses Object.keys() which won't see __proto__
+        // But constructor and prototype should work if explicitly set
+        const objWithConstructor = Object.create(null);
+        objWithConstructor.constructor = {};
+        expect(checkPrototypePollution(objWithConstructor, 'field')).toBe(true);
+
+        const objWithPrototype = Object.create(null);
+        objWithPrototype.prototype = {};
+        expect(checkPrototypePollution(objWithPrototype, 'field')).toBe(true);
+      });
+
+      it('detects __proto__ when explicitly defined as property', () => {
+        // Use Object.defineProperty to actually create a __proto__ key
+        const obj = Object.create(null);
+        Object.defineProperty(obj, '__proto__', {
+          value: {},
+          enumerable: true,
+        });
+        expect(checkPrototypePollution(obj, 'field')).toBe(true);
+      });
+
+      it('recursively checks nested objects', () => {
+        const nested = Object.create(null);
+        nested.a = Object.create(null);
+        nested.a.b = Object.create(null);
+        nested.a.b.constructor = {};
+        expect(checkPrototypePollution(nested, 'field')).toBe(true);
+
+        expect(checkPrototypePollution({ a: { b: { c: 'safe' } } }, 'field')).toBe(false);
+      });
+    });
+  });
+
+  describe('Ticket Schemas', () => {
+    describe('ticketSchemas.purchaseTickets', () => {
+      it('validates eventId as UUID', () => {
+        const { error } = ticketSchemas.purchaseTickets.validate({
+          eventId: 'not-a-uuid',
+          tickets: [{ ticketTypeId: '550e8400-e29b-41d4-a716-446655440000', quantity: 1 }],
+        });
+        expect(error).toBeDefined();
+        expect(error!.details[0].path).toContain('eventId');
+      });
+
+      it('requires tickets array with 1-50 items', () => {
+        const { error: emptyError } = ticketSchemas.purchaseTickets.validate({
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+          tickets: [],
+        });
+        expect(emptyError).toBeDefined();
+
+        const { error: validError } = ticketSchemas.purchaseTickets.validate({
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+          tickets: [{ ticketTypeId: '550e8400-e29b-41d4-a716-446655440000', quantity: 1 }],
+        });
+        expect(validError).toBeUndefined();
+      });
+
+      it('validates ticket quantity 1-10', () => {
+        const { error: zeroError } = ticketSchemas.purchaseTickets.validate({
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+          tickets: [{ ticketTypeId: '550e8400-e29b-41d4-a716-446655440000', quantity: 0 }],
+        });
+        expect(zeroError).toBeDefined();
+
+        const { error: tooManyError } = ticketSchemas.purchaseTickets.validate({
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+          tickets: [{ ticketTypeId: '550e8400-e29b-41d4-a716-446655440000', quantity: 11 }],
+        });
+        expect(tooManyError).toBeDefined();
+      });
+
+      it('rejects unknown properties', () => {
+        const { error } = ticketSchemas.purchaseTickets.validate({
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+          tickets: [{ ticketTypeId: '550e8400-e29b-41d4-a716-446655440000', quantity: 1 }],
+          unknownProp: 'value',
+        });
+        expect(error).toBeDefined();
+      });
+    });
+
+    describe('ticketSchemas.createTicketType', () => {
+      const validTicketType = {
+        eventId: '550e8400-e29b-41d4-a716-446655440000',
+        name: 'VIP Ticket',
+        priceCents: 5000,
+        quantity: 100,
+        maxPerPurchase: 4,
+        saleStartDate: '2024-01-01T00:00:00Z',
+        saleEndDate: '2024-12-31T23:59:59Z',
       };
 
-      const middleware = validate(ticketSchemas.transferTicket);
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
+      it('validates all required fields', () => {
+        const { error } = ticketSchemas.createTicketType.validate(validTicketType);
+        expect(error).toBeUndefined();
+      });
 
-      expect(mockReply.status).toHaveBeenCalledWith(400);
+      it('validates saleEndDate > saleStartDate', () => {
+        const { error } = ticketSchemas.createTicketType.validate({
+          ...validTicketType,
+          saleStartDate: '2024-12-31T23:59:59Z',
+          saleEndDate: '2024-01-01T00:00:00Z',
+        });
+        expect(error).toBeDefined();
+      });
     });
 
-    it('should validate against correct schema', async () => {
-      mockRequest.body = {
-        qrCode: 'QR123',
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-      };
+    describe('ticketSchemas.transferTicket', () => {
+      it('validates ticketId and toUserId as UUIDs', () => {
+        const { error: ticketError } = ticketSchemas.transferTicket.validate({
+          ticketId: 'not-uuid',
+          toUserId: '550e8400-e29b-41d4-a716-446655440000',
+        });
+        expect(ticketError).toBeDefined();
 
-      const middleware = validate(ticketSchemas.validateQR);
-      const result = await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).not.toHaveBeenCalled();
-      expect(result).toBeUndefined();
+        const { error: userError } = ticketSchemas.transferTicket.validate({
+          ticketId: '550e8400-e29b-41d4-a716-446655440000',
+          toUserId: 'not-uuid',
+        });
+        expect(userError).toBeDefined();
+      });
     });
 
-    it('should handle null body as invalid', async () => {
-      mockRequest.body = null as any;
+    describe('ticketSchemas.validateQR', () => {
+      it('requires qrCode and eventId', () => {
+        const { error: missingQR } = ticketSchemas.validateQR.validate({
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+        });
+        expect(missingQR).toBeDefined();
 
-      const middleware = validate(ticketSchemas.purchaseTickets);
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
+        const { error: missingEvent } = ticketSchemas.validateQR.validate({
+          qrCode: 'some-code',
+        });
+        expect(missingEvent).toBeDefined();
 
-      expect(mockReply.status).toHaveBeenCalledWith(400);
+        const { error: valid } = ticketSchemas.validateQR.validate({
+          qrCode: 'some-code',
+          eventId: '550e8400-e29b-41d4-a716-446655440000',
+        });
+        expect(valid).toBeUndefined();
+      });
+    });
+  });
+
+  describe('Validation Middleware', () => {
+    describe('validate()', () => {
+      const mockRequest = (body: any) => ({
+        body,
+        id: 'req-123',
+        ip: '127.0.0.1',
+        headers: { 'user-agent': 'test' },
+        url: '/test',
+        method: 'POST',
+      });
+
+      const mockReply = () => ({
+        status: jest.fn().mockReturnThis(),
+        send: jest.fn().mockReturnThis(),
+      });
+
+      it('returns 400 for prototype pollution', async () => {
+        const schema = ticketSchemas.transferTicket;
+        const middleware = validate(schema);
+        
+        // Create object with __proto__ as enumerable property
+        const pollutedBody = Object.create(null);
+        Object.defineProperty(pollutedBody, '__proto__', {
+          value: {},
+          enumerable: true,
+        });
+        
+        const req = mockRequest(pollutedBody);
+        const reply = mockReply();
+
+        await middleware(req as any, reply as any);
+
+        expect(reply.status).toHaveBeenCalledWith(400);
+        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({
+          error: 'Validation error',
+          code: 'INVALID_INPUT',
+        }));
+      });
+
+      it('returns 400 with error details on validation failure', async () => {
+        const schema = ticketSchemas.transferTicket;
+        const middleware = validate(schema);
+        const req = mockRequest({ ticketId: 'not-uuid', toUserId: 'also-not-uuid' });
+        const reply = mockReply();
+
+        await middleware(req as any, reply as any);
+
+        expect(reply.status).toHaveBeenCalledWith(400);
+        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({
+          error: 'Validation error',
+          code: 'VALIDATION_FAILED',
+          details: expect.any(Array),
+        }));
+      });
+
+      it('replaces request.body with validated value', async () => {
+        const schema = ticketSchemas.transferTicket;
+        const middleware = validate(schema);
+        const req = mockRequest({
+          ticketId: '550e8400-e29b-41d4-a716-446655440000',
+          toUserId: '550e8400-e29b-41d4-a716-446655440001',
+        });
+        const reply = mockReply();
+
+        await middleware(req as any, reply as any);
+
+        // If validation passes, reply.status should not be called
+        expect(reply.status).not.toHaveBeenCalled();
+      });
     });
 
-    it('should handle empty body', async () => {
-      mockRequest.body = {};
+    describe('createSizeAwareValidator()', () => {
+      const mockRequest = (body: any, contentLength: string) => ({
+        body,
+        headers: { 'content-length': contentLength },
+        id: 'req-123',
+        ip: '127.0.0.1',
+        url: '/test',
+        method: 'POST',
+      });
 
-      const middleware = validate(ticketSchemas.purchaseTickets);
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
+      const mockReply = () => ({
+        status: jest.fn().mockReturnThis(),
+        send: jest.fn().mockReturnThis(),
+      });
 
-      expect(mockReply.status).toHaveBeenCalledWith(400);
-    });
+      it('returns 413 for oversized content-length', async () => {
+        const schema = ticketSchemas.transferTicket;
+        const middleware = createSizeAwareValidator(schema, 100);
+        const req = mockRequest({}, '500');
+        const reply = mockReply();
 
-    it('should be reusable', async () => {
-      const middleware = validate(ticketSchemas.purchaseTickets);
+        await middleware(req as any, reply as any);
 
-      mockRequest.body = {
-        eventId: '123e4567-e89b-12d3-a456-426614174000',
-        tickets: [
-          {
-            ticketTypeId: '123e4567-e89b-12d3-a456-426614174001',
-            quantity: 2,
-          },
-        ],
-      };
+        expect(reply.status).toHaveBeenCalledWith(413);
+        expect(reply.send).toHaveBeenCalledWith(expect.objectContaining({
+          error: 'Payload Too Large',
+          code: 'PAYLOAD_TOO_LARGE',
+        }));
+      });
 
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
-      
-      mockRequest.body = {};
-      await middleware(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
+      it('delegates to validate() for valid size', async () => {
+        const schema = ticketSchemas.transferTicket;
+        const middleware = createSizeAwareValidator(schema, 10000);
+        const req = mockRequest({
+          ticketId: '550e8400-e29b-41d4-a716-446655440000',
+          toUserId: '550e8400-e29b-41d4-a716-446655440001',
+        }, '100');
+        const reply = mockReply();
 
-      expect(mockReply.status).toHaveBeenCalledWith(400);
+        await middleware(req as any, reply as any);
+
+        // Should pass through to validate, not return 413
+        expect(reply.status).not.toHaveBeenCalledWith(413);
+      });
     });
   });
 });

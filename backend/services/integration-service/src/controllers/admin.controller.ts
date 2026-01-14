@@ -70,7 +70,7 @@ export class AdminController {
         success: true,
         data: {
           costs,
-          total: costs.reduce((sum, c) => sum + parseFloat(c.total_cost || 0), 0)
+          total: costs.reduce((sum: number, c: { total_cost?: string | number }) => sum + parseFloat(String(c.total_cost || 0)), 0)
         }
       });
     } catch (error) {

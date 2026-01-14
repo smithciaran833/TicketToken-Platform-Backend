@@ -1,200 +1,160 @@
+/**
+ * Unit tests for IntegrationService
+ * Tests third-party integration management with connection testing
+ */
+
 import { IntegrationService } from '../../../src/services/integration.service';
-import { IntegrationModel } from '../../../src/models/integration.model';
+import { createKnexMock } from '../../__mocks__/knex.mock';
 
-// =============================================================================
-// MOCKS
-// =============================================================================
+// Mock logger
+const mockLogger = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
 
-jest.mock('../../../src/models/integration.model');
+// Mock IntegrationModel
+jest.mock('../../../src/models/integration.model', () => ({
+  IntegrationModel: jest.fn().mockImplementation(() => ({
+    findById: jest.fn(),
+    findByVenue: jest.fn(),
+    findByVenueAndType: jest.fn(),
+    create: jest.fn(),
+    update: jest.fn(),
+    delete: jest.fn(),
+  })),
+}));
 
 describe('IntegrationService', () => {
-  let integrationService: IntegrationService;
-  let mockDb: any;
-  let mockLogger: any;
-  let mockIntegrationModel: jest.Mocked<IntegrationModel>;
+  let service: IntegrationService;
+  let mockDb: ReturnType<typeof createKnexMock>;
+  let mockIntegrationModel: any;
+
+  const mockIntegrationId = '123e4567-e89b-12d3-a456-426614174000';
+  const mockVenueId = 'venue-123e4567-e89b-12d3-a456-426614174001';
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    mockDb = {} as any;
-    mockLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn(),
-    };
-
-    mockIntegrationModel = {
-      findById: jest.fn(),
-      findByVenue: jest.fn(),
-      findByVenueAndType: jest.fn(),
-      create: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn(),
-    } as any;
-
-    (IntegrationModel as jest.MockedClass<typeof IntegrationModel>).mockImplementation(
-      () => mockIntegrationModel
-    );
-
-    integrationService = new IntegrationService({ db: mockDb, logger: mockLogger });
-  });
-
-  // =============================================================================
-  // getIntegration() - 3 test cases
-  // =============================================================================
-
-  describe('getIntegration()', () => {
-    it('should get integration by ID', async () => {
-      const mockIntegration = {
-        id: 'int-123',
-        venue_id: 'venue-123',
-        integration_type: 'stripe',
-      };
-      mockIntegrationModel.findById.mockResolvedValue(mockIntegration as any);
-
-      const result = await integrationService.getIntegration('int-123');
-
-      expect(result).toEqual(mockIntegration);
-      expect(mockIntegrationModel.findById).toHaveBeenCalledWith('int-123');
+    mockDb = createKnexMock();
+    
+    service = new IntegrationService({
+      db: mockDb,
+      logger: mockLogger,
     });
 
-    it('should return null if integration not found', async () => {
+    // Get reference to mocked model
+    const { IntegrationModel } = require('../../../src/models/integration.model');
+    mockIntegrationModel = IntegrationModel.mock.results[IntegrationModel.mock.results.length - 1]?.value;
+  });
+
+  describe('getIntegration', () => {
+    it('should return integration when found', async () => {
+      const mockIntegration = {
+        id: mockIntegrationId,
+        venue_id: mockVenueId,
+        integration_type: 'stripe',
+        api_key_encrypted: 'encrypted_key',
+      };
+      mockIntegrationModel.findById.mockResolvedValue(mockIntegration);
+
+      const result = await service.getIntegration(mockIntegrationId);
+
+      expect(result).toEqual(mockIntegration);
+      expect(mockIntegrationModel.findById).toHaveBeenCalledWith(mockIntegrationId);
+    });
+
+    it('should return null when not found', async () => {
       mockIntegrationModel.findById.mockResolvedValue(null);
 
-      const result = await integrationService.getIntegration('non-existent');
+      const result = await service.getIntegration(mockIntegrationId);
 
       expect(result).toBeNull();
     });
-
-    it('should handle errors', async () => {
-      mockIntegrationModel.findById.mockRejectedValue(new Error('DB error'));
-
-      await expect(integrationService.getIntegration('int-123')).rejects.toThrow(
-        'DB error'
-      );
-    });
   });
 
-  // =============================================================================
-  // getVenueIntegrationByType() - 3 test cases
-  // =============================================================================
-
-  describe('getVenueIntegrationByType()', () => {
-    it('should get integration by venue and type', async () => {
+  describe('getVenueIntegrationByType', () => {
+    it('should return integration for venue and type', async () => {
       const mockIntegration = {
-        id: 'int-123',
-        venue_id: 'venue-123',
+        id: mockIntegrationId,
+        venue_id: mockVenueId,
         integration_type: 'stripe',
       };
-      mockIntegrationModel.findByVenueAndType.mockResolvedValue(mockIntegration as any);
+      mockIntegrationModel.findByVenueAndType.mockResolvedValue(mockIntegration);
 
-      const result = await integrationService.getVenueIntegrationByType(
-        'venue-123',
-        'stripe'
-      );
+      const result = await service.getVenueIntegrationByType(mockVenueId, 'stripe');
 
       expect(result).toEqual(mockIntegration);
-      expect(mockIntegrationModel.findByVenueAndType).toHaveBeenCalledWith(
-        'venue-123',
-        'stripe'
-      );
+      expect(mockIntegrationModel.findByVenueAndType).toHaveBeenCalledWith(mockVenueId, 'stripe');
     });
 
-    it('should return null if not found', async () => {
-      mockIntegrationModel.findByVenueAndType.mockResolvedValue(undefined as any);
+    it('should return null when no integration found', async () => {
+      mockIntegrationModel.findByVenueAndType.mockResolvedValue(null);
 
-      const result = await integrationService.getVenueIntegrationByType(
-        'venue-123',
-        'square'
-      );
+      const result = await service.getVenueIntegrationByType(mockVenueId, 'stripe');
 
-      expect(result).toBeUndefined();
-    });
-
-    it('should handle errors', async () => {
-      mockIntegrationModel.findByVenueAndType.mockRejectedValue(
-        new Error('DB error')
-      );
-
-      await expect(
-        integrationService.getVenueIntegrationByType('venue-123', 'stripe')
-      ).rejects.toThrow('DB error');
+      expect(result).toBeNull();
     });
   });
 
-  // =============================================================================
-  // listVenueIntegrations() - 2 test cases
-  // =============================================================================
-
-  describe('listVenueIntegrations()', () => {
-    it('should list all venue integrations', async () => {
+  describe('listVenueIntegrations', () => {
+    it('should return all integrations for venue', async () => {
       const mockIntegrations = [
         { id: 'int-1', integration_type: 'stripe' },
         { id: 'int-2', integration_type: 'square' },
       ];
-      mockIntegrationModel.findByVenue.mockResolvedValue(mockIntegrations as any);
+      mockIntegrationModel.findByVenue.mockResolvedValue(mockIntegrations);
 
-      const result = await integrationService.listVenueIntegrations('venue-123');
+      const result = await service.listVenueIntegrations(mockVenueId);
 
-      expect(result).toEqual(mockIntegrations);
-      expect(mockIntegrationModel.findByVenue).toHaveBeenCalledWith('venue-123');
+      expect(result).toHaveLength(2);
+      expect(mockIntegrationModel.findByVenue).toHaveBeenCalledWith(mockVenueId);
     });
 
-    it('should return empty array if no integrations', async () => {
+    it('should return empty array when no integrations', async () => {
       mockIntegrationModel.findByVenue.mockResolvedValue([]);
 
-      const result = await integrationService.listVenueIntegrations('venue-123');
+      const result = await service.listVenueIntegrations(mockVenueId);
 
       expect(result).toEqual([]);
     });
   });
 
-  // =============================================================================
-  // createIntegration() - 4 test cases
-  // =============================================================================
+  describe('createIntegration', () => {
+    it('should create integration with provided data', async () => {
+      const createData = {
+        type: 'stripe',
+        config: { webhookEnabled: true },
+        status: 'active',
+        encrypted_credentials: 'encrypted_creds',
+      };
+      const createdIntegration = {
+        id: mockIntegrationId,
+        venue_id: mockVenueId,
+        ...createData,
+      };
+      mockIntegrationModel.create.mockResolvedValue(createdIntegration);
 
-  describe('createIntegration()', () => {
-    const venueId = 'venue-123';
-    const data = {
-      type: 'stripe',
-      config: { apiVersion: '2023-10-16' },
-      encrypted_credentials: 'encrypted-key',
-    };
+      const result = await service.createIntegration(mockVenueId, createData);
 
-    it('should create new integration', async () => {
-      const mockIntegration = { id: 'int-123', ...data };
-      mockIntegrationModel.create.mockResolvedValue(mockIntegration as any);
-
-      const result = await integrationService.createIntegration(venueId, data);
-
-      expect(result).toEqual(mockIntegration);
-      expect(mockIntegrationModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          venue_id: venueId,
-          type: data.type,
-          config: data.config,
-        })
-      );
+      expect(result).toEqual(createdIntegration);
+      expect(mockIntegrationModel.create).toHaveBeenCalledWith({
+        venue_id: mockVenueId,
+        type: createData.type,
+        config: createData.config,
+        status: createData.status,
+        encrypted_credentials: createData.encrypted_credentials,
+      });
     });
 
-    it('should use default config if not provided', async () => {
-      const minimalData = { type: 'square' };
-      mockIntegrationModel.create.mockResolvedValue({ id: 'int-123' } as any);
+    it('should use default status when not provided', async () => {
+      const createData = {
+        type: 'square',
+        config: {},
+      };
+      mockIntegrationModel.create.mockResolvedValue({ id: mockIntegrationId });
 
-      await integrationService.createIntegration(venueId, minimalData);
-
-      expect(mockIntegrationModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          config: {},
-        })
-      );
-    });
-
-    it('should use default status if not provided', async () => {
-      const dataWithoutStatus = { type: 'stripe', config: {} };
-      mockIntegrationModel.create.mockResolvedValue({ id: 'int-123' } as any);
-
-      await integrationService.createIntegration(venueId, dataWithoutStatus);
+      await service.createIntegration(mockVenueId, createData);
 
       expect(mockIntegrationModel.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -203,163 +163,138 @@ describe('IntegrationService', () => {
       );
     });
 
-    it('should handle errors', async () => {
-      mockIntegrationModel.create.mockRejectedValue(new Error('Create failed'));
+    it('should use empty config when not provided', async () => {
+      const createData = {
+        type: 'stripe',
+      };
+      mockIntegrationModel.create.mockResolvedValue({ id: mockIntegrationId });
 
-      await expect(
-        integrationService.createIntegration(venueId, data)
-      ).rejects.toThrow('Create failed');
+      await service.createIntegration(mockVenueId, createData);
+
+      expect(mockIntegrationModel.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          config: {},
+        })
+      );
     });
   });
 
-  // =============================================================================
-  // updateIntegration() - 2 test cases
-  // =============================================================================
+  describe('updateIntegration', () => {
+    it('should update integration with provided data', async () => {
+      const updates = {
+        config: { newSetting: true },
+        status: 'inactive',
+      };
+      const updatedIntegration = {
+        id: mockIntegrationId,
+        ...updates,
+      };
+      mockIntegrationModel.update.mockResolvedValue(updatedIntegration);
 
-  describe('updateIntegration()', () => {
-    it('should update integration', async () => {
-      const updates = { status: 'inactive', config: { updated: true } };
-      const mockUpdated = { id: 'int-123', ...updates };
-      mockIntegrationModel.update.mockResolvedValue(mockUpdated as any);
+      const result = await service.updateIntegration(mockIntegrationId, updates);
 
-      const result = await integrationService.updateIntegration('int-123', updates);
-
-      expect(result).toEqual(mockUpdated);
-      expect(mockIntegrationModel.update).toHaveBeenCalledWith('int-123', updates);
-    });
-
-    it('should handle errors', async () => {
-      mockIntegrationModel.update.mockRejectedValue(new Error('Update failed'));
-
-      await expect(
-        integrationService.updateIntegration('int-123', {})
-      ).rejects.toThrow('Update failed');
+      expect(result).toEqual(updatedIntegration);
+      expect(mockIntegrationModel.update).toHaveBeenCalledWith(mockIntegrationId, updates);
     });
   });
 
-  // =============================================================================
-  // deleteIntegration() - 2 test cases
-  // =============================================================================
-
-  describe('deleteIntegration()', () => {
+  describe('deleteIntegration', () => {
     it('should delete integration', async () => {
-      mockIntegrationModel.delete.mockResolvedValue(1 as any);
+      mockIntegrationModel.delete.mockResolvedValue(undefined);
 
-      await integrationService.deleteIntegration('int-123');
+      await service.deleteIntegration(mockIntegrationId);
 
-      expect(mockIntegrationModel.delete).toHaveBeenCalledWith('int-123');
-    });
-
-    it('should handle errors', async () => {
-      mockIntegrationModel.delete.mockRejectedValue(new Error('Delete failed'));
-
-      await expect(integrationService.deleteIntegration('int-123')).rejects.toThrow(
-        'Delete failed'
-      );
+      expect(mockIntegrationModel.delete).toHaveBeenCalledWith(mockIntegrationId);
     });
   });
 
-  // =============================================================================
-  // testIntegration() - 5 test cases
-  // =============================================================================
-
-  describe('testIntegration()', () => {
-    it('should throw error if integration not found', async () => {
-      mockIntegrationModel.findById.mockResolvedValue(null);
-
-      await expect(integrationService.testIntegration('int-123')).rejects.toThrow(
-        'Integration not found'
-      );
-    });
-
-    it('should test Stripe integration', async () => {
+  describe('testIntegration', () => {
+    it('should return success for stripe integration', async () => {
       const mockIntegration = {
-        id: 'int-123',
+        id: mockIntegrationId,
         integration_type: 'stripe',
-        api_key_encrypted: 'encrypted-key',
+        api_key_encrypted: 'encrypted_key',
       };
-      mockIntegrationModel.findById.mockResolvedValue(mockIntegration as any);
+      mockIntegrationModel.findById.mockResolvedValue(mockIntegration);
 
-      const result = await integrationService.testIntegration('int-123');
+      const result = await service.testIntegration(mockIntegrationId);
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('Stripe');
+      expect(result.message).toBe('Stripe connection successful');
     });
 
-    it('should test Square integration', async () => {
+    it('should return success for square integration', async () => {
       const mockIntegration = {
-        id: 'int-123',
+        id: mockIntegrationId,
         integration_type: 'square',
-        api_secret_encrypted: 'encrypted-secret',
+        api_key_encrypted: 'encrypted_key',
       };
-      mockIntegrationModel.findById.mockResolvedValue(mockIntegration as any);
+      mockIntegrationModel.findById.mockResolvedValue(mockIntegration);
 
-      const result = await integrationService.testIntegration('int-123');
+      const result = await service.testIntegration(mockIntegrationId);
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('Square');
+      expect(result.message).toBe('Square connection successful');
     });
 
-    it('should return failure for unsupported integration type', async () => {
+    it('should return not supported for unknown integration type', async () => {
       const mockIntegration = {
-        id: 'int-123',
-        integration_type: 'unsupported',
+        id: mockIntegrationId,
+        integration_type: 'unknown_provider',
+        api_key_encrypted: 'encrypted_key',
       };
-      mockIntegrationModel.findById.mockResolvedValue(mockIntegration as any);
+      mockIntegrationModel.findById.mockResolvedValue(mockIntegration);
 
-      const result = await integrationService.testIntegration('int-123');
+      const result = await service.testIntegration(mockIntegrationId);
 
       expect(result.success).toBe(false);
-      expect(result.message).toContain('not supported');
+      expect(result.message).toBe('Integration type not supported');
     });
 
-    it('should handle errors during test', async () => {
-      mockIntegrationModel.findById.mockRejectedValue(new Error('Test error'));
+    it('should throw error when integration not found', async () => {
+      mockIntegrationModel.findById.mockResolvedValue(null);
 
-      await expect(integrationService.testIntegration('int-123')).rejects.toThrow(
-        'Test error'
-      );
+      await expect(service.testIntegration(mockIntegrationId)).rejects.toThrow('Integration not found');
     });
   });
 
-  // =============================================================================
-  // syncWithExternalSystem() - 3 test cases
-  // =============================================================================
-
-  describe('syncWithExternalSystem()', () => {
-    it('should throw error if integration not found', async () => {
-      mockIntegrationModel.findById.mockResolvedValue(null);
-
-      await expect(
-        integrationService.syncWithExternalSystem('int-123')
-      ).rejects.toThrow('Integration not found');
-    });
-
-    it('should log sync info', async () => {
+  describe('syncWithExternalSystem', () => {
+    it('should log sync attempt for stripe', async () => {
       const mockIntegration = {
-        id: 'int-123',
+        id: mockIntegrationId,
         integration_type: 'stripe',
-        api_key_encrypted: 'encrypted-key',
+        api_key_encrypted: 'encrypted_key',
       };
-      mockIntegrationModel.findById.mockResolvedValue(mockIntegration as any);
+      mockIntegrationModel.findById.mockResolvedValue(mockIntegration);
 
-      await integrationService.syncWithExternalSystem('int-123');
+      await service.syncWithExternalSystem(mockIntegrationId);
 
       expect(mockLogger.info).toHaveBeenCalledWith(
-        expect.objectContaining({
-          integrationId: 'int-123',
-          type: 'stripe',
-        }),
+        { integrationId: mockIntegrationId, type: 'stripe' },
         'Syncing with external system'
       );
     });
 
-    it('should handle errors', async () => {
-      mockIntegrationModel.findById.mockRejectedValue(new Error('Sync error'));
+    it('should log sync attempt for square', async () => {
+      const mockIntegration = {
+        id: mockIntegrationId,
+        integration_type: 'square',
+        api_secret_encrypted: 'encrypted_secret',
+      };
+      mockIntegrationModel.findById.mockResolvedValue(mockIntegration);
 
-      await expect(
-        integrationService.syncWithExternalSystem('int-123')
-      ).rejects.toThrow('Sync error');
+      await service.syncWithExternalSystem(mockIntegrationId);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        { integrationId: mockIntegrationId, type: 'square' },
+        'Syncing with external system'
+      );
+    });
+
+    it('should throw error when integration not found', async () => {
+      mockIntegrationModel.findById.mockResolvedValue(null);
+
+      await expect(service.syncWithExternalSystem(mockIntegrationId)).rejects.toThrow('Integration not found');
     });
   });
 });

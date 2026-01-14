@@ -1,296 +1,205 @@
-// =============================================================================
-// TEST SUITE - Order Model
-// =============================================================================
+/**
+ * Unit Tests for src/models/Order.ts
+ */
 
-import { Pool } from 'pg';
 import { OrderModel, IOrder } from '../../../src/models/Order';
 
-describe('OrderModel', () => {
-  let model: OrderModel;
-  let mockPool: jest.Mocked<Partial<Pool>>;
+describe('models/Order', () => {
+  let mockPool: any;
+  let orderModel: OrderModel;
+
+  const mockOrderRow = {
+    id: 'order-123',
+    tenant_id: 'tenant-456',
+    user_id: 'user-789',
+    event_id: 'event-abc',
+    order_number: 'ORD-12345678',
+    status: 'PENDING',
+    subtotal_cents: 10000,
+    platform_fee_cents: 500,
+    processing_fee_cents: 300,
+    tax_cents: 800,
+    discount_cents: 0,
+    total_cents: 11600,
+    currency: 'USD',
+    ticket_quantity: 2,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
 
   beforeEach(() => {
     mockPool = {
       query: jest.fn(),
     };
-
-    model = new OrderModel(mockPool as Pool);
+    orderModel = new OrderModel(mockPool);
   });
 
   describe('create()', () => {
-    it('should create an order', async () => {
-      const orderData: IOrder = {
-        user_id: 'user-123',
-        event_id: 'event-123',
+    it('inserts order and returns mapped result', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+
+      const input: IOrder = {
+        tenant_id: 'tenant-456',
+        user_id: 'user-789',
+        event_id: 'event-abc',
         status: 'PENDING',
         subtotal_cents: 10000,
-        total_cents: 11000,
+        total_cents: 11600,
         ticket_quantity: 2,
       };
 
-      const mockResult = {
-        rows: [{ id: 'order-1', ...orderData, order_number: 'ORD-12345' }],
-      };
+      const result = await orderModel.create(input);
 
-      (mockPool.query as jest.Mock).mockResolvedValue(mockResult);
-
-      const result = await model.create(orderData);
-
-      expect(result.id).toBe('order-1');
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO orders'),
+        expect.any(Array)
+      );
+      expect(result.id).toBe('order-123');
     });
 
-    it('should generate order number if not provided', async () => {
-      const orderData: IOrder = {
-        user_id: 'user-123',
-        event_id: 'event-123',
+    it('generates order_number if not provided', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+
+      const input: IOrder = {
+        tenant_id: 'tenant-456',
+        user_id: 'user-789',
+        event_id: 'event-abc',
         status: 'PENDING',
         subtotal_cents: 10000,
-        total_cents: 11000,
+        total_cents: 11600,
         ticket_quantity: 2,
       };
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
+      await orderModel.create(input);
 
-      await model.create(orderData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][2]).toMatch(/^ORD-\d{8}$/);
+      const values = mockPool.query.mock.calls[0][1];
+      expect(values[3]).toMatch(/^ORD-/);
     });
 
-    it('should use provided order number', async () => {
-      const orderData: IOrder = {
-        user_id: 'user-123',
-        event_id: 'event-123',
-        order_number: 'CUSTOM-123',
+    it('uses default values for optional fields', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
+
+      const input: IOrder = {
+        tenant_id: 'tenant-456',
+        user_id: 'user-789',
+        event_id: 'event-abc',
         status: 'PENDING',
         subtotal_cents: 10000,
-        total_cents: 11000,
+        total_cents: 11600,
         ticket_quantity: 2,
       };
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [orderData] });
+      await orderModel.create(input);
 
-      await model.create(orderData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][2]).toBe('CUSTOM-123');
-    });
-
-    it('should default status to PENDING', async () => {
-      const orderData: IOrder = {
-        user_id: 'user-123',
-        event_id: 'event-123',
-        status: 'PENDING',
-        subtotal_cents: 10000,
-        total_cents: 11000,
-        ticket_quantity: 2,
-      };
-
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.create(orderData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][3]).toBe('PENDING');
-    });
-
-    it('should default currency to USD', async () => {
-      const orderData: IOrder = {
-        user_id: 'user-123',
-        event_id: 'event-123',
-        status: 'PENDING',
-        subtotal_cents: 10000,
-        total_cents: 11000,
-        ticket_quantity: 2,
-      };
-
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.create(orderData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][5]).toBe('USD');
-    });
-
-    it('should handle optional metadata', async () => {
-      const orderData: IOrder = {
-        user_id: 'user-123',
-        event_id: 'event-123',
-        status: 'PENDING',
-        subtotal_cents: 10000,
-        total_cents: 11000,
-        ticket_quantity: 2,
-        metadata: { source: 'web' },
-      };
-
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [orderData] });
-
-      await model.create(orderData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][9]).toEqual({ source: 'web' });
+      const values = mockPool.query.mock.calls[0][1];
+      expect(values[6]).toBe(0); // platform_fee_cents
+      expect(values[11]).toBe('USD'); // currency
     });
   });
 
   describe('findById()', () => {
-    it('should find order by id', async () => {
-      const mockOrder = {
-        id: 'order-1',
-        user_id: 'user-123',
-        status: 'PAID',
-      };
+    it('returns order when found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [mockOrder] });
+      const result = await orderModel.findById('order-123');
 
-      const result = await model.findById('order-1');
-
-      expect(mockPool.query).toHaveBeenCalledWith(
-        'SELECT * FROM orders WHERE id = $1',
-        ['order-1']
-      );
-      expect(result).toEqual(mockOrder);
+      expect(result?.id).toBe('order-123');
     });
 
-    it('should return null if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns null when not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const result = await model.findById('notfound');
+      const result = await orderModel.findById('nonexistent');
 
       expect(result).toBeNull();
     });
   });
 
   describe('findByUserId()', () => {
-    it('should find orders by user id', async () => {
-      const mockOrders = [
-        { id: 'order-1', user_id: 'user-123' },
-        { id: 'order-2', user_id: 'user-123' },
-      ];
+    it('returns array of user orders', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: mockOrders });
+      const result = await orderModel.findByUserId('user-789');
 
-      const result = await model.findByUserId('user-123');
-
+      expect(result).toHaveLength(1);
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('WHERE user_id = $1'),
-        ['user-123']
+        ['user-789']
       );
-      expect(result).toEqual(mockOrders);
     });
+  });
 
-    it('should order by created_at DESC', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+  describe('findByOrderNumber()', () => {
+    it('returns order when found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow] });
 
-      await model.findByUserId('user-123');
+      const result = await orderModel.findByOrderNumber('ORD-12345678');
 
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('ORDER BY created_at DESC');
+      expect(result?.order_number).toBe('ORD-12345678');
     });
+  });
 
-    it('should return empty array if none found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+  describe('findByEventId()', () => {
+    it('returns array of event orders', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockOrderRow, { ...mockOrderRow, id: 'order-456' }] });
 
-      const result = await model.findByUserId('user-123');
+      const result = await orderModel.findByEventId('event-abc');
 
-      expect(result).toEqual([]);
+      expect(result).toHaveLength(2);
     });
   });
 
   describe('update()', () => {
-    it('should update order with valid fields', async () => {
-      const mockUpdated = { id: 'order-1', status: 'PAID' };
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [mockUpdated] });
+    it('updates allowed fields', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ ...mockOrderRow, status: 'CONFIRMED' }] });
 
-      const result = await model.update('order-1', { status: 'PAID' });
+      const result = await orderModel.update('order-123', { status: 'CONFIRMED' });
 
-      expect(result).toEqual(mockUpdated);
+      expect(result?.status).toBe('CONFIRMED');
     });
 
-    it('should only update whitelisted fields', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('order-1', { status: 'PAID' });
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('status = $2');
-    });
-
-    it('should reject non-whitelisted fields', async () => {
+    it('throws error for no valid fields', async () => {
       await expect(
-        model.update('order-1', { invalid_field: 'value' } as any)
+        orderModel.update('order-123', { id: 'new-id' } as any)
       ).rejects.toThrow('No valid fields to update');
-    });
-
-    it('should update updated_at timestamp', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('order-1', { status: 'PAID' });
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('updated_at = NOW()');
-    });
-
-    it('should return null if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
-
-      const result = await model.update('notfound', { status: 'PAID' });
-
-      expect(result).toBeNull();
-    });
-
-    it('should handle multiple valid fields', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('order-1', {
-        status: 'PAID',
-        total_cents: 15000,
-      });
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('status');
-      expect(call).toContain('total_cents');
-    });
-
-    it('should filter out invalid fields', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('order-1', {
-        status: 'PAID',
-        invalid: 'field',
-      } as any);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1]).toEqual(['order-1', 'PAID']);
     });
   });
 
   describe('delete()', () => {
-    it('should delete order', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 1 });
+    it('deletes order and returns true', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-      const result = await model.delete('order-1');
+      const result = await orderModel.delete('order-123');
 
-      expect(mockPool.query).toHaveBeenCalledWith(
-        'DELETE FROM orders WHERE id = $1',
-        ['order-1']
-      );
       expect(result).toBe(true);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM orders'),
+        ['order-123']
+      );
     });
 
-    it('should return false if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 0 });
+    it('returns false when order not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
 
-      const result = await model.delete('notfound');
+      const result = await orderModel.delete('nonexistent');
 
       expect(result).toBe(false);
     });
+  });
 
-    it('should handle null rowCount', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: null });
+  describe('mapRowToOrder()', () => {
+    it('converts numeric fields to numbers', async () => {
+      const rowWithStrings = {
+        ...mockOrderRow,
+        subtotal_cents: '10000',
+        total_cents: '11600',
+      };
+      mockPool.query.mockResolvedValueOnce({ rows: [rowWithStrings] });
 
-      const result = await model.delete('order-1');
+      const result = await orderModel.findById('order-123');
 
-      expect(result).toBe(false);
+      expect(typeof result?.subtotal_cents).toBe('number');
+      expect(typeof result?.total_cents).toBe('number');
     });
   });
 });

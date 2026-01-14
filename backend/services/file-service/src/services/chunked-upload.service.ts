@@ -1,9 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
-import crypto from 'crypto';
 import path from 'path';
 import fs from 'fs/promises';
 import { getPool } from '../config/database.config';
-import { storageService } from '../storage/storage.service';
 import { logger } from '../utils/logger';
 
 export class ChunkedUploadService {

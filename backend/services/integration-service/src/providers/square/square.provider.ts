@@ -1,6 +1,8 @@
 import { IntegrationProvider, SyncResult } from '../provider.interface';
 import { logger } from '../../utils/logger';
+import { config } from '../../config';
 import axios from 'axios';
+import crypto from 'crypto';
 
 export class SquareProvider implements IntegrationProvider {
   name = 'square';
@@ -9,7 +11,7 @@ export class SquareProvider implements IntegrationProvider {
   private baseUrl: string;
   
   constructor() {
-    this.baseUrl = process.env.SQUARE_SANDBOX === 'true' 
+    this.baseUrl = config.providers.square.sandbox
       ? 'https://connect.squareupsandbox.com/v2'
       : 'https://connect.squareup.com/v2';
   }
@@ -153,7 +155,8 @@ export class SquareProvider implements IntegrationProvider {
         }
       );
 
-      return response.data.payments || [];
+      const responseData = response.data as { payments?: any[] };
+      return responseData.payments || [];
     } catch (error) {
       logger.error('Failed to fetch Square transactions', error);
       return [];
@@ -161,16 +164,25 @@ export class SquareProvider implements IntegrationProvider {
   }
 
   validateWebhookSignature(payload: string, signature: string): boolean {
-    // Square webhook signature validation
-    const crypto = require('crypto');
-    const webhookSignatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY || '';
+    // Square webhook signature validation using centralized config
+    const webhookSignatureKey = config.providers.square.webhookSignatureKey;
+    
+    if (!webhookSignatureKey) {
+      logger.warn('Square webhook signature key not configured, skipping verification');
+      return false;
+    }
     
     const hash = crypto
       .createHmac('sha256', webhookSignatureKey)
       .update(payload)
       .digest('base64');
     
-    return hash === signature;
+    // Use timing-safe comparison
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
+    } catch {
+      return false;
+    }
   }
 
   async handleWebhook(event: any): Promise<void> {
@@ -190,8 +202,8 @@ export class SquareProvider implements IntegrationProvider {
   }
 
   getOAuthUrl(state: string): string {
-    const clientId = process.env.SQUARE_APP_ID;
-    const baseUrl = process.env.SQUARE_SANDBOX === 'true'
+    const clientId = config.providers.square.clientId;
+    const baseUrl = config.providers.square.sandbox
       ? 'https://connect.squareupsandbox.com'
       : 'https://connect.squareup.com';
     
@@ -212,8 +224,8 @@ export class SquareProvider implements IntegrationProvider {
     const response = await axios.post(
       `${this.baseUrl}/oauth2/token`,
       {
-        client_id: process.env.SQUARE_APP_ID,
-        client_secret: process.env.SQUARE_APP_SECRET,
+        client_id: config.providers.square.clientId,
+        client_secret: config.providers.square.clientSecret,
         code,
         grant_type: 'authorization_code'
       }

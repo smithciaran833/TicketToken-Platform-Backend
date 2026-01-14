@@ -15,7 +15,7 @@ export async function setupStorage(): Promise<void> {
       await fs.mkdir(dir, { recursive: true });
       logger.debug(`Directory created/verified: ${dir}`);
     } catch (error) {
-      logger.error(`Failed to create directory ${dir}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), dir }, 'Failed to create directory');
     }
   }
   

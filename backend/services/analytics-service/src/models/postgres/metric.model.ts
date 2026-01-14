@@ -104,7 +104,7 @@ export class MetricModel {
     metricType: string,
     startDate: Date,
     endDate: Date,
-    granularity?: any
+    _granularity?: any
   ): Promise<Metric[]> {
     return this.findByType(metricType, venueId, {
       startDate,
@@ -116,7 +116,7 @@ export class MetricModel {
   static async aggregateMetrics(
     venueId: string,
     metricType: string,
-    aggregationType: string,
+    _aggregationType: string,
     startDate: Date,
     endDate: Date
   ): Promise<any> {

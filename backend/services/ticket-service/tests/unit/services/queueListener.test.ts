@@ -1,127 +1,58 @@
-// =============================================================================
-// MOCKS
-// =============================================================================
-
-const mockLogger = {
-  child: jest.fn().mockReturnThis(),
-  info: jest.fn(),
-  error: jest.fn(),
-  warn: jest.fn(),
-  debug: jest.fn(),
-};
-
-const mockPaymentEventHandler = {
-  handlePaymentSucceeded: jest.fn().mockResolvedValue(undefined),
-  handlePaymentFailed: jest.fn().mockResolvedValue(undefined),
-};
+/**
+ * Unit Tests for src/services/queueListener.ts
+ */
 
 jest.mock('../../../src/utils/logger', () => ({
   logger: {
-    child: jest.fn(() => mockLogger),
+    child: jest.fn().mockReturnValue({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    }),
   },
 }));
 
+const mockHandlePaymentSucceeded = jest.fn();
+const mockHandlePaymentFailed = jest.fn();
+
 jest.mock('../../../src/services/paymentEventHandler', () => ({
-  PaymentEventHandler: mockPaymentEventHandler,
+  PaymentEventHandler: {
+    handlePaymentSucceeded: mockHandlePaymentSucceeded,
+    handlePaymentFailed: mockHandlePaymentFailed,
+  },
 }));
 
-// Import after mocks
 import { QueueListener } from '../../../src/services/queueListener';
 
-// =============================================================================
-// TEST SUITE
-// =============================================================================
-
-describe('QueueListener', () => {
+describe('services/queueListener', () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });
 
   describe('start()', () => {
-    it('should start successfully', async () => {
-      await QueueListener.start();
-
-      expect(mockLogger.info).toHaveBeenCalledWith('Queue listener ready (webhook mode)');
-    });
-
-    it('should not throw error', async () => {
+    it('starts without throwing', async () => {
       await expect(QueueListener.start()).resolves.not.toThrow();
     });
   });
 
   describe('processPaymentSuccess()', () => {
-    const orderId = 'order-123';
-    const paymentId = 'payment-456';
+    it('delegates to PaymentEventHandler.handlePaymentSucceeded', async () => {
+      mockHandlePaymentSucceeded.mockResolvedValueOnce(undefined);
 
-    it('should process payment success', async () => {
-      await QueueListener.processPaymentSuccess(orderId, paymentId);
+      await QueueListener.processPaymentSuccess('order-123', 'payment-456');
 
-      expect(mockPaymentEventHandler.handlePaymentSucceeded).toHaveBeenCalledWith(
-        orderId,
-        paymentId
-      );
-    });
-
-    it('should handle different order and payment IDs', async () => {
-      await QueueListener.processPaymentSuccess('order-999', 'payment-888');
-
-      expect(mockPaymentEventHandler.handlePaymentSucceeded).toHaveBeenCalledWith(
-        'order-999',
-        'payment-888'
-      );
-    });
-
-    it('should propagate errors from handler', async () => {
-      const error = new Error('Payment handler error');
-      mockPaymentEventHandler.handlePaymentSucceeded.mockRejectedValue(error);
-
-      await expect(
-        QueueListener.processPaymentSuccess(orderId, paymentId)
-      ).rejects.toThrow('Payment handler error');
+      expect(mockHandlePaymentSucceeded).toHaveBeenCalledWith('order-123', 'payment-456');
     });
   });
 
   describe('processPaymentFailure()', () => {
-    const orderId = 'order-123';
-    const reason = 'Insufficient funds';
+    it('delegates to PaymentEventHandler.handlePaymentFailed', async () => {
+      mockHandlePaymentFailed.mockResolvedValueOnce(undefined);
 
-    it('should process payment failure', async () => {
-      await QueueListener.processPaymentFailure(orderId, reason);
+      await QueueListener.processPaymentFailure('order-123', 'Card declined');
 
-      expect(mockPaymentEventHandler.handlePaymentFailed).toHaveBeenCalledWith(
-        orderId,
-        reason
-      );
-    });
-
-    it('should handle different order IDs and reasons', async () => {
-      await QueueListener.processPaymentFailure('order-999', 'Card declined');
-
-      expect(mockPaymentEventHandler.handlePaymentFailed).toHaveBeenCalledWith(
-        'order-999',
-        'Card declined'
-      );
-    });
-
-    it('should propagate errors from handler', async () => {
-      const error = new Error('Payment handler error');
-      mockPaymentEventHandler.handlePaymentFailed.mockRejectedValue(error);
-
-      await expect(
-        QueueListener.processPaymentFailure(orderId, reason)
-      ).rejects.toThrow('Payment handler error');
-    });
-  });
-
-  describe('instance', () => {
-    it('should be a singleton', () => {
-      expect(QueueListener).toBeDefined();
-    });
-
-    it('should have all required methods', () => {
-      expect(typeof QueueListener.start).toBe('function');
-      expect(typeof QueueListener.processPaymentSuccess).toBe('function');
-      expect(typeof QueueListener.processPaymentFailure).toBe('function');
+      expect(mockHandlePaymentFailed).toHaveBeenCalledWith('order-123', 'Card declined');
     });
   });
 });

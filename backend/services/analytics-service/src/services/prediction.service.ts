@@ -78,11 +78,13 @@ export class PredictionService {
         const date = new Date(today);
         date.setDate(date.getDate() + i);
         
-        // Simple demand prediction based on day of week and historical average
+        // Deterministic demand prediction based on day of week and seasonal patterns
         const dayOfWeek = date.getDay();
         const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
         const baseDemand = isWeekend ? 150 : 100;
-        const variance = Math.random() * 50 - 25;
+        // Use deterministic variance based on day index and date hash instead of random
+        const dateHash = (date.getDate() + date.getMonth() * 31 + i * 7) % 100;
+        const variance = (dateHash - 50) / 2; // Produces -25 to +25 deterministically
         const predictedDemand = Math.max(0, baseDemand + variance);
         
         predictions.push({
@@ -140,12 +142,15 @@ export class PredictionService {
         const expectedDemand = 100 * (1 + demandChange);
         const expectedRevenue = price * expectedDemand;
         
+        // Deterministic confidence based on price deviation from current
+        const priceDeviation = Math.abs(priceChange);
+        const confidence = 0.9 - (priceDeviation * 0.5); // Higher confidence near current price
         recommendations.push({
           price,
           expectedDemand: Math.round(expectedDemand),
           expectedRevenue: Math.round(expectedRevenue),
           elasticity,
-          confidence: 0.7 + Math.random() * 0.2
+          confidence: Math.max(0.7, Math.min(0.9, confidence))
         });
       }
       
@@ -325,14 +330,16 @@ export class PredictionService {
         }
       }
       
-      // Add weather factor (mock)
-      const weatherRisk = Math.random() * 0.2;
-      if (weatherRisk > 0.1) {
-        noShowProbability += weatherRisk;
+      // Add weather factor - deterministic based on event date
+      // In production, this would call a weather API
+      const eventDate = new Date();
+      const dateBasedWeatherRisk = ((eventDate.getMonth() + eventDate.getDate()) % 10) / 50; // 0 to 0.18
+      if (dateBasedWeatherRisk > 0.1) {
+        noShowProbability += dateBasedWeatherRisk;
         riskFactors.push({
           factor: 'Weather conditions',
-          value: 'Rain expected',
-          contribution: weatherRisk
+          value: 'Potential weather impact',
+          contribution: dateBasedWeatherRisk
         });
       }
       

@@ -102,21 +102,6 @@ export async function setupRateLimitMiddleware(server: FastifyInstance) {
         userId: user?.id,
       }, 'medium');
     },
-    // Log when rate limiting is skipped due to Redis error
-    onError: (request: FastifyRequest, _key: string, error: Error) => {
-      const logger = createRequestLogger(request.id);
-      logger.error({
-        error: error.message,
-        path: request.url,
-        method: request.method,
-      }, 'Rate limiting skipped due to Redis error - request allowed through');
-
-      logSecurityEvent('rate_limit_redis_error', {
-        error: error.message,
-        path: request.url,
-        ip: request.ip,
-      }, 'high');
-    },
   });
 
   // Custom rate limiter for ticket purchases with sliding window

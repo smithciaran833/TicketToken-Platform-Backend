@@ -1,279 +1,350 @@
-// Mock dependencies BEFORE imports
-jest.mock('../../../src/config/database', () => ({
-  db: jest.fn(),
-}));
-
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
-}));
+/**
+ * Pricing Controller Unit Tests
+ * 
+ * Tests the pricing controller handlers for:
+ * - getEventPricing: Get all pricing for an event
+ * - getPricingById: Get specific pricing
+ * - createPricing: Create new pricing
+ * - updatePricing: Update pricing
+ * - calculatePrice: Calculate total price with fees
+ * - getActivePricing: Get currently active pricing
+ */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
-import * as pricingController from '../../../src/controllers/pricing.controller';
+import {
+  getEventPricing,
+  getPricingById,
+  createPricing,
+  updatePricing,
+  calculatePrice,
+  getActivePricing
+} from '../../../src/controllers/pricing.controller';
+
+// Mock dependencies
+jest.mock('../../../src/config/database', () => ({
+  db: {}
+}));
+
+jest.mock('../../../src/services/pricing.service', () => ({
+  PricingService: jest.fn().mockImplementation(() => ({
+    getEventPricing: jest.fn(),
+    getPricingById: jest.fn(),
+    createPricing: jest.fn(),
+    updatePricing: jest.fn(),
+    calculatePrice: jest.fn(),
+    getActivePricing: jest.fn()
+  }))
+}));
+
+jest.mock('../../../src/middleware/error-handler', () => ({
+  createProblemError: jest.fn((status: number, code: string, detail: string) => {
+    const error = new Error(detail) as any;
+    error.statusCode = status;
+    error.code = code;
+    return error;
+  })
+}));
+
 import { PricingService } from '../../../src/services/pricing.service';
 
-// Mock PricingService
-jest.mock('../../../src/services/pricing.service');
-
 describe('Pricing Controller', () => {
+  let mockPricingService: any;
   let mockRequest: Partial<FastifyRequest>;
   let mockReply: Partial<FastifyReply>;
-  let mockPricingService: jest.Mocked<PricingService>;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockRequest = {
-      params: {},
-      body: {},
-      headers: {},
-      log: {
-        info: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-      } as any,
-    };
-
-    mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
-    };
-
-    // Mock PricingService instance
     mockPricingService = {
       getEventPricing: jest.fn(),
       getPricingById: jest.fn(),
       createPricing: jest.fn(),
       updatePricing: jest.fn(),
       calculatePrice: jest.fn(),
-      getActivePricing: jest.fn(),
-    } as any;
+      getActivePricing: jest.fn()
+    };
 
-    (PricingService as jest.MockedClass<typeof PricingService>).mockImplementation(() => mockPricingService);
+    (PricingService as jest.Mock).mockImplementation(() => mockPricingService);
+
+    mockRequest = {
+      params: {},
+      body: {},
+      headers: {}
+    };
+    (mockRequest as any).tenantId = 'tenant-123';
+
+    mockReply = {
+      status: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
+    };
   });
 
   describe('getEventPricing', () => {
-    it('should return event pricing tiers', async () => {
-      const mockPricing = [
-        { id: '1', name: 'General', base_price: 50 },
-        { id: '2', name: 'VIP', base_price: 100 },
+    it('should return pricing for an event', async () => {
+      const pricing = [
+        { id: 'price-1', name: 'VIP', base_price: 100.00 },
+        { id: 'price-2', name: 'GA', base_price: 50.00 }
       ];
+      mockPricingService.getEventPricing.mockResolvedValue(pricing);
+      (mockRequest.params as any) = { eventId: 'event-123' };
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.getEventPricing.mockResolvedValue(mockPricing as any);
+      await getEventPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await pricingController.getEventPricing(
-        mockRequest as FastifyRequest<{ Params: { eventId: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockPricingService.getEventPricing).toHaveBeenCalledWith('event-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ pricing: mockPricing });
+      expect(mockPricingService.getEventPricing).toHaveBeenCalledWith('event-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing });
     });
 
-    it('should handle errors', async () => {
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.getEventPricing.mockRejectedValue(new Error('Database error'));
+    it('should return empty array when no pricing exists', async () => {
+      mockPricingService.getEventPricing.mockResolvedValue([]);
+      (mockRequest.params as any) = { eventId: 'event-123' };
 
-      await pricingController.getEventPricing(
-        mockRequest as FastifyRequest<{ Params: { eventId: string } }>,
-        mockReply as FastifyReply
-      );
+      await getEventPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(500);
-      expect(mockReply.send).toHaveBeenCalledWith({
-        error: 'Failed to get pricing',
-        message: 'Database error',
-      });
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing: [] });
     });
   });
 
   describe('getPricingById', () => {
-    it('should return pricing by id', async () => {
-      const mockPricing = { id: 'pricing-1', name: 'VIP', base_price: 100 };
+    it('should return pricing when found', async () => {
+      const pricing = { id: 'price-123', name: 'VIP', base_price: 100.00 };
+      mockPricingService.getPricingById.mockResolvedValue(pricing);
+      (mockRequest.params as any) = { id: 'price-123' };
 
-      mockRequest.params = { id: 'pricing-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.getPricingById.mockResolvedValue(mockPricing as any);
+      await getPricingById(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await pricingController.getPricingById(
-        mockRequest as FastifyRequest<{ Params: { id: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockPricingService.getPricingById).toHaveBeenCalledWith('pricing-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ pricing: mockPricing });
+      expect(mockPricingService.getPricingById).toHaveBeenCalledWith('price-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing });
     });
 
-    it('should return 404 if pricing not found', async () => {
-      mockRequest.params = { id: 'pricing-999' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.getPricingById.mockRejectedValue(new Error('Pricing not found'));
+    it('should throw NOT_FOUND when pricing does not exist', async () => {
+      mockPricingService.getPricingById.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
 
-      await pricingController.getPricingById(
-        mockRequest as FastifyRequest<{ Params: { id: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(404);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Pricing not found' });
+      await expect(
+        getPricingById(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Pricing not found');
     });
   });
 
   describe('createPricing', () => {
-    it('should create pricing tier', async () => {
-      const mockPricing = { id: 'pricing-1', name: 'General', base_price: 50 };
-      const requestBody = { name: 'General', base_price: 50 };
+    const validPricingData = {
+      name: 'VIP Ticket',
+      base_price: 100.00,
+      service_fee: 5.00,
+      facility_fee: 3.00,
+      tax_rate: 0.08
+    };
 
-      mockRequest.params = { eventId: 'event-1' };
-      mockRequest.body = requestBody;
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.createPricing.mockResolvedValue(mockPricing as any);
+    it('should create pricing successfully', async () => {
+      const createdPricing = { id: 'price-123', ...validPricingData };
+      mockPricingService.createPricing.mockResolvedValue(createdPricing);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+      mockRequest.body = validPricingData;
 
-      await pricingController.createPricing(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await createPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockPricingService.createPricing).toHaveBeenCalledWith(
-        { ...requestBody, event_id: 'event-1' },
-        'tenant-1'
+        { ...validPricingData, event_id: 'event-123' },
+        'tenant-123'
       );
       expect(mockReply.status).toHaveBeenCalledWith(201);
-      expect(mockReply.send).toHaveBeenCalledWith({ pricing: mockPricing });
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing: createdPricing });
     });
 
-    it('should handle creation errors', async () => {
-      mockRequest.params = { eventId: 'event-1' };
-      mockRequest.body = { name: 'Test', base_price: 50 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.createPricing.mockRejectedValue(new Error('Database error'));
+    it('should create pricing with capacity_id and schedule_id', async () => {
+      const pricingWithRefs = {
+        ...validPricingData,
+        capacity_id: 'cap-123',
+        schedule_id: 'sched-123'
+      };
+      mockPricingService.createPricing.mockResolvedValue({ id: 'price-123', ...pricingWithRefs });
+      (mockRequest.params as any) = { eventId: 'event-123' };
+      mockRequest.body = pricingWithRefs;
 
-      await pricingController.createPricing(
-        mockRequest as any,
-        mockReply as FastifyReply
+      await createPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockPricingService.createPricing).toHaveBeenCalledWith(
+        expect.objectContaining({
+          capacity_id: 'cap-123',
+          schedule_id: 'sched-123'
+        }),
+        'tenant-123'
       );
+    });
 
-      expect(mockReply.status).toHaveBeenCalledWith(500);
+    it('should create pricing with tier designation', async () => {
+      const tieredPricing = { ...validPricingData, tier: 'premium' };
+      mockPricingService.createPricing.mockResolvedValue({ id: 'price-123', ...tieredPricing });
+      (mockRequest.params as any) = { eventId: 'event-123' };
+      mockRequest.body = tieredPricing;
+
+      await createPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockPricingService.createPricing).toHaveBeenCalledWith(
+        expect.objectContaining({ tier: 'premium' }),
+        'tenant-123'
+      );
     });
   });
 
   describe('updatePricing', () => {
-    it('should update pricing', async () => {
-      const mockPricing = { id: 'pricing-1', name: 'VIP Updated', base_price: 120 };
+    const updateData = { name: 'Updated VIP', base_price: 120.00 };
 
-      mockRequest.params = { id: 'pricing-1' };
-      mockRequest.body = { name: 'VIP Updated', base_price: 120 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.updatePricing.mockResolvedValue(mockPricing as any);
+    it('should update pricing successfully', async () => {
+      const updatedPricing = { id: 'price-123', ...updateData };
+      mockPricingService.updatePricing.mockResolvedValue(updatedPricing);
+      (mockRequest.params as any) = { id: 'price-123' };
+      mockRequest.body = updateData;
 
-      await pricingController.updatePricing(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await updatePricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockPricingService.updatePricing).toHaveBeenCalledWith(
-        'pricing-1',
-        mockRequest.body,
-        'tenant-1'
+        'price-123',
+        updateData,
+        'tenant-123'
       );
-      expect(mockReply.send).toHaveBeenCalledWith({ pricing: mockPricing });
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing: updatedPricing });
     });
 
-    it('should return 404 if pricing not found', async () => {
-      mockRequest.params = { id: 'pricing-999' };
-      mockRequest.body = { base_price: 120 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.updatePricing.mockRejectedValue(new Error('Pricing not found'));
+    it('should throw NOT_FOUND when pricing does not exist', async () => {
+      mockPricingService.updatePricing.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
+      mockRequest.body = updateData;
 
-      await pricingController.updatePricing(
-        mockRequest as any,
-        mockReply as FastifyReply
+      await expect(
+        updatePricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Pricing not found');
+    });
+
+    it('should update is_active flag', async () => {
+      mockPricingService.updatePricing.mockResolvedValue({ id: 'price-123', is_active: false });
+      (mockRequest.params as any) = { id: 'price-123' };
+      mockRequest.body = { is_active: false };
+
+      await updatePricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockPricingService.updatePricing).toHaveBeenCalledWith(
+        'price-123',
+        { is_active: false },
+        'tenant-123'
       );
+    });
 
-      expect(mockReply.status).toHaveBeenCalledWith(404);
+    it('should update current_price for dynamic pricing', async () => {
+      mockPricingService.updatePricing.mockResolvedValue({ id: 'price-123', current_price: 95.00 });
+      (mockRequest.params as any) = { id: 'price-123' };
+      mockRequest.body = { current_price: 95.00 };
+
+      await updatePricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockPricingService.updatePricing).toHaveBeenCalledWith(
+        'price-123',
+        { current_price: 95.00 },
+        'tenant-123'
+      );
     });
   });
 
   describe('calculatePrice', () => {
     it('should calculate price for quantity', async () => {
-      const mockCalculation = {
-        base_price: 100,
-        service_fee: 10,
-        facility_fee: 5,
-        tax: 11.5,
-        subtotal: 115,
-        total: 126.5,
-        per_ticket: 63.25,
+      const calculation = {
+        base_total: 200.00,
+        service_fee_total: 10.00,
+        facility_fee_total: 6.00,
+        tax_total: 17.28,
+        grand_total: 233.28
       };
-
-      mockRequest.params = { id: 'pricing-1' };
+      mockPricingService.calculatePrice.mockResolvedValue(calculation);
+      (mockRequest.params as any) = { id: 'price-123' };
       mockRequest.body = { quantity: 2 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.calculatePrice.mockResolvedValue(mockCalculation as any);
 
-      await pricingController.calculatePrice(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await calculatePrice(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      expect(mockPricingService.calculatePrice).toHaveBeenCalledWith('pricing-1', 2, 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith(mockCalculation);
+      expect(mockPricingService.calculatePrice).toHaveBeenCalledWith('price-123', 2, 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith(calculation);
     });
 
-    it('should return 400 for invalid quantity', async () => {
-      mockRequest.params = { id: 'pricing-1' };
+    it('should throw INVALID_QUANTITY when quantity is less than 1', async () => {
+      (mockRequest.params as any) = { id: 'price-123' };
       mockRequest.body = { quantity: 0 };
-      (mockRequest as any).tenantId = 'tenant-1';
 
-      await pricingController.calculatePrice(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(400);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Invalid quantity' });
+      await expect(
+        calculatePrice(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
     });
 
-    it('should return 404 if pricing not found', async () => {
-      mockRequest.params = { id: 'pricing-999' };
+    it('should throw INVALID_QUANTITY when quantity is negative', async () => {
+      (mockRequest.params as any) = { id: 'price-123' };
+      mockRequest.body = { quantity: -1 };
+
+      await expect(
+        calculatePrice(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
+    });
+
+    it('should throw INVALID_QUANTITY when quantity is missing', async () => {
+      (mockRequest.params as any) = { id: 'price-123' };
+      mockRequest.body = {};
+
+      await expect(
+        calculatePrice(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
+    });
+
+    it('should throw NOT_FOUND when pricing does not exist', async () => {
+      mockPricingService.calculatePrice.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
       mockRequest.body = { quantity: 1 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.calculatePrice.mockRejectedValue(new Error('Pricing not found'));
 
-      await pricingController.calculatePrice(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(404);
+      await expect(
+        calculatePrice(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Pricing not found');
     });
   });
 
   describe('getActivePricing', () => {
-    it('should return active pricing', async () => {
-      const mockPricing = [
-        { id: '1', name: 'General', base_price: 50, is_active: true },
+    it('should return active pricing for an event', async () => {
+      const activePricing = [
+        { id: 'price-1', name: 'VIP', is_active: true },
+        { id: 'price-2', name: 'GA', is_active: true }
       ];
+      mockPricingService.getActivePricing.mockResolvedValue(activePricing);
+      (mockRequest.params as any) = { eventId: 'event-123' };
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockPricingService.getActivePricing.mockResolvedValue(mockPricing as any);
+      await getActivePricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await pricingController.getActivePricing(
-        mockRequest as FastifyRequest<{ Params: { eventId: string } }>,
-        mockReply as FastifyReply
-      );
+      expect(mockPricingService.getActivePricing).toHaveBeenCalledWith('event-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing: activePricing });
+    });
 
-      expect(mockPricingService.getActivePricing).toHaveBeenCalledWith('event-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ pricing: mockPricing });
+    it('should return empty array when no active pricing exists', async () => {
+      mockPricingService.getActivePricing.mockResolvedValue([]);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await getActivePricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({ pricing: [] });
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle service errors', async () => {
+      mockPricingService.getEventPricing.mockRejectedValue(new Error('Database error'));
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await expect(
+        getEventPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Database error');
+    });
+
+    it('should create new PricingService instance for each request', async () => {
+      mockPricingService.getEventPricing.mockResolvedValue([]);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await getEventPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+      await getEventPricing(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(PricingService).toHaveBeenCalledTimes(2);
     });
   });
 });

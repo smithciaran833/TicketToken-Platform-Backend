@@ -2,9 +2,6 @@ import { db } from '../../config/database';
 import { logger } from '../../utils/logger';
 
 export class FraudReviewService {
-  /**
-   * Get pending reviews for dashboard
-   */
   async getPendingReviews(filters?: {
     priority?: string;
     status?: string;
@@ -42,9 +39,6 @@ export class FraudReviewService {
     return await query;
   }
 
-  /**
-   * Assign review to analyst
-   */
   async assignReview(reviewId: string, analystId: string) {
     await db('fraud_review_queue')
       .where('id', reviewId)
@@ -54,12 +48,9 @@ export class FraudReviewService {
         updated_at: new Date()
       });
 
-    logger.info('Review assigned', { reviewId, analystId });
+    logger.info({ reviewId, analystId }, 'Review assigned');
   }
 
-  /**
-   * Complete review with decision
-   */
   async completeReview(reviewId: string, decision: {
     decision: 'approve' | 'decline' | 'escalate';
     reviewerNotes: string;
@@ -73,7 +64,6 @@ export class FraudReviewService {
       throw new Error('Review not found');
     }
 
-    // Update review
     await db('fraud_review_queue')
       .where('id', reviewId)
       .update({
@@ -84,28 +74,23 @@ export class FraudReviewService {
         updated_at: new Date()
       });
 
-    // Update user/IP reputation based on decision
     if (decision.decision === 'decline') {
       await this.updateReputationsAfterReview(review, 'fraud');
     } else if (decision.decision === 'approve') {
       await this.updateReputationsAfterReview(review, 'legitimate');
     }
 
-    // If it was a false positive, adjust ML model
     if (decision.decision === 'approve') {
       await this.recordFalsePositive(review);
     }
 
-    logger.info('Review completed', {
+    logger.info({
       reviewId,
       decision: decision.decision,
       reviewerId: decision.reviewerId
-    });
+    }, 'Review completed');
   }
 
-  /**
-   * Get review statistics
-   */
   async getReviewStats(dateRange?: { start: Date; end: Date }) {
     const query = db('fraud_review_queue');
 
@@ -136,9 +121,6 @@ export class FraudReviewService {
     };
   }
 
-  /**
-   * Get fraud trends
-   */
   async getFraudTrends(days: number = 30) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -166,9 +148,6 @@ export class FraudReviewService {
     }));
   }
 
-  /**
-   * Get top fraud signals
-   */
   async getTopFraudSignals(days: number = 30) {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
@@ -194,13 +173,8 @@ export class FraudReviewService {
       .slice(0, 10);
   }
 
-  /**
-   * Private helper methods
-   */
-
   private async updateReputationsAfterReview(review: any, classification: 'fraud' | 'legitimate') {
     try {
-      // Update IP reputation
       if (classification === 'fraud') {
         await db('ip_reputation')
           .where('ip_address', review.ip_address)
@@ -208,7 +182,6 @@ export class FraudReviewService {
           .update({ reputation_status: 'suspicious' });
       }
 
-      // Update ML predictions with actual feedback
       if (review.fraud_check_id) {
         await db('ml_fraud_predictions')
           .where('transaction_id', review.payment_id)
@@ -219,19 +192,18 @@ export class FraudReviewService {
       }
 
     } catch (error) {
-      logger.error('Error updating reputations after review:', error);
+      logger.error({ error }, 'Error updating reputations after review');
     }
   }
 
   private async recordFalsePositive(review: any) {
     try {
-      // Record for model retraining
-      logger.info('False positive recorded for ML model improvement', {
+      logger.info({
         reviewId: review.id,
         userId: review.user_id
-      });
+      }, 'False positive recorded for ML model improvement');
     } catch (error) {
-      logger.error('Error recording false positive:', error);
+      logger.error({ error }, 'Error recording false positive');
     }
   }
 }

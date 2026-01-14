@@ -50,7 +50,7 @@ export class RBACService {
     ]);
   }
 
-  async getUserPermissions(userId: string, venueId?: string): Promise<string[]> {
+  async getUserPermissions(userId: string, tenantId: string, venueId?: string): Promise<string[]> {
     const permissions = new Set<string>();
 
     // Get user's venue roles if venueId provided
@@ -58,11 +58,13 @@ export class RBACService {
       const venueRoles = await db('user_venue_roles')
         .where({
           user_id: userId,
+          tenant_id: tenantId,
           venue_id: venueId,
           is_active: true,
         })
-        .where('expires_at', '>', new Date())
-        .orWhereNull('expires_at');
+        .where(function() {
+          this.where('expires_at', '>', new Date()).orWhereNull('expires_at');
+        });
 
       for (const venueRole of venueRoles) {
         const role = this.roles.get(venueRole.role);
@@ -81,8 +83,8 @@ export class RBACService {
     return Array.from(permissions);
   }
 
-  async checkPermission(userId: string, permission: string, venueId?: string): Promise<boolean> {
-    const userPermissions = await this.getUserPermissions(userId, venueId);
+  async checkPermission(userId: string, tenantId: string, permission: string, venueId?: string): Promise<boolean> {
+    const userPermissions = await this.getUserPermissions(userId, tenantId, venueId);
 
     // Check for wildcard permission
     if (userPermissions.includes('*')) {
@@ -93,9 +95,9 @@ export class RBACService {
     return userPermissions.includes(permission);
   }
 
-  async requirePermission(userId: string, permission: string, venueId?: string): Promise<void> {
-    const hasPermission = await this.checkPermission(userId, permission, venueId);
-    
+  async requirePermission(userId: string, tenantId: string, permission: string, venueId?: string): Promise<void> {
+    const hasPermission = await this.checkPermission(userId, tenantId, permission, venueId);
+
     if (!hasPermission) {
       throw new AuthorizationError(`Missing required permission: ${permission}`);
     }
@@ -103,6 +105,7 @@ export class RBACService {
 
   async grantVenueRole(
     userId: string,
+    tenantId: string,
     venueId: string,
     role: string,
     grantedBy: string,
@@ -114,12 +117,13 @@ export class RBACService {
     }
 
     // Check if granter has permission to grant roles
-    await this.requirePermission(grantedBy, 'roles:manage', venueId);
+    await this.requirePermission(grantedBy, tenantId, 'roles:manage', venueId);
 
     // Check for existing role
     const existing = await db('user_venue_roles')
       .where({
         user_id: userId,
+        tenant_id: tenantId,
         venue_id: venueId,
         role: role,
         is_active: true,
@@ -139,6 +143,7 @@ export class RBACService {
     // Grant new role
     await db('user_venue_roles').insert({
       user_id: userId,
+      tenant_id: tenantId,
       venue_id: venueId,
       role: role,
       granted_by: grantedBy,
@@ -146,13 +151,14 @@ export class RBACService {
     });
   }
 
-  async revokeVenueRole(userId: string, venueId: string, role: string, revokedBy: string): Promise<void> {
+  async revokeVenueRole(userId: string, tenantId: string, venueId: string, role: string, revokedBy: string): Promise<void> {
     // Check if revoker has permission
-    await this.requirePermission(revokedBy, 'roles:manage', venueId);
+    await this.requirePermission(revokedBy, tenantId, 'roles:manage', venueId);
 
     await db('user_venue_roles')
       .where({
         user_id: userId,
+        tenant_id: tenantId,
         venue_id: venueId,
         role: role,
         is_active: true,
@@ -160,14 +166,38 @@ export class RBACService {
       .update({ is_active: false });
   }
 
-  async getUserVenueRoles(userId: string): Promise<any[]> {
+  async revokeVenueRoles(userId: string, venueId: string): Promise<void> {
+    await db('user_venue_roles')
+      .where({
+        user_id: userId,
+        venue_id: venueId,
+        is_active: true,
+      })
+      .update({ is_active: false });
+  }
+
+  async getUserVenueRoles(userId: string, tenantId: string): Promise<any[]> {
     return db('user_venue_roles')
       .where({
         user_id: userId,
+        tenant_id: tenantId,
         is_active: true,
       })
-      .where('expires_at', '>', new Date())
-      .orWhereNull('expires_at')
+      .where(function() {
+        this.where('expires_at', '>', new Date()).orWhereNull('expires_at');
+      })
       .select('venue_id', 'role', 'granted_at', 'expires_at');
+  }
+
+  async getVenueRoles(venueId: string): Promise<any[]> {
+    return db('user_venue_roles')
+      .where({
+        venue_id: venueId,
+        is_active: true,
+      })
+      .where(function() {
+        this.where('expires_at', '>', new Date()).orWhereNull('expires_at');
+      })
+      .select('user_id', 'role', 'granted_at', 'expires_at');
   }
 }

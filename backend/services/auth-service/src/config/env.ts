@@ -32,6 +32,9 @@ const envSchema = z.object({
   JWT_PUBLIC_KEY: z.string().optional(),
   JWT_PRIVATE_KEY_PATH: z.string().optional(),
   JWT_PUBLIC_KEY_PATH: z.string().optional(),
+  // Key rotation - previous keys
+  JWT_PRIVATE_KEY_PREVIOUS: z.string().optional(),
+  JWT_PUBLIC_KEY_PREVIOUS: z.string().optional(),
 
   // S2S (RS256) - Service-to-service tokens (separate from user JWT keys)
   S2S_PRIVATE_KEY: z.string().optional(),
@@ -67,6 +70,13 @@ const envSchema = z.object({
   MFA_ISSUER: z.string().default('TicketToken'),
   MFA_WINDOW: z.coerce.number().int().min(1).max(5).default(2),
 
+  // CAPTCHA
+  CAPTCHA_ENABLED: z.enum(['true', 'false']).default('false').transform(val => val === 'true'),
+  CAPTCHA_SECRET_KEY: z.string().optional(),
+  CAPTCHA_PROVIDER: z.enum(['recaptcha', 'hcaptcha']).default('recaptcha'),
+  CAPTCHA_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+  CAPTCHA_FAIL_OPEN: z.enum(['true', 'false']).default('false').transform(val => val === 'true'),
+
   // Email (Resend)
   RESEND_API_KEY: z.string().optional(),
   EMAIL_FROM: z.string().default('TicketToken <noreply@tickettoken.com>'),
@@ -84,6 +94,9 @@ const envSchema = z.object({
 
   // Trusted proxies
   TRUSTED_PROXIES: z.string().optional(),
+
+  // Multi-tenancy
+  DEFAULT_TENANT_ID: z.string().uuid().default('00000000-0000-0000-0000-000000000001'),
 });
 
 // Production-specific schema with stricter requirements
@@ -95,6 +108,8 @@ const productionEnvSchema = envSchema.extend({
   // S2S keys required in production for proper isolation
   S2S_PRIVATE_KEY: z.string().min(1, 'S2S_PRIVATE_KEY is required in production'),
   S2S_PUBLIC_KEY: z.string().min(1, 'S2S_PUBLIC_KEY is required in production'),
+  // CAPTCHA required in production
+  CAPTCHA_SECRET_KEY: z.string().min(1, 'CAPTCHA_SECRET_KEY is required in production'),
 });
 
 // Explicit type with ENCRYPTION_KEY as required string (we guarantee it in validateEnv)
@@ -117,6 +132,8 @@ export interface EnvConfig {
   JWT_PUBLIC_KEY?: string;
   JWT_PRIVATE_KEY_PATH: string;
   JWT_PUBLIC_KEY_PATH: string;
+  JWT_PRIVATE_KEY_PREVIOUS?: string;
+  JWT_PUBLIC_KEY_PREVIOUS?: string;
   // S2S keys - separate from user JWT keys
   S2S_PRIVATE_KEY?: string;
   S2S_PUBLIC_KEY?: string;
@@ -138,6 +155,11 @@ export interface EnvConfig {
   LOCKOUT_DURATION_MINUTES: number;
   MFA_ISSUER: string;
   MFA_WINDOW: number;
+  CAPTCHA_ENABLED: boolean;
+  CAPTCHA_SECRET_KEY?: string;
+  CAPTCHA_PROVIDER: 'recaptcha' | 'hcaptcha';
+  CAPTCHA_MIN_SCORE: number;
+  CAPTCHA_FAIL_OPEN: boolean;
   RESEND_API_KEY?: string;
   EMAIL_FROM: string;
   ENABLE_SWAGGER: boolean;
@@ -146,6 +168,7 @@ export interface EnvConfig {
   NOTIFICATION_SERVICE_URL: string;
   LB_DRAIN_DELAY: number;
   TRUSTED_PROXIES?: string;
+  DEFAULT_TENANT_ID: string;
   isProduction: boolean;
   isDevelopment: boolean;
 }
@@ -202,6 +225,8 @@ function validateEnv(): EnvConfig {
     JWT_PUBLIC_KEY: parsed.JWT_PUBLIC_KEY,
     JWT_PRIVATE_KEY_PATH: parsed.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem'),
     JWT_PUBLIC_KEY_PATH: parsed.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem'),
+    JWT_PRIVATE_KEY_PREVIOUS: parsed.JWT_PRIVATE_KEY_PREVIOUS,
+    JWT_PUBLIC_KEY_PREVIOUS: parsed.JWT_PUBLIC_KEY_PREVIOUS,
     // S2S keys - fall back to JWT keys in dev if not set
     S2S_PRIVATE_KEY: parsed.S2S_PRIVATE_KEY,
     S2S_PUBLIC_KEY: parsed.S2S_PUBLIC_KEY,
@@ -223,6 +248,11 @@ function validateEnv(): EnvConfig {
     LOCKOUT_DURATION_MINUTES: parsed.LOCKOUT_DURATION_MINUTES,
     MFA_ISSUER: parsed.MFA_ISSUER,
     MFA_WINDOW: parsed.MFA_WINDOW,
+    CAPTCHA_ENABLED: parsed.CAPTCHA_ENABLED,
+    CAPTCHA_SECRET_KEY: parsed.CAPTCHA_SECRET_KEY,
+    CAPTCHA_PROVIDER: parsed.CAPTCHA_PROVIDER,
+    CAPTCHA_MIN_SCORE: parsed.CAPTCHA_MIN_SCORE,
+    CAPTCHA_FAIL_OPEN: parsed.CAPTCHA_FAIL_OPEN,
     RESEND_API_KEY: parsed.RESEND_API_KEY,
     EMAIL_FROM: parsed.EMAIL_FROM,
     ENABLE_SWAGGER: parsed.ENABLE_SWAGGER,
@@ -231,6 +261,7 @@ function validateEnv(): EnvConfig {
     NOTIFICATION_SERVICE_URL: parsed.NOTIFICATION_SERVICE_URL,
     LB_DRAIN_DELAY: parsed.LB_DRAIN_DELAY,
     TRUSTED_PROXIES: parsed.TRUSTED_PROXIES,
+    DEFAULT_TENANT_ID: parsed.DEFAULT_TENANT_ID,
     isProduction,
     isDevelopment: nodeEnv === 'development',
   };
@@ -248,5 +279,6 @@ if (process.env.NODE_ENV !== 'test') {
     REDIS_HOST: env.REDIS_HOST,
     ENABLE_SWAGGER: env.ENABLE_SWAGGER,
     S2S_KEYS_CONFIGURED: !!(env.S2S_PRIVATE_KEY && env.S2S_PUBLIC_KEY),
+    CAPTCHA_ENABLED: env.CAPTCHA_ENABLED,
   });
 }

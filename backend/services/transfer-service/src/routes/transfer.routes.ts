@@ -1,4 +1,4 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { FastifyInstance } from 'fastify';
 import { Pool } from 'pg';
 import { TransferController } from '../controllers/transfer.controller';
 import { authenticate } from '../middleware/auth.middleware';
@@ -15,11 +15,27 @@ import {
  * Route definitions for transfer endpoints
  * Phase 2: Route Layer
  */
+
+interface GiftTransferBody {
+  ticketId: string;
+  toEmail: string;
+  message?: string;
+}
+
+interface AcceptTransferParams {
+  transferId: string;
+}
+
+interface AcceptTransferBody {
+  acceptanceCode: string;
+  userId: string;
+}
+
 export async function transferRoutes(app: FastifyInstance, pool: Pool) {
   const controller = new TransferController(pool);
 
   // Create gift transfer
-  app.post(
+  app.post<{ Body: GiftTransferBody }>(
     '/api/v1/transfers/gift',
     {
       preHandler: [
@@ -27,12 +43,11 @@ export async function transferRoutes(app: FastifyInstance, pool: Pool) {
         validate({ body: giftTransferBodySchema })
       ]
     },
-    async (request: FastifyRequest<{ Body: { ticketId: string; toEmail: string; message?: string; } }>, reply: FastifyReply) => 
-      controller.createGiftTransfer(request, reply)
+    async (request, reply) => controller.createGiftTransfer(request, reply)
   );
 
   // Accept transfer
-  app.post(
+  app.post<{ Params: AcceptTransferParams; Body: AcceptTransferBody }>(
     '/api/v1/transfers/:transferId/accept',
     {
       preHandler: [
@@ -43,7 +58,6 @@ export async function transferRoutes(app: FastifyInstance, pool: Pool) {
         })
       ]
     },
-    async (request: FastifyRequest<{ Params: { transferId: string; }; Body: { acceptanceCode: string; userId: string; } }>, reply: FastifyReply) => 
-      controller.acceptTransfer(request, reply)
+    async (request, reply) => controller.acceptTransfer(request, reply)
   );
 }

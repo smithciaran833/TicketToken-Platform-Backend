@@ -1,862 +1,629 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
-import { OrderController } from '../../../src/controllers/order.controller';
-import { OrderService } from '../../../src/services/order.service';
-import { auditService } from '@tickettoken/shared';
+/**
+ * Unit Tests: Order Controller
+ * Tests HTTP request handling for order operations
+ */
 
-// Mock dependencies
-jest.mock('../../../src/services/order.service');
-jest.mock('../../../src/config/database');
-jest.mock('@tickettoken/shared');
+const mockOrderService = {
+  createOrder: jest.fn(),
+  getOrder: jest.fn(),
+  getUserOrders: jest.fn(),
+  reserveOrder: jest.fn(),
+  cancelOrder: jest.fn(),
+  refundOrder: jest.fn(),
+  getOrderEvents: jest.fn(),
+};
+
+const mockPartialRefundService = {
+  processPartialRefund: jest.fn(),
+  updateOrderTotals: jest.fn(),
+  getRefundHistory: jest.fn(),
+};
+
+const mockOrderModificationService = {
+  requestModification: jest.fn(),
+  upgradeItem: jest.fn(),
+  getOrderModifications: jest.fn(),
+  getModification: jest.fn(),
+};
+
+const mockAuditService = {
+  logAction: jest.fn(),
+};
+
+const mockLogger = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+const mockPool = {};
+
+jest.mock('../../../src/services/order.service', () => ({
+  OrderService: jest.fn(() => mockOrderService),
+}));
+
+jest.mock('../../../src/services/partial-refund.service', () => ({
+  partialRefundService: mockPartialRefundService,
+}));
+
+jest.mock('../../../src/services/order-modification.service', () => ({
+  orderModificationService: mockOrderModificationService,
+}));
+
+jest.mock('../../../src/config/database', () => ({
+  getDatabase: jest.fn(() => mockPool),
+}));
+
+jest.mock('../../../src/utils/logger', () => ({
+  logger: mockLogger,
+}));
+
+jest.mock('@tickettoken/shared', () => ({
+  auditService: mockAuditService,
+}));
+
+import { OrderController } from '../../../src/controllers/order.controller';
 
 describe('OrderController', () => {
   let controller: OrderController;
-  let mockOrderService: jest.Mocked<OrderService>;
-  let mockRequest: Partial<FastifyRequest>;
-  let mockReply: Partial<FastifyReply>;
-  let statusMock: jest.Mock;
-  let sendMock: jest.Mock;
+  let mockRequest: any;
+  let mockReply: any;
+
+  const tenantId = 'tenant-123';
+  const userId = 'user-456';
+  const orderId = 'order-789';
 
   beforeEach(() => {
-    // Reset mocks
     jest.clearAllMocks();
+    controller = new OrderController();
 
-    // Setup reply mocks
-    sendMock = jest.fn().mockReturnThis();
-    statusMock = jest.fn().mockReturnValue({ send: sendMock });
-
-    mockReply = {
-      status: statusMock,
-      send: sendMock,
-    };
-
-    // Setup basic request mock
     mockRequest = {
-      user: {
-        id: 'user-123',
-        role: 'customer',
-      },
-      tenantId: 'tenant-123',
-      ip: '192.168.1.1',
-      headers: {
-        'user-agent': 'test-agent',
-      },
-      body: {},
+      user: { id: userId, role: 'user' },
+      tenant: { tenantId },
       params: {},
       query: {},
+      body: {},
+      ip: '127.0.0.1',
+      headers: { 'user-agent': 'test-agent' },
     };
 
-    // Create controller instance
-    controller = new OrderController();
-    mockOrderService = (controller as any).orderService as jest.Mocked<OrderService>;
+    mockReply = {
+      status: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis(),
+    };
   });
 
   describe('createOrder', () => {
-    const validOrderData = {
-      eventId: 'event-123',
-      items: [
-        {
-          ticketTypeId: 'ticket-type-123',
-          quantity: 2,
-          pricePerTicketCents: 5000,
-        },
-      ],
-    };
+    it('should create order successfully', async () => {
+      const orderData = {
+        eventId: 'event-1',
+        items: [{ ticketTypeId: 'ticket-1', quantity: 2 }],
+      };
 
-    describe('Success Cases', () => {
-      it('should create order with valid data', async () => {
-        const mockOrder = {
-          id: 'order-123',
+      const createdOrder = {
+        order: {
+          id: orderId,
           orderNumber: 'ORD-001',
-          status: 'pending',
+          status: 'PENDING',
           totalCents: 10000,
           currency: 'USD',
           createdAt: new Date(),
-        };
+        },
+        items: [{ id: 'item-1', ticketTypeId: 'ticket-1', quantity: 2 }],
+      };
 
-        const mockItems = [
-          {
-            id: 'item-123',
-            ticketTypeId: 'ticket-type-123',
-            quantity: 2,
-            pricePerTicketCents: 5000,
-          },
-        ];
+      mockRequest.body = orderData;
+      mockOrderService.createOrder.mockResolvedValue(createdOrder);
 
-        mockRequest.body = validOrderData;
-        mockOrderService.createOrder = jest.fn().mockResolvedValue({
-          order: mockOrder,
-          items: mockItems,
-        });
+      await controller.createOrder(mockRequest, mockReply);
 
-        await controller.createOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.createOrder).toHaveBeenCalledWith('tenant-123', {
-          ...validOrderData,
-          userId: 'user-123',
-        });
-        expect(statusMock).toHaveBeenCalledWith(201);
-        expect(sendMock).toHaveBeenCalledWith({
-          orderId: 'order-123',
-          orderNumber: 'ORD-001',
-          status: 'pending',
-          totalCents: 10000,
-          currency: 'USD',
-          items: mockItems,
-          createdAt: mockOrder.createdAt,
-        });
-        expect(auditService.logAction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            action: 'create_order',
-            success: true,
-          })
-        );
+      expect(mockOrderService.createOrder).toHaveBeenCalledWith(tenantId, {
+        ...orderData,
+        userId,
       });
-
-      it('should create order with multiple ticket types', async () => {
-        const multiTicketData = {
-          eventId: 'event-123',
-          items: [
-            {
-              ticketTypeId: 'vip-123',
-              quantity: 1,
-              pricePerTicketCents: 10000,
-            },
-            {
-              ticketTypeId: 'standard-123',
-              quantity: 3,
-              pricePerTicketCents: 5000,
-            },
-          ],
-        };
-
-        mockRequest.body = multiTicketData;
-        mockOrderService.createOrder = jest.fn().mockResolvedValue({
-          order: {
-            id: 'order-123',
-            orderNumber: 'ORD-002',
-            status: 'pending',
-            totalCents: 25000,
-            currency: 'USD',
-            createdAt: new Date(),
-          },
-          items: multiTicketData.items.map((item, idx) => ({
-            id: `item-${idx}`,
-            ...item,
-          })),
-        });
-
-        await controller.createOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(statusMock).toHaveBeenCalledWith(201);
-        expect(sendMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            totalCents: 25000,
-            items: expect.arrayContaining([
-              expect.objectContaining({ ticketTypeId: 'vip-123' }),
-              expect.objectContaining({ ticketTypeId: 'standard-123' }),
-            ]),
-          })
-        );
-      });
-
-      it('should create order with optional fields (address, discount)', async () => {
-        const orderWithOptionals = {
-          ...validOrderData,
-          billingAddress: {
-            line1: '123 Main St',
-            city: 'New York',
-            state: 'NY',
-            postalCode: '10001',
-            country: 'US',
-          },
-          discountCode: 'SAVE10',
-        };
-
-        mockRequest.body = orderWithOptionals;
-        mockOrderService.createOrder = jest.fn().mockResolvedValue({
-          order: {
-            id: 'order-123',
-            orderNumber: 'ORD-003',
-            status: 'pending',
-            totalCents: 9000,
-            currency: 'USD',
-            createdAt: new Date(),
-          },
-          items: [{ id: 'item-123', ...validOrderData.items[0] }],
-        });
-
-        await controller.createOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.createOrder).toHaveBeenCalledWith(
-          'tenant-123',
-          expect.objectContaining({
-            billingAddress: orderWithOptionals.billingAddress,
-            discountCode: 'SAVE10',
-          })
-        );
-      });
+      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'create_order', success: true })
+      );
+      expect(mockReply.status).toHaveBeenCalledWith(201);
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ orderId, orderNumber: 'ORD-001' })
+      );
     });
 
-    describe('Validation Failures', () => {
-      it('should reject order without user authentication', async () => {
-        mockRequest.user = undefined;
+    it('should return 401 if user not authenticated', async () => {
+      mockRequest.user = undefined;
 
-        await controller.createOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.createOrder(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(401);
-        expect(sendMock).toHaveBeenCalledWith({ error: 'Unauthorized' });
-        expect(mockOrderService.createOrder).not.toHaveBeenCalled();
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Unauthorized' });
+    });
 
-      it('should reject order without tenant ID', async () => {
-        mockRequest.tenantId = undefined;
+    it('should return 400 if tenant ID missing', async () => {
+      mockRequest.tenant = {};
 
-        await controller.createOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.createOrder(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(400);
-        expect(sendMock).toHaveBeenCalledWith({ error: 'Tenant ID required' });
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(400);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Tenant ID required' });
+    });
 
-      it('should handle service errors gracefully', async () => {
-        mockRequest.body = validOrderData;
-        mockOrderService.createOrder = jest
-          .fn()
-          .mockRejectedValue(new Error('Service error'));
+    it('should return 500 on service error', async () => {
+      mockRequest.body = { eventId: 'event-1', items: [] };
+      mockOrderService.createOrder.mockRejectedValue(new Error('DB error'));
 
-        await controller.createOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.createOrder(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(500);
-        expect(sendMock).toHaveBeenCalledWith({
-          error: 'Failed to create order',
-        });
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(500);
+      expect(mockLogger.error).toHaveBeenCalled();
     });
   });
 
   describe('getOrder', () => {
-    describe('Success Cases', () => {
-      it('should return order for owner', async () => {
-        const mockOrder = {
-          id: 'order-123',
-          userId: 'user-123',
-          orderNumber: 'ORD-001',
-          status: 'confirmed',
-          totalCents: 10000,
-        };
+    const order = {
+      order: {
+        id: orderId,
+        userId,
+        status: 'CONFIRMED',
+        totalCents: 10000,
+      },
+      items: [{ id: 'item-1' }],
+    };
 
-        const mockItems = [
-          { id: 'item-123', ticketTypeId: 'ticket-123', quantity: 2 },
-        ];
+    it('should return order for owner', async () => {
+      mockRequest.params = { orderId };
+      mockOrderService.getOrder.mockResolvedValue(order);
 
-        mockRequest.params = { orderId: 'order-123' };
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: mockOrder,
-          items: mockItems,
-        });
+      await controller.getOrder(mockRequest, mockReply);
 
-        await controller.getOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.getOrder).toHaveBeenCalledWith(
-          'order-123',
-          'tenant-123'
-        );
-        expect(sendMock).toHaveBeenCalledWith({
-          ...mockOrder,
-          items: mockItems,
-        });
-      });
-
-      it('should return order for admin even if not owner', async () => {
-        mockRequest.user = { id: 'admin-123', role: 'admin' };
-        mockRequest.params = { orderId: 'order-123' };
-
-        const mockOrder = {
-          id: 'order-123',
-          userId: 'different-user',
-          orderNumber: 'ORD-001',
-          status: 'confirmed',
-          totalCents: 10000,
-        };
-
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: mockOrder,
-          items: [],
-        });
-
-        await controller.getOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(sendMock).toHaveBeenCalledWith(
-          expect.objectContaining({
-            id: 'order-123',
-            userId: 'different-user',
-          })
-        );
-      });
+      expect(mockOrderService.getOrder).toHaveBeenCalledWith(orderId, tenantId);
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ id: orderId })
+      );
     });
 
-    describe('Validation Failures', () => {
-      it('should return 401 for unauthenticated requests', async () => {
-        mockRequest.user = undefined;
-        mockRequest.params = { orderId: 'order-123' };
+    it('should return order for admin', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.user.role = 'admin';
+      const adminOrder = { ...order, order: { ...order.order, userId: 'different-user' } };
+      mockOrderService.getOrder.mockResolvedValue(adminOrder);
 
-        await controller.getOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.getOrder(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(401);
-        expect(sendMock).toHaveBeenCalledWith({ error: 'Unauthorized' });
-      });
+      expect(mockReply.send).toHaveBeenCalled();
+    });
 
-      it('should return 404 for non-existent order', async () => {
-        mockRequest.params = { orderId: 'non-existent' };
-        mockOrderService.getOrder = jest.fn().mockResolvedValue(null);
+    it('should return 403 if user does not own order', async () => {
+      mockRequest.params = { orderId };
+      const otherOrder = { ...order, order: { ...order.order, userId: 'other-user' } };
+      mockOrderService.getOrder.mockResolvedValue(otherOrder);
 
-        await controller.getOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.getOrder(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(404);
-        expect(sendMock).toHaveBeenCalledWith({ error: 'Order not found' });
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(403);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Forbidden' });
+    });
 
-      it('should return 403 when non-owner tries to access order', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.user = { id: 'different-user', role: 'customer' };
+    it('should return 404 if order not found', async () => {
+      mockRequest.params = { orderId };
+      mockOrderService.getOrder.mockResolvedValue(null);
 
-        const mockOrder = {
-          id: 'order-123',
-          userId: 'original-user',
-          status: 'confirmed',
-        };
+      await controller.getOrder(mockRequest, mockReply);
 
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: mockOrder,
-          items: [],
-        });
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+    });
 
-        await controller.getOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+    it('should return 401 if user not authenticated', async () => {
+      mockRequest.user = undefined;
+      mockRequest.params = { orderId };
 
-        expect(statusMock).toHaveBeenCalledWith(403);
-        expect(sendMock).toHaveBeenCalledWith({ error: 'Forbidden' });
-      });
+      await controller.getOrder(mockRequest, mockReply);
 
-      it('should handle service errors', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockOrderService.getOrder = jest
-          .fn()
-          .mockRejectedValue(new Error('Database error'));
-
-        await controller.getOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(statusMock).toHaveBeenCalledWith(500);
-        expect(sendMock).toHaveBeenCalledWith({
-          error: 'Failed to get order',
-        });
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(401);
     });
   });
 
   describe('listOrders', () => {
-    describe('Success Cases', () => {
-      it('should list orders for authenticated user', async () => {
-        const mockOrders = [
-          { id: 'order-1', orderNumber: 'ORD-001', status: 'confirmed' },
-          { id: 'order-2', orderNumber: 'ORD-002', status: 'pending' },
-        ];
+    it('should list user orders with default pagination', async () => {
+      const orders = [{ id: 'order-1' }, { id: 'order-2' }];
+      mockOrderService.getUserOrders.mockResolvedValue(orders);
 
-        mockOrderService.getUserOrders = jest.fn().mockResolvedValue(mockOrders);
+      await controller.listOrders(mockRequest, mockReply);
 
-        await controller.listOrders(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.getUserOrders).toHaveBeenCalledWith(
-          'user-123',
-          'tenant-123',
-          50,
-          0
-        );
-        expect(sendMock).toHaveBeenCalledWith({
-          orders: mockOrders,
-          pagination: { limit: 50, offset: 0, total: 2 },
-        });
-      });
-
-      it('should respect pagination parameters', async () => {
-        mockRequest.query = { limit: 10, offset: 20 };
-        mockOrderService.getUserOrders = jest.fn().mockResolvedValue([]);
-
-        await controller.listOrders(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.getUserOrders).toHaveBeenCalledWith(
-          'user-123',
-          'tenant-123',
-          10,
-          20
-        );
-      });
-
-      it('should use default pagination when not provided', async () => {
-        mockRequest.query = {};
-        mockOrderService.getUserOrders = jest.fn().mockResolvedValue([]);
-
-        await controller.listOrders(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.getUserOrders).toHaveBeenCalledWith(
-          'user-123',
-          'tenant-123',
-          50,
-          0
-        );
+      expect(mockOrderService.getUserOrders).toHaveBeenCalledWith(userId, tenantId, 50, 0);
+      expect(mockReply.send).toHaveBeenCalledWith({
+        orders,
+        pagination: { limit: 50, offset: 0, total: 2 },
       });
     });
 
-    describe('Validation Failures', () => {
-      it('should reject unauthenticated requests', async () => {
-        mockRequest.user = undefined;
+    it('should list orders with custom pagination', async () => {
+      mockRequest.query = { limit: 10, offset: 20 };
+      const orders = [{ id: 'order-1' }];
+      mockOrderService.getUserOrders.mockResolvedValue(orders);
 
-        await controller.listOrders(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.listOrders(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(401);
-        expect(sendMock).toHaveBeenCalledWith({ error: 'Unauthorized' });
-      });
+      expect(mockOrderService.getUserOrders).toHaveBeenCalledWith(userId, tenantId, 10, 20);
+    });
 
-      it('should reject requests without tenant ID', async () => {
-        mockRequest.tenantId = undefined;
+    it('should return 401 if user not authenticated', async () => {
+      mockRequest.user = undefined;
 
-        await controller.listOrders(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.listOrders(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(400);
-      });
-
-      it('should handle service errors', async () => {
-        mockOrderService.getUserOrders = jest
-          .fn()
-          .mockRejectedValue(new Error('Database error'));
-
-        await controller.listOrders(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(statusMock).toHaveBeenCalledWith(500);
-        expect(sendMock).toHaveBeenCalledWith({
-          error: 'Failed to list orders',
-        });
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(401);
     });
   });
 
   describe('reserveOrder', () => {
-    describe('Success Cases', () => {
-      it('should reserve order successfully', async () => {
-        mockRequest.params = { orderId: 'order-123' };
+    it('should reserve order successfully', async () => {
+      mockRequest.params = { orderId };
+      const reservation = {
+        order: { id: orderId, status: 'RESERVED', expiresAt: new Date(), paymentIntentId: 'pi_123' },
+        paymentIntent: { clientSecret: 'secret_123' },
+      };
+      mockOrderService.reserveOrder.mockResolvedValue(reservation);
 
-        const mockResult = {
-          order: {
-            id: 'order-123',
-            status: 'reserved',
-            expiresAt: new Date(),
-            paymentIntentId: 'pi_123',
-          },
-          paymentIntent: {
-            clientSecret: 'secret_123',
-          },
-        };
+      await controller.reserveOrder(mockRequest, mockReply);
 
-        mockOrderService.reserveOrder = jest.fn().mockResolvedValue(mockResult);
-
-        await controller.reserveOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.reserveOrder).toHaveBeenCalledWith('tenant-123', {
-          orderId: 'order-123',
-          userId: 'user-123',
-        });
-        expect(sendMock).toHaveBeenCalledWith({
-          orderId: 'order-123',
-          status: 'reserved',
-          expiresAt: mockResult.order.expiresAt,
-          clientSecret: 'secret_123',
-          paymentIntentId: 'pi_123',
-        });
-      });
+      expect(mockOrderService.reserveOrder).toHaveBeenCalledWith(tenantId, { orderId, userId });
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ clientSecret: 'secret_123' })
+      );
     });
 
-    describe('Validation Failures', () => {
-      it('should reject unauthenticated requests', async () => {
-        mockRequest.user = undefined;
-        mockRequest.params = { orderId: 'order-123' };
+    it('should return 401 if user not authenticated', async () => {
+      mockRequest.user = undefined;
+      mockRequest.params = { orderId };
 
-        await controller.reserveOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
+      await controller.reserveOrder(mockRequest, mockReply);
 
-        expect(statusMock).toHaveBeenCalledWith(401);
-      });
-
-      it('should handle reservation failures', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockOrderService.reserveOrder = jest
-          .fn()
-          .mockRejectedValue(new Error('Tickets unavailable'));
-
-        await controller.reserveOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(statusMock).toHaveBeenCalledWith(500);
-        expect(sendMock).toHaveBeenCalledWith({
-          error: 'Failed to reserve order',
-        });
-      });
+      expect(mockReply.status).toHaveBeenCalledWith(401);
     });
   });
 
   describe('cancelOrder', () => {
-    describe('Success Cases', () => {
-      it('should cancel order with reason', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.body = { reason: 'Changed mind' };
+    it('should cancel order successfully', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = { reason: 'Changed my mind' };
+      
+      const beforeResult = { order: { status: 'CONFIRMED' } };
+      const cancelResult = {
+        order: { id: orderId, status: 'CANCELLED', cancelledAt: new Date() },
+        refund: { id: 'refund-1', refundAmountCents: 10000 },
+      };
 
-        const beforeResult = {
-          order: { id: 'order-123', status: 'reserved' },
-          items: [],
-        };
+      mockOrderService.getOrder.mockResolvedValue(beforeResult);
+      mockOrderService.cancelOrder.mockResolvedValue(cancelResult);
 
-        const afterResult = {
-          order: {
-            id: 'order-123',
-            status: 'cancelled',
-            cancelledAt: new Date(),
-          },
-          refund: {
-            id: 'refund-123',
-            refundAmountCents: 10000,
-          },
-        };
+      await controller.cancelOrder(mockRequest, mockReply);
 
-        mockOrderService.getOrder = jest.fn().mockResolvedValue(beforeResult);
-        mockOrderService.cancelOrder = jest.fn().mockResolvedValue(afterResult);
-
-        await controller.cancelOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.cancelOrder).toHaveBeenCalledWith('tenant-123', {
-          orderId: 'order-123',
-          userId: 'user-123',
-          reason: 'Changed mind',
-        });
-        expect(sendMock).toHaveBeenCalledWith({
-          orderId: 'order-123',
-          status: 'cancelled',
-          cancelledAt: afterResult.order.cancelledAt,
-          refund: afterResult.refund,
-        });
-        expect(auditService.logAction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            action: 'cancel_order',
-            success: true,
-          })
-        );
+      expect(mockOrderService.cancelOrder).toHaveBeenCalledWith(tenantId, {
+        orderId,
+        userId,
+        reason: 'Changed my mind',
       });
-
-      it('should use default reason if not provided', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.body = {};
-
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: { id: 'order-123', status: 'reserved' },
-          items: [],
-        });
-
-        mockOrderService.cancelOrder = jest.fn().mockResolvedValue({
-          order: { id: 'order-123', status: 'cancelled', cancelledAt: new Date() },
-          refund: null,
-        });
-
-        await controller.cancelOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(mockOrderService.cancelOrder).toHaveBeenCalledWith(
-          'tenant-123',
-          expect.objectContaining({
-            reason: 'User cancelled',
-          })
-        );
-      });
+      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'cancel_order', success: true })
+      );
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'CANCELLED' })
+      );
     });
 
-    describe('Error Handling', () => {
-      it('should log failed cancellation attempts', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.body = { reason: 'Test' };
+    it('should use default reason if not provided', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = {};
 
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: { id: 'order-123', status: 'confirmed' },
-          items: [],
-        });
-
-        mockOrderService.cancelOrder = jest
-          .fn()
-          .mockRejectedValue(new Error('Cannot cancel confirmed order'));
-
-        await controller.cancelOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(statusMock).toHaveBeenCalledWith(500);
-        expect(auditService.logAction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            action: 'cancel_order',
-            success: false,
-            errorMessage: 'Cannot cancel confirmed order',
-          })
-        );
+      mockOrderService.getOrder.mockResolvedValue({ order: { status: 'CONFIRMED' } });
+      mockOrderService.cancelOrder.mockResolvedValue({
+        order: { id: orderId, status: 'CANCELLED' },
+        refund: null,
       });
+
+      await controller.cancelOrder(mockRequest, mockReply);
+
+      expect(mockOrderService.cancelOrder).toHaveBeenCalledWith(
+        tenantId,
+        expect.objectContaining({ reason: 'User cancelled' })
+      );
+    });
+
+    it('should log failed cancellation', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = {};
+      mockOrderService.getOrder.mockRejectedValue(new Error('DB error'));
+
+      await controller.cancelOrder(mockRequest, mockReply);
+
+      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+        expect.objectContaining({ success: false })
+      );
+      expect(mockReply.status).toHaveBeenCalledWith(500);
     });
   });
 
   describe('refundOrder', () => {
-    describe('Success Cases', () => {
-      it('should process full refund', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.body = { reason: 'Event cancelled' };
+    it('should refund order successfully', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = { reason: 'Event cancelled' };
 
-        const beforeResult = {
-          order: {
-            id: 'order-123',
-            status: 'confirmed',
-            totalCents: 10000,
-          },
-          items: [],
-        };
+      const beforeResult = { order: { status: 'COMPLETED', totalCents: 10000 } };
+      const refundResult = {
+        order: { id: orderId, status: 'REFUNDED' },
+        refund: { id: 'refund-1', refundAmountCents: 10000 },
+      };
 
-        const afterResult = {
-          order: {
-            id: 'order-123',
-            status: 'refunded',
-          },
-          refund: {
-            id: 'refund-123',
-            refundAmountCents: 10000,
-          },
-        };
+      mockOrderService.getOrder.mockResolvedValue(beforeResult);
+      mockOrderService.refundOrder.mockResolvedValue(refundResult);
 
-        mockOrderService.getOrder = jest.fn().mockResolvedValue(beforeResult);
-        mockOrderService.refundOrder = jest.fn().mockResolvedValue(afterResult);
+      await controller.refundOrder(mockRequest, mockReply);
 
-        await controller.refundOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(sendMock).toHaveBeenCalledWith({
-          orderId: 'order-123',
-          status: 'refunded',
-          refund: afterResult.refund,
-        });
-        expect(auditService.logAction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            action: 'refund_order',
-            success: true,
-            metadata: expect.objectContaining({
-              refundAmount: 10000,
-              refundPercentage: 100,
-            }),
-          })
-        );
+      expect(mockOrderService.refundOrder).toHaveBeenCalledWith(tenantId, {
+        orderId,
+        reason: 'Event cancelled',
+        userId,
       });
-
-      it('should process partial refund', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.body = {
-          reason: 'Partial cancellation',
-          amountCents: 5000,
-        };
-
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: { id: 'order-123', status: 'confirmed', totalCents: 10000 },
-          items: [],
-        });
-
-        mockOrderService.refundOrder = jest.fn().mockResolvedValue({
-          order: { id: 'order-123', status: 'partially_refunded' },
-          refund: { id: 'refund-123', refundAmountCents: 5000 },
-        });
-
-        await controller.refundOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(auditService.logAction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            metadata: expect.objectContaining({
-              partialRefund: true,
-              refundPercentage: 50,
-            }),
-          })
-        );
-      });
+      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'refund_order', success: true })
+      );
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'REFUNDED' })
+      );
     });
 
-    describe('Error Handling', () => {
-      it('should log failed refund attempts with critical flag', async () => {
-        mockRequest.params = { orderId: 'order-123' };
-        mockRequest.body = { reason: 'Test', amountCents: 5000 };
+    it('should log failed refund attempt', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = { amountCents: 5000, reason: 'Partial' };
+      mockOrderService.getOrder.mockRejectedValue(new Error('DB error'));
 
-        mockOrderService.getOrder = jest.fn().mockResolvedValue({
-          order: { id: 'order-123', status: 'confirmed', totalCents: 10000 },
-          items: [],
-        });
+      await controller.refundOrder(mockRequest, mockReply);
 
-        mockOrderService.refundOrder = jest
-          .fn()
-          .mockRejectedValue(new Error('Payment provider error'));
-
-        await controller.refundOrder(
-          mockRequest as FastifyRequest,
-          mockReply as FastifyReply
-        );
-
-        expect(statusMock).toHaveBeenCalledWith(500);
-        expect(auditService.logAction).toHaveBeenCalledWith(
-          expect.objectContaining({
-            action: 'refund_order',
-            success: false,
-            errorMessage: 'Payment provider error',
-            metadata: expect.objectContaining({
-              attemptedAmount: 5000,
-            }),
-          })
-        );
-      });
+      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+        expect.objectContaining({ success: false, action: 'refund_order' })
+      );
+      expect(mockReply.status).toHaveBeenCalledWith(500);
     });
   });
 
   describe('getOrderEvents', () => {
-    it('should return events for order owner', async () => {
-      mockRequest.params = { orderId: 'order-123' };
+    it('should return order events for owner', async () => {
+      mockRequest.params = { orderId };
+      const order = { order: { id: orderId, userId }, items: [] };
+      const events = [{ id: 'event-1', type: 'CREATED' }];
 
-      const mockOrder = {
-        id: 'order-123',
-        userId: 'user-123',
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockOrderService.getOrderEvents.mockResolvedValue(events);
+
+      await controller.getOrderEvents(mockRequest, mockReply);
+
+      expect(mockOrderService.getOrderEvents).toHaveBeenCalledWith(orderId, tenantId);
+      expect(mockReply.send).toHaveBeenCalledWith({ events });
+    });
+
+    it('should return 403 if user does not own order', async () => {
+      mockRequest.params = { orderId };
+      const order = { order: { id: orderId, userId: 'other-user' }, items: [] };
+
+      mockOrderService.getOrder.mockResolvedValue(order);
+
+      await controller.getOrderEvents(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(403);
+    });
+
+    it('should return 404 if order not found', async () => {
+      mockRequest.params = { orderId };
+      mockOrderService.getOrder.mockResolvedValue(null);
+
+      await controller.getOrderEvents(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+    });
+  });
+
+  describe('partialRefundOrder', () => {
+    it('should process partial refund successfully', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = {
+        items: [{ orderItemId: 'item-1', quantity: 1 }],
+        reason: 'Partial cancellation',
       };
 
-      const mockEvents = [
-        { id: 'event-1', eventType: 'created', createdAt: new Date() },
-        { id: 'event-2', eventType: 'reserved', createdAt: new Date() },
+      const refund = { id: 'refund-1', amountCents: 5000, refundedItems: [] };
+      mockPartialRefundService.processPartialRefund.mockResolvedValue(refund);
+
+      await controller.partialRefundOrder(mockRequest, mockReply);
+
+      expect(mockPartialRefundService.processPartialRefund).toHaveBeenCalledWith({
+        orderId,
+        items: mockRequest.body.items,
+        reason: 'Partial cancellation',
+      });
+      expect(mockPartialRefundService.updateOrderTotals).toHaveBeenCalledWith(orderId);
+      expect(mockAuditService.logAction).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'partial_refund_order' })
+      );
+      expect(mockReply.send).toHaveBeenCalledWith({ refund });
+    });
+
+    it('should return 401 if user not authenticated', async () => {
+      mockRequest.user = undefined;
+      mockRequest.params = { orderId };
+
+      await controller.partialRefundOrder(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+    });
+  });
+
+  describe('getRefundHistory', () => {
+    it('should return refund history for order owner', async () => {
+      mockRequest.params = { orderId };
+      const order = { order: { id: orderId, userId }, items: [] };
+      const refunds = [{ id: 'refund-1' }, { id: 'refund-2' }];
+
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockPartialRefundService.getRefundHistory.mockResolvedValue(refunds);
+
+      await controller.getRefundHistory(mockRequest, mockReply);
+
+      expect(mockPartialRefundService.getRefundHistory).toHaveBeenCalledWith(orderId);
+      expect(mockReply.send).toHaveBeenCalledWith({ refunds });
+    });
+
+    it('should return 403 if user does not own order', async () => {
+      mockRequest.params = { orderId };
+      const order = { order: { id: orderId, userId: 'other-user' }, items: [] };
+
+      mockOrderService.getOrder.mockResolvedValue(order);
+
+      await controller.getRefundHistory(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(403);
+    });
+  });
+
+  describe('getRefund', () => {
+    const refundId = 'refund-123';
+
+    it('should return specific refund', async () => {
+      mockRequest.params = { orderId, refundId };
+      const order = { order: { id: orderId, userId }, items: [] };
+      const refunds = [
+        { id: refundId, amountCents: 5000 },
+        { id: 'refund-2', amountCents: 3000 },
       ];
 
-      mockOrderService.getOrder = jest.fn().mockResolvedValue({
-        order: mockOrder,
-        items: [],
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockPartialRefundService.getRefundHistory.mockResolvedValue(refunds);
+
+      await controller.getRefund(mockRequest, mockReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({
+        refund: { id: refundId, amountCents: 5000 },
       });
-
-      mockOrderService.getOrderEvents = jest.fn().mockResolvedValue(mockEvents);
-
-      await controller.getOrderEvents(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
-
-      expect(mockOrderService.getOrderEvents).toHaveBeenCalledWith(
-        'order-123',
-        'tenant-123'
-      );
-      expect(sendMock).toHaveBeenCalledWith({ events: mockEvents });
     });
 
-    it('should allow admin to view any order events', async () => {
-      mockRequest.user = { id: 'admin-123', role: 'admin' };
-      mockRequest.params = { orderId: 'order-123' };
+    it('should return 404 if refund not found', async () => {
+      mockRequest.params = { orderId, refundId: 'nonexistent' };
+      const order = { order: { id: orderId, userId }, items: [] };
+      const refunds = [{ id: 'other-refund', amountCents: 5000 }];
 
-      mockOrderService.getOrder = jest.fn().mockResolvedValue({
-        order: { id: 'order-123', userId: 'different-user' },
-        items: [],
-      });
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockPartialRefundService.getRefundHistory.mockResolvedValue(refunds);
 
-      mockOrderService.getOrderEvents = jest.fn().mockResolvedValue([]);
+      await controller.getRefund(mockRequest, mockReply);
 
-      await controller.getOrderEvents(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Refund not found' });
+    });
+  });
+
+  describe('requestModification', () => {
+    it('should request modification successfully', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = {
+        modificationType: 'UPGRADE_ITEM',
+        originalItemId: 'item-1',
+        newTicketTypeId: 'ticket-vip',
+        reason: 'Upgrade to VIP',
+      };
+
+      const modification = { id: 'mod-1', status: 'PENDING' };
+      mockOrderModificationService.requestModification.mockResolvedValue(modification);
+
+      await controller.requestModification(mockRequest, mockReply);
+
+      expect(mockOrderModificationService.requestModification).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        { orderId, ...mockRequest.body }
       );
+      expect(mockReply.send).toHaveBeenCalledWith({ modification });
+    });
+  });
 
-      expect(mockOrderService.getOrderEvents).toHaveBeenCalled();
+  describe('upgradeOrderItem', () => {
+    it('should upgrade order item successfully', async () => {
+      mockRequest.params = { orderId };
+      mockRequest.body = {
+        originalItemId: 'item-1',
+        newTicketTypeId: 'ticket-vip',
+        reason: 'Upgrade',
+      };
+
+      const modification = { id: 'mod-1', modificationType: 'UPGRADE_ITEM' };
+      mockOrderModificationService.upgradeItem.mockResolvedValue(modification);
+
+      await controller.upgradeOrderItem(mockRequest, mockReply);
+
+      expect(mockOrderModificationService.upgradeItem).toHaveBeenCalledWith(
+        tenantId,
+        userId,
+        { orderId, ...mockRequest.body }
+      );
+      expect(mockReply.send).toHaveBeenCalledWith({ modification });
+    });
+  });
+
+  describe('getOrderModifications', () => {
+    it('should return modifications for order owner', async () => {
+      mockRequest.params = { orderId };
+      const order = { order: { id: orderId, userId }, items: [] };
+      const modifications = [{ id: 'mod-1' }, { id: 'mod-2' }];
+
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockOrderModificationService.getOrderModifications.mockResolvedValue(modifications);
+
+      await controller.getOrderModifications(mockRequest, mockReply);
+
+      expect(mockOrderModificationService.getOrderModifications).toHaveBeenCalledWith(orderId);
+      expect(mockReply.send).toHaveBeenCalledWith({ modifications });
     });
 
-    it('should deny non-owner access to order events', async () => {
-      mockRequest.params = { orderId: 'order-123' };
-      mockRequest.user = { id: 'different-user', role: 'customer' };
+    it('should return 403 if user does not own order', async () => {
+      mockRequest.params = { orderId };
+      const order = { order: { id: orderId, userId: 'other-user' }, items: [] };
 
-      mockOrderService.getOrder = jest.fn().mockResolvedValue({
-        order: { id: 'order-123', userId: 'owner-user' },
-        items: [],
-      });
+      mockOrderService.getOrder.mockResolvedValue(order);
 
-      await controller.getOrderEvents(
-        mockRequest as FastifyRequest,
-        mockReply as FastifyReply
-      );
+      await controller.getOrderModifications(mockRequest, mockReply);
 
-      expect(statusMock).toHaveBeenCalledWith(403);
-      expect(mockOrderService.getOrderEvents).not.toHaveBeenCalled();
+      expect(mockReply.status).toHaveBeenCalledWith(403);
+    });
+  });
+
+  describe('getModification', () => {
+    const modificationId = 'mod-123';
+
+    it('should return specific modification', async () => {
+      mockRequest.params = { orderId, modificationId };
+      const order = { order: { id: orderId, userId }, items: [] };
+      const modification = { id: modificationId, status: 'COMPLETED' };
+
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockOrderModificationService.getModification.mockResolvedValue(modification);
+
+      await controller.getModification(mockRequest, mockReply);
+
+      expect(mockOrderModificationService.getModification).toHaveBeenCalledWith(modificationId);
+      expect(mockReply.send).toHaveBeenCalledWith({ modification });
+    });
+
+    it('should return 404 if modification not found', async () => {
+      mockRequest.params = { orderId, modificationId: 'nonexistent' };
+      const order = { order: { id: orderId, userId }, items: [] };
+
+      mockOrderService.getOrder.mockResolvedValue(order);
+      mockOrderModificationService.getModification.mockResolvedValue(null);
+
+      await controller.getModification(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Modification not found' });
     });
   });
 });

@@ -10,7 +10,23 @@ export class RabbitMQService {
 
   async connect(): Promise<void> {
     try {
-      this.connection = await amqp.connect(env.RABBITMQ_URL);
+      // AUDIT FIX S2S-1: Enforce TLS for RabbitMQ in production
+      const url = env.RABBITMQ_URL;
+      
+      if (env.NODE_ENV === 'production') {
+        if (!url.startsWith('amqps://')) {
+          throw new Error(
+            'SECURITY: RabbitMQ must use TLS (amqps://) in production. ' +
+            'Current URL uses unencrypted connection. ' +
+            'Set RABBITMQ_URL to amqps://...'
+          );
+        }
+        logger.info('RabbitMQ TLS enabled for production');
+      } else if (!url.startsWith('amqps://')) {
+        logger.warn('RabbitMQ using unencrypted connection (non-production)');
+      }
+
+      this.connection = await amqp.connect(url);
       
       if (!this.connection) {
         throw new Error('Failed to establish RabbitMQ connection');

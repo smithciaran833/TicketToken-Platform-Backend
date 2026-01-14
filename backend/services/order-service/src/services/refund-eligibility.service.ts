@@ -1,347 +1,680 @@
-import { Pool } from 'pg';
 import { getDatabase } from '../config/database';
-import {
-  RefundEligibility,
-  RefundEligibilityRequest,
-  RefundPolicy,
-  RefundPolicyRule,
-  RefundRuleType,
-  TimeBasedRuleConfig,
-  PercentageRuleConfig,
-  TieredRuleConfig,
-  FlatFeeRuleConfig,
-  ProRatedCalculation
-} from '../types/refund-policy.types';
-import { RefundPolicyService } from './refund-policy.service';
+import { logger } from '../utils/logger';
+import { TicketClient } from './ticket.client';
+import { PaymentClient } from './payment.client';
+import { EventClient } from './event.client';
+import { disputeService } from './dispute.service';
+
+/**
+ * CRITICAL: Refund eligibility service with transfer check
+ * Prevents double spend vulnerability by checking ticket transfers before refund
+ *
+ * Key validations:
+ * - Ticket has NOT been transferred (CRITICAL - prevents double spend)
+ * - No active dispute on order
+ * - Payment is refundable in Stripe
+ * - Event status (cancelled/postponed/rescheduled) - HIGH
+ * - Payout status (seller already paid out) - HIGH
+ * - Currency validation - MEDIUM
+ * - Event hasn't passed (configurable)
+ * - Within refund policy window
+ * - Policy version tracking - MEDIUM
+ */
+
+export interface RefundEligibilityResult {
+  eligible: boolean;
+  reason?: string;
+  maxRefundAmountCents?: number;
+  refundPercentage?: number;
+  warnings?: string[];
+  blockers?: string[];
+  autoApprove?: boolean;
+  requiresManualReview?: boolean;
+  manualReviewReason?: string;
+  // MEDIUM: Track policy version used for eligibility check
+  policyVersion?: {
+    policyId: string;
+    policyName: string;
+    ruleId?: string;
+    checkedAt: string;
+  };
+  // MEDIUM: Currency info
+  currency?: string;
+}
+
+interface RequestContext {
+  requestId?: string;
+  tenantId?: string;
+  userId?: string;
+}
+
+interface PolicyResult {
+  eligible: boolean;
+  refundPercentage: number;
+  reason?: string;
+  policyId?: string;
+  policyName?: string;
+  ruleId?: string;
+}
+
+// MEDIUM: Supported currencies for refunds
+const SUPPORTED_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
 
 export class RefundEligibilityService {
-  private db: Pool;
-  private policyService: RefundPolicyService;
+  private db = getDatabase();
+  private ticketClient = new TicketClient();
+  private paymentClient = new PaymentClient();
+  private eventClient = new EventClient();
 
-  constructor() {
-    this.db = getDatabase();
-    this.policyService = new RefundPolicyService();
-  }
+  /**
+   * CRITICAL: Check refund eligibility with all validations
+   * This is the main entry point for refund validation
+   */
+  async checkEligibility(
+    orderId: string,
+    userId: string,
+    context?: RequestContext,
+    requestedCurrency?: string
+  ): Promise<RefundEligibilityResult> {
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+    let autoApprove = false;
+    let requiresManualReview = false;
+    let manualReviewReason: string | undefined;
+    let policyVersion: RefundEligibilityResult['policyVersion'];
 
-  async checkEligibility(request: RefundEligibilityRequest): Promise<RefundEligibility> {
+    logger.info('Checking refund eligibility', { orderId, userId });
+
     // Get order details
-    const order = await this.getOrderDetails(request.order_id, request.tenant_id);
+    const order = await this.getOrder(orderId);
     if (!order) {
-      return this.createIneligibleResponse('Order not found');
+      return {
+        eligible: false,
+        reason: 'Order not found',
+        blockers: ['ORDER_NOT_FOUND'],
+      };
     }
 
-    // Find applicable policy
-    const policy = await this.policyService.getPolicyForOrder(
-      request.tenant_id,
-      order.event_type,
-      order.ticket_type
+    // Verify user owns the order
+    if (order.user_id !== userId) {
+      return {
+        eligible: false,
+        reason: 'Order does not belong to this user',
+        blockers: ['NOT_ORDER_OWNER'],
+      };
+    }
+
+    // Check order status
+    if (!['CONFIRMED', 'COMPLETED'].includes(order.status)) {
+      return {
+        eligible: false,
+        reason: `Order status '${order.status}' is not eligible for refund`,
+        blockers: ['INVALID_ORDER_STATUS'],
+      };
+    }
+
+    // MEDIUM: Validate currency matches order currency
+    const currencyCheck = this.validateCurrency(order.currency, requestedCurrency);
+    if (!currencyCheck.valid) {
+      return {
+        eligible: false,
+        reason: currencyCheck.reason,
+        blockers: ['CURRENCY_MISMATCH'],
+        currency: order.currency,
+      };
+    }
+
+    // CRITICAL: Check for active dispute
+    const hasDispute = await disputeService.hasActiveDispute(orderId);
+    if (hasDispute) {
+      blockers.push('ACTIVE_DISPUTE');
+      return {
+        eligible: false,
+        reason: 'Order has an active dispute. Refunds are locked until dispute is resolved.',
+        blockers,
+        currency: order.currency,
+      };
+    }
+
+    // CRITICAL: Check if tickets have been transferred (DOUBLE SPEND PREVENTION)
+    const transferCheck = await this.checkTicketTransfers(orderId, order.user_id, context);
+    if (!transferCheck.allValid) {
+      blockers.push('TICKETS_TRANSFERRED');
+      return {
+        eligible: false,
+        reason: `${transferCheck.transferredCount} ticket(s) have been transferred. Cannot refund transferred tickets.`,
+        blockers,
+        warnings: [`Transferred tickets: ${transferCheck.transferredTickets.join(', ')}`],
+        currency: order.currency,
+      };
+    }
+
+    // HIGH: Check event status (cancelled/postponed/rescheduled)
+    const eventStatusCheck = await this.checkEventStatus(order.event_id, context);
+    if (eventStatusCheck.autoApprove) {
+      autoApprove = true;
+      warnings.push(eventStatusCheck.reason || 'Event status allows auto-approval');
+    }
+    if (eventStatusCheck.bypassPolicy) {
+      warnings.push(`Policy bypassed: ${eventStatusCheck.reason}`);
+    }
+
+    // HIGH: Check payout status (seller already paid out)
+    const payoutCheck = await this.checkPayoutStatus(orderId, order.stripe_payment_intent_id, context);
+    if (payoutCheck.payoutCompleted) {
+      requiresManualReview = true;
+      manualReviewReason = `Seller payout already completed (${payoutCheck.payoutAmountCents} cents). Manual review required.`;
+      warnings.push(manualReviewReason);
+    }
+
+    // Check payment status is refundable
+    if (order.stripe_payment_intent_id) {
+      const paymentCheck = await this.checkPaymentRefundable(
+        order.stripe_payment_intent_id,
+        context
+      );
+      if (!paymentCheck.refundable) {
+        blockers.push('PAYMENT_NOT_REFUNDABLE');
+        return {
+          eligible: false,
+          reason: paymentCheck.reason || 'Payment is not refundable',
+          blockers,
+          currency: order.currency,
+        };
+      }
+      if (paymentCheck.hasDispute) {
+        blockers.push('PAYMENT_HAS_DISPUTE');
+        return {
+          eligible: false,
+          reason: 'Payment has a dispute in Stripe',
+          blockers,
+          currency: order.currency,
+        };
+      }
+    }
+
+    // Check event date (optional - configurable)
+    const eventCheck = await this.checkEventDate(orderId);
+    if (eventCheck.eventPassed) {
+      warnings.push('Event has already occurred');
+      // May still be eligible depending on policy
+    }
+
+    // Check refund policy (skip if event status bypasses policy)
+    let policyResult: PolicyResult = { eligible: true, refundPercentage: 100 };
+    if (!eventStatusCheck.bypassPolicy) {
+      policyResult = await this.applyRefundPolicy(orderId, order);
+
+      if (!policyResult.eligible) {
+        return {
+          eligible: false,
+          reason: policyResult.reason,
+          blockers: ['POLICY_RESTRICTION'],
+          warnings,
+          currency: order.currency,
+          policyVersion: policyResult.policyId ? {
+            policyId: policyResult.policyId,
+            policyName: policyResult.policyName || 'Unknown',
+            ruleId: policyResult.ruleId,
+            checkedAt: new Date().toISOString(),
+          } : undefined,
+        };
+      }
+    }
+
+    // MEDIUM: Track policy version used
+    if (policyResult.policyId) {
+      policyVersion = {
+        policyId: policyResult.policyId,
+        policyName: policyResult.policyName || 'Unknown',
+        ruleId: policyResult.ruleId,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
+    // Calculate max refund amount
+    const maxRefundCents = this.calculateMaxRefund(
+      order.total_amount_cents,
+      order.refunded_amount_cents || 0,
+      policyResult.refundPercentage
     );
 
-    if (!policy) {
-      return this.createIneligibleResponse('No refund policy found for this order');
+    if (maxRefundCents <= 0) {
+      return {
+        eligible: false,
+        reason: 'No refundable amount remaining',
+        blockers: ['NO_REFUNDABLE_AMOUNT'],
+        warnings,
+        currency: order.currency,
+        policyVersion,
+      };
     }
 
-    // Check refund window
-    const eventDate = request.event_date || order.event_date;
-    if (!this.isWithinRefundWindow(policy, eventDate)) {
-      return this.createIneligibleResponse('Order is outside the refund window');
+    logger.info('Refund eligibility check passed', {
+      orderId,
+      maxRefundCents,
+      refundPercentage: policyResult.refundPercentage,
+      autoApprove,
+      requiresManualReview,
+      policyVersion,
+    });
+
+    return {
+      eligible: true,
+      maxRefundAmountCents: maxRefundCents,
+      refundPercentage: policyResult.refundPercentage,
+      warnings: warnings.length > 0 ? warnings : undefined,
+      autoApprove,
+      requiresManualReview,
+      manualReviewReason,
+      currency: order.currency,
+      policyVersion,
+    };
+  }
+
+  /**
+   * MEDIUM: Validate currency for refund request
+   * Ensures refund currency matches order currency and is supported
+   */
+  private validateCurrency(
+    orderCurrency: string,
+    requestedCurrency?: string
+  ): { valid: boolean; reason?: string } {
+    // Check if order currency is supported
+    if (!SUPPORTED_CURRENCIES.includes(orderCurrency.toUpperCase())) {
+      return {
+        valid: false,
+        reason: `Order currency '${orderCurrency}' is not supported for refunds. Supported: ${SUPPORTED_CURRENCIES.join(', ')}`,
+      };
     }
 
-    // Get policy rules
-    const rules = await this.policyService.getRulesForPolicy(policy.id, request.tenant_id);
-    if (rules.length === 0) {
-      return this.createIneligibleResponse('No refund rules configured for this policy');
+    // If a specific currency was requested, it must match order currency
+    if (requestedCurrency && requestedCurrency.toUpperCase() !== orderCurrency.toUpperCase()) {
+      return {
+        valid: false,
+        reason: `Requested currency '${requestedCurrency}' does not match order currency '${orderCurrency}'`,
+      };
     }
 
-    // Calculate refund amount
-    const refundAmount = await this.calculateRefund(
-      order,
-      policy,
-      rules,
+    return { valid: true };
+  }
+
+  /**
+   * HIGH: Check event status for refund eligibility
+   * Handles cancelled, postponed, and rescheduled events
+   */
+  private async checkEventStatus(
+    eventId: string,
+    context?: RequestContext
+  ): Promise<{
+    eligible: boolean;
+    autoApprove: boolean;
+    bypassPolicy: boolean;
+    reason?: string;
+  }> {
+    try {
+      const status = await this.eventClient.getEventStatus(eventId, context);
+
+      // Cancelled event - auto-approve refund, bypass policy
+      if (status.isCancelled) {
+        logger.info('Event cancelled - auto-approving refund', { eventId });
+        return {
+          eligible: true,
+          autoApprove: true,
+          bypassPolicy: true,
+          reason: 'Event has been cancelled',
+        };
+      }
+
+      // Postponed event - allow refund regardless of policy window
+      if (status.isPostponed) {
+        logger.info('Event postponed - bypassing refund policy', { eventId });
+        return {
+          eligible: true,
+          autoApprove: false,
+          bypassPolicy: true,
+          reason: 'Event has been postponed',
+        };
+      }
+
+      // Rescheduled event - allow refund if user doesn't accept new date
+      if (status.isRescheduled) {
+        logger.info('Event rescheduled - bypassing refund policy', {
+          eventId,
+          originalDate: status.originalDate,
+          newDate: status.newDate,
+        });
+        return {
+          eligible: true,
+          autoApprove: false,
+          bypassPolicy: true,
+          reason: `Event rescheduled from ${status.originalDate} to ${status.newDate}`,
+        };
+      }
+
+      // Normal event - apply standard policy
+      return {
+        eligible: true,
+        autoApprove: false,
+        bypassPolicy: false,
+      };
+    } catch (error) {
+      logger.error('Failed to check event status', { error, eventId });
+      // Don't block refund if we can't check status, but don't bypass policy either
+      return {
+        eligible: true,
+        autoApprove: false,
+        bypassPolicy: false,
+      };
+    }
+  }
+
+  /**
+   * HIGH: Check if seller has already been paid out
+   * If payout completed, requires manual review for refund
+   */
+  private async checkPayoutStatus(
+    orderId: string,
+    paymentIntentId: string | null,
+    context?: RequestContext
+  ): Promise<{
+    payoutCompleted: boolean;
+    payoutAmountCents?: number;
+    payoutDate?: Date;
+  }> {
+    try {
+      // Check order-level payout tracking
+      const result = await this.db.query(
+        `SELECT payout_completed, payout_amount_cents, payout_completed_at
+         FROM orders
+         WHERE id = $1`,
+        [orderId]
+      );
+
+      if (result.rows.length > 0 && result.rows[0].payout_completed) {
+        logger.warn('Seller payout already completed - manual review required', {
+          orderId,
+          payoutAmountCents: result.rows[0].payout_amount_cents,
+          payoutDate: result.rows[0].payout_completed_at,
+        });
+        return {
+          payoutCompleted: true,
+          payoutAmountCents: result.rows[0].payout_amount_cents,
+          payoutDate: result.rows[0].payout_completed_at,
+        };
+      }
+
+      // If we have a payment intent, also check with payment service
+      if (paymentIntentId) {
+        try {
+          const paymentStatus = await this.paymentClient.getPaymentStatus(paymentIntentId, context);
+          // Check if payment service indicates payout completed
+          if ((paymentStatus as any).payoutCompleted) {
+            return {
+              payoutCompleted: true,
+              payoutAmountCents: (paymentStatus as any).payoutAmountCents,
+            };
+          }
+        } catch (paymentError) {
+          // Log but don't fail - local DB check is sufficient
+          logger.debug('Could not check payout status with payment service', { paymentError });
+        }
+      }
+
+      return { payoutCompleted: false };
+    } catch (error) {
+      logger.error('Failed to check payout status', { error, orderId });
+      // Fail open - don't block refund if we can't check
+      return { payoutCompleted: false };
+    }
+  }
+
+  /**
+   * CRITICAL: Check if any tickets have been transferred
+   * This prevents double spend where user transfers ticket then requests refund
+   */
+  private async checkTicketTransfers(
+    orderId: string,
+    originalBuyerId: string,
+    context?: RequestContext
+  ): Promise<{ allValid: boolean; transferredCount: number; transferredTickets: string[] }> {
+    try {
+      const result = await this.ticketClient.checkOrderTicketsNotTransferred(
+        orderId,
+        originalBuyerId,
+        context
+      );
+
+      if (!result.allValid) {
+        logger.warn('REFUND BLOCKED: Tickets have been transferred', {
+          orderId,
+          originalBuyerId,
+          transferredCount: result.transferredTickets.length,
+        });
+      }
+
+      return {
+        allValid: result.allValid,
+        transferredCount: result.transferredTickets.length,
+        transferredTickets: result.transferredTickets,
+      };
+    } catch (error) {
+      logger.error('Failed to check ticket transfers', { error, orderId });
+      // Fail closed - if we can't verify, don't allow refund
+      return {
+        allValid: false,
+        transferredCount: -1,
+        transferredTickets: ['VERIFICATION_FAILED'],
+      };
+    }
+  }
+
+  /**
+   * Check if payment is refundable in Stripe
+   */
+  private async checkPaymentRefundable(
+    paymentIntentId: string,
+    context?: RequestContext
+  ): Promise<{ refundable: boolean; hasDispute: boolean; reason?: string }> {
+    try {
+      const status = await this.paymentClient.getPaymentStatus(paymentIntentId, context);
+
+      return {
+        refundable: status.refundable,
+        hasDispute: status.hasDispute,
+        reason: status.refundable ? undefined : `Payment status: ${status.status}`,
+      };
+    } catch (error) {
+      logger.error('Failed to check payment status', { error, paymentIntentId });
+      // Fail closed - if we can't verify, don't allow refund
+      return {
+        refundable: false,
+        hasDispute: false,
+        reason: 'Unable to verify payment status',
+      };
+    }
+  }
+
+  /**
+   * Check event date for refund eligibility
+   */
+  private async checkEventDate(orderId: string): Promise<{ eventPassed: boolean; eventDate?: Date }> {
+    const result = await this.db.query(
+      `SELECT MIN(oi.event_date) as event_date
+       FROM order_items oi
+       WHERE oi.order_id = $1`,
+      [orderId]
+    );
+
+    if (result.rows.length === 0 || !result.rows[0].event_date) {
+      return { eventPassed: false };
+    }
+
+    const eventDate = new Date(result.rows[0].event_date);
+    return {
+      eventPassed: eventDate < new Date(),
       eventDate,
-      request.requested_amount_cents
+    };
+  }
+
+  /**
+   * Apply refund policy to determine eligibility and percentage
+   * MEDIUM: Now tracks policy version for audit
+   */
+  private async applyRefundPolicy(
+    orderId: string,
+    order: any
+  ): Promise<PolicyResult> {
+    // Get applicable refund policy
+    const policyResult = await this.db.query(
+      `SELECT rp.id as policy_id, rp.policy_name, rpr.id as rule_id, rp.*, rpr.*
+       FROM refund_policies rp
+       LEFT JOIN refund_policy_rules rpr ON rpr.policy_id = rp.id AND rpr.is_active = true
+       WHERE rp.is_active = true
+       AND (rp.tenant_id = $1 OR rp.is_default = true)
+       ORDER BY rp.is_default ASC, rpr.priority DESC
+       LIMIT 10`,
+      [order.tenant_id]
+    );
+
+    if (policyResult.rows.length === 0) {
+      // No policy - default to 100% refund
+      return { eligible: true, refundPercentage: 100 };
+    }
+
+    // Get event date for time-based calculations
+    const eventResult = await this.db.query(
+      `SELECT MIN(event_date) as event_date FROM order_items WHERE order_id = $1`,
+      [orderId]
+    );
+    const eventDate = eventResult.rows[0]?.event_date ? new Date(eventResult.rows[0].event_date) : null;
+
+    // Calculate hours until event
+    const hoursUntilEvent = eventDate
+      ? (eventDate.getTime() - Date.now()) / (1000 * 60 * 60)
+      : Infinity;
+
+    // Find applicable rule
+    for (const rule of policyResult.rows) {
+      if (rule.condition_type === 'HOURS_BEFORE_EVENT') {
+        if (hoursUntilEvent >= (rule.condition_value || 0)) {
+          return {
+            eligible: true,
+            refundPercentage: rule.refund_percentage || 100,
+            policyId: rule.policy_id,
+            policyName: rule.policy_name,
+            ruleId: rule.rule_id,
+          };
+        }
+      } else if (rule.condition_type === 'DAYS_BEFORE_EVENT') {
+        const daysUntilEvent = hoursUntilEvent / 24;
+        if (daysUntilEvent >= (rule.condition_value || 0)) {
+          return {
+            eligible: true,
+            refundPercentage: rule.refund_percentage || 100,
+            policyId: rule.policy_id,
+            policyName: rule.policy_name,
+            ruleId: rule.rule_id,
+          };
+        }
+      } else if (rule.condition_type === 'ALWAYS') {
+        return {
+          eligible: true,
+          refundPercentage: rule.refund_percentage || 100,
+          policyId: rule.policy_id,
+          policyName: rule.policy_name,
+          ruleId: rule.rule_id,
+        };
+      }
+    }
+
+    // No applicable rule found - return first policy info for tracking
+    const firstPolicy = policyResult.rows[0];
+    return {
+      eligible: false,
+      refundPercentage: 0,
+      reason: 'Order is outside the refund policy window',
+      policyId: firstPolicy?.policy_id,
+      policyName: firstPolicy?.policy_name,
+    };
+  }
+
+  /**
+   * Calculate maximum refund amount
+   */
+  private calculateMaxRefund(
+    totalAmountCents: number,
+    refundedAmountCents: number,
+    refundPercentage: number
+  ): number {
+    const eligibleAmount = Math.floor(totalAmountCents * (refundPercentage / 100));
+    const remainingAmount = totalAmountCents - refundedAmountCents;
+    return Math.min(eligibleAmount, remainingAmount);
+  }
+
+  /**
+   * Get order details
+   */
+  private async getOrder(orderId: string): Promise<any> {
+    const result = await this.db.query(
+      `SELECT * FROM orders WHERE id = $1`,
+      [orderId]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Validate partial refund request
+   * Ensures specified items haven't been transferred
+   */
+  async validatePartialRefund(
+    orderId: string,
+    userId: string,
+    itemIds: string[],
+    context?: RequestContext
+  ): Promise<RefundEligibilityResult> {
+    // First check general eligibility
+    const eligibility = await this.checkEligibility(orderId, userId, context);
+    if (!eligibility.eligible) {
+      return eligibility;
+    }
+
+    // For partial refund, check specific items
+    const blockers: string[] = [];
+    const warnings: string[] = [];
+
+    // Get tickets for specific items
+    for (const itemId of itemIds) {
+      // This would need ticket-to-item mapping
+      // For now, the general transfer check covers this
+    }
+
+    // Calculate partial refund amount
+    const itemsResult = await this.db.query(
+      `SELECT SUM(unit_price_cents * quantity) as total_cents
+       FROM order_items
+       WHERE order_id = $1 AND id = ANY($2)`,
+      [orderId, itemIds]
+    );
+
+    const itemsTotalCents = itemsResult.rows[0]?.total_cents || 0;
+    const maxPartialRefund = Math.min(
+      itemsTotalCents,
+      eligibility.maxRefundAmountCents || 0
     );
 
     return {
       eligible: true,
-      policy_id: policy.id,
-      policy_name: policy.policy_name,
-      refund_amount_cents: refundAmount.total,
-      original_amount_cents: order.total_amount_cents,
-      refund_percentage: (refundAmount.total / order.total_amount_cents) * 100,
-      deductions: refundAmount.deductions,
-      calculation_details: refundAmount.details
-    };
-  }
-
-  private async getOrderDetails(orderId: string, tenantId: string): Promise<any> {
-    const query = `
-      SELECT 
-        o.id,
-        o.total_amount_cents,
-        o.event_id,
-        e.event_date,
-        e.event_type,
-        o.ticket_type
-      FROM orders o
-      LEFT JOIN events e ON o.event_id = e.id
-      WHERE o.id = $1 AND o.tenant_id = $2
-    `;
-
-    const result = await this.db.query(query, [orderId, tenantId]);
-    return result.rows[0] || null;
-  }
-
-  private isWithinRefundWindow(policy: RefundPolicy, eventDate: Date): boolean {
-    const now = new Date();
-    const hoursUntilEvent = (eventDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-    return hoursUntilEvent >= 0 && hoursUntilEvent <= policy.refund_window_hours;
-  }
-
-  private async calculateRefund(
-    order: any,
-    policy: RefundPolicy,
-    rules: RefundPolicyRule[],
-    eventDate: Date,
-    requestedAmount?: number
-  ): Promise<{
-    total: number;
-    deductions: Array<{ description: string; amount_cents: number }>;
-    details: Record<string, any>;
-  }> {
-    let refundAmount = order.total_amount_cents;
-    const deductions: Array<{ description: string; amount_cents: number }> = [];
-    const details: Record<string, any> = {};
-
-    // If partial refund requested, cap at that amount
-    if (requestedAmount !== undefined) {
-      refundAmount = Math.min(refundAmount, requestedAmount);
-      details.requested_amount = requestedAmount;
-    }
-
-    // Apply pro-rating if enabled
-    if (policy.pro_rated) {
-      const proRated = this.calculateProRated(order, eventDate);
-      refundAmount = Math.floor((refundAmount * proRated.refund_percentage) / 100);
-      details.pro_rated = proRated;
-    }
-
-    // Apply rules in priority order
-    for (const rule of rules) {
-      const ruleResult = this.applyRule(rule, refundAmount, order, eventDate);
-      refundAmount = ruleResult.amount;
-      
-      if (ruleResult.deduction) {
-        deductions.push(ruleResult.deduction);
-      }
-
-      details[`rule_${rule.id}`] = ruleResult.details;
-    }
-
-    return {
-      total: Math.max(0, refundAmount),
-      deductions,
-      details
-    };
-  }
-
-  private calculateProRated(order: any, eventDate: Date): ProRatedCalculation {
-    const now = new Date();
-    const purchaseDate = new Date(order.created_at);
-    
-    const totalPeriodHours = (eventDate.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60);
-    const elapsedHours = (now.getTime() - purchaseDate.getTime()) / (1000 * 60 * 60);
-    const remainingHours = Math.max(0, totalPeriodHours - elapsedHours);
-    
-    const usagePercentage = (elapsedHours / totalPeriodHours) * 100;
-    const refundPercentage = Math.max(0, 100 - usagePercentage);
-
-    return {
-      total_period_hours: totalPeriodHours,
-      elapsed_hours: elapsedHours,
-      remaining_hours: remainingHours,
-      usage_percentage: usagePercentage,
-      refund_percentage: refundPercentage,
-      refund_amount_cents: Math.floor((order.total_amount_cents * refundPercentage) / 100)
-    };
-  }
-
-  private applyRule(
-    rule: RefundPolicyRule,
-    currentAmount: number,
-    order: any,
-    eventDate: Date
-  ): {
-    amount: number;
-    deduction?: { description: string; amount_cents: number };
-    details: Record<string, any>;
-  } {
-    switch (rule.rule_type) {
-      case RefundRuleType.TIME_BASED:
-        return this.applyTimeBasedRule(rule.rule_config as TimeBasedRuleConfig, currentAmount, eventDate);
-      
-      case RefundRuleType.PERCENTAGE:
-        return this.applyPercentageRule(rule.rule_config as PercentageRuleConfig, currentAmount, order);
-      
-      case RefundRuleType.TIERED:
-        return this.applyTieredRule(rule.rule_config as TieredRuleConfig, currentAmount);
-      
-      case RefundRuleType.FLAT_FEE:
-        return this.applyFlatFeeRule(rule.rule_config as FlatFeeRuleConfig, currentAmount);
-      
-      case RefundRuleType.NO_REFUND:
-        return {
-          amount: 0,
-          deduction: { description: 'No refund allowed', amount_cents: currentAmount },
-          details: { rule_type: 'NO_REFUND' }
-        };
-      
-      default:
-        return { amount: currentAmount, details: {} };
-    }
-  }
-
-  private applyTimeBasedRule(
-    config: TimeBasedRuleConfig,
-    currentAmount: number,
-    eventDate: Date
-  ): { amount: number; deduction?: { description: string; amount_cents: number }; details: Record<string, any> } {
-    const now = new Date();
-    const hoursUntilEvent = (eventDate.getTime() - now.getTime()) / (1000 * 60 * 60);
-
-    // Find applicable tier
-    const applicableTier = config.tiers
-      .sort((a, b) => a.hours_before_event - b.hours_before_event)
-      .find(tier => hoursUntilEvent >= tier.hours_before_event);
-
-    if (!applicableTier) {
-      return {
-        amount: 0,
-        deduction: { description: 'Outside time-based refund window', amount_cents: currentAmount },
-        details: { hours_until_event: hoursUntilEvent, applicable_tier: null }
-      };
-    }
-
-    const refundAmount = Math.floor((currentAmount * applicableTier.refund_percentage) / 100);
-    const deduction = currentAmount - refundAmount;
-
-    return {
-      amount: refundAmount,
-      deduction: deduction > 0 ? {
-        description: `Time-based deduction (${applicableTier.refund_percentage}% refund)`,
-        amount_cents: deduction
-      } : undefined,
-      details: {
-        hours_until_event: hoursUntilEvent,
-        applicable_tier: applicableTier,
-        refund_percentage: applicableTier.refund_percentage
-      }
-    };
-  }
-
-  private applyPercentageRule(
-    config: PercentageRuleConfig,
-    currentAmount: number,
-    order: any
-  ): { amount: number; deduction?: { description: string; amount_cents: number }; details: Record<string, any> } {
-    let baseAmount = currentAmount;
-
-    // Adjust base amount based on apply_to setting
-    if (config.apply_to === 'TICKET_PRICE_ONLY') {
-      baseAmount = order.ticket_price_cents || currentAmount;
-    } else if (config.apply_to === 'EXCLUDING_FEES') {
-      baseAmount = currentAmount - (order.fees_cents || 0);
-    }
-
-    const refundAmount = Math.floor((baseAmount * config.percentage) / 100);
-    const deduction = currentAmount - refundAmount;
-
-    return {
-      amount: refundAmount,
-      deduction: deduction > 0 ? {
-        description: `Percentage-based deduction (${config.percentage}% refund)`,
-        amount_cents: deduction
-      } : undefined,
-      details: {
-        percentage: config.percentage,
-        apply_to: config.apply_to,
-        base_amount: baseAmount
-      }
-    };
-  }
-
-  private applyTieredRule(
-    config: TieredRuleConfig,
-    currentAmount: number
-  ): { amount: number; deduction?: { description: string; amount_cents: number }; details: Record<string, any> } {
-    // Find applicable tier based on order amount
-    const applicableTier = config.tiers.find(tier => {
-      const meetsMin = tier.min_amount_cents === undefined || currentAmount >= tier.min_amount_cents;
-      const meetsMax = tier.max_amount_cents === undefined || currentAmount <= tier.max_amount_cents;
-      return meetsMin && meetsMax;
-    });
-
-    if (!applicableTier) {
-      return {
-        amount: currentAmount,
-        details: { applicable_tier: null, message: 'No applicable tier found' }
-      };
-    }
-
-    const refundAmount = Math.floor((currentAmount * applicableTier.refund_percentage) / 100);
-    const deduction = currentAmount - refundAmount;
-
-    return {
-      amount: refundAmount,
-      deduction: deduction > 0 ? {
-        description: `Tiered deduction (${applicableTier.refund_percentage}% refund)`,
-        amount_cents: deduction
-      } : undefined,
-      details: {
-        applicable_tier: applicableTier,
-        refund_percentage: applicableTier.refund_percentage
-      }
-    };
-  }
-
-  private applyFlatFeeRule(
-    config: FlatFeeRuleConfig,
-    currentAmount: number
-  ): { amount: number; deduction?: { description: string; amount_cents: number }; details: Record<string, any> } {
-    if (config.deduct_from_refund) {
-      const refundAmount = Math.max(0, currentAmount - config.fee_cents);
-      return {
-        amount: refundAmount,
-        deduction: {
-          description: 'Flat fee deduction',
-          amount_cents: config.fee_cents
-        },
-        details: {
-          fee_cents: config.fee_cents,
-          deducted: true
-        }
-      };
-    }
-
-    return {
-      amount: currentAmount,
-      details: {
-        fee_cents: config.fee_cents,
-        deducted: false,
-        note: 'Fee will be charged separately'
-      }
-    };
-  }
-
-  private createIneligibleResponse(reason: string): RefundEligibility {
-    return {
-      eligible: false,
-      refund_amount_cents: 0,
-      original_amount_cents: 0,
-      refund_percentage: 0,
-      deductions: [],
-      reasons: [reason],
-      calculation_details: {}
+      maxRefundAmountCents: maxPartialRefund,
+      refundPercentage: eligibility.refundPercentage,
+      warnings: eligibility.warnings,
+      autoApprove: eligibility.autoApprove,
+      requiresManualReview: eligibility.requiresManualReview,
+      manualReviewReason: eligibility.manualReviewReason,
+      currency: eligibility.currency,
+      policyVersion: eligibility.policyVersion,
     };
   }
 }
+
+export const refundEligibilityService = new RefundEligibilityService();

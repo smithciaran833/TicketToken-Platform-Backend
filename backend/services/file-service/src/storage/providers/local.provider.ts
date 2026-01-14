@@ -15,7 +15,7 @@ export class LocalStorageProvider implements StorageProvider {
     try {
       await fs.mkdir(this.basePath, { recursive: true });
     } catch (error) {
-      logger.error('Failed to create storage directory:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to create storage directory');
     }
   }
   

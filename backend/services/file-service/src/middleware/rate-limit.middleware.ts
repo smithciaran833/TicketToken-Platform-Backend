@@ -23,7 +23,7 @@ export async function registerRateLimiting(app: FastifyInstance) {
       return user?.id || request.ip;
     },
     errorResponseBuilder: (request, context) => {
-      logger.warn(`Rate limit exceeded for ${(request as any).user?.id || request.ip}`);
+      logger.warn({ userId: (request as any).user?.id, ip: request.ip }, 'Rate limit exceeded');
       const retryAfter = Number(context.after) || 0;
       return {
         statusCode: 429,
@@ -32,11 +32,11 @@ export async function registerRateLimiting(app: FastifyInstance) {
         retryAfter: context.after
       };
     },
-    onExceeding: (request, key) => {
+    onExceeding: (_request, key) => {
       logger.debug(`Rate limit approaching for key: ${key}`);
     },
-    onExceeded: (request, key) => {
-      logger.warn(`Rate limit exceeded for key: ${key}`);
+    onExceeded: (_request, key) => {
+      logger.warn({ key }, 'Rate limit exceeded for key');
     }
   });
 
@@ -56,7 +56,7 @@ export const uploadRateLimiter = {
         const user = request.user;
         return user?.id || request.ip;
       },
-      errorResponseBuilder: (request: any, context: any) => {
+      errorResponseBuilder: (_request: any, context: any) => {
         const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
@@ -82,7 +82,7 @@ export const downloadRateLimiter = {
         const user = request.user;
         return user?.id || request.ip;
       },
-      errorResponseBuilder: (request: any, context: any) => {
+      errorResponseBuilder: (_request: any, context: any) => {
         const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
@@ -108,7 +108,7 @@ export const processingRateLimiter = {
         const user = request.user;
         return user?.id || request.ip;
       },
-      errorResponseBuilder: (request: any, context: any) => {
+      errorResponseBuilder: (_request: any, context: any) => {
         const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,
@@ -134,7 +134,7 @@ export const qrRateLimiter = {
         const user = request.user;
         return user?.id || request.ip;
       },
-      errorResponseBuilder: (request: any, context: any) => {
+      errorResponseBuilder: (_request: any, context: any) => {
         const retryAfter = Number(context.after) || 0;
         return {
           statusCode: 429,

@@ -41,7 +41,7 @@ export class EventOrderingService {
     // Ensure we don't process the same payment concurrently
     const lockKey = `payment:${paymentId}`;
     if (this.processingLocks.has(lockKey)) {
-      this.log.info('Waiting for existing processing to complete', { paymentId });
+      this.log.info({ paymentId }, 'Waiting for existing processing to complete');
       await this.processingLocks.get(lockKey);
     }
 
@@ -67,19 +67,19 @@ export class EventOrderingService {
 
       // Check for duplicate event
       const duplicateCheck = await client.query(`
-        SELECT sequence_number, processed_at 
+        SELECT sequence_number, processed_at
         FROM payment_event_sequence
-        WHERE payment_id = $1 
+        WHERE payment_id = $1
           AND event_type = $2
           AND idempotency_key = $3
       `, [event.paymentId, event.eventType, idempotencyKey]);
 
       if (duplicateCheck.rows.length > 0) {
-        this.log.info('Duplicate event detected, skipping', {
+        this.log.info({
           paymentId: event.paymentId,
           eventType: event.eventType,
           idempotencyKey
-        });
+        }, 'Duplicate event detected, skipping');
         await client.query('COMMIT');
         return {
           sequenceNumber: duplicateCheck.rows[0].sequence_number,
@@ -125,11 +125,11 @@ export class EventOrderingService {
         await this.processEventInOrder(client, event);
         await this.processQueuedEvents(client, event.paymentId);
       } else {
-        this.log.warn('Event received out of order, queuing for later', {
+        this.log.warn({
           paymentId: event.paymentId,
           sequenceNumber,
           eventType: event.eventType
-        });
+        }, 'Event received out of order, queuing for later');
       }
 
       await client.query('COMMIT');
@@ -141,10 +141,10 @@ export class EventOrderingService {
 
     } catch (error) {
       await client.query('ROLLBACK');
-      this.log.error('Failed to process payment event', {
+      this.log.error({
         error,
         event
-      });
+      }, 'Failed to process payment event');
       throw error;
     } finally {
       client.release();
@@ -190,20 +190,20 @@ export class EventOrderingService {
     );
 
     if (!isValid.rows[0].valid) {
-      this.log.warn('Invalid state transition', {
+      this.log.warn({
         paymentId: event.paymentId,
         from: currentStatus,
         to: newStatus,
         event: event.eventType
-      });
-      
+      }, 'Invalid state transition');
+
       // Mark event as processed but don't change state
       await client.query(`
         UPDATE payment_event_sequence
         SET processed_at = NOW()
         WHERE payment_id = $1 AND event_type = $2 AND idempotency_key = $3
       `, [event.paymentId, event.eventType, event.idempotencyKey]);
-      
+
       return;
     }
 
@@ -270,12 +270,12 @@ export class EventOrderingService {
       })
     ]);
 
-    this.log.info('Payment event processed in order', {
+    this.log.info({
       paymentId: event.paymentId,
       eventType: event.eventType,
       fromState: currentStatus,
       toState: newStatus
-    });
+    }, 'Payment event processed in order');
   }
 
   private async processQueuedEvents(client: any, paymentId: string): Promise<void> {
@@ -290,7 +290,7 @@ export class EventOrderingService {
 
     for (const queuedEvent of queuedEvents.rows) {
       const isInOrder = await this.checkEventOrder(client, paymentId, queuedEvent.sequence_number);
-      
+
       if (isInOrder) {
         await this.processEventInOrder(client, {
           paymentId: queuedEvent.payment_id,
@@ -338,7 +338,7 @@ export class EventOrderingService {
       try {
         await this.processStuckEvents();
       } catch (error) {
-        this.log.error('Background processor error', error);
+        this.log.error({ error }, 'Background processor error');
       }
     }, 30000); // Run every 30 seconds
   }
@@ -379,11 +379,11 @@ export class EventOrderingService {
         ORDER BY sequence_number ASC
       `, [paymentId]);
 
-      this.log.info(`Reprocessing ${events.rows.length} stuck events for payment ${paymentId}`);
+      this.log.info({ paymentId, eventCount: events.rows.length }, `Reprocessing stuck events`);
 
       for (const event of events.rows) {
         const isInOrder = await this.checkEventOrder(client, paymentId, event.sequence_number);
-        
+
         if (isInOrder) {
           await this.processEventInOrder(client, {
             paymentId: event.payment_id,
@@ -401,7 +401,7 @@ export class EventOrderingService {
 
     } catch (error) {
       await client.query('ROLLBACK');
-      this.log.error(`Failed to reprocess events for payment ${paymentId}`, error);
+      this.log.error({ paymentId, error }, 'Failed to reprocess events');
     } finally {
       client.release();
     }
@@ -435,7 +435,7 @@ export class EventOrderingService {
 
       if (existing.rows.length > 0) {
         const row = existing.rows[0];
-        
+
         // Verify request hasn't changed
         const existingHash = await client.query(`
           SELECT request_hash FROM payment_idempotency WHERE idempotency_key = $1
@@ -446,8 +446,8 @@ export class EventOrderingService {
         }
 
         await client.query('COMMIT');
-        
-        this.log.info('Returning idempotent response', { idempotencyKey, operation });
+
+        this.log.info({ idempotencyKey, operation }, 'Returning idempotent response');
         return row.response as T;
       }
 

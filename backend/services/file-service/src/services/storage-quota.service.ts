@@ -1,7 +1,6 @@
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
-import { cacheService, CachePrefix, CacheTTL } from './cache.service';
-import { metricsService } from './metrics.service';
+import { cacheService, CacheTTL } from './cache.service';
 
 interface StorageQuota {
   id: string;
@@ -108,7 +107,7 @@ export class StorageQuotaService {
 
       return quotaId;
     } catch (error) {
-      logger.error('Error setting quota:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error setting quota');
       throw error;
     }
   }
@@ -154,7 +153,7 @@ export class StorageQuotaService {
 
       return result;
     } catch (error) {
-      logger.error('Error getting quota:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error getting quota');
       return null;
     }
   }
@@ -212,7 +211,7 @@ export class StorageQuotaService {
 
       return usage;
     } catch (error) {
-      logger.error('Error calculating usage:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error calculating usage');
       throw error;
     }
   }
@@ -258,7 +257,7 @@ export class StorageQuotaService {
         });
       }
     } catch (error) {
-      logger.error('Error saving usage:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error saving usage');
     }
   }
 
@@ -341,7 +340,7 @@ export class StorageQuotaService {
         remaining: quota.maxStorageBytes - projectedUsage
       };
     } catch (error) {
-      logger.error('Error checking quota:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error checking quota');
       // Fail open - allow upload if check fails
       return {
         allowed: true,
@@ -386,12 +385,12 @@ export class StorageQuotaService {
         quota_limit_bytes: quota.maxStorageBytes
       });
 
-      logger.warn(`Storage quota alert created: ${alertType} at ${percentageUsed}%`);
+      logger.warn({ alertType, percentageUsed }, 'Storage quota alert created');
 
       // Record metric (TODO: Add storageQuotaAlert metric to metricsService)
       // metricsService.storageQuotaAlert.inc({ type: alertType });
     } catch (error) {
-      logger.error('Error creating alert:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error creating alert');
     }
   }
 
@@ -458,7 +457,7 @@ export class StorageQuotaService {
       logger.info(`Deactivated storage quota ${quotaId}`);
       return true;
     } catch (error) {
-      logger.error('Error deleting quota:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error deleting quota');
       return false;
     }
   }

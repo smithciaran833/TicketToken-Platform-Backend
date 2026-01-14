@@ -1,148 +1,177 @@
-import { validate } from '../../../src/middleware/validation.middleware';
 import Joi from 'joi';
-import { ValidationError } from '../../../src/errors';
+import { validate } from '../../../src/middleware/validation.middleware';
 
-describe('Validation Middleware', () => {
-  it('should validate and pass valid data', async () => {
-    const schema = Joi.object({
+// Mock Fastify request and reply
+const createMockRequest = (overrides: any = {}) => ({
+  body: {},
+  query: {},
+  params: {},
+  ...overrides,
+});
+
+const createMockReply = () => ({
+  status: jest.fn().mockReturnThis(),
+  send: jest.fn().mockReturnThis(),
+});
+
+describe('validation.middleware', () => {
+  describe('validate function', () => {
+    const testSchema = Joi.object({
       email: Joi.string().email().required(),
-      password: Joi.string().min(8).required(),
+      name: Joi.string().max(50).optional(),
     });
 
-    const request: any = {
-      body: {
-        email: 'test@example.com',
-        password: 'password123',
-      },
-    };
-    const reply: any = {};
+    describe('body validation (default)', () => {
+      it('passes valid body', async () => {
+        const req = createMockRequest({ body: { email: 'test@example.com' } });
+        const reply = createMockReply();
 
-    const middleware = validate(schema);
-    await expect(middleware(request, reply)).resolves.not.toThrow();
+        await validate(testSchema)(req as any, reply as any);
 
-    expect(request.body).toEqual({
-      email: 'test@example.com',
-      password: 'password123',
-    });
-  });
+        expect(req.body).toEqual({ email: 'test@example.com' });
+      });
 
-  it('should throw ValidationError for invalid data', async () => {
-    const schema = Joi.object({
-      email: Joi.string().email().required(),
-      password: Joi.string().min(8).required(),
-    });
+      it('replaces body with validated data', async () => {
+        const req = createMockRequest({ body: { email: 'test@example.com', name: 'John' } });
+        const reply = createMockReply();
 
-    const request: any = {
-      body: {
-        email: 'invalid-email',
-        password: '123',
-      },
-    };
-    const reply: any = {};
+        await validate(testSchema)(req as any, reply as any);
 
-    const middleware = validate(schema);
+        expect(req.body).toEqual({ email: 'test@example.com', name: 'John' });
+      });
 
-    await expect(middleware(request, reply)).rejects.toThrow(ValidationError);
-  });
+      it('strips unknown fields', async () => {
+        const req = createMockRequest({ body: { email: 'test@example.com', unknown: 'field' } });
+        const reply = createMockReply();
 
-  it('should strip unknown fields', async () => {
-    const schema = Joi.object({
-      email: Joi.string().email().required(),
-    });
+        await validate(testSchema)(req as any, reply as any);
 
-    const request: any = {
-      body: {
-        email: 'test@example.com',
-        unknownField: 'should be stripped',
-      },
-    };
-    const reply: any = {};
+        expect(req.body).toEqual({ email: 'test@example.com' });
+        expect((req.body as any).unknown).toBeUndefined();
+      });
 
-    const middleware = validate(schema);
-    await middleware(request, reply);
+      it('throws 400 with errors array on invalid body', async () => {
+        const req = createMockRequest({ body: { email: 'invalid' } });
+        const reply = createMockReply();
 
-    expect(request.body).toEqual({
-      email: 'test@example.com',
-    });
-    expect(request.body.unknownField).toBeUndefined();
-  });
+        await expect(validate(testSchema)(req as any, reply as any)).rejects.toMatchObject({
+          statusCode: 400,
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              field: 'email',
+              message: expect.stringContaining('email'),
+            }),
+          ]),
+        });
+      });
 
-  it('should include all validation errors', async () => {
-    const schema = Joi.object({
-      email: Joi.string().email().required(),
-      password: Joi.string().min(8).required(),
-      age: Joi.number().min(18).required(),
-    });
+      it('includes field paths in errors', async () => {
+        const nestedSchema = Joi.object({
+          user: Joi.object({
+            email: Joi.string().email().required(),
+          }),
+        });
 
-    const request: any = {
-      body: {
-        email: 'invalid',
-        password: 'short',
-        age: 10,
-      },
-    };
-    const reply: any = {};
+        const req = createMockRequest({ body: { user: { email: 'invalid' } } });
+        const reply = createMockReply();
 
-    const middleware = validate(schema);
+        await expect(validate(nestedSchema)(req as any, reply as any)).rejects.toMatchObject({
+          errors: expect.arrayContaining([
+            expect.objectContaining({
+              field: 'user.email',
+            }),
+          ]),
+        });
+      });
 
-    try {
-      await middleware(request, reply);
-      fail('Should have thrown ValidationError');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ValidationError);
-      const validationError = error as ValidationError;
-      expect(validationError.errors.length).toBeGreaterThan(0);
-      expect(validationError.errors).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ field: expect.any(String) }),
-        ])
-      );
-    }
-  });
+      it('collects multiple errors (abortEarly: false)', async () => {
+        const multiFieldSchema = Joi.object({
+          email: Joi.string().email().required(),
+          password: Joi.string().min(8).required(),
+        });
 
-  it('should format validation errors correctly', async () => {
-    const schema = Joi.object({
-      email: Joi.string().email().required(),
+        const req = createMockRequest({ body: {} });
+        const reply = createMockReply();
+
+        try {
+          await validate(multiFieldSchema)(req as any, reply as any);
+          fail('Should have thrown');
+        } catch (error: any) {
+          expect(error.errors.length).toBeGreaterThanOrEqual(2);
+        }
+      });
     });
 
-    const request: any = {
-      body: {
-        email: 'not-an-email',
-      },
-    };
-    const reply: any = {};
+    describe('query validation', () => {
+      const querySchema = Joi.object({
+        page: Joi.number().integer().min(1).default(1),
+        limit: Joi.number().integer().min(1).max(100).default(20),
+      });
 
-    const middleware = validate(schema);
+      it('validates query params', async () => {
+        const req = createMockRequest({ query: { page: '2', limit: '50' } });
+        const reply = createMockReply();
 
-    try {
-      await middleware(request, reply);
-      fail('Should have thrown ValidationError');
-    } catch (error) {
-      expect(error).toBeInstanceOf(ValidationError);
-      const validationError = error as ValidationError;
-      expect(validationError.errors[0]).toHaveProperty('field');
-      expect(validationError.errors[0]).toHaveProperty('message');
-    }
-  });
+        await validate(querySchema, 'query')(req as any, reply as any);
 
-  it('should propagate non-Joi errors', async () => {
-    const schema = Joi.object({
-      email: Joi.string().required(),
+        expect(req.query).toEqual({ page: 2, limit: 50 });
+      });
+
+      it('applies defaults to query', async () => {
+        const req = createMockRequest({ query: {} });
+        const reply = createMockReply();
+
+        await validate(querySchema, 'query')(req as any, reply as any);
+
+        expect(req.query).toEqual({ page: 1, limit: 20 });
+      });
+
+      it('throws on invalid query', async () => {
+        const req = createMockRequest({ query: { page: '-1' } });
+        const reply = createMockReply();
+
+        await expect(validate(querySchema, 'query')(req as any, reply as any)).rejects.toMatchObject({
+          statusCode: 400,
+        });
+      });
     });
 
-    // Mock validateAsync to throw a non-Joi error
-    const originalValidate = schema.validateAsync;
-    schema.validateAsync = jest.fn().mockRejectedValue(new Error('Database error'));
+    describe('params validation', () => {
+      const paramsSchema = Joi.object({
+        id: Joi.string().uuid().required(),
+      });
 
-    const request: any = {
-      body: { email: 'test@example.com' },
-    };
-    const reply: any = {};
+      it('validates route params', async () => {
+        const validUUID = '123e4567-e89b-12d3-a456-426614174000';
+        const req = createMockRequest({ params: { id: validUUID } });
+        const reply = createMockReply();
 
-    const middleware = validate(schema);
+        await validate(paramsSchema, 'params')(req as any, reply as any);
 
-    await expect(middleware(request, reply)).rejects.toThrow('Database error');
+        expect(req.params).toEqual({ id: validUUID });
+      });
 
-    schema.validateAsync = originalValidate;
+      it('throws on invalid params', async () => {
+        const req = createMockRequest({ params: { id: 'not-a-uuid' } });
+        const reply = createMockReply();
+
+        await expect(validate(paramsSchema, 'params')(req as any, reply as any)).rejects.toMatchObject({
+          statusCode: 400,
+        });
+      });
+    });
+
+    describe('error handling', () => {
+      it('re-throws non-Joi errors', async () => {
+        const badSchema = {
+          validateAsync: jest.fn().mockRejectedValue(new Error('Unexpected error')),
+        };
+
+        const req = createMockRequest({ body: {} });
+        const reply = createMockReply();
+
+        await expect(validate(badSchema as any)(req as any, reply as any)).rejects.toThrow('Unexpected error');
+      });
+    });
   });
 });

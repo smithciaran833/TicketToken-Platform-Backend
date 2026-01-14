@@ -91,12 +91,12 @@ export class TicketPDFService {
         }
       });
 
-      logger.info('Ticket PDF generated successfully', { ticketId: ticketData.ticketId });
+      logger.info({ ticketId: ticketData.ticketId }, 'Ticket PDF generated successfully');
       
       return Buffer.from(pdfBuffer);
 
     } catch (error) {
-      logger.error('Failed to generate ticket PDF:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to generate ticket PDF');
       throw error;
     } finally {
       if (browser) {
@@ -127,7 +127,7 @@ export class TicketPDFService {
         isWhiteLabel: venueResponse.data.venue?.hide_platform_branding || false
       };
     } catch (error: any) {
-      logger.warn(`Failed to fetch branding for venue ${venueId}:`, error.message);
+      logger.warn({ venueId, errorMessage: error.message }, 'Failed to fetch branding for venue');
       return null;
     }
   }

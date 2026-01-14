@@ -1,6 +1,6 @@
-import { InfluxDB, Point, WriteApi } from '@influxdata/influxdb-client';
+import { InfluxDB, Point, WriteApi, QueryApi, flux, fluxDuration } from '@influxdata/influxdb-client';
 import { logger } from '../utils/logger';
-import { MetricType } from '../types';
+import { MetricType, TimeGranularity } from '../types';
 
 interface InfluxConfig {
   url: string;
@@ -193,6 +193,153 @@ export class InfluxDBService {
       this.isConnected = false;
       this.log.error('InfluxDB health check failed', error);
       return false;
+    }
+  }
+
+  private getQueryApi(): QueryApi {
+    return this.client.getQueryApi(this.config.org);
+  }
+
+  async queryMetrics(
+    venueId: string,
+    metricType: MetricType,
+    startDate: Date,
+    endDate: Date,
+    granularity?: TimeGranularity
+  ): Promise<Array<{
+    id: string;
+    venueId: string;
+    metricType: MetricType;
+    value: number;
+    timestamp: Date;
+    dimensions?: Record<string, string>;
+  }>> {
+    try {
+      const queryApi = this.getQueryApi();
+      
+      // Calculate window based on granularity
+      let windowPeriod = '1m'; // default
+      if (granularity) {
+        switch (granularity.unit) {
+          case 'minute': windowPeriod = `${granularity.value}m`; break;
+          case 'hour': windowPeriod = `${granularity.value}h`; break;
+          case 'day': windowPeriod = `${granularity.value}d`; break;
+          case 'week': windowPeriod = `${granularity.value * 7}d`; break;
+          case 'month': windowPeriod = `${granularity.value * 30}d`; break;
+        }
+      }
+
+      const fluxQuery = `
+        from(bucket: "${this.config.bucket}")
+          |> range(start: ${startDate.toISOString()}, stop: ${endDate.toISOString()})
+          |> filter(fn: (r) => r._measurement == "${metricType}")
+          |> filter(fn: (r) => r.venue_id == "${venueId}")
+          |> filter(fn: (r) => r._field == "value")
+          |> aggregateWindow(every: ${windowPeriod}, fn: mean, createEmpty: false)
+          |> yield(name: "metrics")
+      `;
+
+      const results: Array<{
+        id: string;
+        venueId: string;
+        metricType: MetricType;
+        value: number;
+        timestamp: Date;
+        dimensions?: Record<string, string>;
+      }> = [];
+
+      await new Promise<void>((resolve, reject) => {
+        queryApi.queryRows(fluxQuery, {
+          next: (row, tableMeta) => {
+            const obj = tableMeta.toObject(row);
+            results.push({
+              id: `${venueId}-${metricType}-${new Date(obj._time).getTime()}`,
+              venueId,
+              metricType,
+              value: obj._value,
+              timestamp: new Date(obj._time),
+              dimensions: {}
+            });
+          },
+          error: (error) => {
+            this.log.error('InfluxDB query failed', error);
+            reject(error);
+          },
+          complete: () => {
+            resolve();
+          }
+        });
+      });
+
+      this.log.debug('InfluxDB query completed', {
+        venueId,
+        metricType,
+        resultCount: results.length
+      });
+
+      return results;
+    } catch (error) {
+      this.log.error('Failed to query metrics from InfluxDB', error, { venueId, metricType });
+      throw error;
+    }
+  }
+
+  async aggregateMetrics(
+    venueId: string,
+    metricType: MetricType,
+    aggregation: 'sum' | 'avg' | 'min' | 'max' | 'count',
+    startDate: Date,
+    endDate: Date
+  ): Promise<{ [key: string]: number }> {
+    try {
+      const queryApi = this.getQueryApi();
+      
+      // Map aggregation type to Flux function
+      const fluxFn = aggregation === 'avg' ? 'mean' : aggregation;
+
+      const fluxQuery = `
+        from(bucket: "${this.config.bucket}")
+          |> range(start: ${startDate.toISOString()}, stop: ${endDate.toISOString()})
+          |> filter(fn: (r) => r._measurement == "${metricType}")
+          |> filter(fn: (r) => r.venue_id == "${venueId}")
+          |> filter(fn: (r) => r._field == "value")
+          |> ${fluxFn}()
+          |> yield(name: "aggregate")
+      `;
+
+      let result = 0;
+
+      await new Promise<void>((resolve, reject) => {
+        queryApi.queryRows(fluxQuery, {
+          next: (row, tableMeta) => {
+            const obj = tableMeta.toObject(row);
+            result = obj._value || 0;
+          },
+          error: (error) => {
+            this.log.error('InfluxDB aggregation query failed', error);
+            reject(error);
+          },
+          complete: () => {
+            resolve();
+          }
+        });
+      });
+
+      this.log.debug('InfluxDB aggregation completed', {
+        venueId,
+        metricType,
+        aggregation,
+        result
+      });
+
+      return { [aggregation]: result };
+    } catch (error) {
+      this.log.error('Failed to aggregate metrics from InfluxDB', error, {
+        venueId,
+        metricType,
+        aggregation
+      });
+      throw error;
     }
   }
 }

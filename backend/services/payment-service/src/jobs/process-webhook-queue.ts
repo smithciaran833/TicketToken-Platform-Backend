@@ -61,7 +61,7 @@ export class ProcessWebhookQueueJob {
   }
 
   private async processStripeWebhook(payload: any, webhookId: string): Promise<void> {
-    log.info('Processing Stripe webhook', { webhookId });
+    log.info({ webhookId }, 'Processing Stripe webhook');
     // The actual processing is handled by the handler
   }
 }

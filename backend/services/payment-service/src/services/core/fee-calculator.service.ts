@@ -1,16 +1,5 @@
 /**
  * DYNAMIC FEE CALCULATOR - For Transaction Processing
- * 
- * Complete fee calculation including:
- * - Dynamic venue tier pricing (STARTER/PRO/ENTERPRISE)
- * - Sales tax (TaxJar integration)
- * - Blockchain gas fees (Solana/Polygon)
- * - Redis caching for performance
- * - Integer cents calculation (PCI DSS compliant)
- * 
- * For simple UI previews, use ../fee-calculator.service.ts
- * 
- * @see docs/FEE_CALCULATOR_ARCHITECTURE.md
  */
 
 import { feeConfig } from '../../config/fees';
@@ -23,11 +12,9 @@ import { cacheService } from '../cache.service';
 
 const logger = new SafeLogger('FeeCalculatorService');
 
-// Cache configuration
-const VENUE_TIER_CACHE_TTL = 3600; // 1 hour
-const VENUE_VOLUME_CACHE_TTL = 1800; // 30 minutes
+const VENUE_TIER_CACHE_TTL = 3600;
+const VENUE_VOLUME_CACHE_TTL = 1800;
 
-// Inline utility functions (replacing shared module dependency)
 function percentOfCents(cents: number, basisPoints: number): number {
   return Math.round((cents * basisPoints) / 10000);
 }
@@ -36,17 +23,17 @@ function addCents(...amounts: number[]): number {
   return amounts.reduce((sum, amount) => sum + amount, 0);
 }
 
-// All calculations use INTEGER CENTS
 export class FeeCalculatorService {
   private venueAnalyticsService: VenueAnalyticsService;
   private taxCalculatorService: TaxCalculatorService;
   private gasFeeEstimatorService: GasFeeEstimatorService;
-  
+
   constructor() {
     this.venueAnalyticsService = new VenueAnalyticsService();
     this.taxCalculatorService = new TaxCalculatorService();
     this.gasFeeEstimatorService = new GasFeeEstimatorService();
   }
+
   async calculateDynamicFees(
     venueId: string,
     amountCents: number,
@@ -55,11 +42,11 @@ export class FeeCalculatorService {
   ): Promise<DynamicFees> {
     const tier = await this.getVenueTier(venueId);
     const platformPercentageBps = this.getTierPercentageBps(tier);
-    
+
     const platformFee = percentOfCents(amountCents, platformPercentageBps);
     const gasEstimate = await this.estimateGasFees(ticketCount);
     const taxBreakdown = await this.calculateTax(amountCents, venueId, location);
-    
+
     const total = addCents(
       amountCents,
       platformFee,
@@ -91,12 +78,10 @@ export class FeeCalculatorService {
 
   private async getVenueTier(venueId: string): Promise<VenueTier> {
     const cacheKey = `venue:tier:${venueId}`;
-    
-    // Try to get from cache first
+
     return cacheService.getOrCompute(
       cacheKey,
       async () => {
-        // Cache miss - compute tier
         const monthlyVolumeCents = await this.getMonthlyVolume(venueId);
 
         let tier: VenueTier;
@@ -107,8 +92,8 @@ export class FeeCalculatorService {
         } else {
           tier = VenueTier.ENTERPRISE;
         }
-        
-        logger.info('Venue tier calculated', { venueId, tier, monthlyVolumeCents });
+
+        logger.info({ venueId, tier, monthlyVolumeCents }, 'Venue tier calculated');
         return tier;
       },
       VENUE_TIER_CACHE_TTL
@@ -130,28 +115,25 @@ export class FeeCalculatorService {
 
   private async getMonthlyVolume(venueId: string): Promise<number> {
     const cacheKey = `venue:volume:${venueId}`;
-    
-    // Try to get from cache first (shorter TTL since volume changes frequently)
+
     return cacheService.getOrCompute(
       cacheKey,
       async () => {
         try {
-          // FIXED: Use real venue analytics instead of hardcoded value
           const volume = await this.venueAnalyticsService.getMonthlyVolume(venueId);
-          
-          logger.info('Monthly volume retrieved for tier calculation', {
+
+          logger.info({
             venueId,
             volume,
-          });
-          
+          }, 'Monthly volume retrieved for tier calculation');
+
           return volume;
         } catch (error) {
-          logger.error('Failed to get monthly volume, using conservative estimate', {
+          logger.error({
             venueId,
             error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          
-          // Fallback: Conservative estimate (treat as new venue)
+          }, 'Failed to get monthly volume, using conservative estimate');
+
           return 0;
         }
       },
@@ -161,29 +143,27 @@ export class FeeCalculatorService {
 
   private async estimateGasFees(ticketCount: number): Promise<number> {
     try {
-      // FIXED: Use real blockchain gas estimation
       const network = process.env.BLOCKCHAIN_NETWORK as BlockchainNetwork || BlockchainNetwork.SOLANA;
       const gasFeeEstimate = await this.gasFeeEstimatorService.estimateGasFees(
         ticketCount,
         network
       );
 
-      logger.info('Gas fees estimated', {
+      logger.info({
         ticketCount,
         network,
         totalFeeCents: gasFeeEstimate.totalFeeCents,
         feePerTransaction: gasFeeEstimate.feePerTransactionCents,
-      });
+      }, 'Gas fees estimated');
 
       return gasFeeEstimate.totalFeeCents;
     } catch (error) {
-      logger.error('Gas fee estimation failed, using fallback', {
+      logger.error({
         ticketCount,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Gas fee estimation failed, using fallback');
 
-      // Fallback: Conservative estimate
-      const fallbackFeeCents = 50; // 50 cents per ticket
+      const fallbackFeeCents = 50;
       return fallbackFeeCents * ticketCount;
     }
   }
@@ -193,16 +173,14 @@ export class FeeCalculatorService {
     venueId: string,
     location?: TaxLocation
   ): Promise<{ state: number; county: number; city: number; special: number; total: number }> {
-    // If location not provided, use default (could be fetched from venue record)
     const taxLocation: TaxLocation = location || {
       country: 'US',
       state: 'TN',
-      zip: '37203', // Default Nashville, TN
+      zip: '37203',
       city: 'Nashville',
     };
 
     try {
-      // FIXED: Use real tax calculation instead of hardcoded rates
       const taxBreakdown = await this.taxCalculatorService.calculateTax(
         amountCents,
         taxLocation,
@@ -211,18 +189,17 @@ export class FeeCalculatorService {
 
       return taxBreakdown;
     } catch (error) {
-      logger.error('Tax calculation failed, using fallback', {
+      logger.error({
         venueId,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Tax calculation failed, using fallback');
 
-      // Fallback to hardcoded rates if TaxJar fails
-      const stateTaxBps = 700;  // 7%
-      const localTaxBps = 225;  // 2.25%
-      
+      const stateTaxBps = 700;
+      const localTaxBps = 225;
+
       const state = percentOfCents(amountCents, stateTaxBps);
       const local = percentOfCents(amountCents, localTaxBps);
-      
+
       return { state, county: local, city: 0, special: 0, total: state + local };
     }
   }

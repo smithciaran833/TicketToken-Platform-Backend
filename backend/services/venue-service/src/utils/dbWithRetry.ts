@@ -10,10 +10,10 @@ export function retryableQuery<T>(
   return withRetry(
     queryFn,
     {
-      maxAttempts: 3,
+      maxRetries: 3,
       initialDelay: 50,
       maxDelay: 1000,
-      shouldRetry: isRetryableDbError,
+      isRetryable: isRetryableDbError,
       onRetry: (error, attempt) => {
         logger.debug({ 
           operation,
@@ -26,6 +26,11 @@ export function retryableQuery<T>(
 }
 
 export function isRetryableDbError(error: any): boolean {
+  // Handle null/undefined errors
+  if (!error) {
+    return false;
+  }
+  
   // Retry on connection errors
   if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT') {
     return true;

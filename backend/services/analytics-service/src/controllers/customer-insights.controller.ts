@@ -17,7 +17,8 @@ export class CustomerInsightsController {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      const profile = await customerInsightsService.getCustomerProfile(userId);
+      const tenantId = (request as any).user?.tenantId || '';
+      const profile = await customerInsightsService.getCustomerProfile(userId, tenantId);
       
       if (!profile) {
         return reply.status(404).send({ error: 'Customer profile not found' });
@@ -39,7 +40,8 @@ export class CustomerInsightsController {
         return reply.status(401).send({ error: 'Unauthorized' });
       }
 
-      const segments = await customerInsightsService.segmentCustomers(venueId);
+      const tenantId = (request as any).user?.tenantId || venueId;
+      const segments = await customerInsightsService.segmentCustomers(venueId, tenantId);
       reply.send({ success: true, data: segments });
     } catch (error) {
       logger.error('Error getting customer segments:', error);
@@ -61,7 +63,8 @@ export class CustomerInsightsController {
         return reply.status(403).send({ error: 'Forbidden' });
       }
 
-      const preferences = await customerInsightsService.getEventPreferences(userId);
+      const tenantId = (request as any).user?.tenantId || '';
+      const preferences = await customerInsightsService.getEventPreferences(userId, tenantId);
       reply.send({ success: true, data: preferences });
     } catch (error) {
       logger.error('Error getting customer preferences:', error);

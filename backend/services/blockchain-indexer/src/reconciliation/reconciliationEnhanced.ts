@@ -2,20 +2,26 @@ import { Connection } from '@solana/web3.js';
 import logger from '../utils/logger';
 import db from '../utils/database';
 import OnChainQuery from '../utils/onChainQuery';
-
-interface Ticket {
-    id: string;
-    token_id: string;
-    wallet_address: string;
-    status: string;
-    is_minted: boolean;
-}
+import { ticketServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { TicketForReconciliation } from '@tickettoken/shared/clients/types';
 
 interface Discrepancy {
     type: string;
     field: string;
     dbValue: any;
     chainValue: any;
+}
+
+/**
+ * Helper to create request context for service calls
+ * Blockchain indexer operates as a system service
+ */
+function createSystemContext(): RequestContext {
+    return {
+        tenantId: 'system',
+        traceId: `recon-enhanced-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    };
 }
 
 export default class EnhancedReconciliationEngine {
@@ -31,20 +37,26 @@ export default class EnhancedReconciliationEngine {
         this.reconciliationInterval = null;
     }
 
-    async checkTicket(ticket: Ticket): Promise<Discrepancy[] | null> {
+    /**
+     * REFACTORED: Now uses ticketServiceClient instead of direct DB updates
+     * Checks a ticket against on-chain state and updates sync status via service client
+     */
+    async checkTicket(ticket: TicketForReconciliation): Promise<Discrepancy[] | null> {
+        const ctx = createSystemContext();
+
         try {
-            if (!ticket.token_id) {
+            if (!ticket.tokenId) {
                 return null;
             }
 
-            logger.debug({ ticketId: ticket.id, tokenId: ticket.token_id }, 'Checking ticket');
+            logger.debug({ ticketId: ticket.id, tokenId: ticket.tokenId }, 'Checking ticket');
 
-            const onChainState = await this.onChainQuery.getTokenState(ticket.token_id);
+            const onChainState = await this.onChainQuery.getTokenState(ticket.tokenId);
 
             const discrepancies: Discrepancy[] = [];
 
             if (!onChainState.exists) {
-                if (ticket.is_minted) {
+                if (ticket.isMinted) {
                     discrepancies.push({
                         type: 'TOKEN_NOT_FOUND',
                         field: 'is_minted',
@@ -72,22 +84,21 @@ export default class EnhancedReconciliationEngine {
                 });
             }
 
-            if (onChainState.owner && onChainState.owner !== ticket.wallet_address) {
+            if (onChainState.owner && onChainState.owner !== ticket.walletAddress) {
                 discrepancies.push({
                     type: 'OWNERSHIP_MISMATCH',
                     field: 'wallet_address',
-                    dbValue: ticket.wallet_address,
+                    dbValue: ticket.walletAddress,
                     chainValue: onChainState.owner
                 });
             }
 
             if (discrepancies.length === 0) {
-                await db.query(`
-                    UPDATE tickets
-                    SET sync_status = 'SYNCED',
-                        reconciled_at = NOW()
-                    WHERE id = $1
-                `, [ticket.id]);
+                // Use ticketServiceClient to update sync status
+                await ticketServiceClient.updateBlockchainSync(ticket.id, {
+                    syncStatus: 'SYNCED',
+                    reconciledAt: new Date().toISOString(),
+                }, ctx);
 
                 return null;
             }
@@ -97,46 +108,54 @@ export default class EnhancedReconciliationEngine {
         } catch (error) {
             logger.error({ error: (error as Error).message, ticketId: ticket.id }, 'Failed to check ticket');
 
-            await db.query(`
-                UPDATE tickets
-                SET sync_status = 'ERROR'
-                WHERE id = $1
-            `, [ticket.id]);
+            // Use ticketServiceClient to mark sync error
+            try {
+                await ticketServiceClient.updateBlockchainSync(ticket.id, {
+                    syncStatus: 'ERROR',
+                }, ctx);
+            } catch (updateError) {
+                logger.error({ error: updateError, ticketId: ticket.id }, 'Failed to update sync status to ERROR');
+            }
 
             return null;
         }
     }
 
+    /**
+     * REFACTORED: Now uses ticketServiceClient instead of direct DB queries/updates
+     * Detects burned tokens and updates via service client
+     */
     async detectBurns(): Promise<{ detected: number; errors: number }> {
+        const ctx = createSystemContext();
         logger.info('Starting burn detection scan...');
 
-        const result = await db.query(`
-            SELECT id, token_id, wallet_address, status
-            FROM tickets
-            WHERE is_minted = true
-            AND status != 'BURNED'
-            AND token_id IS NOT NULL
-            ORDER BY last_indexed_at ASC NULLS FIRST
-            LIMIT 50
-        `);
+        // Fetch minted tickets via service client
+        const ticketsResponse = await ticketServiceClient.getTicketsForReconciliation(ctx, {
+            limit: 50,
+            syncStatus: 'SYNCED', // Only check synced tickets that might have been burned
+        });
+
+        // Filter for minted tickets that aren't already burned
+        const mintedTickets = ticketsResponse.tickets.filter(
+            t => t.isMinted && t.status !== 'BURNED' && t.tokenId
+        );
 
         let burnCount = 0;
         let errorCount = 0;
 
-        for (const ticket of result.rows) {
+        for (const ticket of mintedTickets) {
             try {
-                const state = await this.onChainQuery.getTokenState(ticket.token_id);
+                const state = await this.onChainQuery.getTokenState(ticket.tokenId);
 
                 if (state.burned) {
-                    await db.query(`
-                        UPDATE tickets
-                        SET
-                            status = 'BURNED',
-                            sync_status = 'SYNCED',
-                            reconciled_at = NOW()
-                        WHERE id = $1
-                    `, [ticket.id]);
+                    // Use ticketServiceClient to update ticket status
+                    await ticketServiceClient.updateBlockchainSync(ticket.id, {
+                        status: 'BURNED',
+                        syncStatus: 'SYNCED',
+                        reconciledAt: new Date().toISOString(),
+                    }, ctx);
 
+                    // Record discrepancy (owned by blockchain-indexer)
                     await db.query(`
                         INSERT INTO ownership_discrepancies
                         (ticket_id, discrepancy_type, database_value, blockchain_value, resolved)
@@ -146,8 +165,8 @@ export default class EnhancedReconciliationEngine {
                     burnCount++;
                     logger.info({
                         ticketId: ticket.id,
-                        tokenId: ticket.token_id
-                    }, 'Burned ticket detected and updated');
+                        tokenId: ticket.tokenId
+                    }, 'Burned ticket detected and updated via ticket-service');
                 }
 
             } catch (error) {
@@ -160,7 +179,7 @@ export default class EnhancedReconciliationEngine {
         }
 
         logger.info({
-            checked: result.rows.length,
+            checked: mintedTickets.length,
             burns: burnCount,
             errors: errorCount
         }, 'Burn detection scan complete');
@@ -168,16 +187,21 @@ export default class EnhancedReconciliationEngine {
         return { detected: burnCount, errors: errorCount };
     }
 
+    /**
+     * REFACTORED: Now uses ticketServiceClient instead of direct DB queries/updates
+     * Verifies marketplace activity and updates ticket ownership via service client
+     */
     async verifyMarketplaceActivity(): Promise<{ checked: number; mismatches: number }> {
+        const ctx = createSystemContext();
+
+        // Query marketplace_activity which is owned by blockchain-indexer
         const recentActivity = await db.query(`
             SELECT
                 ma.id,
                 ma.token_id,
                 ma.buyer,
-                ma.activity_type,
-                t.wallet_address as db_owner
+                ma.activity_type
             FROM marketplace_activity ma
-            JOIN tickets t ON ma.token_id = t.token_id
             WHERE ma.activity_type = 'SALE'
             AND ma.created_at > NOW() - INTERVAL '1 hour'
             ORDER BY ma.created_at DESC
@@ -187,6 +211,7 @@ export default class EnhancedReconciliationEngine {
         let mismatches = 0;
 
         for (const activity of recentActivity.rows) {
+            // Verify on-chain ownership
             const verification = await this.onChainQuery.verifyOwnership(
                 activity.token_id,
                 activity.buyer
@@ -203,12 +228,24 @@ export default class EnhancedReconciliationEngine {
 
                 mismatches++;
 
+                // Update ticket ownership via service client if we know the actual owner
                 if (verification.actualOwner) {
-                    await db.query(`
-                        UPDATE tickets
-                        SET wallet_address = $1
-                        WHERE token_id = $2
-                    `, [verification.actualOwner, activity.token_id]);
+                    try {
+                        await ticketServiceClient.updateBlockchainSyncByToken(activity.token_id, {
+                            walletAddress: verification.actualOwner,
+                            syncStatus: 'SYNCED',
+                        }, ctx);
+                        
+                        logger.info({
+                            tokenId: activity.token_id,
+                            newOwner: verification.actualOwner
+                        }, 'Updated ticket ownership via ticket-service');
+                    } catch (error) {
+                        logger.error({
+                            error,
+                            tokenId: activity.token_id
+                        }, 'Failed to update ticket ownership via ticket-service');
+                    }
                 }
             }
         }

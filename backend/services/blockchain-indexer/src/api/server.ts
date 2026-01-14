@@ -1,7 +1,7 @@
 import fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import logger from '../utils/logger';
 import db from '../utils/database';
-import MetricsCollector from '../metrics/metricsCollector';
+import { register } from '../utils/metrics';
 
 interface Health {
     status: string;
@@ -9,19 +9,46 @@ interface Health {
     timestamp: string;
 }
 
+// =============================================================================
+// EXPLICIT COLUMN DEFINITIONS
+// AUDIT FIX: INP-5/DB-7 - Avoid SELECT *, use explicit columns
+// =============================================================================
+
+const COLUMNS = {
+    indexer_state: [
+        'id',
+        'last_processed_slot',
+        'last_processed_signature',
+        'indexer_version',
+        'is_running',
+        'started_at',
+        'updated_at'
+    ].join(', '),
+
+    reconciliation_runs: [
+        'id',
+        'started_at',
+        'completed_at',
+        'status',
+        'tickets_checked',
+        'discrepancies_found',
+        'discrepancies_resolved',
+        'duration_ms',
+        'error_message'
+    ].join(', ')
+};
+
 export default class IndexerAPI {
     private app: FastifyInstance;
     private indexer: any;
     private reconciliation: any;
     private port: number;
-    private metrics: MetricsCollector;
 
     constructor(indexer: any, reconciliationEngine: any, port: number = 3456) {
         this.app = fastify({ logger: false });
         this.indexer = indexer;
         this.reconciliation = reconciliationEngine;
         this.port = port;
-        this.metrics = new MetricsCollector();
 
         this.setupMiddleware();
         this.setupRoutes();
@@ -47,8 +74,8 @@ export default class IndexerAPI {
 
         this.app.get('/metrics', async (request: FastifyRequest, reply: FastifyReply) => {
             try {
-                reply.header('Content-Type', this.metrics.getContentType());
-                const metrics = await this.metrics.getMetrics();
+                reply.header('Content-Type', register.contentType);
+                const metrics = await register.metrics();
                 return reply.send(metrics);
             } catch (error) {
                 logger.error({ error }, 'Failed to get metrics');
@@ -130,8 +157,9 @@ export default class IndexerAPI {
             healthy = false;
         }
 
+        // AUDIT FIX: INP-5 - explicit columns
         const indexerState = await db.query(
-            'SELECT * FROM indexer_state WHERE id = 1'
+            `SELECT ${COLUMNS.indexer_state} FROM indexer_state WHERE id = 1`
         );
 
         if (indexerState.rows[0]) {
@@ -156,7 +184,8 @@ export default class IndexerAPI {
     }
 
     async getStats(): Promise<any> {
-        const state = await db.query('SELECT * FROM indexer_state WHERE id = 1');
+        // AUDIT FIX: INP-5 - explicit columns
+        const state = await db.query(`SELECT ${COLUMNS.indexer_state} FROM indexer_state WHERE id = 1`);
         const txCount = await db.query('SELECT COUNT(*) FROM indexed_transactions');
         const recentTx = await db.query(`
             SELECT instruction_type, COUNT(*) as count
@@ -199,8 +228,9 @@ export default class IndexerAPI {
     }
 
     async getReconciliationStatus(): Promise<any> {
+        // AUDIT FIX: INP-5 - explicit columns
         const lastRun = await db.query(`
-            SELECT * FROM reconciliation_runs
+            SELECT ${COLUMNS.reconciliation_runs} FROM reconciliation_runs
             ORDER BY started_at DESC
             LIMIT 1
         `);

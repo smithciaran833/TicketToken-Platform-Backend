@@ -5,6 +5,8 @@ import { withLock, LockKeys } from '@tickettoken/shared';
 import { LockTimeoutError, LockContentionError, LockSystemError } from '@tickettoken/shared';
 import { DatabaseService } from './databaseService';
 import { RedisService } from './redisService';
+// Import tenant-db helpers - Fixes Batch 3 audit findings (Multi-Tenancy & RLS)
+import { withTenantContext, setTenantContext, isValidTenantId } from '../utils/tenant-db';
 import {
   Ticket,
   TicketStatus,
@@ -15,11 +17,119 @@ import {
 import {
   NotFoundError,
   ConflictError,
+  ValidationError,
 } from '../utils/errors';
 import { logger } from '../utils/logger';
 import { config } from '../config';
 import * as crypto from 'crypto';
 import * as QRCode from 'qrcode';
+
+// =============================================================================
+// TICKET STATE MACHINE
+// =============================================================================
+
+/**
+ * SECURITY-CRITICAL: Valid state transitions for tickets
+ * This defines which status transitions are allowed.
+ * 
+ * Terminal states (empty arrays) cannot transition to any other state.
+ * This prevents:
+ * - Resurrecting cancelled/refunded tickets
+ * - Re-using already checked-in tickets
+ * - Bypassing the normal ticket lifecycle
+ */
+export const VALID_TRANSITIONS: Record<string, string[]> = {
+  // Initial states
+  'available': ['reserved', 'sold', 'cancelled'],
+  'reserved': ['available', 'sold', 'expired', 'cancelled'],
+  
+  // Active states
+  'sold': ['active', 'transferred', 'refunded', 'cancelled'],
+  'active': ['transferred', 'checked_in', 'refunded', 'cancelled'],
+  'transferred': ['active', 'transferred', 'checked_in', 'refunded', 'cancelled'],
+  
+  // Terminal states - NO outgoing transitions allowed
+  'checked_in': [],  // Terminal - ticket has been used
+  'used': [],        // Terminal - alias for checked_in
+  'refunded': [],    // Terminal - money returned
+  'expired': [],     // Terminal - reservation timed out
+  'cancelled': [],   // Terminal - admin cancelled
+};
+
+// Map uppercase enum to lowercase DB values
+const STATUS_NORMALIZE: Record<string, string> = {
+  'AVAILABLE': 'available',
+  'RESERVED': 'reserved',
+  'SOLD': 'sold',
+  'ACTIVE': 'active',
+  'TRANSFERRED': 'transferred',
+  'CHECKED_IN': 'checked_in',
+  'USED': 'used',
+  'REFUNDED': 'refunded',
+  'EXPIRED': 'expired',
+  'CANCELLED': 'cancelled',
+};
+
+/**
+ * Normalize status to lowercase for consistent comparison
+ */
+function normalizeStatus(status: string): string {
+  return STATUS_NORMALIZE[status] || status.toLowerCase();
+}
+
+/**
+ * Check if a status is terminal (no outgoing transitions)
+ */
+function isTerminalStatus(status: string): boolean {
+  const normalized = normalizeStatus(status);
+  return VALID_TRANSITIONS[normalized]?.length === 0;
+}
+
+/**
+ * Validate a state transition
+ * @throws ValidationError if transition is invalid
+ */
+export function validateStateTransition(
+  fromStatus: string,
+  toStatus: string,
+  context?: { ticketId?: string; reason?: string }
+): void {
+  const from = normalizeStatus(fromStatus);
+  const to = normalizeStatus(toStatus);
+  
+  // Check if from status is known
+  if (!(from in VALID_TRANSITIONS)) {
+    throw new ValidationError(
+      `Unknown ticket status: ${fromStatus}`,
+      { from, to, ...context }
+    );
+  }
+  
+  // Check if to status is known
+  if (!(to in VALID_TRANSITIONS)) {
+    throw new ValidationError(
+      `Unknown target status: ${toStatus}`,
+      { from, to, ...context }
+    );
+  }
+  
+  // Check if transition is allowed
+  const allowedTransitions = VALID_TRANSITIONS[from];
+  if (!allowedTransitions.includes(to)) {
+    // Check if it's a terminal state
+    if (isTerminalStatus(from)) {
+      throw new ValidationError(
+        `Cannot transition from terminal status '${from}'. Ticket is in final state.`,
+        { from, to, isTerminal: true, ...context }
+      );
+    }
+    
+    throw new ValidationError(
+      `Invalid status transition from '${from}' to '${to}'. Allowed: [${allowedTransitions.join(', ')}]`,
+      { from, to, allowed: allowedTransitions, ...context }
+    );
+  }
+}
 
 export class TicketService {
   private log = logger.child({ component: 'TicketService' });
@@ -380,31 +490,93 @@ export class TicketService {
     return ticket;
   }
 
+  /**
+   * Get tickets for a user within a specific tenant context
+   * Batch 3 Fix: Uses withTenantContext for proper RLS enforcement
+   */
   async getUserTickets(userId: string, tenantId: string, eventId?: string): Promise<Ticket[]> {
-    let query = `
-      SELECT t.*, tt.name as ticket_type_name, e.name as event_name
-      FROM tickets t
-      JOIN ticket_types tt ON t.ticket_type_id = tt.id
-      JOIN events e ON t.event_id = e.id
-      WHERE t.user_id = $1 AND t.tenant_id = $2
-    `;
-
-    const params: any[] = [userId, tenantId];
-
-    if (eventId) {
-      query += ' AND t.event_id = $3';
-      params.push(eventId);
+    // Validate tenant ID format - Batch 3 security check
+    if (!isValidTenantId(tenantId)) {
+      this.log.warn('Invalid tenant ID format in getUserTickets', { tenantId: tenantId?.substring(0, 50) });
+      throw new ValidationError('Invalid tenant ID format');
     }
 
-    query += ' ORDER BY t.created_at DESC';
+    // Wrap in tenant context for proper RLS enforcement
+    return withTenantContext(tenantId, async () => {
+      let query = `
+        SELECT t.*, tt.name as ticket_type_name, e.name as event_name
+        FROM tickets t
+        JOIN ticket_types tt ON t.ticket_type_id = tt.id
+        JOIN events e ON t.event_id = e.id
+        WHERE t.user_id = $1 AND t.tenant_id = $2
+      `;
 
-    const result = await DatabaseService.query<Ticket>(query, params);
-    return result.rows;
+      const params: any[] = [userId, tenantId];
+
+      if (eventId) {
+        query += ' AND t.event_id = $3';
+        params.push(eventId);
+      }
+
+      query += ' ORDER BY t.created_at DESC';
+
+      const result = await DatabaseService.query<Ticket>(query, params);
+      return result.rows;
+    });
   }
 
-  async updateTicketStatus(ticketId: string, status: TicketStatus): Promise<void> {
-    const query = 'UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2';
-    await DatabaseService.query(query, [status, ticketId]);
+  /**
+   * SECURITY-CRITICAL: Update ticket status with state machine validation
+   * This method validates the status transition before updating.
+   * 
+   * @throws ValidationError if the transition is not allowed
+   * @throws NotFoundError if ticket doesn't exist
+   */
+  async updateTicketStatus(
+    ticketId: string, 
+    newStatus: TicketStatus,
+    options?: { tenantId?: string; reason?: string; skipValidation?: boolean }
+  ): Promise<void> {
+    // Get current ticket status with lock
+    const currentQuery = options?.tenantId
+      ? 'SELECT status FROM tickets WHERE id = $1 AND tenant_id = $2 FOR UPDATE'
+      : 'SELECT status FROM tickets WHERE id = $1 FOR UPDATE';
+    
+    const params = options?.tenantId ? [ticketId, options.tenantId] : [ticketId];
+    const result = await DatabaseService.query<{ status: string }>(currentQuery, params);
+    
+    if (result.rows.length === 0) {
+      throw new NotFoundError('Ticket', { ticketId });
+    }
+    
+    const currentStatus = result.rows[0].status;
+    const targetStatus = typeof newStatus === 'string' ? newStatus : String(newStatus);
+    
+    // SECURITY: Validate state transition unless explicitly skipped (admin override)
+    if (!options?.skipValidation) {
+      validateStateTransition(currentStatus, targetStatus, {
+        ticketId,
+        reason: options?.reason
+      });
+    } else {
+      this.log.warn('State transition validation skipped', {
+        ticketId,
+        from: currentStatus,
+        to: targetStatus,
+        reason: options?.reason
+      });
+    }
+    
+    // Log the transition for audit
+    this.log.info('Ticket status transition', {
+      ticketId,
+      from: currentStatus,
+      to: targetStatus,
+      reason: options?.reason
+    });
+    
+    const updateQuery = 'UPDATE tickets SET status = $1, updated_at = NOW() WHERE id = $2';
+    await DatabaseService.query(updateQuery, [targetStatus.toLowerCase(), ticketId]);
 
     try {
       await RedisService.del(`ticket:${ticketId}`);

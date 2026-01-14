@@ -4,6 +4,7 @@ import { Venue, VenueAccessCheck, VenueServiceErrorResponse } from '../types/ven
 import { serviceUrls } from '../config/services';
 import { getCircuitBreaker } from '../middleware/circuit-breaker.middleware';
 import { logSecurityEvent } from '../utils/logger';
+import { generateInternalAuthHeaders } from '../utils/internal-auth';
 
 export class VenueServiceClient {
   private httpClient: AxiosInstance;
@@ -13,13 +14,12 @@ export class VenueServiceClient {
   constructor(server: FastifyInstance) {
     this.server = server;
     this.serviceUrl = serviceUrls.venue;
-    
+
     this.httpClient = axios.create({
       baseURL: this.serviceUrl,
       timeout: 3000,  // Faster timeout for access checks
       headers: {
-        'Content-Type': 'application/json',
-        'x-gateway-internal': 'true'
+        'Content-Type': 'application/json'
       }
     });
   }
@@ -34,12 +34,16 @@ export class VenueServiceClient {
     permission: string
   ): Promise<boolean> {
     const circuitBreaker = getCircuitBreaker('venue-service');
+    const path = '/internal/access-check';
+    const body = { userId, venueId, permission };
 
     try {
       const makeRequest = async () => {
+        const internalHeaders = generateInternalAuthHeaders('POST', path, body);
         const response = await this.httpClient.post<VenueAccessCheck>(
-          '/internal/access-check',
-          { userId, venueId, permission }
+          path,
+          body,
+          { headers: internalHeaders }
         );
         return response.data;
       };
@@ -62,7 +66,7 @@ export class VenueServiceClient {
     } catch (error) {
       // CRITICAL: On error, fail secure (deny access)
       this.handleError(error, 'checkUserVenueAccess', { userId, venueId, permission });
-      
+
       logSecurityEvent('venue_access_check_failed', {
         userId,
         venueId,
@@ -80,10 +84,14 @@ export class VenueServiceClient {
    */
   async getUserVenues(userId: string): Promise<Venue[]> {
     const circuitBreaker = getCircuitBreaker('venue-service');
+    const path = `/internal/users/${userId}/venues`;
 
     try {
       const makeRequest = async () => {
-        const response = await this.httpClient.get<Venue[]>(`/internal/users/${userId}/venues`);
+        const internalHeaders = generateInternalAuthHeaders('GET', path);
+        const response = await this.httpClient.get<Venue[]>(path, {
+          headers: internalHeaders
+        });
         return response.data;
       };
 
@@ -103,10 +111,14 @@ export class VenueServiceClient {
    */
   async getVenueById(venueId: string): Promise<Venue | null> {
     const circuitBreaker = getCircuitBreaker('venue-service');
+    const path = `/api/v1/venues/${venueId}`;
 
     try {
       const makeRequest = async () => {
-        const response = await this.httpClient.get<Venue>(`/api/v1/venues/${venueId}`);
+        const internalHeaders = generateInternalAuthHeaders('GET', path);
+        const response = await this.httpClient.get<Venue>(path, {
+          headers: internalHeaders
+        });
         return response.data;
       };
 
@@ -126,7 +138,7 @@ export class VenueServiceClient {
   private handleError(error: any, method: string, context?: any): any {
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError<VenueServiceErrorResponse>;
-      
+
       if (axiosError.code === 'ECONNREFUSED' || axiosError.code === 'ETIMEDOUT') {
         this.server.log.error({
           method,
@@ -134,7 +146,7 @@ export class VenueServiceClient {
           error: 'Venue service unavailable',
           code: axiosError.code
         }, 'VenueServiceClient error');
-        
+
         return null;
       }
 
@@ -166,6 +178,7 @@ export class VenueServiceClient {
 
   /**
    * Health check for venue service
+   * Note: Health checks don't need internal auth - they're public endpoints
    */
   async healthCheck(): Promise<boolean> {
     try {

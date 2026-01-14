@@ -56,12 +56,12 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
 
         // If still processing (102), return 409
         if (cachedResponse.statusCode === 102) {
-          log.warn('Concurrent duplicate request detected', {
+          log.warn({
             idempotencyKey,
             userId,
             tenantId,
             path: request.url
-          });
+          }, 'Concurrent duplicate request detected');
 
           return reply.status(409).send({
             error: 'Request already processing',
@@ -71,12 +71,12 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
         }
 
         // Return cached response
-        log.info('Returning cached idempotent response', {
+        log.info({
           idempotencyKey,
           userId,
           tenantId,
           originalStatus: cachedResponse.statusCode
-        });
+        }, 'Returning cached idempotent response');
 
         return reply.status(cachedResponse.statusCode).send(cachedResponse.body);
       }
@@ -100,7 +100,7 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
       return;
 
     } catch (err) {
-      log.error('Idempotency middleware error', { err, idempotencyKey });
+      log.error({ err, idempotencyKey }, 'Idempotency middleware error');
       // On Redis failure, proceed without idempotency (degraded mode)
       return;
     }
@@ -110,13 +110,13 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
 // Hook to cache response after sending (register globally in app.ts)
 export async function idempotencyCacheHook(request: FastifyRequest, reply: FastifyReply, payload: any) {
   const redisKey = (request as any).idempotencyRedisKey;
-  
+
   if (!redisKey) {
     return payload; // No idempotency key, skip caching
   }
 
   const statusCode = reply.statusCode;
-  
+
   let body: any;
   try {
     // Parse payload if it's a string
@@ -136,13 +136,13 @@ export async function idempotencyCacheHook(request: FastifyRequest, reply: Fasti
       }),
       86400  // 24 hours
     ).catch(err => {
-      log.error('Failed to cache successful response', { err });
+      log.error({ err }, 'Failed to cache successful response');
     });
   }
   // Delete key on server errors (5xx) to allow retry
   else if (statusCode >= 500) {
     await RedisService.del(redisKey).catch(err => {
-      log.error('Failed to delete key after server error', { err });
+      log.error({ err }, 'Failed to delete key after server error');
     });
   }
   // Keep key for client errors (4xx) to prevent retry
@@ -156,7 +156,7 @@ export async function idempotencyCacheHook(request: FastifyRequest, reply: Fasti
       }),
       3600  // 1 hour for errors
     ).catch(err => {
-      log.error('Failed to cache error response', { err });
+      log.error({ err }, 'Failed to cache error response');
     });
   }
 

@@ -1,0 +1,1836 @@
+{
+  "scanDate": "2026-01-07T02:01:42.640Z",
+  "summary": {
+    "total": 179,
+    "byTag": {
+      "NOTE": 110,
+      "TODO": 55,
+      "HACK": 1,
+      "OPTIMIZE": 4,
+      "REVIEW": 9
+    },
+    "bySeverity": {
+      "low": 114,
+      "medium": 64,
+      "high": 1
+    },
+    "byService": {
+      "auth-service": 9,
+      "event-service": 12,
+      "integration-service": 4,
+      "minting-service": 12,
+      "order-service": 12,
+      "payment-service": 12,
+      "packages": 1,
+      "analytics-service": 10,
+      "api-gateway": 4,
+      "blockchain-service": 12,
+      "compliance-service": 20,
+      "file-service": 4,
+      "marketplace-service": 3,
+      "monitoring-service": 3,
+      "notification-service": 1,
+      "queue-service": 4,
+      "search-service": 4,
+      "ticket-service": 8,
+      "transfer-service": 2,
+      "venue-service": 12,
+      "shared": 6,
+      "root": 13,
+      "frontend": 9,
+      "smart-contracts": 2
+    }
+  },
+  "results": [
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/auth.controller.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/auth.controller.test.ts",
+      "service": "auth-service",
+      "line": 459,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This test may need actual auth middleware to work fully",
+      "context": "\r\n      // Note: This test may need actual auth middleware to work fully\r\n      // For now, we verify the controller logic exists\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/auth.routes.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/auth.routes.test.ts",
+      "service": "auth-service",
+      "line": 46,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This test would ideally import and register actual routes",
+      "context": "\r\n    // Note: This test would ideally import and register actual routes\r\n    // For integration testing without full app setup, we create minimal routes\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/config/dependencies.integration.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/config/dependencies.integration.test.ts",
+      "service": "auth-service",
+      "line": 15,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "createDependencyContainer would need to be imported",
+      "context": "  beforeEach(() => {\r\n    // Note: createDependencyContainer would need to be imported\r\n    // This is a placeholder showing the test structure\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/jwt.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/jwt.service.test.ts",
+      "service": "auth-service",
+      "line": 404,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This requires the family to be stored in Redis metadata",
+      "context": "      // Verify tokens with that family are deleted\r\n      // Note: This requires the family to be stored in Redis metadata\r\n      // The actual implementation may vary\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/jwt.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/jwt.service.test.ts",
+      "service": "auth-service",
+      "line": 543,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "The actual implementation may create a new family or preserve it",
+      "context": "      expect(family2).toBeDefined();\r\n      // Note: The actual implementation may create a new family or preserve it\r\n      // This test verifies the family tracking mechanism exists\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/oauth.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/oauth.service.test.ts",
+      "service": "auth-service",
+      "line": 114,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In real implementation, this would call Google's API",
+      "context": "\r\n      // Note: In real implementation, this would call Google's API\r\n      // For integration tests, assume the service handles the OAuth exchange\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/oauth.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/oauth.service.test.ts",
+      "service": "auth-service",
+      "line": 384,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This should check provider_id, not just provider",
+      "context": "      // Try to link same OAuth account to another user\r\n      // Note: This should check provider_id, not just provider\r\n      // The actual implementation may vary\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/wallet.controller.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/wallet.controller.test.ts",
+      "service": "auth-service",
+      "line": 174,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "With mock signature, this will fail at signature verification",
+      "context": "\r\n      // Note: With mock signature, this will fail at signature verification\r\n      await walletController.register(request, reply);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/auth-service/tests/integration/wallet.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/auth-service/tests/integration/wallet.service.test.ts",
+      "service": "auth-service",
+      "line": 200,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In a real test, you'd use actual Solana keypair and signature",
+      "context": "    it('should return true for valid Solana signature', async () => {\r\n      // Note: In a real test, you'd use actual Solana keypair and signature\r\n      // For integration testing, we verify the verification logic exists\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/event-service/tests/integration/middleware-rate-limit.test.ts",
+      "relativePath": ".archived-tests/backend-services/event-service/tests/integration/middleware-rate-limit.test.ts",
+      "service": "event-service",
+      "line": 64,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "exact header names depend on @fastify/rate-limit config",
+      "context": "      // Rate limit headers should be present\n      // Note: exact header names depend on @fastify/rate-limit config\n      expect(response.statusCode).not.toBe(429);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/event-service/tests/integration/middleware-rate-limit.test.ts",
+      "relativePath": ".archived-tests/backend-services/event-service/tests/integration/middleware-rate-limit.test.ts",
+      "service": "event-service",
+      "line": 130,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This test would need actual rate limit triggering",
+      "context": "    it('should return retryAfter in rate limit error response', async () => {\n      // Note: This test would need actual rate limit triggering\n      // For now, verify the error response builder is configured"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/integration-service/tests/unit/services/health-check.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/integration-service/tests/unit/services/health-check.service.test.ts",
+      "service": "integration-service",
+      "line": 129,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Service initializes all providers, so this might always return a value",
+      "context": "    it('should return undefined for unchecked provider', () => {\r\n      // Note: Service initializes all providers, so this might always return a value\r\n      // Testing with a provider that doesn't get initialized\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/minting-service/tests/security/security.test.ts",
+      "relativePath": ".archived-tests/backend-services/minting-service/tests/security/security.test.ts",
+      "service": "minting-service",
+      "line": 231,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Not all may be configured, but they should be checked",
+      "context": "      // These are common security headers that should be present\r\n      // Note: Not all may be configured, but they should be checked\r\n      const securityHeaders = [\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/order-service/tests/unit/jobs/reconciliation.job.test.ts",
+      "relativePath": ".archived-tests/backend-services/order-service/tests/unit/jobs/reconciliation.job.test.ts",
+      "service": "order-service",
+      "line": 3,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Fix fake timer tests - currently hanging",
+      "context": "\n// TODO: Fix fake timer tests - currently hanging\ndescribe.skip('ReconciliationJob', () => {"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/backend-services/payment-service/tests/integration/services/database.service.test.ts",
+      "relativePath": ".archived-tests/backend-services/payment-service/tests/integration/services/database.service.test.ts",
+      "service": "payment-service",
+      "line": 15,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "The singleton is already used by other services, so we test behavior carefully",
+      "context": "  // We'll create a fresh instance for some tests\n  // Note: The singleton is already used by other services, so we test behavior carefully\n"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/.archived-tests/packages/sdk-typescript-tests/unit/types/config.test.ts",
+      "relativePath": ".archived-tests/packages/sdk-typescript-tests/unit/types/config.test.ts",
+      "service": "packages",
+      "line": 20,
+      "tag": "HACK",
+      "severity": "high",
+      "message": "ed.com';",
+      "context": "        // @ts-ignore - testing runtime immutability\r\n        ENVIRONMENTS.production = 'https://hacked.com';\r\n      }).toThrow();\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/src/controllers/prediction.controller.ts",
+      "relativePath": "backend/services/analytics-service/src/controllers/prediction.controller.ts",
+      "service": "analytics-service",
+      "line": 153,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In production, these should come from model monitoring/tracking (e.g., MLflow, Weights & Biases)",
+      "context": "      // Return model performance metrics\n      // NOTE: In production, these should come from model monitoring/tracking (e.g., MLflow, Weights & Biases)\n      // Currently using deterministic baseline metrics per model type for consistent API responses"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/src/routes/prediction.routes.ts",
+      "relativePath": "backend/services/analytics-service/src/routes/prediction.routes.ts",
+      "service": "analytics-service",
+      "line": 104,
+      "tag": "OPTIMIZE",
+      "severity": "low",
+      "message": "pricing",
+      "context": "\n  // Optimize pricing\n  app.post('/pricing', {"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/src/services/demand-tracker.service.ts",
+      "relativePath": "backend/services/analytics-service/src/services/demand-tracker.service.ts",
+      "service": "analytics-service",
+      "line": 50,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "PostgreSQL doesn't support parameterized INTERVAL values",
+      "context": "      const db = getDb();\n      // Note: PostgreSQL doesn't support parameterized INTERVAL values\n      // Using string interpolation is safe here since 'hours' is validated as a number"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/src/services/metrics-migration.service.ts",
+      "relativePath": "backend/services/analytics-service/src/services/metrics-migration.service.ts",
+      "service": "analytics-service",
+      "line": 62,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Connection is kept open for connection pooling - call close() on service shutdown",
+      "context": "    }\n    // Note: Connection is kept open for connection pooling - call close() on service shutdown\n  }"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/src/services/metrics-migration.service.ts",
+      "relativePath": "backend/services/analytics-service/src/services/metrics-migration.service.ts",
+      "service": "analytics-service",
+      "line": 122,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Connection is kept open for connection pooling - call close() on service shutdown",
+      "context": "\n    // Note: Connection is kept open for connection pooling - call close() on service shutdown\n    console.log('🎉 Migration complete!');"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/src/services/metrics-migration.service.ts",
+      "relativePath": "backend/services/analytics-service/src/services/metrics-migration.service.ts",
+      "service": "analytics-service",
+      "line": 141,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Connection is kept open for connection pooling - call close() on service shutdown",
+      "context": "\n    // Note: Connection is kept open for connection pooling - call close() on service shutdown\n"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/tests/global-setup.ts",
+      "relativePath": "backend/services/analytics-service/tests/global-setup.ts",
+      "service": "analytics-service",
+      "line": 27,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In a real setup, you would run migrations here",
+      "context": "    try {\r\n      // Note: In a real setup, you would run migrations here\r\n      // const knex = require('knex')(require('../knexfile').test);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/tests/global-setup.ts",
+      "relativePath": "backend/services/analytics-service/tests/global-setup.ts",
+      "service": "analytics-service",
+      "line": 40,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In a real setup, you would verify Redis connection here",
+      "context": "    try {\r\n      // Note: In a real setup, you would verify Redis connection here\r\n      console.log('✅ Test Redis ready');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/tests/global-teardown.ts",
+      "relativePath": "backend/services/analytics-service/tests/global-teardown.ts",
+      "service": "analytics-service",
+      "line": 12,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In a real teardown, you would clean up the test database",
+      "context": "    try {\r\n      // Note: In a real teardown, you would clean up the test database\r\n      // const knex = require('knex')(require('../knexfile').test);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/analytics-service/tests/global-teardown.ts",
+      "relativePath": "backend/services/analytics-service/tests/global-teardown.ts",
+      "service": "analytics-service",
+      "line": 25,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In a real teardown, you would flush test Redis keys",
+      "context": "    try {\r\n      // Note: In a real teardown, you would flush test Redis keys\r\n      // const Redis = require('ioredis');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/api-gateway/src/middleware/logging.middleware.ts",
+      "relativePath": "backend/services/api-gateway/src/middleware/logging.middleware.ts",
+      "service": "api-gateway",
+      "line": 38,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Request metrics (duration, count, etc.) are tracked in metrics.middleware.ts",
+      "context": "\n    // Note: Request metrics (duration, count, etc.) are tracked in metrics.middleware.ts\n  });"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/api-gateway/src/middleware/timeout.middleware.ts",
+      "relativePath": "backend/services/api-gateway/src/middleware/timeout.middleware.ts",
+      "service": "api-gateway",
+      "line": 168,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Export timeout metrics to monitoring system",
+      "context": "  setInterval(() => {\n    // TODO: Export timeout metrics to monitoring system\n    const metrics = (server as any).timeoutMetrics;"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/api-gateway/src/middleware/venue-isolation.middleware.ts",
+      "relativePath": "backend/services/api-gateway/src/middleware/venue-isolation.middleware.ts",
+      "service": "api-gateway",
+      "line": 63,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "PostgreSQL RLS context (SET LOCAL app.current_venue_id) is NOT set here.",
+      "context": "\n    // NOTE: PostgreSQL RLS context (SET LOCAL app.current_venue_id) is NOT set here.\n    // The API Gateway is a stateless proxy with no database connection."
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/api-gateway/src/services/proxy.service.ts",
+      "relativePath": "backend/services/api-gateway/src/services/proxy.service.ts",
+      "service": "api-gateway",
+      "line": 168,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "These are typically client errors that should be returned as-is",
+      "context": "      // 4xx errors - pass through but wrap for consistency\n      // Note: These are typically client errors that should be returned as-is\n      return new ProxyError(message, status, 'DOWNSTREAM_ERROR', service, axiosError);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/app.ts",
+      "relativePath": "backend/services/blockchain-service/src/app.ts",
+      "service": "blockchain-service",
+      "line": 90,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Tenant context middleware is applied per-route based on authentication requirements",
+      "context": "\n  // Note: Tenant context middleware is applied per-route based on authentication requirements\n  // - Public routes (health, metrics): No tenant context needed"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/config/treasury-whitelist.ts",
+      "relativePath": "backend/services/blockchain-service/src/config/treasury-whitelist.ts",
+      "service": "blockchain-service",
+      "line": 108,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In production, this would load from a secure config file",
+      "context": "  try {\r\n    // Note: In production, this would load from a secure config file\r\n    // For now, just log that we would load from file\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/middleware/idempotency.ts",
+      "relativePath": "backend/services/blockchain-service/src/middleware/idempotency.ts",
+      "service": "blockchain-service",
+      "line": 525,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "For Redis, would need SCAN to find all keys for tenant",
+      "context": "\r\n  // Note: For Redis, would need SCAN to find all keys for tenant\r\n  // This is simplified for single-process scenarios\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/migrations/002_add_rls_force_and_fix_tenant_defaults.ts",
+      "relativePath": "backend/services/blockchain-service/src/migrations/002_add_rls_force_and_fix_tenant_defaults.ts",
+      "service": "blockchain-service",
+      "line": 103,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This makes tenant_id required without a default",
+      "context": "    // Remove default value from tenant_id column\r\n    // Note: This makes tenant_id required without a default\r\n    await knex.raw(`\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/migrations/002_add_rls_force_and_fix_tenant_defaults.ts",
+      "relativePath": "backend/services/blockchain-service/src/migrations/002_add_rls_force_and_fix_tenant_defaults.ts",
+      "service": "blockchain-service",
+      "line": 268,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We don't drop the role as other objects may depend on it",
+      "context": "\r\n  // Note: We don't drop the role as other objects may depend on it\r\n\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/migrations/006_add_partial_unique_indexes.ts",
+      "relativePath": "backend/services/blockchain-service/src/migrations/006_add_partial_unique_indexes.ts",
+      "service": "blockchain-service",
+      "line": 169,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Not recreating old indexes as they may cause issues",
+      "context": "\r\n  // Note: Not recreating old indexes as they may cause issues\r\n  // If rollback is needed, old indexes should be manually assessed\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/migrations/008_ensure_extensions.ts",
+      "relativePath": "backend/services/blockchain-service/src/migrations/008_ensure_extensions.ts",
+      "service": "blockchain-service",
+      "line": 85,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We don't drop extensions in down() because:",
+      "context": "export async function down(knex: Knex): Promise<void> {\r\n  // NOTE: We don't drop extensions in down() because:\r\n  // 1. Other tables/functions may depend on them\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/queues/dlq-processor.ts",
+      "relativePath": "backend/services/blockchain-service/src/queues/dlq-processor.ts",
+      "service": "blockchain-service",
+      "line": 569,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In a real implementation, use clearInterval",
+      "context": "  if (processingInterval) {\r\n    // Note: In a real implementation, use clearInterval\r\n    processingInterval = null;\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/queues/mintQueue.ts",
+      "relativePath": "backend/services/blockchain-service/src/queues/mintQueue.ts",
+      "service": "blockchain-service",
+      "line": 143,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "base58 decoding typically needs the bs58 library",
+      "context": "        // Try to decode as base58 (standard Solana format)\n        // Note: base58 decoding typically needs the bs58 library\n        // For now, assume JSON array format is required"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/routes/health.routes.ts",
+      "relativePath": "backend/services/blockchain-service/src/routes/health.routes.ts",
+      "service": "blockchain-service",
+      "line": 622,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "balance is intentionally NOT exposed in public endpoints",
+      "context": "        service: 'blockchain-service'\n        // NOTE: balance is intentionally NOT exposed in public endpoints\n      };"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/utils/recovery-points.ts",
+      "relativePath": "backend/services/blockchain-service/src/utils/recovery-points.ts",
+      "service": "blockchain-service",
+      "line": 384,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Redis scan would be needed for distributed systems",
+      "context": "  \r\n  // Note: Redis scan would be needed for distributed systems\r\n  // This is simplified for single-process\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/blockchain-service/src/wallets/userWallet.ts",
+      "relativePath": "backend/services/blockchain-service/src/wallets/userWallet.ts",
+      "service": "blockchain-service",
+      "line": 429,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "expiresAt was stored with the nonce, but we verify signature against the message format",
+      "context": "      // Reconstruct the message that was signed\n      // Note: expiresAt was stored with the nonce, but we verify signature against the message format\n      // The client should have signed the exact message returned by requestConnectionNonce"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/bank.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/bank.controller.ts",
+      "service": "compliance-service",
+      "line": 13,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Update bankService.verifyBankAccount() to accept tenantId parameter",
+      "context": "      \n      // TODO: Update bankService.verifyBankAccount() to accept tenantId parameter\n      const verification = await bankService.verifyBankAccount("
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/bank.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/bank.controller.ts",
+      "service": "compliance-service",
+      "line": 44,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Update bankService.createPayoutMethod() to accept tenantId parameter",
+      "context": "      \n      // TODO: Update bankService.createPayoutMethod() to accept tenantId parameter\n      const payoutId = await bankService.createPayoutMethod(venueId, accountToken);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/gdpr.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/gdpr.controller.ts",
+      "service": "compliance-service",
+      "line": 24,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Update dataRetentionService to be tenant-aware",
+      "context": "      // Process deletion\n      // TODO: Update dataRetentionService to be tenant-aware\n      await dataRetentionService.handleGDPRDeletion(customerId);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 9,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "External webhooks don't include tenant_id in request",
+      "context": "  // Plaid webhook for bank verification\n  // NOTE: External webhooks don't include tenant_id in request\n  // Tenant must be inferred from item_id or other identifiers"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 16,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Look up tenant_id from item_id before logging",
+      "context": "\n      // TODO: Look up tenant_id from item_id before logging\n      // const tenantLookup = await db.query('SELECT tenant_id FROM bank_verifications WHERE plaid_item_id = $1', [item_id]);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 32,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Add tenant_id check to WHERE clause for security",
+      "context": "            // Mark bank verification as expired\n            // TODO: Add tenant_id check to WHERE clause for security\n            await db.query("
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 57,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "External webhooks don't include tenant_id in request",
+      "context": "  // Stripe webhook for payment processing\n  // NOTE: External webhooks don't include tenant_id in request\n  // Tenant must be inferred from payment/customer identifiers"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 76,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Extract customer/account ID and look up tenant_id before logging",
+      "context": "\n      // TODO: Extract customer/account ID and look up tenant_id before logging\n      // const tenantId = await lookupTenantFromStripeEvent(payload);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 96,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "External webhooks don't include tenant_id in request",
+      "context": "  // SendGrid webhook for email events\n  // NOTE: External webhooks don't include tenant_id in request\n  // Tenant must be inferred from email/notification identifiers"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "relativePath": "backend/services/compliance-service/src/controllers/webhook.controller.ts",
+      "service": "compliance-service",
+      "line": 106,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Add tenant_id to WHERE clause for security once tenant is looked up",
+      "context": "        // Update notification log\n        // TODO: Add tenant_id to WHERE clause for security once tenant is looked up\n        if (event.event === 'delivered' || event.event === 'bounce') {"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "relativePath": "backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "service": "compliance-service",
+      "line": 32,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual tax update processing",
+      "context": "      \n      // TODO: Implement actual tax update processing\n      // - Validate payload"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "relativePath": "backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "service": "compliance-service",
+      "line": 75,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement KYC update processing",
+      "context": "      \n      // TODO: Implement KYC update processing\n      // - Update venue verification status"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "relativePath": "backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "service": "compliance-service",
+      "line": 118,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement risk alert processing",
+      "context": "      \n      // TODO: Implement risk alert processing\n      // - Log risk event"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "relativePath": "backend/services/compliance-service/src/routes/webhook.routes.ts",
+      "service": "compliance-service",
+      "line": 162,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement OFAC result processing",
+      "context": "      \n      // TODO: Implement OFAC result processing\n      // - Update screening records"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/services/privacy-export.service.ts",
+      "relativePath": "backend/services/compliance-service/src/services/privacy-export.service.ts",
+      "service": "compliance-service",
+      "line": 60,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement proper tenant context retrieval",
+      "context": "  private getTenantId(): string {\r\n    // TODO: Implement proper tenant context retrieval\r\n    // For now, return a default - this should be properly implemented with tenant middleware\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/services/risk.service.ts",
+      "relativePath": "backend/services/compliance-service/src/services/risk.service.ts",
+      "service": "compliance-service",
+      "line": 138,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Send notification to admin",
+      "context": "    \n    // TODO: Send notification to admin\n  }"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/src/services/scheduler.service.ts",
+      "relativePath": "backend/services/compliance-service/src/services/scheduler.service.ts",
+      "service": "compliance-service",
+      "line": 26,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement report generation",
+      "context": "      logger.info('Generating weekly compliance report...');\n      // TODO: Implement report generation\n      logger.warn('Weekly report generation not yet implemented');"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/tests/fixtures/index.ts",
+      "relativePath": "backend/services/compliance-service/tests/fixtures/index.ts",
+      "service": "compliance-service",
+      "line": 340,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This is a mock signature, not cryptographically valid",
+      "context": "  const payloadB64 = Buffer.from(JSON.stringify({ ...defaultPayload, ...payload })).toString('base64url');\r\n  // Note: This is a mock signature, not cryptographically valid\r\n  return `${header}.${payloadB64}.mock_signature`;\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/tests/integration/tenant-isolation.test.ts",
+      "relativePath": "backend/services/compliance-service/tests/integration/tenant-isolation.test.ts",
+      "service": "compliance-service",
+      "line": 48,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Replace with actual API call",
+      "context": "      \r\n      // TODO: Replace with actual API call\r\n      // const response = await request(app)\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/compliance-service/tests/setup.ts",
+      "relativePath": "backend/services/compliance-service/tests/setup.ts",
+      "service": "compliance-service",
+      "line": 42,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This is NOT a valid signature - only for testing without verification",
+      "context": "  \r\n  // Note: This is NOT a valid signature - only for testing without verification\r\n  const signature = 'test-signature';\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/config/database.ts",
+      "relativePath": "backend/services/event-service/src/config/database.ts",
+      "service": "event-service",
+      "line": 131,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In production, ensure DATABASE_CA_CERT env var is set if using self-signed certs",
+      "context": "          // CRITICAL FIX: TLS certificate validation enabled for production\n          // Note: In production, ensure DATABASE_CA_CERT env var is set if using self-signed certs\n          ssl: config.environment === 'production' ? { "
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/controllers/customer-analytics.controller.ts",
+      "relativePath": "backend/services/event-service/src/controllers/customer-analytics.controller.ts",
+      "service": "event-service",
+      "line": 11,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This is a simplified version - in reality you'd join with actual",
+      "context": "    // Get customer's ticket purchase history from event_pricing\n    // Note: This is a simplified version - in reality you'd join with actual\n    // ticket purchases from the ticket-service"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/controllers/tickets.controller.ts",
+      "relativePath": "backend/services/event-service/src/controllers/tickets.controller.ts",
+      "service": "event-service",
+      "line": 140,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In production, you'd want to check if tickets have been sold",
+      "context": "\n    // Note: In production, you'd want to check if tickets have been sold\n    // via the ticket service before allowing certain updates"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/migrations/001_baseline_event.ts",
+      "relativePath": "backend/services/event-service/src/migrations/001_baseline_event.ts",
+      "service": "event-service",
+      "line": 18,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Tenants table is created by auth-service",
+      "context": "\n  // NOTE: Tenants table is created by auth-service\n  // This service only references it via FK constraints"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/migrations/001_baseline_event.ts",
+      "relativePath": "backend/services/event-service/src/migrations/001_baseline_event.ts",
+      "service": "event-service",
+      "line": 505,
+      "tag": "OPTIMIZE",
+      "severity": "low",
+      "message": "queries that filter by tenant_id (10-100x performance improvement)",
+      "context": "\n  // Optimize queries that filter by tenant_id (10-100x performance improvement)\n  await knex.raw('CREATE INDEX IF NOT EXISTS idx_events_tenant_venue ON events(tenant_id, venue_id)');"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/models/base.model.ts",
+      "relativePath": "backend/services/event-service/src/models/base.model.ts",
+      "service": "event-service",
+      "line": 50,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Subclasses should define selectColumns for better practice",
+      "context": "    // Fall back to * for backward compatibility\n    // Note: Subclasses should define selectColumns for better practice\n    return '*';"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/models/event.model.ts",
+      "relativePath": "backend/services/event-service/src/models/event.model.ts",
+      "service": "event-service",
+      "line": 223,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Conflict occurred, returned existing record",
+      "context": "      delete record._inserted;\n      // Note: Conflict occurred, returned existing record\n    } else if (record) {"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/routes/event-reviews.routes.ts",
+      "relativePath": "backend/services/event-service/src/routes/event-reviews.routes.ts",
+      "service": "event-service",
+      "line": 12,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "s",
+      "context": "\r\n  // Reviews\r\n  fastify.post('/:eventId/reviews', controller.createReview);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/routes/event-reviews.routes.ts",
+      "relativePath": "backend/services/event-service/src/routes/event-reviews.routes.ts",
+      "service": "event-service",
+      "line": 19,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "actions",
+      "context": "\r\n  // Review actions\r\n  fastify.post('/:eventId/reviews/:reviewId/helpful', controller.markHelpful);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/event-service/src/services/event-state-machine.ts",
+      "relativePath": "backend/services/event-service/src/services/event-state-machine.ts",
+      "service": "event-service",
+      "line": 440,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual notification logic:",
+      "context": "\r\n  // TODO: Implement actual notification logic:\r\n  // 1. Query ticket holders for this event\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/file-service/src/controllers/upload.controller.ts",
+      "relativePath": "backend/services/file-service/src/controllers/upload.controller.ts",
+      "service": "file-service",
+      "line": 134,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "S3StorageService doesn't have a download/getObject method",
+      "context": "    try {\n      // Note: S3StorageService doesn't have a download/getObject method\n      // We'll need to add it or use the AWS SDK directly"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/file-service/src/migrations/20260104_add_idempotency_and_rls_force.ts",
+      "relativePath": "backend/services/file-service/src/migrations/20260104_add_idempotency_and_rls_force.ts",
+      "service": "file-service",
+      "line": 41,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Not enforced to allow for in-progress uploads",
+      "context": "    // Foreign key to files table (optional - file may not exist yet)\r\n    // Note: Not enforced to allow for in-progress uploads\r\n    table.index(['file_id']);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/file-service/src/migrations/20260104_add_rls_policies.ts",
+      "relativePath": "backend/services/file-service/src/migrations/20260104_add_rls_policies.ts",
+      "service": "file-service",
+      "line": 278,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We don't drop the tenant_id column as it may contain data",
+      "context": "    \r\n    // Note: We don't drop the tenant_id column as it may contain data\r\n    console.log('Note: tenant_id column preserved to prevent data loss');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/file-service/src/processors/image/image.processor.ts",
+      "relativePath": "backend/services/file-service/src/processors/image/image.processor.ts",
+      "service": "file-service",
+      "line": 56,
+      "tag": "OPTIMIZE",
+      "severity": "low",
+      "message": "original",
+      "context": "\n        // Optimize original\n        tasks.push(this.optimizeImage(fileId, buffer, filePath));"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/integration-service/src/services/dead-letter-queue.service.ts",
+      "relativePath": "backend/services/integration-service/src/services/dead-letter-queue.service.ts",
+      "service": "integration-service",
+      "line": 155,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Actual requeuing logic would go here",
+      "context": "\r\n    // Note: Actual requeuing logic would go here\r\n    // This would typically involve adding the job back to the main queue\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/integration-service/src/services/sync-engine.service.ts",
+      "relativePath": "backend/services/integration-service/src/services/sync-engine.service.ts",
+      "service": "integration-service",
+      "line": 182,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In practice, you'd need to know the key name",
+      "context": "    // Try API keys\n    // Note: In practice, you'd need to know the key name\n    // This is a simplified example"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/integration-service/src/utils/error-handler.ts",
+      "relativePath": "backend/services/integration-service/src/utils/error-handler.ts",
+      "service": "integration-service",
+      "line": 204,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Integrate with alerting service",
+      "context": "\r\n    // TODO: Integrate with alerting service\r\n    // Example: await alertingService.send({ ... });\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/marketplace-service/migrations/20260103_add_indexes_and_audit.ts",
+      "relativePath": "backend/services/marketplace-service/migrations/20260103_add_indexes_and_audit.ts",
+      "service": "marketplace-service",
+      "line": 138,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "CONCURRENTLY cannot run inside a transaction, so we use raw SQL",
+      "context": "  // 5. AUDIT FIX MIG-1: Create indexes CONCURRENTLY\r\n  // Note: CONCURRENTLY cannot run inside a transaction, so we use raw SQL\r\n  // and handle errors gracefully\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/marketplace-service/migrations/20260103_add_indexes_and_audit.ts",
+      "relativePath": "backend/services/marketplace-service/migrations/20260103_add_indexes_and_audit.ts",
+      "service": "marketplace-service",
+      "line": 261,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We don't drop indexes as they may be needed by other parts of the system",
+      "context": "\r\n  // Note: We don't drop indexes as they may be needed by other parts of the system\r\n  console.log('✅ Rollback completed');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/marketplace-service/src/jobs/listing-expiration.ts",
+      "relativePath": "backend/services/marketplace-service/src/jobs/listing-expiration.ts",
+      "service": "marketplace-service",
+      "line": 218,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Integrate with notification service",
+      "context": "\r\n  // TODO: Integrate with notification service\r\n  // await notificationService.send({\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/migrations/20260102_add_rls_policies.ts",
+      "relativePath": "backend/services/minting-service/migrations/20260102_add_rls_policies.ts",
+      "service": "minting-service",
+      "line": 111,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "With soft delete, this mainly prevents hard deletes",
+      "context": "    -- Policy: DELETE - Users can only delete their tenant's data\r\n    -- Note: With soft delete, this mainly prevents hard deletes\r\n    CREATE POLICY tenant_isolation_delete ON nft_mints\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/migrations/20260102_add_rls_policies.ts",
+      "relativePath": "backend/services/minting-service/migrations/20260102_add_rls_policies.ts",
+      "service": "minting-service",
+      "line": 130,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "DELETE not granted by default - use soft delete",
+      "context": "    \r\n    -- Note: DELETE not granted by default - use soft delete\r\n    -- GRANT DELETE ON nft_mints TO minting_app;  -- Uncomment if hard delete needed\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/migrations/20260102_migration_best_practices.ts",
+      "relativePath": "backend/services/minting-service/migrations/20260102_migration_best_practices.ts",
+      "service": "minting-service",
+      "line": 33,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "CONCURRENTLY indexes cannot be created inside a transaction.",
+      "context": "\r\n  // NOTE: CONCURRENTLY indexes cannot be created inside a transaction.\r\n  // If running this migration with Knex's default transaction wrapper,\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/migrations/20260102_migration_best_practices.ts",
+      "relativePath": "backend/services/minting-service/migrations/20260102_migration_best_practices.ts",
+      "service": "minting-service",
+      "line": 179,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We don't drop pgcrypto or uuid-ossp as other parts of the DB might use them",
+      "context": "\r\n  // Note: We don't drop pgcrypto or uuid-ossp as other parts of the DB might use them\r\n  console.log('Note: pgcrypto and uuid-ossp extensions not dropped - may be used by other schemas');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/config/wallet-provider.ts",
+      "relativePath": "backend/services/minting-service/src/config/wallet-provider.ts",
+      "service": "minting-service",
+      "line": 146,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement fetching public key from KMS",
+      "context": "    if (!this.publicKey) {\r\n      // TODO: Implement fetching public key from KMS\r\n      // const kms = new KMSClient({ region: process.env.AWS_REGION });\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/config/wallet-provider.ts",
+      "relativePath": "backend/services/minting-service/src/config/wallet-provider.ts",
+      "service": "minting-service",
+      "line": 159,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement KMS signing",
+      "context": "  async sign(message: Uint8Array): Promise<Uint8Array> {\r\n    // TODO: Implement KMS signing\r\n    // const kms = new KMSClient({ region: process.env.AWS_REGION });\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/routes/bull-board.ts",
+      "relativePath": "backend/services/minting-service/src/routes/bull-board.ts",
+      "service": "minting-service",
+      "line": 114,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "basePath is already set via serverAdapter.setBasePath()",
+      "context": "  // Register the Bull Board plugin\r\n  // Note: basePath is already set via serverAdapter.setBasePath()\r\n  await fastify.register(serverAdapter.registerPlugin(), {\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/routes/health.ts",
+      "relativePath": "backend/services/minting-service/src/routes/health.ts",
+      "service": "minting-service",
+      "line": 252,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "uptime and version omitted for security (issue #9 - SEC5)",
+      "context": "      timestamp: new Date().toISOString()\r\n      // Note: uptime and version omitted for security (issue #9 - SEC5)\r\n    };\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/routes/health.ts",
+      "relativePath": "backend/services/minting-service/src/routes/health.ts",
+      "service": "minting-service",
+      "line": 341,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "version and uptime omitted for security",
+      "context": "      timestamp: new Date().toISOString(),\r\n      // Note: version and uptime omitted for security\r\n      components\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/routes/health.ts",
+      "relativePath": "backend/services/minting-service/src/routes/health.ts",
+      "service": "minting-service",
+      "line": 594,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Solana RPC is NOT checked here - it's an external dependency",
+      "context": "\r\n    // NOTE: Solana RPC is NOT checked here - it's an external dependency\r\n    // Solana status is available in /health/detailed for monitoring\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/minting-service/src/routes/internal-mint.ts",
+      "relativePath": "backend/services/minting-service/src/routes/internal-mint.ts",
+      "service": "minting-service",
+      "line": 354,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Query mint status from database",
+      "context": "\n      // TODO: Query mint status from database\n      // For now, return a placeholder"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/monitoring-service/src/server.ts",
+      "relativePath": "backend/services/monitoring-service/src/server.ts",
+      "service": "monitoring-service",
+      "line": 138,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "System metrics (activeUsers, queueSize, cacheHitRate) should be updated",
+      "context": "\n  // Note: System metrics (activeUsers, queueSize, cacheHitRate) should be updated\n  // by the actual services that track these values, not by random generation."
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/monitoring-service/src/services/websocket-manager.service.ts",
+      "relativePath": "backend/services/monitoring-service/src/services/websocket-manager.service.ts",
+      "service": "monitoring-service",
+      "line": 180,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement JWT token validation",
+      "context": "  private handleAuth(connectionId: string, token: string): void {\r\n    // TODO: Implement JWT token validation\r\n    const connection = this.connections.get(connectionId);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/monitoring-service/src/services/websocket.service.ts",
+      "relativePath": "backend/services/monitoring-service/src/services/websocket.service.ts",
+      "service": "monitoring-service",
+      "line": 8,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual WebSocket support later",
+      "context": "    logger.info('WebSocket service initialized (placeholder)');\n    // TODO: Implement actual WebSocket support later\n    // For now, this is just a placeholder to avoid errors"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/notification-service/src/models/suppression.model.ts",
+      "relativePath": "backend/services/notification-service/src/models/suppression.model.ts",
+      "service": "notification-service",
+      "line": 79,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This might be null for privacy",
+      "context": "      id: row.id,\n      identifier: row.identifier, // Note: This might be null for privacy\n      channel: row.channel,"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/controllers/tax.controller.ts",
+      "relativePath": "backend/services/order-service/src/controllers/tax.controller.ts",
+      "service": "order-service",
+      "line": 16,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Tax services not yet implemented - stubbed for now",
+      "context": "\r\n// TODO: Tax services not yet implemented - stubbed for now\r\nexport class TaxController {\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/migrations/001_baseline_orders.ts",
+      "relativePath": "backend/services/order-service/src/migrations/001_baseline_orders.ts",
+      "service": "order-service",
+      "line": 173,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "discounts and order_discounts tables are owned by ticket-service",
+      "context": "\n  // NOTE: discounts and order_discounts tables are owned by ticket-service\n"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/migrations/001_baseline_orders.ts",
+      "relativePath": "backend/services/order-service/src/migrations/001_baseline_orders.ts",
+      "service": "order-service",
+      "line": 433,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "These indexes use regular CREATE INDEX since tables are empty during initial migration",
+      "context": "\n  // Note: These indexes use regular CREATE INDEX since tables are empty during initial migration\n  // For future index additions on populated tables, use CREATE INDEX CONCURRENTLY in a separate migration"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/services/order-modification.service.ts",
+      "relativePath": "backend/services/order-service/src/services/order-modification.service.ts",
+      "service": "order-service",
+      "line": 43,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Fetch from ticket service",
+      "context": "        // For now, we'll use a placeholder - in production, call ticket service\r\n        const newPrice = 0; // TODO: Fetch from ticket service\r\n\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/services/order-notes.service.ts",
+      "relativePath": "backend/services/order-service/src/services/order-notes.service.ts",
+      "service": "order-service",
+      "line": 170,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Templates",
+      "context": "\r\n  // Note Templates\r\n  async createTemplate(\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/services/order-search.service.ts",
+      "relativePath": "backend/services/order-service/src/services/order-search.service.ts",
+      "service": "order-service",
+      "line": 111,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "s filter",
+      "context": "\r\n    // Notes filter\r\n    if (filters.hasNotes !== undefined) {\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/services/order-search.service.ts",
+      "relativePath": "backend/services/order-service/src/services/order-search.service.ts",
+      "service": "order-service",
+      "line": 153,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Join with events table if needed",
+      "context": "        totalAmount: parseFloat(row.total_amount),\r\n        eventName: row.event_id, // TODO: Join with events table if needed\r\n        createdAt: row.created_at,\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/services/payment.client.ts",
+      "relativePath": "backend/services/order-service/src/services/payment.client.ts",
+      "service": "order-service",
+      "line": 46,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "No fallback for write operations - they must fail explicitly",
+      "context": "\n    // Note: No fallback for write operations - they must fail explicitly\n    this.createPaymentIntentBreaker = createCircuitBreaker("
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/utils/pdf-generator.ts",
+      "relativePath": "backend/services/order-service/src/utils/pdf-generator.ts",
+      "service": "order-service",
+      "line": 26,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual PDF generation using PDFKit or similar",
+      "context": "    try {\r\n      // TODO: Implement actual PDF generation using PDFKit or similar\r\n      // For now, return a placeholder buffer\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/utils/pdf-generator.ts",
+      "relativePath": "backend/services/order-service/src/utils/pdf-generator.ts",
+      "service": "order-service",
+      "line": 42,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement multi-ticket PDF generation",
+      "context": "    try {\r\n      // TODO: Implement multi-ticket PDF generation\r\n      const placeholder = tickets.map(t => this.generatePlaceholderPDF(t)).join('\\n\\n');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/order-service/src/utils/pdf-generator.ts",
+      "relativePath": "backend/services/order-service/src/utils/pdf-generator.ts",
+      "service": "order-service",
+      "line": 56,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual QR code generation using 'qrcode' npm package",
+      "context": "  static generateQRCode(data: string): string {\r\n    // TODO: Implement actual QR code generation using 'qrcode' npm package\r\n    // For now, return a placeholder\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/controllers/group-payment.controller.ts",
+      "relativePath": "backend/services/payment-service/src/controllers/group-payment.controller.ts",
+      "service": "payment-service",
+      "line": 75,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Make getGroupPayment public or add a public method",
+      "context": "    // Verify organizer\n    // TODO: Make getGroupPayment public or add a public method\n    const group = { organizerId: \"\" }; // await this.groupPaymentService.getGroupPayment(groupId);"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/controllers/refundController.ts",
+      "relativePath": "backend/services/payment-service/src/controllers/refundController.ts",
+      "service": "payment-service",
+      "line": 269,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We typically absorb Stripe fees on refunds",
+      "context": "  // Max refundable is original minus already refunded\n  // Note: We typically absorb Stripe fees on refunds\n  const maxRefundable = originalAmount - totalRefunded;"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/controllers/venue.controller.ts",
+      "relativePath": "backend/services/payment-service/src/controllers/venue.controller.ts",
+      "service": "payment-service",
+      "line": 79,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement getPayoutHistory method",
+      "context": "\n    // TODO: Implement getPayoutHistory method\n    const history: any[] = []; /* await this.venueBalanceService.getPayoutHistory("
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/jobs/background-job-processor.ts",
+      "relativePath": "backend/services/payment-service/src/jobs/background-job-processor.ts",
+      "service": "payment-service",
+      "line": 699,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual event publishing (e.g., to RabbitMQ, Kafka, etc.)",
+      "context": "async function publishOutboxEvent(event: any): Promise<void> {\r\n  // TODO: Implement actual event publishing (e.g., to RabbitMQ, Kafka, etc.)\r\n  log.debug({ eventType: event.event_type, aggregateId: event.aggregate_id }, 'Publishing outbox event');\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/migrations/002_add_rls_policies.ts",
+      "relativePath": "backend/services/payment-service/src/migrations/002_add_rls_policies.ts",
+      "service": "payment-service",
+      "line": 248,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "enable_rls_bypass should only be available to admin roles",
+      "context": "    \r\n    -- Note: enable_rls_bypass should only be available to admin roles\r\n    -- REVOKE EXECUTE ON FUNCTION enable_rls_bypass() FROM payment_app;\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/routes/admin.routes.ts",
+      "relativePath": "backend/services/payment-service/src/routes/admin.routes.ts",
+      "service": "payment-service",
+      "line": 282,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement cache clearing based on cache type",
+      "context": "\r\n    // TODO: Implement cache clearing based on cache type\r\n    // For now, just acknowledge the request\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/routes/admin.routes.ts",
+      "relativePath": "backend/services/payment-service/src/routes/admin.routes.ts",
+      "service": "payment-service",
+      "line": 299,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement database query for audit log",
+      "context": "    \r\n    // TODO: Implement database query for audit log\r\n    // This is a placeholder response\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/routes/admin.routes.ts",
+      "relativePath": "backend/services/payment-service/src/routes/admin.routes.ts",
+      "service": "payment-service",
+      "line": 324,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement maintenance mode toggle",
+      "context": "\r\n    // TODO: Implement maintenance mode toggle\r\n    // This would typically set a flag that middleware checks\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/services/compliance/form-1099-da.service.ts",
+      "relativePath": "backend/services/payment-service/src/services/compliance/form-1099-da.service.ts",
+      "service": "payment-service",
+      "line": 163,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "price is in cents, threshold is in dollars, so multiply threshold by 100",
+      "context": "    // Get all users who need 1099-DA\n    // Note: price is in cents, threshold is in dollars, so multiply threshold by 100\n    const usersQuery = `"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/src/services/group/contribution-tracker.service.ts",
+      "relativePath": "backend/services/payment-service/src/services/group/contribution-tracker.service.ts",
+      "service": "payment-service",
+      "line": 87,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We track failure count in reminders_sent field repurposed,",
+      "context": "    // Record failed attempt by updating member status\n    // Note: We track failure count in reminders_sent field repurposed, \n    // or we just mark as failed after any failure"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/payment-service/tests/integration/services/database.service.test.ts",
+      "relativePath": "backend/services/payment-service/tests/integration/services/database.service.test.ts",
+      "service": "payment-service",
+      "line": 15,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "The singleton is already used by other services, so we test behavior carefully",
+      "context": "  // We'll create a fresh instance for some tests\n  // Note: The singleton is already used by other services, so we test behavior carefully\n"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/queue-service/src/workers/background/analytics.processor.ts",
+      "relativePath": "backend/services/queue-service/src/workers/background/analytics.processor.ts",
+      "service": "queue-service",
+      "line": 55,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Send to actual analytics service (Mixpanel, Segment, etc)",
+      "context": "    try {\n      // TODO: Send to actual analytics service (Mixpanel, Segment, etc)\n      await this.simulateAnalyticsProcessing();"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/queue-service/src/workers/communication/email.processor.ts",
+      "relativePath": "backend/services/queue-service/src/workers/communication/email.processor.ts",
+      "service": "queue-service",
+      "line": 45,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual SendGrid email sending",
+      "context": "      try {\n        // TODO: Implement actual SendGrid email sending\n        await this.simulateEmailSend();"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/queue-service/src/workers/money/nft-mint.processor.ts",
+      "relativePath": "backend/services/queue-service/src/workers/money/nft-mint.processor.ts",
+      "service": "queue-service",
+      "line": 48,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual Solana NFT minting",
+      "context": "    try {\n      // TODO: Implement actual Solana NFT minting\n      await this.simulateNFTMinting();"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/queue-service/src/workers/money/refund.processor.ts",
+      "relativePath": "backend/services/queue-service/src/workers/money/refund.processor.ts",
+      "service": "queue-service",
+      "line": 47,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual Stripe refund",
+      "context": "    try {\n      // TODO: Implement actual Stripe refund\n      await this.simulateRefundProcessing();"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/search-service/src/scripts/sync-data.ts",
+      "relativePath": "backend/services/search-service/src/scripts/sync-data.ts",
+      "service": "search-service",
+      "line": 17,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This indexes basic PostgreSQL data only",
+      "context": "    for (const venue of venues) {\n      // NOTE: This indexes basic PostgreSQL data only\n      // For full enrichment (amenities, images, ratings from MongoDB),"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/search-service/src/scripts/sync-data.ts",
+      "relativePath": "backend/services/search-service/src/scripts/sync-data.ts",
+      "service": "search-service",
+      "line": 42,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Phase 2: Add MongoDB content via venue-enrichment.service",
+      "context": "          }\n          // TODO Phase 2: Add MongoDB content via venue-enrichment.service\n          // - sections (from venue_sections table)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/search-service/src/scripts/sync-data.ts",
+      "relativePath": "backend/services/search-service/src/scripts/sync-data.ts",
+      "service": "search-service",
+      "line": 63,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "This indexes basic PostgreSQL data only",
+      "context": "      \n      // NOTE: This indexes basic PostgreSQL data only\n      // For full enrichment (performers, images, ratings from MongoDB),"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/search-service/src/scripts/sync-data.ts",
+      "relativePath": "backend/services/search-service/src/scripts/sync-data.ts",
+      "service": "search-service",
+      "line": 88,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Phase 2: Add MongoDB content via event-enrichment.service",
+      "context": "          }\n          // TODO Phase 2: Add MongoDB content via event-enrichment.service\n          // - performers (from event_performers + performers tables + MongoDB)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/migrations/001_baseline_ticket.ts",
+      "relativePath": "backend/services/ticket-service/src/migrations/001_baseline_ticket.ts",
+      "service": "ticket-service",
+      "line": 27,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Tenants table is created by auth-service",
+      "context": "\n  // NOTE: Tenants table is created by auth-service\n  // This service only references it via FK constraints"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/migrations/001_baseline_ticket.ts",
+      "relativePath": "backend/services/ticket-service/src/migrations/001_baseline_ticket.ts",
+      "service": "ticket-service",
+      "line": 767,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "update_event_revenue function and trigger moved to order-service",
+      "context": "\n  // NOTE: update_event_revenue function and trigger moved to order-service\n  // since it operates on the orders table which is owned by order-service"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/migrations/001_baseline_ticket.ts",
+      "relativePath": "backend/services/ticket-service/src/migrations/001_baseline_ticket.ts",
+      "service": "ticket-service",
+      "line": 805,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "trg_update_event_revenue trigger moved to order-service",
+      "context": "\n  // NOTE: trg_update_event_revenue trigger moved to order-service\n"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/migrations/004_add_rls_role_verification.ts",
+      "relativePath": "backend/services/ticket-service/src/migrations/004_add_rls_role_verification.ts",
+      "service": "ticket-service",
+      "line": 220,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "We don't drop the role as it may be in use",
+      "context": "    \r\n    -- Note: We don't drop the role as it may be in use\r\n    -- Manual cleanup: DROP ROLE IF EXISTS ${appRole};\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/migrations/008_add_foreign_key_constraints.ts",
+      "relativePath": "backend/services/ticket-service/src/migrations/008_add_foreign_key_constraints.ts",
+      "service": "ticket-service",
+      "line": 29,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Cannot add actual FK to external service table, using check constraint pattern",
+      "context": "  // tickets.event_id → events.id (cross-service reference - soft FK via check)\r\n  // Note: Cannot add actual FK to external service table, using check constraint pattern\r\n  if (!(await constraintExists('tickets', 'fk_tickets_tenant_id'))) {\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/routes/purchaseRoutes.ts",
+      "relativePath": "backend/services/ticket-service/src/routes/purchaseRoutes.ts",
+      "service": "ticket-service",
+      "line": 121,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Add confirmPurchase method to purchaseController",
+      "context": "  // Fixes Batch 5: Purchase-tier rate limiting (5 req/min per user)\n  // TODO: Add confirmPurchase method to purchaseController\n  // =========================================================================="
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/routes/purchaseRoutes.ts",
+      "relativePath": "backend/services/ticket-service/src/routes/purchaseRoutes.ts",
+      "service": "ticket-service",
+      "line": 170,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Add cancelReservation method to purchaseController",
+      "context": "  // DELETE /purchase/:reservationId - Cancel a reservation\n  // TODO: Add cancelReservation method to purchaseController\n  // =========================================================================="
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/ticket-service/src/services/batch-operations.ts",
+      "relativePath": "backend/services/ticket-service/src/services/batch-operations.ts",
+      "service": "ticket-service",
+      "line": 387,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "transferNFT would need to be implemented with proper wallet handling",
+      "context": "        // Queue blockchain transfer - don't await\r\n        // Note: transferNFT would need to be implemented with proper wallet handling\r\n        log.info('NFT transfer queued for blockchain processing', {\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/transfer-service/src/index.ts",
+      "relativePath": "backend/services/transfer-service/src/index.ts",
+      "service": "transfer-service",
+      "line": 120,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "implement testSolanaConnection",
+      "context": "    // Test Solana connection\n    const solanaConnected = true; // TODO: implement testSolanaConnection\n    if (!solanaConnected) {"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/transfer-service/src/services/event-stream.service.ts",
+      "relativePath": "backend/services/transfer-service/src/services/event-stream.service.ts",
+      "service": "transfer-service",
+      "line": 186,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Implement actual token verification",
+      "context": "  private async verifyToken(_token: string, _userId: string): Promise<boolean> {\r\n    // TODO: Implement actual token verification\r\n    // This is a placeholder - implement with your JWT/auth system\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/controllers/venues.controller.ts",
+      "relativePath": "backend/services/venue-service/src/controllers/venues.controller.ts",
+      "service": "venue-service",
+      "line": 216,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Calculate available capacity from active events",
+      "context": "\n        // TODO: Calculate available capacity from active events\n        // For now, return total capacity as available"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/middleware/auth.middleware.ts",
+      "relativePath": "backend/services/venue-service/src/middleware/auth.middleware.ts",
+      "service": "venue-service",
+      "line": 130,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "The api_keys table should store key_hash instead of plaintext key",
+      "context": "  // Look up API key by hash in database\n  // Note: The api_keys table should store key_hash instead of plaintext key\n  // This lookup supports both legacy (plaintext) and new (hashed) storage"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/middleware/auth.middleware.ts",
+      "relativePath": "backend/services/venue-service/src/middleware/auth.middleware.ts",
+      "service": "venue-service",
+      "line": 138,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Remove this fallback after migration to hashed keys is complete",
+      "context": "  // Fallback to legacy plaintext lookup if hash not found\n  // TODO: Remove this fallback after migration to hashed keys is complete\n  if (!keyData) {"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/routes/venue-reviews.routes.ts",
+      "relativePath": "backend/services/venue-service/src/routes/venue-reviews.routes.ts",
+      "service": "venue-service",
+      "line": 12,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "s",
+      "context": "\r\n  // Reviews\r\n  fastify.post('/:venueId/reviews', controller.createReview);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/routes/venue-reviews.routes.ts",
+      "relativePath": "backend/services/venue-service/src/routes/venue-reviews.routes.ts",
+      "service": "venue-service",
+      "line": 19,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "actions",
+      "context": "\r\n  // Review actions\r\n  fastify.post('/:venueId/reviews/:reviewId/helpful', controller.markHelpful);\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/routes/venues.routes.ts",
+      "relativePath": "backend/services/venue-service/src/routes/venues.routes.ts",
+      "service": "venue-service",
+      "line": 8,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "V2 routes should only be registered when actually implemented",
+      "context": "  \n  // Note: V2 routes should only be registered when actually implemented\n  // Don't leave phantom route registrations commented out"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/services/venue-stripe-onboarding.service.ts",
+      "relativePath": "backend/services/venue-service/src/services/venue-stripe-onboarding.service.ts",
+      "service": "venue-service",
+      "line": 184,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "accountLinks are short-lived so we include timestamp for uniqueness",
+      "context": "      // Generate account link for onboarding\r\n      // Note: accountLinks are short-lived so we include timestamp for uniqueness\r\n      const accountLink = await this.stripe.accountLinks.create({\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/services/venue.service.ts",
+      "relativePath": "backend/services/venue-service/src/services/venue.service.ts",
+      "service": "venue-service",
+      "line": 1,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Add createSpan export to tracing.ts",
+      "context": "// import { createSpan } from '../utils/tracing'; // TODO: Add createSpan export to tracing.ts\nimport { VenueModel, IVenue } from '../models/venue.model';"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/services/venue.service.ts",
+      "relativePath": "backend/services/venue-service/src/services/venue.service.ts",
+      "service": "venue-service",
+      "line": 107,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Consider queuing to dead letter queue for retry",
+      "context": "          });\n          // TODO: Consider queuing to dead letter queue for retry\n        }"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/services/venue.service.ts",
+      "relativePath": "backend/services/venue-service/src/services/venue.service.ts",
+      "service": "venue-service",
+      "line": 189,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Consider queuing to dead letter queue for retry",
+      "context": "        });\n        // TODO: Consider queuing to dead letter queue for retry\n      }"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/services/venue.service.ts",
+      "relativePath": "backend/services/venue-service/src/services/venue.service.ts",
+      "service": "venue-service",
+      "line": 232,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Consider queuing to dead letter queue for retry",
+      "context": "      });\n      // TODO: Consider queuing to dead letter queue for retry\n    }"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/services/venue-service/src/services/venue.service.ts",
+      "relativePath": "backend/services/venue-service/src/services/venue.service.ts",
+      "service": "venue-service",
+      "line": 483,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Order checking removed - this is cross-service concern",
+      "context": "\n      // NOTE: Order checking removed - this is cross-service concern\n      // The event-service and order-service should handle order validation"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/shared/content-reviews/src/models/user-content.model.ts",
+      "relativePath": "backend/shared/content-reviews/src/models/user-content.model.ts",
+      "service": "shared",
+      "line": 87,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "content",
+      "context": "    content: {\r\n      // Review content\r\n      review: {\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/shared/mongodb/src/schema-validator.ts",
+      "relativePath": "backend/shared/mongodb/src/schema-validator.ts",
+      "service": "shared",
+      "line": 428,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Actual type checking would be more complex in real implementation",
+      "context": "    const types = Array.isArray(fieldSchema.bsonType) ? fieldSchema.bsonType : [fieldSchema.bsonType];\r\n    // Note: Actual type checking would be more complex in real implementation\r\n  }\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/shared/src/index.ts",
+      "relativePath": "backend/shared/src/index.ts",
+      "service": "shared",
+      "line": 29,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Framework-specific middleware (helmet, rate limiters, authenticate) removed",
+      "context": "\n// Note: Framework-specific middleware (helmet, rate limiters, authenticate) removed\n// Services should implement their own middleware using their chosen framework"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/shared/src/redis/managers/pubsub-manager.ts",
+      "relativePath": "backend/shared/src/redis/managers/pubsub-manager.ts",
+      "service": "shared",
+      "line": 300,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Don't close clients as they're managed by ConnectionManager",
+      "context": "      \r\n      // Note: Don't close clients as they're managed by ConnectionManager\r\n      this.pubClient = null;\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/shared/src/redis/utils/serialization.ts",
+      "relativePath": "backend/shared/src/redis/utils/serialization.ts",
+      "service": "shared",
+      "line": 171,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Add actual compression here if needed (e.g., using zlib)",
+      "context": "  \r\n  // TODO: Add actual compression here if needed (e.g., using zlib)\r\n  // For now, just return serialized data\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/backend/shared/src/redis/utils/serialization.ts",
+      "relativePath": "backend/shared/src/redis/utils/serialization.ts",
+      "service": "shared",
+      "line": 189,
+      "tag": "TODO",
+      "severity": "medium",
+      "message": "Check for compression marker and decompress if needed",
+      "context": "  \r\n  // TODO: Check for compression marker and decompress if needed\r\n  // For now, just deserialize normally\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/business_intelligence.js",
+      "relativePath": "database/mongodb/collections/analytics/business_intelligence.js",
+      "service": "root",
+      "line": 350,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getStrategicInsights function is available for use in application code",
+      "context": "\n// Note: getStrategicInsights function is available for use in application code\n// Usage: getStrategicInsights(days)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/customer_insights.js",
+      "relativePath": "database/mongodb/collections/analytics/customer_insights.js",
+      "service": "root",
+      "line": 422,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getCustomerProfile function is available for use in application code",
+      "context": "\n// Note: getCustomerProfile function is available for use in application code\n// Usage: getCustomerProfile(userId)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/event_analytics.js",
+      "relativePath": "database/mongodb/collections/analytics/event_analytics.js",
+      "service": "root",
+      "line": 296,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getEventMetrics function is available for use in application code",
+      "context": "\n// Note: getEventMetrics function is available for use in application code\n// Usage: getEventMetrics(eventId, days)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/marketplace_analytics.js",
+      "relativePath": "database/mongodb/collections/analytics/marketplace_analytics.js",
+      "service": "root",
+      "line": 355,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getMarketInsights function is available for use in application code",
+      "context": "\n// Note: getMarketInsights function is available for use in application code\n// Usage: getMarketInsights(eventId, days)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/payment_analytics.js",
+      "relativePath": "database/mongodb/collections/analytics/payment_analytics.js",
+      "service": "root",
+      "line": 383,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getPaymentHealth function is available for use in application code",
+      "context": "\n// Note: getPaymentHealth function is available for use in application code\n// Usage: getPaymentHealth(days)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/ticket_analytics.js",
+      "relativePath": "database/mongodb/collections/analytics/ticket_analytics.js",
+      "service": "root",
+      "line": 329,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getTicketMetrics function is available for use in application code",
+      "context": "\n// Note: getTicketMetrics function is available for use in application code\n// Usage: getTicketMetrics(eventId, days)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/analytics/venue_analytics.js",
+      "relativePath": "database/mongodb/collections/analytics/venue_analytics.js",
+      "service": "root",
+      "line": 298,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getVenuePerformance function is available for use in application code",
+      "context": "\n// Note: getVenuePerformance function is available for use in application code\n// Usage: getVenuePerformance(venueId, days)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/mongodb/collections/logs/application_logs.js",
+      "relativePath": "database/mongodb/collections/logs/application_logs.js",
+      "service": "root",
+      "line": 332,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "getServiceAlerts function is available for use in application code",
+      "context": "\n// Note: getServiceAlerts function is available for use in application code\n// Usage: getServiceAlerts(minutes)"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/postgresql/enable_rls.sql",
+      "relativePath": "database/postgresql/enable_rls.sql",
+      "service": "root",
+      "line": 138,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Generate a strong password with: openssl rand -base64 32",
+      "context": "-- Create a service role for background jobs\r\n-- NOTE: Generate a strong password with: openssl rand -base64 32\r\nDO $$\r"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/postgresql/views/compliance_reporting_view.sql",
+      "relativePath": "database/postgresql/views/compliance_reporting_view.sql",
+      "service": "root",
+      "line": 129,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "Phase 5 (venue compliance) removed due to schema limitations",
+      "context": "-- This is the main view that applications should use\n-- Note: Phase 5 (venue compliance) removed due to schema limitations\n-- venue_compliance table only has: id, venue_id, settings, created_at, updated_at"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/postgresql/views/financial_summary_view.sql",
+      "relativePath": "database/postgresql/views/financial_summary_view.sql",
+      "service": "root",
+      "line": 2,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "payment_methods table doesn't exist in schema, use metadata from payment_transactions",
+      "context": "-- Fix Phase 2: Payment Methods\n-- Note: payment_methods table doesn't exist in schema, use metadata from payment_transactions\nDROP VIEW IF EXISTS financial_summary_payment_methods CASCADE;"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/postgresql/views/financial_summary_view.sql",
+      "relativePath": "database/postgresql/views/financial_summary_view.sql",
+      "service": "root",
+      "line": 67,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "settlement_batches is for batch processing, not individual transactions",
+      "context": "-- Phase 5: Settlements\n-- Note: settlement_batches is for batch processing, not individual transactions\n-- Removed settlement join as settlements don't link to individual transactions"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/database/postgresql/views/user_dashboard_view.sql",
+      "relativePath": "database/postgresql/views/user_dashboard_view.sql",
+      "service": "root",
+      "line": 436,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "S",
+      "context": "-- =====================================================================\n-- NOTES\n-- ====================================================================="
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/fan-app/src/pages/Event/EventReviews.tsx",
+      "relativePath": "frontend/apps/fan-app/src/pages/Event/EventReviews.tsx",
+      "service": "frontend",
+      "line": 188,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "s List */}",
+      "context": "\n        {/* Reviews List */}\n        <div className=\"space-y-6\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/fan-app/src/pages/Event/WriteReview.tsx",
+      "relativePath": "frontend/apps/fan-app/src/pages/Event/WriteReview.tsx",
+      "service": "frontend",
+      "line": 106,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "Text */}",
+      "context": "\n        {/* Review Text */}\n        <div className=\"mb-6\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/fan-app/src/pages/Home/MapView.tsx",
+      "relativePath": "frontend/apps/fan-app/src/pages/Home/MapView.tsx",
+      "service": "frontend",
+      "line": 27,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "In production, you'd use a real map library like react-map-gl, google-maps-react, or leaflet",
+      "context": "\n  // Note: In production, you'd use a real map library like react-map-gl, google-maps-react, or leaflet\n  // This is a placeholder UI demonstrating the layout"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/fan-app/src/pages/Profile/AccessibilitySettings.tsx",
+      "relativePath": "frontend/apps/fan-app/src/pages/Profile/AccessibilitySettings.tsx",
+      "service": "frontend",
+      "line": 143,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "*/}",
+      "context": "\n        {/* Note */}\n        <p className=\"text-sm text-gray-500 text-center\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/venue-dashboard/src/pages/EventReviews.tsx",
+      "relativePath": "frontend/apps/venue-dashboard/src/pages/EventReviews.tsx",
+      "service": "frontend",
+      "line": 187,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "s List */}",
+      "context": "\n        {/* Reviews List */}\n        <div className=\"col-span-2\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/venue-dashboard/src/pages/EventReviews.tsx",
+      "relativePath": "frontend/apps/venue-dashboard/src/pages/EventReviews.tsx",
+      "service": "frontend",
+      "line": 211,
+      "tag": "REVIEW",
+      "severity": "medium",
+      "message": "s */}",
+      "context": "\n          {/* Reviews */}\n          <div className=\"space-y-4\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/venue-dashboard/src/pages/Operations/AddEquipment.tsx",
+      "relativePath": "frontend/apps/venue-dashboard/src/pages/Operations/AddEquipment.tsx",
+      "service": "frontend",
+      "line": 114,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "s */}",
+      "context": "\n        {/* Notes */}\n        <div className=\"bg-white rounded-lg border border-gray-200 p-6 space-y-4\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/venue-dashboard/src/pages/Settings/VenueAge.tsx",
+      "relativePath": "frontend/apps/venue-dashboard/src/pages/Settings/VenueAge.tsx",
+      "service": "frontend",
+      "line": 113,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "*/}",
+      "context": "\n      {/* Note */}\n      <div className=\"bg-blue-50 border border-blue-200 rounded-lg p-4\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/frontend/apps/venue-dashboard/src/pages/Venues/AddVenue.tsx",
+      "relativePath": "frontend/apps/venue-dashboard/src/pages/Venues/AddVenue.tsx",
+      "service": "frontend",
+      "line": 132,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "*/}",
+      "context": "\n        {/* Note */}\n        <div className=\"bg-blue-50 border border-blue-200 rounded-lg p-4\">"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/smart-contracts/programs/tickettoken/src/constants.rs",
+      "relativePath": "smart-contracts/programs/tickettoken/src/constants.rs",
+      "service": "smart-contracts",
+      "line": 24,
+      "tag": "OPTIMIZE",
+      "severity": "low",
+      "message": "d for proof size",
+      "context": "pub const TREE_MAX_BUFFER_SIZE: u32 = 256;   // Concurrent operations\npub const TREE_CANOPY_DEPTH: u8 = 17;        // Optimized for proof size\npub const MAX_TICKET_PURCHASE: u8 = 10;"
+    },
+    {
+      "file": "/home/kevin/Desktop/TicketToken-Platform/smart-contracts/programs/tickettoken/src/state/tree_config.rs",
+      "relativePath": "smart-contracts/programs/tickettoken/src/state/tree_config.rs",
+      "service": "smart-contracts",
+      "line": 85,
+      "tag": "NOTE",
+      "severity": "low",
+      "message": "validate() returns Err because Rent::get() doesn't work in tests",
+      "context": "        let valid_config = TreeConfig::optimal();\n        // Note: validate() returns Err because Rent::get() doesn't work in tests\n        // But we can still test the validation logic"
+    }
+  ]
+}

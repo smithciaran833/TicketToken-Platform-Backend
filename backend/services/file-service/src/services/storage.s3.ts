@@ -1,7 +1,6 @@
 import AWS from 'aws-sdk';
 import { v4 as uuidv4 } from 'uuid';
 import { logger } from '../utils/logger';
-import crypto from 'crypto';
 
 interface UploadOptions {
   contentType: string;
@@ -77,7 +76,7 @@ export class S3StorageService {
         expiresAt: new Date(Date.now() + expiresIn * 1000)
       };
     } catch (error) {
-      logger.error('Failed to generate signed URL:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to generate signed URL');
       throw error;
     }
   }

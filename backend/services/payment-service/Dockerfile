@@ -1,57 +1,103 @@
-FROM node:20-alpine AS builder
+# Payment Service Dockerfile
+# 
+# LOW FIXES:
+# - Pin base image with @sha256 digest for reproducibility
+# - Add npm cache clean to reduce image size
+# - Multi-stage build for smaller production image
+
+# =============================================================================
+# Build Stage
+# =============================================================================
+# LOW FIX: Pin Node.js LTS image with SHA256 digest
+FROM node:20.10.0-alpine3.18@sha256:e96618520c7db4c3e082648678ab72a49b73367b9a1e7884cf75ac30a198e454 AS builder
+
+# Set working directory
 WORKDIR /app
-# Copy shared module first
-COPY backend/shared ./backend/shared
-# Build shared module
-WORKDIR /app/backend/shared
-RUN npm install --legacy-peer-deps
+
+# Install build dependencies for native modules
+RUN apk add --no-cache python3 make g++ git
+
+# Copy package files first for better caching
+COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install all dependencies (including dev for building)
+RUN npm ci
+
+# LOW FIX: Clean npm cache after install
+RUN npm cache clean --force
+
+# Copy source code
+COPY src/ ./src/
+
+# Build TypeScript
 RUN npm run build
-# Copy payment-service
+
+# Remove dev dependencies after build
+RUN npm prune --production
+
+# LOW FIX: Final cache clean
+RUN npm cache clean --force && \
+    rm -rf /tmp/* /var/cache/apk/*
+
+# =============================================================================
+# Production Stage
+# =============================================================================
+# LOW FIX: Pin Node.js LTS image with SHA256 digest
+FROM node:20.10.0-alpine3.18@sha256:e96618520c7db4c3e082648678ab72a49b73367b9a1e7884cf75ac30a198e454 AS production
+
+# Set production environment
+ENV NODE_ENV=production
+
+# Create non-root user for security
+RUN addgroup -g 1001 nodejs && \
+    adduser -u 1001 -G nodejs -s /bin/sh -D nodejs
+
+# Set working directory
 WORKDIR /app
-COPY backend/services/payment-service ./backend/services/payment-service
-# Build payment-service
-WORKDIR /app/backend/services/payment-service
-RUN npm install --legacy-peer-deps
-RUN npm run build
-# Copy knexfile to dist/config after build
-RUN cp src/config/knexfile.js dist/config/ 2>/dev/null || true
 
-# Production stage
-FROM node:20-alpine
-WORKDIR /app
-# Install dumb-init for proper signal handling
-RUN apk add --no-cache dumb-init
-# Copy shared module
-COPY --from=builder /app/backend/shared /app/backend/shared
-# Copy package files
-COPY --from=builder /app/backend/services/payment-service/package.json /app/backend/services/payment-service/package.json
-COPY --from=builder /app/backend/services/payment-service/package-lock.json /app/backend/services/payment-service/package-lock.json
-# Install production dependencies (this will properly link @tickettoken/shared)
-WORKDIR /app/backend/services/payment-service
-RUN npm ci --legacy-peer-deps
-# Copy built artifacts
-COPY --from=builder /app/backend/services/payment-service/dist ./dist
+# Copy production dependencies from builder
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/dist ./dist
+COPY --from=builder --chown=nodejs:nodejs /app/package*.json ./
 
-# Copy migration files
-COPY --from=builder /app/backend/services/payment-service/knexfile.ts ./knexfile.ts
-COPY --from=builder /app/backend/services/payment-service/src/migrations ./src/migrations
+# Create necessary directories
+RUN mkdir -p logs && chown nodejs:nodejs logs
 
-# Create entrypoint script for migrations
-RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
-    echo 'set -e' >> /app/entrypoint.sh && \
-    echo 'echo "Running migrations for payment-service..."' >> /app/entrypoint.sh && \
-    echo 'cd /app/backend/services/payment-service' >> /app/entrypoint.sh && \
-    echo 'npm run migrate || exit 1' >> /app/entrypoint.sh && \
-    echo 'exec "$@"' >> /app/entrypoint.sh && \
-    chmod +x /app/entrypoint.sh
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT:-3006}/health || exit 1
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs && \
-    adduser -S nodejs -u 1001 && \
-    chown -R nodejs:nodejs /app
+# Switch to non-root user
 USER nodejs
-EXPOSE 3006
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3006/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-ENTRYPOINT ["/app/entrypoint.sh", "dumb-init", "--"]
-CMD ["node", "dist/services/payment-service/src/index.js"]
+
+# Expose port
+EXPOSE ${PORT:-3006}
+
+# Set memory limits for Node.js
+ENV NODE_OPTIONS="--max-old-space-size=512"
+
+# Start the application
+CMD ["node", "dist/index.js"]
+
+# =============================================================================
+# Development Stage (optional, for local dev)
+# =============================================================================
+FROM node:20.10.0-alpine3.18@sha256:e96618520c7db4c3e082648678ab72a49b73367b9a1e7884cf75ac30a198e454 AS development
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache python3 make g++ git
+
+# Copy package files
+COPY package*.json ./
+
+# Install all dependencies
+RUN npm ci && npm cache clean --force
+
+# Copy source
+COPY . .
+
+# Start in development mode
+CMD ["npm", "run", "dev"]

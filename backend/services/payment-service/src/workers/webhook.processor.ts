@@ -41,7 +41,6 @@ export class WebhookProcessor extends EventEmitter {
     this.isProcessing = true;
 
     try {
-      // Get unprocessed webhooks ordered by timestamp
       const webhooks = await db('webhook_inbox')
         .whereNull('processed_at')
         .orderBy('created_at', 'asc')
@@ -71,7 +70,6 @@ export class WebhookProcessor extends EventEmitter {
       const stripeEventId = payload?.id;
       const eventTimestamp = payload?.created ? new Date(payload.created * 1000) : new Date();
 
-      // Extract payment and order IDs
       const paymentId = payload?.data?.object?.id || payload?.id;
       const orderId = payload?.data?.object?.metadata?.orderId || payload?.metadata?.orderId;
 
@@ -82,7 +80,6 @@ export class WebhookProcessor extends EventEmitter {
         return;
       }
 
-      // Process event through ordering service
       const event = {
         paymentId,
         orderId,
@@ -94,18 +91,16 @@ export class WebhookProcessor extends EventEmitter {
 
       const result = await this.eventOrderingService.processPaymentEvent(event);
 
-      this.log.info('Event processed', {
+      this.log.info({
         webhookId: webhook.id,
         paymentId,
         sequenceNumber: result.sequenceNumber,
         processed: result.processed
-      });
+      }, 'Event processed');
 
-      // Mark webhook as processed
       await this.markWebhookProcessed(trx, webhook.id);
       await trx.commit();
 
-      // Emit events for listeners
       if (result.processed) {
         if (webhook.event_type.includes('succeeded')) {
           this.emit('payment.completed', payload);
@@ -118,7 +113,6 @@ export class WebhookProcessor extends EventEmitter {
       await trx.rollback();
       this.log.error(`Error processing webhook ${webhook.id}:`, error.message);
 
-      // Update retry count
       await db('webhook_inbox')
         .where('id', webhook.id)
         .update({

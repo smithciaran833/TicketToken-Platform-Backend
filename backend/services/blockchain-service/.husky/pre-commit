@@ -1,0 +1,17 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# AUDIT FIX #58: Pre-commit hooks for code quality
+# This hook runs before every commit to ensure code quality
+
+echo "🔍 Running pre-commit checks..."
+
+# Run lint-staged for staged files only
+npx lint-staged
+
+# Type check the entire project
+echo "📝 Running TypeScript check..."
+npm run typecheck
+
+# If we get here, all checks passed
+echo "✅ Pre-commit checks passed!"

@@ -236,7 +236,7 @@ export class EscrowService {
   }
 
   private async startReleaseMonitoring(escrowId: string): Promise<void> {
-    log.info('Started monitoring release conditions', { escrowId });
+    log.info({ escrowId }, 'Started monitoring release conditions');
   }
 
   private async getEscrow(escrowId: string): Promise<ExtendedEscrowTransaction> {

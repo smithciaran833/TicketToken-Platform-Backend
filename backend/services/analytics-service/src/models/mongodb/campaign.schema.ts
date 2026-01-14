@@ -63,16 +63,16 @@ export class CampaignSchema {
       query.type = filters.type;
     }
     
-    if (filters.startDate || filters.endDate) {
-      query.$or = [];
-      
-      if (filters.startDate) {
-        query.$or.push({ endDate: { $gte: filters.startDate } });
-      }
-      
-      if (filters.endDate) {
-        query.$or.push({ startDate: { $lte: filters.endDate } });
-      }
+    // For overlapping date ranges: campaign.start <= filter.end AND campaign.end >= filter.start
+    // Both conditions must be true (AND logic), not either one (OR logic)
+    if (filters.startDate) {
+      // Campaign must end on or after the filter start date
+      query.endDate = { $gte: filters.startDate };
+    }
+    
+    if (filters.endDate) {
+      // Campaign must start on or before the filter end date
+      query.startDate = { $lte: filters.endDate };
     }
     
     return await collection

@@ -1,7 +1,7 @@
-import { 
-  Connection, 
-  Keypair, 
-  PublicKey, 
+import {
+  Connection,
+  Keypair,
+  PublicKey,
   Transaction,
   sendAndConfirmTransaction,
   TransactionSignature,
@@ -10,12 +10,13 @@ import {
   SystemProgram,
   LAMPORTS_PER_SOL
 } from '@solana/web3.js';
-import { 
-  createMint, 
-  mintTo, 
+import {
+  createMint,
+  mintTo,
   transfer,
   getAssociatedTokenAddress,
   createAssociatedTokenAccountInstruction,
+  createTransferInstruction,
   TOKEN_PROGRAM_ID
 } from '@solana/spl-token';
 import { Metaplex, keypairIdentity } from '@metaplex-foundation/js';
@@ -55,7 +56,7 @@ export class SolanaService {
     // Initialize connection to Solana
     const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
     this.connection = new Connection(rpcUrl, this.commitment);
-    
+
     // Load payer keypair from environment
     const payerSecret = process.env.SOLANA_PAYER_SECRET_KEY;
     if (payerSecret) {
@@ -65,7 +66,7 @@ export class SolanaService {
     } else {
       // Generate new keypair for testing
       this.payerKeypair = Keypair.generate();
-      logger.warn('Using generated keypair - fund this address:', 
+      logger.warn('Using generated keypair - fund this address:',
         this.payerKeypair.publicKey.toString());
     }
 
@@ -79,7 +80,7 @@ export class SolanaService {
    */
   async mintTicketNFT(request: MintRequest): Promise<string> {
     const startTime = Date.now();
-    
+
     try {
       // Check if already minted (idempotency)
       const existing = await this.checkExistingMint(request.ticketId);
@@ -105,7 +106,7 @@ export class SolanaService {
       });
 
       const mintAddress = nft.address.toString();
-      
+
       // Store mint record for idempotency
       await this.storeMintRecord(request.ticketId, mintAddress, nft);
 
@@ -121,24 +122,24 @@ export class SolanaService {
 
       const duration = Date.now() - startTime;
       logger.info(`NFT minted in ${duration}ms: ${mintAddress}`);
-      
+
       // Record metrics
       this.recordMetrics('mint', true, duration);
-      
+
       return mintAddress;
-      
+
     } catch (error: any) {
       const duration = Date.now() - startTime;
       logger.error('Mint failed:', error);
-      
+
       // Record metrics
       this.recordMetrics('mint', false, duration, error.message);
-      
+
       // Retry logic
       if (this.shouldRetry(error)) {
         return this.retryMint(request);
       }
-      
+
       throw error;
     }
   }
@@ -148,7 +149,7 @@ export class SolanaService {
    */
   async transferNFT(request: TransferRequest): Promise<string> {
     const startTime = Date.now();
-    
+
     try {
       const fromPubkey = new PublicKey(request.fromAddress);
       const toPubkey = new PublicKey(request.toAddress);
@@ -159,7 +160,7 @@ export class SolanaService {
         mintPubkey,
         fromPubkey
       );
-      
+
       const toTokenAccount = await getAssociatedTokenAddress(
         mintPubkey,
         toPubkey
@@ -167,9 +168,9 @@ export class SolanaService {
 
       // Check if destination account exists
       const toAccountInfo = await this.connection.getAccountInfo(toTokenAccount);
-      
+
       const transaction = new Transaction();
-      
+
       // Create account if it doesn't exist
       if (!toAccountInfo) {
         transaction.add(
@@ -184,12 +185,10 @@ export class SolanaService {
 
       // Add transfer instruction
       transaction.add(
-        Token.createTransferInstruction(
-          TOKEN_PROGRAM_ID,
+        createTransferInstruction(
           fromTokenAccount,
           toTokenAccount,
           fromPubkey,
-          [],
           request.amount
         )
       );
@@ -207,22 +206,22 @@ export class SolanaService {
 
       const duration = Date.now() - startTime;
       logger.info(`NFT transferred in ${duration}ms: ${signature}`);
-      
+
       // Store transfer record
       await this.storeTransferRecord(request, signature);
-      
+
       // Record metrics
       this.recordMetrics('transfer', true, duration);
-      
+
       return signature;
-      
+
     } catch (error: any) {
       const duration = Date.now() - startTime;
       logger.error('Transfer failed:', error);
-      
+
       // Record metrics
       this.recordMetrics('transfer', false, duration, error.message);
-      
+
       throw error;
     }
   }
@@ -234,16 +233,16 @@ export class SolanaService {
     try {
       const mintPubkey = new PublicKey(tokenAddress);
       const ownerPubkey = new PublicKey(ownerAddress);
-      
+
       const ownerTokenAccount = await getAssociatedTokenAddress(
         mintPubkey,
         ownerPubkey
       );
-      
+
       const accountInfo = await this.connection.getTokenAccountBalance(ownerTokenAccount);
-      
+
       return accountInfo.value.uiAmount === 1;
-      
+
     } catch (error) {
       logger.error('Ownership verification failed:', error);
       return false;
@@ -256,25 +255,25 @@ export class SolanaService {
   async getTransactionStatus(signature: string): Promise<string> {
     try {
       const status = await this.connection.getSignatureStatus(signature);
-      
+
       if (!status || !status.value) {
         return 'unknown';
       }
-      
+
       if (status.value.err) {
         return 'failed';
       }
-      
+
       if (status.value.confirmationStatus === 'finalized') {
         return 'finalized';
       }
-      
+
       if (status.value.confirmationStatus === 'confirmed') {
         return 'confirmed';
       }
-      
+
       return 'processing';
-      
+
     } catch (error) {
       logger.error('Failed to get transaction status:', error);
       return 'error';
@@ -289,9 +288,9 @@ export class SolanaService {
       const record = await db('nft_mints')
         .where({ ticket_id: ticketId, status: 'completed' })
         .first();
-      
+
       return record?.mint_address || null;
-      
+
     } catch (error) {
       logger.error('Failed to check existing mint:', error);
       return null;
@@ -337,8 +336,8 @@ export class SolanaService {
       'ECONNREFUSED',
       'ETIMEDOUT'
     ];
-    
-    return retryableErrors.some(msg => 
+
+    return retryableErrors.some(msg =>
       error.message?.toLowerCase().includes(msg.toLowerCase())
     );
   }
@@ -350,10 +349,10 @@ export class SolanaService {
     if (attempt > this.maxRetries) {
       throw new Error(`Mint failed after ${this.maxRetries} attempts`);
     }
-    
+
     logger.info(`Retrying mint attempt ${attempt}...`);
     await new Promise(resolve => setTimeout(resolve, this.retryDelay * attempt));
-    
+
     try {
       return await this.mintTicketNFT(request);
     } catch (error: any) {
@@ -383,15 +382,15 @@ export class SolanaService {
     try {
       const blockHeight = await this.connection.getBlockHeight();
       const balance = await this.connection.getBalance(this.payerKeypair.publicKey);
-      
+
       logger.info('Solana health check:', {
         blockHeight,
         balance: balance / LAMPORTS_PER_SOL,
         address: this.payerKeypair.publicKey.toString()
       });
-      
+
       return blockHeight > 0;
-      
+
     } catch (error) {
       logger.error('Solana health check failed:', error);
       return false;

@@ -5,10 +5,10 @@ import { FastifyInstance, FastifyPluginOptions, DoneFuncWithErrOrRes } from 'fas
 
 function requestIdMiddleware(
   fastify: FastifyInstance,
-  options: FastifyPluginOptions,
+  _options: FastifyPluginOptions,
   done: DoneFuncWithErrOrRes
 ): void {
-  fastify.addHook('onRequest', (request, reply, next) => {
+  fastify.addHook('onRequest', (_request, _reply, next) => {
     // Fastify already handles request IDs via the genReqId option
     // This hook is just for any additional logging or processing
     next();

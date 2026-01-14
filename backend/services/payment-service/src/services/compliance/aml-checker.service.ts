@@ -309,7 +309,7 @@ export class AMLCheckerService {
     );
     
     // In production, notify compliance team
-    log.info('SAR generated', { sarId, userId });
+    log.info({ sarId, userId }, 'SAR generated');
     
     return {
       sarId,

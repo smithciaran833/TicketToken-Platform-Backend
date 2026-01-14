@@ -49,7 +49,7 @@ class JWTKeyManager {
   async initialize(): Promise<void> {
     if (this.initialized) return;
 
-    if (process.env.NODE_ENV === 'production') {
+    if (env.isProduction) {
       await this.loadFromSecretsManager();
     } else {
       await this.loadFromFilesystem();
@@ -59,8 +59,8 @@ class JWTKeyManager {
   }
 
   private async loadFromSecretsManager(): Promise<void> {
-    const privateKey = process.env.JWT_PRIVATE_KEY;
-    const publicKey = process.env.JWT_PUBLIC_KEY;
+    const privateKey = env.JWT_PRIVATE_KEY;
+    const publicKey = env.JWT_PUBLIC_KEY;
 
     if (!privateKey || !publicKey) {
       throw new Error('JWT keys not found in environment. Ensure secrets are loaded.');
@@ -76,8 +76,8 @@ class JWTKeyManager {
     });
     this.currentKeyId = 'current';
 
-    const previousPrivate = process.env.JWT_PRIVATE_KEY_PREVIOUS;
-    const previousPublic = process.env.JWT_PUBLIC_KEY_PREVIOUS;
+    const previousPrivate = env.JWT_PRIVATE_KEY_PREVIOUS;
+    const previousPublic = env.JWT_PUBLIC_KEY_PREVIOUS;
 
     if (previousPrivate && previousPublic) {
       this.keys.set('previous', {
@@ -92,9 +92,8 @@ class JWTKeyManager {
   }
 
   private async loadFromFilesystem(): Promise<void> {
-    const defaultKeyPath = path.join(process.env.HOME!, 'tickettoken-secrets');
-    const privateKeyPath = process.env.JWT_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 'jwt-private.pem');
-    const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem');
+    const privateKeyPath = env.JWT_PRIVATE_KEY_PATH;
+    const publicKeyPath = env.JWT_PUBLIC_KEY_PATH;
 
     try {
       const privateKey = fs.readFileSync(privateKeyPath, 'utf8');
@@ -183,7 +182,7 @@ export class JWTService {
         'SELECT tenant_id FROM users WHERE id = $1',
         [user.id]
       );
-      tenantId = result.rows[0]?.tenant_id || '00000000-0000-0000-0000-000000000001';
+      tenantId = result.rows[0]?.tenant_id || env.DEFAULT_TENANT_ID;
     }
 
     const currentKeyId = keyManager.getCurrentKeyId();
@@ -355,7 +354,7 @@ export class JWTService {
   async invalidateTokenFamily(family: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
     // Scan for keys with tenant prefix if provided
-    const pattern = tenantId 
+    const pattern = tenantId
       ? `tenant:${tenantId}:refresh_token:*`
       : 'refresh_token:*';
     const keys = await this.scanner.scanKeys(pattern);
@@ -374,7 +373,7 @@ export class JWTService {
   async revokeAllUserTokens(userId: string, tenantId?: string): Promise<void> {
     const redis = getRedis();
     // Scan for keys with tenant prefix if provided
-    const pattern = tenantId 
+    const pattern = tenantId
       ? `tenant:${tenantId}:refresh_token:*`
       : 'refresh_token:*';
     const keys = await this.scanner.scanKeys(pattern);

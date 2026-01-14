@@ -1,23 +1,71 @@
 {
+  /**
+   * TypeScript Configuration
+   * 
+   * AUDIT FIX: DEP-1, DEP-H3 - Enable strict type checking
+   * Strict mode catches many potential runtime errors at compile time
+   */
   "compilerOptions": {
+    // Target
     "target": "ES2022",
     "module": "CommonJS",
     "moduleResolution": "Node",
     "outDir": "./dist",
-    "strict": false,
-    "strictNullChecks": false,
-    "noImplicitReturns": false,
-    "noImplicitAny": false,
+    "rootDir": "./src",
+    
+    // AUDIT FIX: DEP-1 - Enable strict type checking
+    "strict": true,
+    "strictNullChecks": true,
+    "strictFunctionTypes": true,
+    "strictBindCallApply": true,
+    "strictPropertyInitialization": true,
+    "noImplicitAny": true,
+    "noImplicitThis": true,
+    "noImplicitReturns": true,
+    "noUncheckedIndexedAccess": true,
+    "noFallthroughCasesInSwitch": true,
+    "useUnknownInCatchVariables": true,
+    
+    // Additional safety checks
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "exactOptionalPropertyTypes": false,
+    "noPropertyAccessFromIndexSignature": false,
+    
+    // Module resolution
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "downlevelIteration": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
+    
+    // Output
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
-    "removeComments": true
+    "removeComments": false,
+    "incremental": true,
+    
+    // Type definitions
+    "types": [
+      "node"
+    ],
+    
+    // Path mapping
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["./*"],
+      "@config/*": ["./config/*"],
+      "@middleware/*": ["./middleware/*"],
+      "@routes/*": ["./routes/*"],
+      "@services/*": ["./services/*"],
+      "@models/*": ["./models/*"],
+      "@utils/*": ["./utils/*"],
+      "@errors/*": ["./errors/*"],
+      "@tickettoken/shared": ["../../shared/dist/src/index"],
+      "@tickettoken/shared/*": ["../../shared/dist/src/*"]
+    }
   },
   "include": [
     "src/**/*"
@@ -25,8 +73,13 @@
   "exclude": [
     "node_modules",
     "dist",
-    "test",
+    "tests",
     "**/*.test.ts",
-    "**/*.spec.ts"
-  ]
+    "**/*.spec.ts",
+    "coverage"
+  ],
+  "ts-node": {
+    "require": ["tsconfig-paths/register"],
+    "transpileOnly": true
+  }
 }

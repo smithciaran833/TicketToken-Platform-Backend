@@ -1,4 +1,4 @@
-import { createSpan } from '../utils/tracing';
+// import { createSpan } from '../utils/tracing'; // TODO: Add createSpan export to tracing.ts
 import { VenueModel, IVenue } from '../models/venue.model';
 import { QUEUES } from "@tickettoken/shared/src/mq/queues";
 import { StaffModel } from '../models/staff.model';

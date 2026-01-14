@@ -6,7 +6,7 @@ import { validateEnv } from './config/env-validation';
 validateEnv();
 
 // SI4: Validate service identity at startup (fail fast if invalid)
-import { validateServiceIdentity, getServiceIdentity } from './config/service-auth';
+import { validateServiceIdentity, getServiceIdentity, shutdownServiceAuth } from './config/service-auth';
 validateServiceIdentity();
 
 import Fastify from 'fastify';
@@ -29,9 +29,38 @@ import { registerResponseMiddleware } from './middleware/response.middleware';
 import { closeAllQueues, getQueueStats, QUEUE_NAMES } from './jobs';
 import { initializeEventTransitionsProcessor } from './jobs/event-transitions.job';
 
+// ============================================================
+// Configuration Constants
+// ============================================================
+
 // AUDIT FIX (LOW-BODY): Configurable body size limit
 // Default: 1MB (1048576 bytes), configurable via BODY_LIMIT env var
 const BODY_LIMIT = parseInt(process.env.BODY_LIMIT || '1048576', 10);
+
+// AUDIT FIX (GD-3): Pre-stop sleep for load balancer drain delay
+const PRESTOP_DELAY_MS = parseInt(process.env.PRESTOP_DELAY_MS || '5000', 10);
+
+// AUDIT FIX: Max shutdown timeout to prevent hanging
+// If shutdown takes longer than this, force exit
+const MAX_SHUTDOWN_TIMEOUT_MS = parseInt(process.env.MAX_SHUTDOWN_TIMEOUT_MS || '30000', 10);
+
+// AUDIT FIX: Grace period configuration for time-sensitive operations
+// These values control how lenient the system is with timing
+export const GRACE_PERIODS = {
+  // Grace period for sales start/end times (in minutes)
+  salesTimingGraceMinutes: parseInt(process.env.SALES_TIMING_GRACE_MINUTES || '5', 10),
+  // Grace period for event start times (in minutes)
+  eventStartGraceMinutes: parseInt(process.env.EVENT_START_GRACE_MINUTES || '15', 10),
+  // Grace period for ticket transfers (in minutes)
+  transferGraceMinutes: parseInt(process.env.TRANSFER_GRACE_MINUTES || '30', 10),
+  // Grace period for refund requests after event changes (in hours)
+  refundRequestGraceHours: parseInt(process.env.REFUND_REQUEST_GRACE_HOURS || '48', 10),
+  // Grace period for cancellation deadlines (in hours)
+  cancellationGraceHours: parseInt(process.env.CANCELLATION_GRACE_HOURS || '2', 10),
+};
+
+// Log grace periods at startup
+logger.info({ gracePeriods: GRACE_PERIODS }, 'Grace periods configured');
 
 const app = Fastify({
   logger: {
@@ -47,7 +76,7 @@ const app = Fastify({
   requestTimeout: 30000, // 30 second timeout for all requests
   connectionTimeout: 10000, // 10 second connection timeout
   keepAliveTimeout: 72000, // 72 seconds (longer than AWS ALB idle timeout)
-  
+
   // AUDIT FIX (LOW-BODY): Limit request body size to prevent DoS
   // Prevents memory exhaustion from large payloads
   bodyLimit: BODY_LIMIT
@@ -58,6 +87,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 
 // Global cleanup service instance
 let cleanupService: ReservationCleanupService | null = null;
+
+// Track if shutdown is in progress
+let isShuttingDown = false;
 
 async function start(): Promise<void> {
   try {
@@ -214,13 +246,33 @@ async function start(): Promise<void> {
   }
 }
 
-// AUDIT FIX (GD-3): Pre-stop sleep for load balancer drain delay
-const PRESTOP_DELAY_MS = parseInt(process.env.PRESTOP_DELAY_MS || '5000', 10);
+// ============================================================
+// Graceful Shutdown
+// ============================================================
 
-// Enhanced graceful shutdown with complete resource cleanup
+/**
+ * Enhanced graceful shutdown with complete resource cleanup and timeout
+ * 
+ * AUDIT FIXES:
+ * - GD-3: Pre-stop delay for load balancer drain
+ * - Max shutdown timeout to prevent hanging
+ */
 const gracefulShutdown = async (signal: string) => {
-  logger.info({ signal }, 'Shutdown signal received, shutting down gracefully');
-  
+  // Prevent multiple shutdown attempts
+  if (isShuttingDown) {
+    logger.warn({ signal }, 'Shutdown already in progress, ignoring signal');
+    return;
+  }
+  isShuttingDown = true;
+
+  logger.info({ signal, maxTimeoutMs: MAX_SHUTDOWN_TIMEOUT_MS }, 'Shutdown signal received, shutting down gracefully');
+
+  // Set up force exit timeout
+  const forceExitTimeout = setTimeout(() => {
+    logger.error({ timeoutMs: MAX_SHUTDOWN_TIMEOUT_MS }, 'Shutdown timeout exceeded, forcing exit');
+    process.exit(1);
+  }, MAX_SHUTDOWN_TIMEOUT_MS);
+
   try {
     // AUDIT FIX (GD-3): Wait for load balancer to drain connections
     // This gives the LB time to stop sending new requests before we close
@@ -241,30 +293,38 @@ const gracefulShutdown = async (signal: string) => {
     await closeAllQueues();
     logger.info('Job queues closed');
 
-    // 3. Close database connections
+    // 3. Shutdown service auth (token manager, revocation manager)
+    shutdownServiceAuth();
+    logger.info('Service auth shutdown');
+
+    // 4. Close database connections
     const pool = DatabaseService.getPool();
     if (pool) {
       await pool.end();
       logger.info('Database pool closed');
     }
 
-    // 4. Close Knex connection
+    // 5. Close Knex connection
     if (db) {
       await db.destroy();
       logger.info('Knex database connection closed');
     }
 
-    // 5. Close MongoDB connection
+    // 6. Close MongoDB connection
     await closeMongoDB();
     logger.info('MongoDB connection closed');
 
-    // 6. Close Redis connections
+    // 7. Close Redis connections
     await closeRedisConnections();
     logger.info('Redis connections closed');
+
+    // Clear the force exit timeout
+    clearTimeout(forceExitTimeout);
 
     logger.info('Graceful shutdown completed successfully');
     process.exit(0);
   } catch (error) {
+    clearTimeout(forceExitTimeout);
     logger.error({ error }, 'Error during graceful shutdown');
     process.exit(1);
   }
@@ -272,6 +332,18 @@ const gracefulShutdown = async (signal: string) => {
 
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.fatal({ error }, 'Uncaught exception');
+  gracefulShutdown('uncaughtException');
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  logger.fatal({ reason, promise }, 'Unhandled promise rejection');
+  gracefulShutdown('unhandledRejection');
+});
 
 start().catch((error) => {
   logger.error({ error }, 'Failed to start event service');

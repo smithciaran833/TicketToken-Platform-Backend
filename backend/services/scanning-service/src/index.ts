@@ -5,7 +5,7 @@ dotenv.config();
 import { validateEnv } from './config/env.validator';
 validateEnv();
 
-import Fastify, { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import Fastify, { FastifyInstance, FastifyRequest, FastifyReply, FastifyError } from 'fastify';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import { initializeDatabase, getPool } from './config/database';
@@ -58,7 +58,7 @@ async function startService(): Promise<void> {
     // ====================================
     // This middleware sets the PostgreSQL session variable for Row Level Security
     // IMPORTANT: Register AFTER authentication middleware (when added)
-    app.addHook('onRequest', async (request, reply) => {
+    app.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         await setTenantContext(request, reply);
       } catch (error) {
@@ -167,7 +167,7 @@ async function startService(): Promise<void> {
     await app.register(policyRoutes, { prefix: '/api/policies' });
 
     // Global error handler
-    app.setErrorHandler((error, request, reply) => {
+    app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
       logger.error('Unhandled error:', error);
       reply.status(500).send({
         success: false,

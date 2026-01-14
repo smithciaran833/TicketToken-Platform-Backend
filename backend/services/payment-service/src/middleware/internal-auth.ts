@@ -4,7 +4,17 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'InternalAuth' });
 
-const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET || 'internal-service-secret-change-in-production';
+// SECURITY: No default fallback - secret MUST be provided via environment
+const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
+
+if (!INTERNAL_SECRET || INTERNAL_SECRET.length < 32) {
+  const errorMsg = 'INTERNAL_SERVICE_SECRET must be at least 32 characters';
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(errorMsg);
+  } else {
+    log.warn(`⚠️ ${errorMsg} - this would fail in production`);
+  }
+}
 
 // ISSUE #25 FIX: Consistent internal service authentication
 export async function internalAuth(request: FastifyRequest, reply: FastifyReply) {
@@ -14,12 +24,12 @@ export async function internalAuth(request: FastifyRequest, reply: FastifyReply)
 
   // Check all required headers
   if (!serviceName || !timestamp || !signature) {
-    log.warn('Internal request missing required headers', {
+    log.warn({
       path: request.url,
       hasService: !!serviceName,
       hasTimestamp: !!timestamp,
       hasSignature: !!signature
-    });
+    }, 'Internal request missing required headers');
     return reply.status(401).send({ error: 'Missing authentication headers' });
   }
 
@@ -29,40 +39,45 @@ export async function internalAuth(request: FastifyRequest, reply: FastifyReply)
   const timeDiff = Math.abs(now - requestTime);
 
   if (isNaN(requestTime) || timeDiff > 5 * 60 * 1000) {
-    log.warn('Internal request with invalid timestamp', {
+    log.warn({
       service: serviceName,
       timeDiff: timeDiff / 1000
-    });
+    }, 'Internal request with invalid timestamp');
     return reply.status(401).send({ error: 'Request expired' });
   }
 
-  // For development, accept temp-signature
-  if (signature === 'temp-signature' && process.env.NODE_ENV !== 'production') {
-    log.debug('Accepted temp signature in development', { service: serviceName });
-    (request as any).internalService = serviceName;
-    return;
+  // SECURITY FIX: Removed dev temp-signature bypass - all environments require proper auth
+  
+  // Verify HMAC signature
+  if (!INTERNAL_SECRET) {
+    log.error('INTERNAL_SERVICE_SECRET not configured');
+    return reply.status(500).send({ error: 'Service authentication not configured' });
   }
 
-  // Verify HMAC signature
   const payload = `${serviceName}:${timestamp}:${request.method}:${request.url}:${JSON.stringify(request.body)}`;
   const expectedSignature = crypto
     .createHmac('sha256', INTERNAL_SECRET)
     .update(payload)
     .digest('hex');
 
-  if (signature !== expectedSignature) {
-    log.warn('Invalid internal service signature', {
+  // SECURITY FIX: Use timing-safe comparison to prevent timing attacks
+  const signatureBuffer = Buffer.from(signature, 'hex');
+  const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+  
+  if (signatureBuffer.length !== expectedBuffer.length || 
+      !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
+    log.warn({
       service: serviceName,
       path: request.url
-    });
+    }, 'Invalid internal service signature');
     return reply.status(401).send({ error: 'Invalid signature' });
   }
 
   // Add service info to request
   (request as any).internalService = serviceName;
   
-  log.debug('Internal request authenticated', {
+  log.debug({
     service: serviceName,
     path: request.url
-  });
+  }, 'Internal request authenticated');
 }

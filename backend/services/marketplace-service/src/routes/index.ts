@@ -9,7 +9,7 @@ import taxRoutes from './tax.routes';
 import healthRoutes from './health.routes';
 import webhookRoutes from './webhook.routes';
 import { sellerOnboardingRoutes } from './seller-onboarding.routes';
-import { authMiddleware } from '../middleware/auth.middleware';
+import { authMiddleware, AuthRequest } from '../middleware/auth.middleware';
 
 export default async function routes(fastify: FastifyInstance) {
   // Health check routes
@@ -43,14 +43,26 @@ export default async function routes(fastify: FastifyInstance) {
     }
   });
 
-  // Cache management endpoints
-  fastify.get('/cache/stats', async (request, reply) => {
+  // AUDIT FIX SEC-2: Cache management endpoints require admin auth
+  fastify.get('/cache/stats', {
+    preHandler: [authMiddleware]
+  }, async (request: AuthRequest, reply) => {
+    // Only admins can view cache stats
+    if (!request.user?.roles?.includes('admin')) {
+      return reply.status(403).send({ error: 'Admin access required' });
+    }
     const { cache } = require('../services/cache-integration');
     const stats = await cache.getStats();
     reply.send(stats);
   });
 
-  fastify.delete('/cache/flush', async (request, reply) => {
+  fastify.delete('/cache/flush', {
+    preHandler: [authMiddleware]
+  }, async (request: AuthRequest, reply) => {
+    // Only admins can flush cache - dangerous operation
+    if (!request.user?.roles?.includes('admin')) {
+      return reply.status(403).send({ error: 'Admin access required' });
+    }
     const { cache } = require('../services/cache-integration');
     await cache.flush();
     reply.send({ success: true, message: 'Cache flushed' });

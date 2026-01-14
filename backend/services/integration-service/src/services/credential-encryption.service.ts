@@ -60,27 +60,50 @@ export class CredentialEncryptionService {
         idTokenEncrypted = idTokenResult.ciphertext;
       }
 
-      // Store in database
-      await db('oauth_tokens')
-        .insert({
-          venue_id: venueId,
-          integration_type: integrationType,
-          provider,
-          access_token_encrypted: accessTokenEncrypted.ciphertext,
-          refresh_token_encrypted: refreshTokenEncrypted?.ciphertext,
-          id_token_encrypted: idTokenEncrypted,
-          access_token_expires_at: tokens.expiresAt,
-          refresh_token_expires_at: tokens.refreshExpiresAt,
-          scopes: tokens.scopes || [],
-          token_type: tokens.tokenType || 'Bearer',
-          kms_key_id: accessTokenEncrypted.keyId,
-          encryption_context: accessTokenEncrypted.encryptionContext,
-          token_version: 1,
-          last_validated_at: new Date(),
-          validation_status: 'valid',
-        })
-        .onConflict(['venue_id', 'integration_type'])
-        .merge();
+      // Store in database - use upsert pattern
+      const existingToken = await db('oauth_tokens')
+        .where({ venue_id: venueId, integration_type: integrationType })
+        .first();
+
+      if (existingToken) {
+        await db('oauth_tokens')
+          .where({ venue_id: venueId, integration_type: integrationType })
+          .update({
+            provider,
+            access_token_encrypted: accessTokenEncrypted.ciphertext,
+            refresh_token_encrypted: refreshTokenEncrypted?.ciphertext,
+            id_token_encrypted: idTokenEncrypted,
+            access_token_expires_at: tokens.expiresAt,
+            refresh_token_expires_at: tokens.refreshExpiresAt,
+            scopes: tokens.scopes || [],
+            token_type: tokens.tokenType || 'Bearer',
+            kms_key_id: accessTokenEncrypted.keyId,
+            encryption_context: accessTokenEncrypted.encryptionContext,
+            token_version: db.raw('token_version + 1'),
+            last_validated_at: new Date(),
+            validation_status: 'valid',
+            updated_at: new Date(),
+          });
+      } else {
+        await db('oauth_tokens')
+          .insert({
+            venue_id: venueId,
+            integration_type: integrationType,
+            provider,
+            access_token_encrypted: accessTokenEncrypted.ciphertext,
+            refresh_token_encrypted: refreshTokenEncrypted?.ciphertext,
+            id_token_encrypted: idTokenEncrypted,
+            access_token_expires_at: tokens.expiresAt,
+            refresh_token_expires_at: tokens.refreshExpiresAt,
+            scopes: tokens.scopes || [],
+            token_type: tokens.tokenType || 'Bearer',
+            kms_key_id: accessTokenEncrypted.keyId,
+            encryption_context: accessTokenEncrypted.encryptionContext,
+            token_version: 1,
+            last_validated_at: new Date(),
+            validation_status: 'valid',
+          });
+      }
 
       console.log(`✅ OAuth tokens stored securely for venue ${venueId}, integration ${integrationType}`);
     } catch (error) {
@@ -199,27 +222,49 @@ export class CredentialEncryptionService {
         webhookSecretEncrypted = result.ciphertext;
       }
 
-      // Store in database
-      await db('venue_api_keys')
-        .insert({
-          venue_id: venueId,
-          integration_type: integrationType,
-          provider,
-          key_name: keys.keyName,
-          api_key_encrypted: apiKeyEncrypted.ciphertext,
-          api_secret_encrypted: apiSecretEncrypted,
-          webhook_secret_encrypted: webhookSecretEncrypted,
-          key_type: keys.keyType,
-          environment: keys.environment || 'production',
-          status: 'active',
-          kms_key_id: apiKeyEncrypted.keyId,
-          encryption_context: apiKeyEncrypted.encryptionContext,
-          key_version: 1,
-          last_validated_at: new Date(),
-          validation_status: 'valid',
-        })
-        .onConflict(['venue_id', 'integration_type', 'key_name'])
-        .merge();
+      // Store in database - use upsert pattern
+      const existingKey = await db('venue_api_keys')
+        .where({ venue_id: venueId, integration_type: integrationType, key_name: keys.keyName })
+        .first();
+
+      if (existingKey) {
+        await db('venue_api_keys')
+          .where({ venue_id: venueId, integration_type: integrationType, key_name: keys.keyName })
+          .update({
+            provider,
+            api_key_encrypted: apiKeyEncrypted.ciphertext,
+            api_secret_encrypted: apiSecretEncrypted,
+            webhook_secret_encrypted: webhookSecretEncrypted,
+            key_type: keys.keyType,
+            environment: keys.environment || 'production',
+            status: 'active',
+            kms_key_id: apiKeyEncrypted.keyId,
+            encryption_context: apiKeyEncrypted.encryptionContext,
+            key_version: db.raw('key_version + 1'),
+            last_validated_at: new Date(),
+            validation_status: 'valid',
+            updated_at: new Date(),
+          });
+      } else {
+        await db('venue_api_keys')
+          .insert({
+            venue_id: venueId,
+            integration_type: integrationType,
+            provider,
+            key_name: keys.keyName,
+            api_key_encrypted: apiKeyEncrypted.ciphertext,
+            api_secret_encrypted: apiSecretEncrypted,
+            webhook_secret_encrypted: webhookSecretEncrypted,
+            key_type: keys.keyType,
+            environment: keys.environment || 'production',
+            status: 'active',
+            kms_key_id: apiKeyEncrypted.keyId,
+            encryption_context: apiKeyEncrypted.encryptionContext,
+            key_version: 1,
+            last_validated_at: new Date(),
+            validation_status: 'valid',
+          });
+      }
 
       console.log(`✅ API keys stored securely for venue ${venueId}, integration ${integrationType}`);
     } catch (error) {

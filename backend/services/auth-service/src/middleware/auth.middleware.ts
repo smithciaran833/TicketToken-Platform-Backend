@@ -11,13 +11,12 @@ export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACSe
         if (!authHeader || !authHeader.startsWith('Bearer ')) {
           throw new AuthenticationError('Missing or invalid authorization header');
         }
-
         const token = authHeader.substring(7);
         const payload = await jwtService.verifyAccessToken(token);
-
+        
         // Get user permissions
-        const permissions = await rbacService.getUserPermissions(payload.sub);
-
+        const permissions = await rbacService.getUserPermissions(payload.sub, payload.tenant_id);
+        
         request.user = {
           id: payload.sub,
           tenant_id: payload.tenant_id,
@@ -38,14 +37,15 @@ export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACSe
         if (!request.user) {
           throw new AuthenticationError('Authentication required');
         }
-
+        
         const venueId = request.params?.venueId || request.body?.venueId;
         const hasPermission = await rbacService.checkPermission(
           request.user.id,
+          request.user.tenant_id,
           permission,
           venueId
         );
-
+        
         if (!hasPermission) {
           // Log authorization failure for security auditing
           auditLogger.warn({
@@ -69,15 +69,15 @@ export function createAuthMiddleware(jwtService: JWTService, rbacService: RBACSe
       if (!request.user) {
         throw new AuthenticationError('Authentication required');
       }
-
+      
       const venueId = request.params?.venueId;
       if (!venueId) {
         throw new Error('Venue ID required');
       }
-
-      const venueRoles = await rbacService.getUserVenueRoles(request.user.id);
+      
+      const venueRoles = await rbacService.getUserVenueRoles(request.user.id, request.user.tenant_id);
       const hasAccess = venueRoles.some((role: any) => role.venue_id === venueId);
-
+      
       if (!hasAccess) {
         // Log venue access denial for security auditing
         auditLogger.warn({

@@ -3,7 +3,7 @@ import { ticketPDFService } from '../services/ticket-pdf.service';
 
 export default async function ticketPdfRoutes(
   fastify: FastifyInstance,
-  opts: FastifyPluginOptions
+  _opts: FastifyPluginOptions
 ): Promise<void> {
   /**
    * POST /api/v1/tickets/pdf/generate

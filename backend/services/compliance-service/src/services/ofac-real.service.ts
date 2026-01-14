@@ -50,8 +50,8 @@ export class RealOFACService {
       
       console.log(`✅ OFAC list updated: ${processed} entries`);
       
-      // Update last update timestamp
-      await redis.set('ofac:last_update', new Date().toISOString());
+      // Update last update timestamp (using null for tenantId since OFAC is global)
+      await redis.set(null, 'ofac:last_update', new Date().toISOString());
       
     } catch (error) {
       console.error('❌ Failed to update OFAC list:', error);
@@ -66,9 +66,9 @@ export class RealOFACService {
   }> {
     const normalizedName = name.toUpperCase().trim();
     
-    // Check cache first
+    // Check cache first (using null for tenantId since OFAC is global)
     const cacheKey = `ofac:check:${normalizedName}`;
-    const cached = await redis.get(cacheKey);
+    const cached = await redis.get(null, cacheKey);
     if (cached) {
       return JSON.parse(cached);
     }
@@ -104,8 +104,8 @@ export class RealOFACService {
       }))
     };
     
-    // Cache for 24 hours
-    await redis.set(cacheKey, JSON.stringify(response), 86400);
+    // Cache for 24 hours (using null for tenantId since OFAC is global)
+    await redis.set(null, cacheKey, JSON.stringify(response), 86400);
     
     return response;
   }

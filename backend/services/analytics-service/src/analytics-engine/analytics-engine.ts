@@ -74,7 +74,7 @@ export class AnalyticsEngine {
   }
 
   private async calculateRevenue(query: AnalyticsQuery) {
-    const { RevenueCalculator } = await import('./calculators/revenue-calculator');
+    const { RevenueCalculator } = await import('./calculators/revenue-calculator.js');
     const calculator = new RevenueCalculator();
     
     const [byChannel, byEventType] = await Promise.all([
@@ -86,7 +86,7 @@ export class AnalyticsEngine {
   }
 
   private async calculateTicketSales(query: AnalyticsQuery) {
-    const { MetricsAggregator } = await import('./aggregators/metrics-aggregator');
+    const { MetricsAggregator } = await import('./aggregators/metrics-aggregator.js');
     const aggregator = new MetricsAggregator();
     
     return aggregator.aggregateSalesMetrics({
@@ -127,7 +127,7 @@ export class AnalyticsEngine {
   }
 
   private async calculateCustomerMetrics(query: AnalyticsQuery) {
-    const { CustomerAnalytics } = await import('./calculators/customer-analytics');
+    const { CustomerAnalytics } = await import('./calculators/customer-analytics.js');
     const analytics = new CustomerAnalytics();
     
     const [clv, churnRisk, segmentation] = await Promise.all([
@@ -140,7 +140,7 @@ export class AnalyticsEngine {
   }
 
   private async getTopEvents(query: AnalyticsQuery) {
-    const { MetricsAggregator } = await import('./aggregators/metrics-aggregator');
+    const { MetricsAggregator } = await import('./aggregators/metrics-aggregator.js');
     const aggregator = new MetricsAggregator();
     
     return aggregator.aggregateEventPerformance(
@@ -151,7 +151,7 @@ export class AnalyticsEngine {
   }
 
   private async calculateSalesTrends(query: AnalyticsQuery) {
-    const { PredictiveAnalytics } = await import('./calculators/predictive-analytics');
+    const { PredictiveAnalytics } = await import('./calculators/predictive-analytics.js');
     const predictor = new PredictiveAnalytics();
     
     const [seasonal, pricing] = await Promise.all([

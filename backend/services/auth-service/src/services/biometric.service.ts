@@ -10,6 +10,7 @@ export class BiometricService {
    */
   async registerBiometric(
     userId: string,
+    tenantId: string,
     deviceId: string,
     publicKey: string,
     type: 'faceId' | 'touchId' | 'fingerprint' = 'faceId'
@@ -17,6 +18,7 @@ export class BiometricService {
     const existing = await db('biometric_credentials')
       .where({
         user_id: userId,
+        tenant_id: tenantId,
         device_id: deviceId,
       })
       .first();
@@ -30,6 +32,7 @@ export class BiometricService {
     await db('biometric_credentials').insert({
       id: credentialId,
       user_id: userId,
+      tenant_id: tenantId,
       device_id: deviceId,
       public_key: publicKey,
       credential_type: type,
@@ -48,13 +51,13 @@ export class BiometricService {
    */
   async verifyBiometric(
     userId: string,
+    tenantId: string,
     credentialId: string,
     signature: string,
-    challenge: string,
-    tenantId?: string
+    challenge: string
   ): Promise<{ valid: boolean; userId: string }> {
     const redis = getRedis();
-    
+
     // Try tenant-prefixed key first, then fall back
     let storedChallenge = await redis.get(redisKeys.biometricChallenge(userId, tenantId));
     if (!storedChallenge) {
@@ -77,6 +80,7 @@ export class BiometricService {
       .where({
         id: credentialId,
         user_id: userId,
+        tenant_id: tenantId,
       })
       .first();
 
@@ -118,9 +122,9 @@ export class BiometricService {
   /**
    * List registered biometric devices for a user
    */
-  async listBiometricDevices(userId: string): Promise<any[]> {
+  async listBiometricDevices(userId: string, tenantId: string): Promise<any[]> {
     const devices = await db('biometric_credentials')
-      .where({ user_id: userId })
+      .where({ user_id: userId, tenant_id: tenantId })
       .select('id', 'device_id', 'credential_type', 'created_at');
 
     return devices;
@@ -129,11 +133,12 @@ export class BiometricService {
   /**
    * Remove a biometric device
    */
-  async removeBiometricDevice(userId: string, credentialId: string): Promise<boolean> {
+  async removeBiometricDevice(userId: string, tenantId: string, credentialId: string): Promise<boolean> {
     const deleted = await db('biometric_credentials')
       .where({
         id: credentialId,
         user_id: userId,
+        tenant_id: tenantId,
       })
       .del();
 
@@ -147,11 +152,12 @@ export class BiometricService {
   /**
    * Get credential by ID (for internal use)
    */
-  async getCredential(credentialId: string, userId: string): Promise<any> {
+  async getCredential(credentialId: string, userId: string, tenantId: string): Promise<any> {
     return db('biometric_credentials')
       .where({
         id: credentialId,
         user_id: userId,
+        tenant_id: tenantId,
       })
       .first();
   }

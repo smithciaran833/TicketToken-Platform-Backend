@@ -12,7 +12,7 @@ export async function verifyFileOwnership(request: FastifyRequest, reply: Fastif
     const user = (request as any).user;
     
     if (!user || !user.id) {
-      logger.warn('File access attempted without valid user context');
+      logger.warn({}, 'File access attempted without valid user context');
       return reply.status(401).send({ 
         error: 'Unauthorized',
         message: 'Authentication required' 
@@ -57,7 +57,7 @@ export async function verifyFileOwnership(request: FastifyRequest, reply: Fastif
       
       case 'private':
         // Private files only accessible to owner (already checked above)
-        logger.warn(`Unauthorized file access attempt: ${fileId} by user ${user.id}`);
+        logger.warn({ fileId, userId: user.id }, 'Unauthorized file access attempt');
         return reply.status(403).send({ 
           error: 'Forbidden',
           message: 'You do not have permission to access this file' 
@@ -72,7 +72,7 @@ export async function verifyFileOwnership(request: FastifyRequest, reply: Fastif
           return;
         }
         
-        logger.warn(`Unauthorized shared file access: ${fileId} by user ${user.id}`);
+        logger.warn({ fileId, userId: user.id }, 'Unauthorized shared file access');
         return reply.status(403).send({ 
           error: 'Forbidden',
           message: 'This file has not been shared with you' 
@@ -87,7 +87,7 @@ export async function verifyFileOwnership(request: FastifyRequest, reply: Fastif
           return;
         }
         
-        logger.warn(`Unauthorized tenant file access: ${fileId} by user ${user.id}`);
+        logger.warn({ fileId, userId: user.id }, 'Unauthorized tenant file access');
         return reply.status(403).send({ 
           error: 'Forbidden',
           message: 'You do not have permission to access this file' 
@@ -95,7 +95,7 @@ export async function verifyFileOwnership(request: FastifyRequest, reply: Fastif
       
       default:
         // Unknown access level - deny access
-        logger.error(`Unknown access level for file ${fileId}: ${file.access_level}`);
+        logger.error({ fileId, accessLevel: file.access_level }, 'Unknown access level for file');
         return reply.status(403).send({ 
           error: 'Forbidden',
           message: 'Invalid file access configuration' 
@@ -103,7 +103,7 @@ export async function verifyFileOwnership(request: FastifyRequest, reply: Fastif
     }
     
   } catch (error) {
-    logger.error('Error in file ownership verification:', error);
+    logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error in file ownership verification');
     return reply.status(500).send({ 
       error: 'Internal Server Error',
       message: 'Failed to verify file access permissions' 
@@ -190,7 +190,7 @@ export async function verifyFileModifyPermission(request: FastifyRequest, reply:
     const isAdmin = user.roles?.includes('admin') || user.role === 'admin' || user.isAdmin;
     
     if (!isOwner && !isAdmin) {
-      logger.warn(`Unauthorized file modification attempt: ${fileId} by user ${user.id}`);
+      logger.warn({ fileId, userId: user.id }, 'Unauthorized file modification attempt');
       return reply.status(403).send({ 
         error: 'Forbidden',
         message: 'Only the file owner can modify this file' 
@@ -201,7 +201,7 @@ export async function verifyFileModifyPermission(request: FastifyRequest, reply:
     (request as any).file = file;
     
   } catch (error) {
-    logger.error('Error in file modification permission check:', error);
+    logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error in file modification permission check');
     return reply.status(500).send({ 
       error: 'Internal Server Error',
       message: 'Failed to verify file modification permissions' 

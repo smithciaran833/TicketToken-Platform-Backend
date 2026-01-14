@@ -1,12 +1,28 @@
 import { Pool } from 'pg';
 import logger from '../utils/logger';
+import { ticketServiceClient, authServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
 
 /**
  * TRANSFER RULES SERVICE
  * 
  * Enforces transfer restrictions and business rules
  * Phase 6: Enhanced Features & Business Logic
+ * 
+ * PHASE 5c REFACTORED:
+ * - Replaced direct tickets/events table join with ticketServiceClient
+ * - Replaced direct users table query with authServiceClient
  */
+
+/**
+ * Helper to create request context for service calls
+ */
+function createRequestContext(tenantId: string): RequestContext {
+  return {
+    tenantId,
+    traceId: `transfer-rules-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  };
+}
 
 export interface TransferRule {
   id: string;
@@ -35,11 +51,12 @@ export class TransferRulesService {
     fromUserId: string;
     toUserId?: string;
     toEmail?: string;
+    tenantId: string;
   }): Promise<ValidationResult> {
-    const { ticketId, ticketTypeId, eventId, fromUserId, toUserId } = params;
+    const { ticketId, ticketTypeId, eventId, tenantId } = params;
 
     try {
-      // Get all active transfer rules for this ticket type/event
+      // Get all active transfer rules for this ticket type/event - transfer_service owned table
       const rulesResult = await this.pool.query(`
         SELECT * FROM transfer_rules
         WHERE (ticket_type_id = $1 OR event_id = $2 OR (ticket_type_id IS NULL AND event_id IS NULL))
@@ -51,7 +68,7 @@ export class TransferRulesService {
 
       // Check each rule
       for (const rule of rulesResult.rows) {
-        const checkResult = await this.checkRule(rule, params);
+        const checkResult = await this.checkRule(rule, { ...params, tenantId });
         if (!checkResult.allowed) {
           violatedRules.push(rule.rule_name);
           
@@ -94,9 +111,10 @@ export class TransferRulesService {
       ticketId: string;
       fromUserId: string;
       toUserId?: string;
+      tenantId: string;
     }
   ): Promise<ValidationResult> {
-    const { ticketId, fromUserId, toUserId } = params;
+    const { ticketId, fromUserId, toUserId, tenantId } = params;
 
     switch (rule.rule_type) {
       case 'MAX_TRANSFERS_PER_TICKET':
@@ -112,10 +130,10 @@ export class TransferRulesService {
         return await this.checkCoolingPeriod(ticketId, rule.config);
 
       case 'EVENT_DATE_PROXIMITY':
-        return await this.checkEventDateProximity(ticketId, rule.config);
+        return await this.checkEventDateProximity(ticketId, rule.config, tenantId);
 
       case 'IDENTITY_VERIFICATION':
-        return await this.checkIdentityVerification(fromUserId, toUserId, rule.config);
+        return await this.checkIdentityVerification(fromUserId, toUserId, rule.config, tenantId);
 
       default:
         logger.warn('Unknown rule type', { ruleType: rule.rule_type });
@@ -124,7 +142,7 @@ export class TransferRulesService {
   }
 
   /**
-   * Check max transfers per ticket
+   * Check max transfers per ticket - transfer_service owned table
    */
   private async checkMaxTransfersPerTicket(
     ticketId: string,
@@ -152,7 +170,7 @@ export class TransferRulesService {
   }
 
   /**
-   * Check max transfers per user per day
+   * Check max transfers per user per day - transfer_service owned table
    */
   private async checkMaxTransfersPerUserPerDay(
     userId: string,
@@ -180,7 +198,7 @@ export class TransferRulesService {
   }
 
   /**
-   * Check user blacklist
+   * Check user blacklist - transfer_service owned table
    */
   private async checkBlacklist(
     fromUserId: string,
@@ -205,7 +223,7 @@ export class TransferRulesService {
   }
 
   /**
-   * Check cooling period between transfers
+   * Check cooling period between transfers - transfer_service owned table
    */
   private async checkCoolingPeriod(
     ticketId: string,
@@ -236,43 +254,48 @@ export class TransferRulesService {
   }
 
   /**
-   * Check proximity to event date
+   * REFACTORED: Check proximity to event date
+   * Uses ticketServiceClient instead of direct tickets/events table join
    */
   private async checkEventDateProximity(
     ticketId: string,
-    config: any
+    config: any,
+    tenantId: string
   ): Promise<ValidationResult> {
     const minDaysBefore = config.min_days_before_event || 7;
+    const ctx = createRequestContext(tenantId);
 
-    const result = await this.pool.query(`
-      SELECT e.start_date
-      FROM tickets t
-      JOIN events e ON t.event_id = e.id
-      WHERE t.id = $1
-    `, [ticketId]);
+    try {
+      // REFACTORED: Get event date via ticketServiceClient instead of direct DB join
+      const eventInfo = await ticketServiceClient.getTicketEventDate(ticketId, ctx);
+      
+      if (eventInfo && eventInfo.eventStartDate) {
+        const daysUntil = eventInfo.daysUntilEvent;
 
-    if (result.rows.length > 0) {
-      const eventDate = new Date(result.rows[0].start_date);
-      const daysUntil = (eventDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
-
-      if (daysUntil < minDaysBefore) {
-        return {
-          allowed: false,
-          reason: `Too close to event date. Transfers blocked within ${minDaysBefore} days`
-        };
+        if (daysUntil < minDaysBefore) {
+          return {
+            allowed: false,
+            reason: `Too close to event date. Transfers blocked within ${minDaysBefore} days`
+          };
+        }
       }
-    }
 
-    return { allowed: true };
+      return { allowed: true };
+    } catch (error) {
+      logger.warn({ error, ticketId }, 'Failed to check event date proximity, allowing transfer');
+      return { allowed: true };
+    }
   }
 
   /**
-   * Check identity verification requirements
+   * REFACTORED: Check identity verification requirements
+   * Uses authServiceClient instead of direct users table query
    */
   private async checkIdentityVerification(
     fromUserId: string,
     toUserId: string | undefined,
-    config: any
+    config: any,
+    tenantId: string
   ): Promise<ValidationResult> {
     const requireVerification = config.require_verification || false;
 
@@ -280,22 +303,27 @@ export class TransferRulesService {
       return { allowed: true };
     }
 
-    const userIds = [fromUserId, toUserId].filter(Boolean);
+    const userIds = [fromUserId, toUserId].filter(Boolean) as string[];
+    const ctx = createRequestContext(tenantId);
     
-    const result = await this.pool.query(`
-      SELECT user_id, identity_verified
-      FROM users
-      WHERE user_id = ANY($1::uuid[])
-        AND identity_verified = false
-    `, [userIds]);
+    try {
+      // REFACTORED: Get identity verification status via authServiceClient instead of direct DB query
+      const result = await authServiceClient.batchIdentityCheck(userIds, ctx);
 
-    if (result.rows.length > 0) {
+      if (!result.allVerified) {
+        return {
+          allowed: false,
+          reason: 'Identity verification required for all parties'
+        };
+      }
+
+      return { allowed: true };
+    } catch (error) {
+      logger.warn({ error, userIds }, 'Failed to check identity verification, rejecting transfer');
       return {
         allowed: false,
-        reason: 'Identity verification required for all parties'
+        reason: 'Unable to verify identity status'
       };
     }
-
-    return { allowed: true };
   }
 }

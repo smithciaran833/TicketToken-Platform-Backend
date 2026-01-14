@@ -1,0 +1,73 @@
+# LOW FIX: .dockerignore - Reduce Docker build context size
+
+# Dependencies
+node_modules
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Build outputs
+dist
+build
+.tsbuildinfo
+*.tsbuildinfo
+
+# Test files
+tests
+__tests__
+*.test.ts
+*.spec.ts
+coverage
+.nyc_output
+jest.config.js
+
+# Development files
+.env
+.env.local
+.env.*.local
+*.env
+
+# IDE and editor files
+.idea
+.vscode
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+docs
+*.md
+!README.md
+
+# CI/CD
+.github
+.gitlab-ci.yml
+.travis.yml
+.circleci
+Jenkinsfile
+
+# Logs
+logs
+*.log
+
+# Temp files
+tmp
+temp
+.cache
+
+# Debugging
+.debug
+
+# Local development
+docker-compose*.yml
+Makefile
+*.sh
+
+# Audit results
+audit-results

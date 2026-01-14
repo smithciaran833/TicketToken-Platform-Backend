@@ -1,6 +1,5 @@
 import sharp from 'sharp';
 import { logger } from '../../utils/logger';
-import { fileModel } from '../../models/file.model';
 import { storageService } from '../../storage/storage.service';
 
 export interface ImageProcessingOptions {
@@ -34,14 +33,14 @@ export class ImageProcessor {
     'orientation'
   ];
 
-  async processImage(fileId: string, buffer: Buffer): Promise<void> {
+  async processImage(fileId: string, buffer: Buffer, storagePath?: string): Promise<void> {
     try {
       logger.info(`Processing image: ${fileId}`);
 
-      // Get file record
-      const file = await fileModel.findById(fileId);
-      if (!file) {
-        throw new Error(`File not found: ${fileId}`);
+      // Use provided storagePath or fallback (background processing uses provided path)
+      const filePath = storagePath || '';
+      if (!filePath) {
+        logger.warn(`No storage path provided for file: ${fileId}`);
       }
 
       // Process based on file type
@@ -50,18 +49,20 @@ export class ImageProcessor {
       // Always extract metadata
       tasks.push(this.extractMetadata(fileId, buffer));
 
-      // Generate thumbnails
-      tasks.push(this.generateThumbnails(fileId, buffer, file.storagePath));
+      // Generate thumbnails if we have a path
+      if (filePath) {
+        tasks.push(this.generateThumbnails(fileId, buffer, filePath));
 
-      // Optimize original
-      tasks.push(this.optimizeImage(fileId, buffer, file.storagePath));
+        // Optimize original
+        tasks.push(this.optimizeImage(fileId, buffer, filePath));
+      }
 
       await Promise.all(tasks);
 
       logger.info(`Image processing completed: ${fileId}`);
 
     } catch (error) {
-      logger.error(`Image processing failed for ${fileId}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), fileId }, 'Image processing failed');
       throw error;
     }
   }
@@ -148,7 +149,7 @@ export class ImageProcessor {
     });
 
     if (validFields.length === 0) {
-      logger.warn('No valid fields to update in image metadata');
+      logger.warn({}, 'No valid fields to update in image metadata');
       return;
     }
 

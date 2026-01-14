@@ -6,11 +6,15 @@ import { storageService } from '../storage/storage.service';
 import { logger } from '../utils/logger';
 
 export class ImageService {
-  async processUploadedImage(fileId: string): Promise<void> {
+  async processUploadedImage(fileId: string, tenantId: string): Promise<void> {
     try {
-      const file = await fileModel.findById(fileId);
+      const file = await fileModel.findById(fileId, tenantId);
       if (!file) {
         throw new Error(`File not found: ${fileId}`);
+      }
+
+      if (!file.storagePath) {
+        throw new Error(`File ${fileId} has no storage path`);
       }
 
       // Download original
@@ -20,20 +24,25 @@ export class ImageService {
       await imageProcessor.processImage(fileId, buffer);
       
       // Update status
-      await fileModel.updateStatus(fileId, 'ready');
+      await fileModel.updateStatus(fileId, tenantId, 'ready');
       
       logger.info(`Image processing completed for ${fileId}`);
       
-    } catch (error) {
-      logger.error(`Image processing failed for ${fileId}:`, error);
-      await fileModel.updateStatus(fileId, 'failed', error.message);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), fileId }, 'Image processing failed');
+      await fileModel.updateStatus(fileId, tenantId, 'failed', errorMessage);
     }
   }
 
-  async generateThumbnail(fileId: string, size: 'small' | 'medium' | 'large'): Promise<string> {
-    const file = await fileModel.findById(fileId);
+  async generateThumbnail(fileId: string, tenantId: string, size: 'small' | 'medium' | 'large'): Promise<string> {
+    const file = await fileModel.findById(fileId, tenantId);
     if (!file) {
       throw new Error(`File not found: ${fileId}`);
+    }
+
+    if (!file.storagePath) {
+      throw new Error(`File ${fileId} has no storage path`);
     }
 
     const buffer = await storageService.download(file.storagePath);
@@ -52,14 +61,19 @@ export class ImageService {
     return result.publicUrl || '';
   }
 
-  async optimizeImage(fileId: string): Promise<void> {
-    const file = await fileModel.findById(fileId);
+  async optimizeImage(fileId: string, tenantId: string): Promise<void> {
+    const file = await fileModel.findById(fileId, tenantId);
     if (!file) {
       throw new Error(`File not found: ${fileId}`);
     }
 
+    if (!file.storagePath) {
+      throw new Error(`File ${fileId} has no storage path`);
+    }
+
     const buffer = await storageService.download(file.storagePath);
-    const optimized = await imageOptimizer.optimize(buffer, file.mimeType);
+    const mimeType = file.mimeType || 'image/jpeg';
+    const optimized = await imageOptimizer.optimize(buffer, mimeType);
     
     if (optimized.length < buffer.length) {
       const optimizedPath = file.storagePath.replace(/\.[^.]+$/, '_optimized.jpg');

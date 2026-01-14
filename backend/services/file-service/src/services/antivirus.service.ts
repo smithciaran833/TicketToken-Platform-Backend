@@ -5,6 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
+import { storageService } from '../storage/storage.service';
 
 const execAsync = promisify(exec);
 
@@ -23,7 +24,7 @@ export class AntivirusService {
   constructor() {
     this.quarantinePath = process.env.QUARANTINE_PATH || '/var/quarantine';
     this.tempPath = process.env.TEMP_PATH || '/tmp/av-scan';
-    
+
     // Ensure directories exist
     this.ensureDirectories();
   }
@@ -66,7 +67,7 @@ export class AntivirusService {
 
       return scanResult;
     } catch (error) {
-      logger.error('AV scan failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'AV scan failed');
       throw new Error('Antivirus scan failed');
     }
   }
@@ -77,8 +78,8 @@ export class AntivirusService {
   private async runClamAVScan(filePath: string): Promise<ScanResult> {
     try {
       // Use clamscan command
-      const { stdout, stderr } = await execAsync(`clamscan --no-summary "${filePath}"`);
-      
+      const { stdout } = await execAsync(`clamscan --no-summary "${filePath}"`);
+
       const clean = !stdout.includes('FOUND');
       const threats: string[] = [];
 
@@ -103,7 +104,7 @@ export class AntivirusService {
     } catch (error: any) {
       // If clamscan is not installed, use alternative or mock
       if (error.code === 127) {
-        logger.warn('ClamAV not installed, using mock scanner');
+        logger.warn({}, 'ClamAV not installed, using mock scanner');
         return this.mockScan(filePath);
       }
       throw error;
@@ -163,7 +164,7 @@ export class AntivirusService {
 
       return null;
     } catch (error) {
-      logger.error('Failed to check existing scan:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to check existing scan');
       return null;
     }
   }
@@ -206,29 +207,43 @@ export class AntivirusService {
       quarantined_at: new Date()
     });
 
-    logger.warn(`File quarantined: ${filePath} -> ${quarantinedPath}`, { threats });
+    logger.warn({ threats, filePath, quarantinedPath }, 'File quarantined');
   }
 
   /**
-   * Scan S3 file by downloading temporarily
+   * Scan S3/storage file by downloading temporarily
    */
-  async scanS3File(s3Url: string): Promise<ScanResult> {
-    const tempFile = path.join(this.tempPath, `scan_${Date.now()}`);
-    
+  async scanStorageFile(storageKey: string): Promise<ScanResult> {
+    const tempFile = path.join(this.tempPath, `scan_${Date.now()}_${path.basename(storageKey)}`);
+
     try {
-      // Download file temporarily
-      // Implementation depends on your S3 setup
+      // Download file from storage (works for S3 or local)
+      const buffer = await storageService.download(storageKey);
       
+      // Write to temp file
+      fs.writeFileSync(tempFile, buffer);
+
       // Scan the file
       const result = await this.scanFile(tempFile);
-      
+
+      logger.info({ storageKey, clean: result.clean }, 'Storage file scanned');
       return result;
+    } catch (error) {
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), storageKey }, 'Failed to scan storage file');
+      throw error;
     } finally {
       // Clean up temp file
       if (fs.existsSync(tempFile)) {
         fs.unlinkSync(tempFile);
       }
     }
+  }
+
+  /**
+   * @deprecated Use scanStorageFile instead
+   */
+  async scanS3File(s3Key: string): Promise<ScanResult> {
+    return this.scanStorageFile(s3Key);
   }
 }
 

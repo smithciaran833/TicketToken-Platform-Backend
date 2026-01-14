@@ -85,4 +85,8 @@ export const config = {
     customerHashSalt: process.env.CUSTOMER_HASH_SALT || 'default-salt-change-this',
     dataRetentionDays: parseInt(process.env.DATA_RETENTION_DAYS || '365', 10),
   },
+  cache: {
+    secret: process.env.CACHE_SECRET || 'default-cache-secret-change-this',
+    ttl: parseInt(process.env.CACHE_TTL || '3600', 10),
+  },
 };

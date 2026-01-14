@@ -13,9 +13,9 @@ export class ImageOptimizer {
     if (this.shouldConvertToWebP(mimeType, metadata)) {
       return this.optimizeAsWebP(image, metadata);
     } else if (mimeType === 'image/png' && !metadata.hasAlpha) {
-      return this.optimizeAsJpeg(image, metadata);
+      return this.optimizeAsJpeg(image);
     } else if (mimeType === 'image/jpeg') {
-      return this.optimizeJpeg(image, metadata);
+      return this.optimizeJpeg(image);
     }
     
     return buffer; // Return original if no optimization needed
@@ -40,7 +40,7 @@ export class ImageOptimizer {
     return optimized;
   }
 
-  private async optimizeAsJpeg(image: sharp.Sharp, metadata: any): Promise<Buffer> {
+  private async optimizeAsJpeg(image: sharp.Sharp): Promise<Buffer> {
     return image
       .jpeg({
         quality: 85,
@@ -53,7 +53,7 @@ export class ImageOptimizer {
       .toBuffer();
   }
 
-  private async optimizeJpeg(image: sharp.Sharp, metadata: any): Promise<Buffer> {
+  private async optimizeJpeg(image: sharp.Sharp): Promise<Buffer> {
     // Re-encode JPEG with better settings
     return image
       .jpeg({

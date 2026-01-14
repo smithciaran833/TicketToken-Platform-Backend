@@ -1,14 +1,9 @@
 import { Connection } from '@solana/web3.js';
 import logger from '../utils/logger';
 import db from '../utils/database';
-
-interface Ticket {
-    id: string;
-    token_id: string;
-    wallet_address: string;
-    status: string;
-    is_minted: boolean;
-}
+import { ticketServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { TicketForReconciliation } from '@tickettoken/shared/clients/types';
 
 interface Discrepancy {
     type: string;
@@ -21,6 +16,17 @@ interface ReconciliationResults {
     ticketsChecked: number;
     discrepanciesFound: number;
     discrepanciesResolved: number;
+}
+
+/**
+ * Helper to create request context for service calls
+ * Blockchain indexer operates as a system service
+ */
+function createSystemContext(): RequestContext {
+    return {
+        tenantId: 'system',
+        traceId: `recon-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    };
 }
 
 export default class ReconciliationEngine {
@@ -152,39 +158,37 @@ export default class ReconciliationEngine {
         `, [runId, errorMessage]);
     }
 
-    async getTicketsToReconcile(): Promise<Ticket[]> {
-        const result = await db.query(`
-            SELECT
-                id,
-                token_id,
-                wallet_address,
-                status,
-                is_minted
-            FROM tickets
-            WHERE
-                token_id IS NOT NULL
-                AND (
-                    reconciled_at IS NULL
-                    OR reconciled_at < NOW() - INTERVAL '1 hour'
-                    OR sync_status != 'SYNCED'
-                )
-            ORDER BY reconciled_at ASC NULLS FIRST
-            LIMIT 100
-        `);
+    /**
+     * REFACTORED: Now uses ticketServiceClient instead of direct DB query
+     * Gets tickets needing reconciliation via ticket-service internal API
+     */
+    async getTicketsToReconcile(): Promise<TicketForReconciliation[]> {
+        const ctx = createSystemContext();
+        
+        try {
+            const response = await ticketServiceClient.getTicketsForReconciliation(ctx, {
+                limit: 100,
+                staleHours: 1,
+            });
 
-        return result.rows;
+            logger.debug({ count: response.count }, 'Fetched tickets for reconciliation via service client');
+            return response.tickets;
+        } catch (error) {
+            logger.error({ error }, 'Failed to fetch tickets for reconciliation from ticket-service');
+            throw error;
+        }
     }
 
-    async checkTicket(ticket: Ticket): Promise<Discrepancy | null> {
+    async checkTicket(ticket: TicketForReconciliation): Promise<Discrepancy | null> {
         try {
-            if (!ticket.token_id) {
+            if (!ticket.tokenId) {
                 return null;
             }
 
-            const onChainData = await this.getOnChainState(ticket.token_id);
+            const onChainData = await this.getOnChainState(ticket.tokenId);
 
             if (!onChainData) {
-                if (ticket.is_minted) {
+                if (ticket.isMinted) {
                     return {
                         type: 'TOKEN_NOT_FOUND',
                         field: 'is_minted',
@@ -195,11 +199,11 @@ export default class ReconciliationEngine {
                 return null;
             }
 
-            if (onChainData.owner !== ticket.wallet_address) {
+            if (onChainData.owner !== ticket.walletAddress) {
                 return {
                     type: 'OWNERSHIP_MISMATCH',
                     field: 'wallet_address',
-                    dbValue: ticket.wallet_address,
+                    dbValue: ticket.walletAddress,
                     chainValue: onChainData.owner
                 };
             }
@@ -231,7 +235,13 @@ export default class ReconciliationEngine {
         }
     }
 
-    async resolveDiscrepancy(runId: number, ticket: Ticket, discrepancy: Discrepancy): Promise<boolean> {
+    /**
+     * REFACTORED: Now uses ticketServiceClient instead of direct DB updates
+     * Resolves discrepancies via ticket-service internal API
+     */
+    async resolveDiscrepancy(runId: number, ticket: TicketForReconciliation, discrepancy: Discrepancy): Promise<boolean> {
+        const ctx = createSystemContext();
+
         try {
             logger.info({
                 ticketId: ticket.id,
@@ -239,6 +249,7 @@ export default class ReconciliationEngine {
                 field: discrepancy.field
             }, 'Resolving discrepancy');
 
+            // Record the discrepancy (owned by blockchain-indexer)
             await db.query(`
                 INSERT INTO ownership_discrepancies
                 (ticket_id, discrepancy_type, database_value, blockchain_value)
@@ -247,32 +258,26 @@ export default class ReconciliationEngine {
                 String(discrepancy.dbValue),
                 String(discrepancy.chainValue)]);
 
+            // Use ticketServiceClient to update the ticket based on discrepancy type
+            const updateData: any = {
+                syncStatus: 'SYNCED' as const,
+            };
+
             switch (discrepancy.field) {
                 case 'wallet_address':
-                    await db.query(`
-                        UPDATE tickets
-                        SET wallet_address = $1, sync_status = 'SYNCED'
-                        WHERE id = $2
-                    `, [discrepancy.chainValue, ticket.id]);
+                    updateData.walletAddress = discrepancy.chainValue;
                     break;
-
                 case 'status':
-                    await db.query(`
-                        UPDATE tickets
-                        SET status = $1, sync_status = 'SYNCED'
-                        WHERE id = $2
-                    `, [discrepancy.chainValue, ticket.id]);
+                    updateData.status = discrepancy.chainValue;
                     break;
-
                 case 'is_minted':
-                    await db.query(`
-                        UPDATE tickets
-                        SET is_minted = $1, sync_status = 'SYNCED'
-                        WHERE id = $2
-                    `, [discrepancy.chainValue, ticket.id]);
+                    updateData.isMinted = discrepancy.chainValue;
                     break;
             }
 
+            await ticketServiceClient.updateBlockchainSync(ticket.id, updateData, ctx);
+
+            // Log reconciliation (owned by blockchain-indexer)
             await db.query(`
                 INSERT INTO reconciliation_log
                 (reconciliation_run_id, ticket_id, field_name, old_value, new_value, source)
@@ -281,7 +286,7 @@ export default class ReconciliationEngine {
                 String(discrepancy.dbValue),
                 String(discrepancy.chainValue)]);
 
-            logger.info({ ticketId: ticket.id }, 'Discrepancy resolved');
+            logger.info({ ticketId: ticket.id }, 'Discrepancy resolved via ticket-service');
             return true;
 
         } catch (error) {
@@ -290,11 +295,20 @@ export default class ReconciliationEngine {
         }
     }
 
+    /**
+     * REFACTORED: Now uses ticketServiceClient instead of direct DB update
+     * Marks ticket as reconciled via ticket-service internal API
+     */
     async markTicketReconciled(ticketId: string): Promise<void> {
-        await db.query(`
-            UPDATE tickets
-            SET reconciled_at = NOW()
-            WHERE id = $1
-        `, [ticketId]);
+        const ctx = createSystemContext();
+
+        try {
+            await ticketServiceClient.updateBlockchainSync(ticketId, {
+                reconciledAt: new Date().toISOString(),
+            }, ctx);
+        } catch (error) {
+            logger.error({ error, ticketId }, 'Failed to mark ticket reconciled via ticket-service');
+            // Don't throw - this is not critical to the reconciliation process
+        }
     }
 }

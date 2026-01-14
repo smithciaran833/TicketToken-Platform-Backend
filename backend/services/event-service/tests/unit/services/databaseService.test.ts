@@ -1,81 +1,99 @@
+/**
+ * Unit tests for DatabaseService
+ * Tests pg Pool initialization and management
+ */
+
+// Mock pg Pool before imports
+const mockQuery = jest.fn();
+const mockPool = {
+  query: mockQuery,
+  end: jest.fn(),
+};
+
 jest.mock('pg', () => ({
-  Pool: jest.fn(),
+  Pool: jest.fn().mockImplementation(() => mockPool),
 }));
 
-import { DatabaseService } from '../../../src/services/databaseService';
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+  },
+}));
+
 import { Pool } from 'pg';
 
 describe('DatabaseService', () => {
-  let mockPool: any;
-  let mockQuery: jest.Mock;
-  let originalEnv: NodeJS.ProcessEnv;
+  let DatabaseService: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Save original env
-    originalEnv = { ...process.env };
-
-    mockQuery = jest.fn().mockResolvedValue({ rows: [{ now: new Date() }] });
-
-    mockPool = {
-      query: mockQuery,
-      connect: jest.fn(),
-      end: jest.fn(),
-    };
-
-    (Pool as jest.MockedClass<typeof Pool>).mockImplementation(() => mockPool);
-
-    // Reset the singleton instance
-    (DatabaseService as any).pool = null;
+    mockQuery.mockResolvedValue({ rows: [{ now: new Date() }] });
+    
+    // Reset module to get fresh instance
+    jest.resetModules();
+    
+    // Re-apply mocks after reset
+    jest.doMock('pg', () => ({
+      Pool: jest.fn().mockImplementation(() => mockPool),
+    }));
+    
+    jest.doMock('../../../src/utils/logger', () => ({
+      logger: {
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+        debug: jest.fn(),
+      },
+    }));
   });
 
   afterEach(() => {
-    // Restore original env
-    process.env = originalEnv;
+    // Clean up environment
+    delete process.env.DATABASE_URL;
+    delete process.env.DB_HOST;
+    delete process.env.DB_PORT;
+    delete process.env.DB_NAME;
+    delete process.env.DB_USER;
+    delete process.env.DB_PASSWORD;
   });
 
   describe('initialize', () => {
-    it('should initialize with DATABASE_URL', async () => {
-      process.env.DATABASE_URL = 'postgresql://user:pass@localhost:5432/testdb';
-
-      await DatabaseService.initialize();
+    it('should initialize with DATABASE_URL when provided', async () => {
+      process.env.DATABASE_URL = 'postgresql://user:pass@host:5432/db';
+      
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
 
       expect(Pool).toHaveBeenCalledWith({
-        connectionString: 'postgresql://user:pass@localhost:5432/testdb',
+        connectionString: 'postgresql://user:pass@host:5432/db',
       });
-      expect(mockQuery).toHaveBeenCalledWith('SELECT NOW()');
     });
 
-    it('should initialize with individual env vars', async () => {
-      delete process.env.DATABASE_URL;
-      process.env.DB_HOST = 'test-host';
+    it('should initialize with individual env vars when DATABASE_URL not set', async () => {
+      process.env.DB_HOST = 'custom-host';
       process.env.DB_PORT = '5433';
-      process.env.DB_NAME = 'test-db';
-      process.env.DB_USER = 'test-user';
-      process.env.DB_PASSWORD = 'test-pass';
+      process.env.DB_NAME = 'custom_db';
+      process.env.DB_USER = 'custom_user';
+      process.env.DB_PASSWORD = 'custom_pass';
 
-      await DatabaseService.initialize();
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
 
       expect(Pool).toHaveBeenCalledWith({
-        host: 'test-host',
+        host: 'custom-host',
         port: 5433,
-        database: 'test-db',
-        user: 'test-user',
-        password: 'test-pass',
+        database: 'custom_db',
+        user: 'custom_user',
+        password: 'custom_pass',
       });
-      expect(mockQuery).toHaveBeenCalledWith('SELECT NOW()');
     });
 
     it('should use default values when env vars not set', async () => {
-      delete process.env.DATABASE_URL;
-      delete process.env.DB_HOST;
-      delete process.env.DB_PORT;
-      delete process.env.DB_NAME;
-      delete process.env.DB_USER;
-      delete process.env.DB_PASSWORD;
-
-      await DatabaseService.initialize();
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
 
       expect(Pool).toHaveBeenCalledWith({
         host: 'tickettoken-postgres',
@@ -86,32 +104,102 @@ describe('DatabaseService', () => {
       });
     });
 
-    it('should test connection with SELECT NOW()', async () => {
-      await DatabaseService.initialize();
+    it('should verify connection with SELECT NOW() query', async () => {
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
 
       expect(mockQuery).toHaveBeenCalledWith('SELECT NOW()');
     });
 
-    it('should handle connection errors', async () => {
-      mockQuery.mockRejectedValueOnce(new Error('Connection failed'));
+    it('should throw error if connection verification fails', async () => {
+      mockQuery.mockRejectedValue(new Error('Connection refused'));
 
-      await expect(DatabaseService.initialize()).rejects.toThrow('Connection failed');
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+
+      await expect(DS.initialize()).rejects.toThrow('Connection refused');
+    });
+
+    it('should parse port as integer', async () => {
+      process.env.DB_PORT = '5434';
+
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
+
+      expect(Pool).toHaveBeenCalledWith(
+        expect.objectContaining({
+          port: 5434,
+        })
+      );
     });
   });
 
   describe('getPool', () => {
     it('should return pool after initialization', async () => {
-      await DatabaseService.initialize();
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
 
-      const pool = DatabaseService.getPool();
+      const pool = DS.getPool();
 
       expect(pool).toBe(mockPool);
     });
 
-    it('should throw error if not initialized', () => {
-      (DatabaseService as any).pool = null;
+    it('should throw error if not initialized', async () => {
+      jest.resetModules();
+      
+      jest.doMock('pg', () => ({
+        Pool: jest.fn().mockImplementation(() => mockPool),
+      }));
 
-      expect(() => DatabaseService.getPool()).toThrow('Database not initialized');
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+
+      expect(() => DS.getPool()).toThrow('Database not initialized');
+    });
+
+    it('should return same pool instance on multiple calls', async () => {
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+      await DS.initialize();
+
+      const pool1 = DS.getPool();
+      const pool2 = DS.getPool();
+
+      expect(pool1).toBe(pool2);
+    });
+  });
+
+  describe('singleton behavior', () => {
+    it('should export singleton instance', async () => {
+      const module1 = await import('../../../src/services/databaseService');
+      const module2 = await import('../../../src/services/databaseService');
+
+      expect(module1.DatabaseService).toBe(module2.DatabaseService);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should handle invalid DATABASE_URL gracefully', async () => {
+      process.env.DATABASE_URL = 'invalid-url';
+      
+      // Pool constructor might throw or query might fail
+      const { Pool: MockPool } = require('pg');
+      MockPool.mockImplementationOnce(() => {
+        throw new Error('Invalid connection string');
+      });
+
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+
+      await expect(DS.initialize()).rejects.toThrow();
+    });
+
+    it('should handle pool query timeout', async () => {
+      mockQuery.mockImplementation(() => 
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Query timeout')), 100)
+        )
+      );
+
+      const { DatabaseService: DS } = await import('../../../src/services/databaseService');
+
+      await expect(DS.initialize()).rejects.toThrow('Query timeout');
     });
   });
 });

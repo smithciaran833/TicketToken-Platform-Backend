@@ -2,6 +2,7 @@ const amqplib = require('amqplib');
 import { logger } from '../utils/logger';
 import { createCircuitBreaker } from '../utils/circuitBreaker';
 import { publishSearchSync } from '@tickettoken/shared';
+import { getConfig } from '../config/index';
 
 export interface EventMessage {
   eventType: string;
@@ -25,7 +26,8 @@ export class EventPublisher {
   private connected: boolean = false;
 
   constructor() {
-    this.rabbitUrl = process.env.RABBITMQ_URL || 'amqp://admin:admin@rabbitmq:5672';
+    const config = getConfig();
+    this.rabbitUrl = config.rabbitmq.url;
 
     const breaker = createCircuitBreaker(
       this.publishInternal.bind(this),

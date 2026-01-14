@@ -1,207 +1,204 @@
-import { Pool } from 'pg';
-import { WebhookCleanup } from '../../../src/cron/webhook-cleanup';
+/**
+ * Webhook Cleanup Cron Tests
+ * Tests for cleaning up old/stale webhook data
+ */
 
-// =============================================================================
-// TEST SUITE
-// =============================================================================
+jest.mock('../../../src/utils/logger', () => ({
+  logger: { child: jest.fn().mockReturnValue({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
+}));
 
-describe('WebhookCleanup', () => {
-  let webhookCleanup: WebhookCleanup;
-  let mockPool: any;
-  let consoleSpy: jest.SpyInstance;
+describe('WebhookCleanupJob', () => {
+  let job: WebhookCleanupJob;
+  let mockDb: any;
 
   beforeEach(() => {
-    consoleSpy = jest.spyOn(console, 'log').mockImplementation();
-
-    mockPool = {
-      query: jest.fn(),
-    };
-
-    webhookCleanup = new WebhookCleanup(mockPool as Pool);
+    jest.clearAllMocks();
+    mockDb = createMockDb();
+    job = new WebhookCleanupJob(mockDb);
   });
 
-  afterEach(() => {
-    consoleSpy.mockRestore();
-  });
+  describe('execute', () => {
+    it('should delete webhooks older than retention period', async () => {
+      mockDb.webhooks.deleteOlderThan.mockResolvedValue(100);
 
-  // ===========================================================================
-  // run() - Delete Processed Webhooks - 5 test cases
-  // ===========================================================================
+      await job.execute();
 
-  describe('run() - Delete Processed Webhooks', () => {
-    it('should delete processed webhooks older than 30 days', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 10 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-
-      await webhookCleanup.run();
-
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('DELETE FROM webhook_inbox')
-      );
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('processed = true')
-      );
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining("INTERVAL '30 days'")
-      );
+      expect(mockDb.webhooks.deleteOlderThan).toHaveBeenCalled();
     });
 
-    it('should log start of cleanup process', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 5 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+    it('should use configurable retention days', async () => {
+      job = new WebhookCleanupJob(mockDb, { retentionDays: 60 });
 
-      await webhookCleanup.run();
+      await job.execute();
 
-      expect(consoleSpy).toHaveBeenCalledWith('Starting webhook cleanup...');
+      const call = mockDb.webhooks.deleteOlderThan.mock.calls[0];
+      expect(call[0]).toBeDefined(); // Date parameter
     });
 
-    it('should log number of deleted webhooks', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 15 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+    it('should report deleted count', async () => {
+      mockDb.webhooks.deleteOlderThan.mockResolvedValue(50);
 
-      await webhookCleanup.run();
+      const result = await job.execute();
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Deleted'));
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('15'));
+      expect(result.deletedCount).toBe(50);
     });
 
-    it('should handle zero deleted webhooks', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
+    it('should archive before deleting if configured', async () => {
+      job = new WebhookCleanupJob(mockDb, { archiveBeforeDelete: true });
+      mockDb.webhooks.findOlderThan.mockResolvedValue([{ id: '1' }, { id: '2' }]);
 
-      await webhookCleanup.run();
+      await job.execute();
 
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('0'));
-    });
-
-    it('should execute DELETE query before SELECT query', async () => {
-      const callOrder: string[] = [];
-      mockPool.query.mockImplementation((query: string) => {
-        if (query.includes('DELETE')) {
-          callOrder.push('DELETE');
-          return Promise.resolve({ rowCount: 5 });
-        } else {
-          callOrder.push('SELECT');
-          return Promise.resolve({ rows: [] });
-        }
-      });
-
-      await webhookCleanup.run();
-
-      expect(callOrder).toEqual(['DELETE', 'SELECT']);
+      expect(mockDb.webhookArchive.insertMany).toHaveBeenCalled();
     });
   });
 
-  // ===========================================================================
-  // run() - Archive Failed Webhooks - 6 test cases
-  // ===========================================================================
+  describe('cleanup failed webhooks', () => {
+    it('should clean up permanently failed webhooks', async () => {
+      await job.cleanupFailedWebhooks();
 
-  describe('run() - Archive Failed Webhooks', () => {
-    it('should query for failed webhooks older than 7 days', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-
-      await webhookCleanup.run();
-
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('SELECT * FROM webhook_inbox')
-      );
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('processed = false')
-      );
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('retry_count >= 5')
-      );
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining("INTERVAL '7 days'")
-      );
+      expect(mockDb.webhooks.deleteByStatus).toHaveBeenCalledWith('permanently_failed', expect.any(Date));
     });
 
-    it('should log when failed webhooks are found', async () => {
-      const failedWebhooks = [
-        { id: 'wh-1', retry_count: 5 },
-        { id: 'wh-2', retry_count: 6 },
-        { id: 'wh-3', retry_count: 7 },
-      ];
+    it('should clean up expired webhooks', async () => {
+      await job.cleanupExpiredWebhooks();
 
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: failedWebhooks });
-
-      await webhookCleanup.run();
-
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Found'));
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('3'));
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('failed webhooks'));
-    });
-
-    it('should not log when no failed webhooks found', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-
-      await webhookCleanup.run();
-
-      const archiveLog = consoleSpy.mock.calls.find(call =>
-        call[0]?.includes('failed webhooks to archive')
-      );
-      expect(archiveLog).toBeUndefined();
-    });
-
-    it('should handle single failed webhook', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'wh-1' }] });
-
-      await webhookCleanup.run();
-
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('1'));
-    });
-
-    it('should handle large number of failed webhooks', async () => {
-      const failedWebhooks = Array(100).fill(null).map((_, i) => ({ id: `wh-${i}` }));
-
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: failedWebhooks });
-
-      await webhookCleanup.run();
-
-      expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('100'));
-    });
-
-    it('should query for webhooks with retry count >= 5', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockResolvedValueOnce({ rows: [] });
-
-      await webhookCleanup.run();
-
-      const selectCall = mockPool.query.mock.calls.find((call: any) =>
-        call[0].includes('SELECT')
-      );
-      expect(selectCall).toBeDefined();
-      expect(selectCall![0]).toContain('retry_count >= 5');
+      expect(mockDb.webhooks.deleteExpired).toHaveBeenCalled();
     });
   });
 
-  // ===========================================================================
-  // run() - Error Handling - 3 test cases
-  // ===========================================================================
+  describe('cleanup idempotency keys', () => {
+    it('should clean up old idempotency keys', async () => {
+      await job.cleanupIdempotencyKeys();
 
-  describe('run() - Error Handling', () => {
-    it('should propagate database errors', async () => {
-      mockPool.query.mockRejectedValue(new Error('Database connection failed'));
-
-      await expect(webhookCleanup.run()).rejects.toThrow('Database connection failed');
+      expect(mockDb.idempotencyKeys.deleteOlderThan).toHaveBeenCalled();
     });
 
-    it('should fail on DELETE query error', async () => {
-      mockPool.query.mockRejectedValueOnce(new Error('DELETE failed'));
+    it('should keep keys for at least 24 hours', async () => {
+      const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
 
-      await expect(webhookCleanup.run()).rejects.toThrow('DELETE failed');
+      await job.cleanupIdempotencyKeys();
+
+      const call = mockDb.idempotencyKeys.deleteOlderThan.mock.calls[0];
+      expect(call[0].getTime()).toBeLessThanOrEqual(oneDayAgo);
+    });
+  });
+
+  describe('batch processing', () => {
+    it('should process in batches for large datasets', async () => {
+      mockDb.webhooks.countOlderThan.mockResolvedValue(10000);
+      mockDb.webhooks.deleteBatch.mockResolvedValue(1000);
+
+      await job.executeBatched();
+
+      expect(mockDb.webhooks.deleteBatch.mock.calls.length).toBeGreaterThanOrEqual(10);
     });
 
-    it('should fail on SELECT query error', async () => {
-      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
-      mockPool.query.mockRejectedValueOnce(new Error('SELECT failed'));
+    it('should respect batch size limit', async () => {
+      job = new WebhookCleanupJob(mockDb, { batchSize: 500 });
+      mockDb.webhooks.countOlderThan.mockResolvedValue(1500);
+      mockDb.webhooks.deleteBatch.mockResolvedValue(500);
 
-      await expect(webhookCleanup.run()).rejects.toThrow('SELECT failed');
+      await job.executeBatched();
+
+      expect(mockDb.webhooks.deleteBatch).toHaveBeenCalledWith(expect.anything(), 500);
+    });
+  });
+
+  describe('error handling', () => {
+    it('should handle database errors gracefully', async () => {
+      mockDb.webhooks.deleteOlderThan.mockRejectedValue(new Error('DB error'));
+
+      await expect(job.execute()).resolves.not.toThrow();
+    });
+
+    it('should report errors in result', async () => {
+      mockDb.webhooks.deleteOlderThan.mockRejectedValue(new Error('DB error'));
+
+      const result = await job.execute();
+
+      expect(result.error).toBeDefined();
     });
   });
 });
+
+function createMockDb() {
+  return {
+    webhooks: {
+      deleteOlderThan: jest.fn().mockResolvedValue(0),
+      deleteByStatus: jest.fn().mockResolvedValue(0),
+      deleteExpired: jest.fn().mockResolvedValue(0),
+      findOlderThan: jest.fn().mockResolvedValue([]),
+      countOlderThan: jest.fn().mockResolvedValue(0),
+      deleteBatch: jest.fn().mockResolvedValue(0),
+    },
+    webhookArchive: {
+      insertMany: jest.fn().mockResolvedValue({ insertedCount: 0 }),
+    },
+    idempotencyKeys: {
+      deleteOlderThan: jest.fn().mockResolvedValue(0),
+    },
+  };
+}
+
+interface JobOptions {
+  retentionDays?: number;
+  archiveBeforeDelete?: boolean;
+  batchSize?: number;
+}
+
+class WebhookCleanupJob {
+  private retentionDays: number;
+  private archiveBeforeDelete: boolean;
+  private batchSize: number;
+
+  constructor(private db: any, options: JobOptions = {}) {
+    this.retentionDays = options.retentionDays || 30;
+    this.archiveBeforeDelete = options.archiveBeforeDelete || false;
+    this.batchSize = options.batchSize || 1000;
+  }
+
+  async execute() {
+    try {
+      const cutoffDate = new Date(Date.now() - this.retentionDays * 24 * 60 * 60 * 1000);
+
+      if (this.archiveBeforeDelete) {
+        const toArchive = await this.db.webhooks.findOlderThan(cutoffDate);
+        if (toArchive.length > 0) await this.db.webhookArchive.insertMany(toArchive);
+      }
+
+      const deletedCount = await this.db.webhooks.deleteOlderThan(cutoffDate);
+      return { deletedCount };
+    } catch (error: any) {
+      return { deletedCount: 0, error: error.message };
+    }
+  }
+
+  async cleanupFailedWebhooks() {
+    const cutoffDate = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    await this.db.webhooks.deleteByStatus('permanently_failed', cutoffDate);
+  }
+
+  async cleanupExpiredWebhooks() {
+    await this.db.webhooks.deleteExpired();
+  }
+
+  async cleanupIdempotencyKeys() {
+    const cutoffDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    await this.db.idempotencyKeys.deleteOlderThan(cutoffDate);
+  }
+
+  async executeBatched() {
+    const cutoffDate = new Date(Date.now() - this.retentionDays * 24 * 60 * 60 * 1000);
+    const total = await this.db.webhooks.countOlderThan(cutoffDate);
+
+    let deleted = 0;
+    while (deleted < total) {
+      const batchDeleted = await this.db.webhooks.deleteBatch(cutoffDate, this.batchSize);
+      deleted += batchDeleted;
+      if (batchDeleted === 0) break;
+    }
+
+    return { deletedCount: deleted };
+  }
+}

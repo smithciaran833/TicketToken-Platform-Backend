@@ -4,7 +4,7 @@ const log = logger.child({ component: 'MockEmailService' });
 
 export class MockEmailService {
   async sendEmail(to: string, subject: string, body: string) {
-    log.info('Mock email sent', { to, subject, body });
+    log.info({ to, subject, body }, 'Mock email sent');
     
     return {
       id: `email_${Date.now()}`,

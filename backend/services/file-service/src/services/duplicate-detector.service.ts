@@ -73,7 +73,7 @@ export class DuplicateDetectorService {
 
       return null;
     } catch (error) {
-      logger.error('Error finding duplicate file:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error finding duplicate file');
       return null;
     }
   }
@@ -102,7 +102,7 @@ export class DuplicateDetectorService {
       logger.info(`Found ${duplicates.length} duplicates for file ${fileId}`);
       return duplicates;
     } catch (error) {
-      logger.error('Error finding all duplicates:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error finding all duplicates');
       return [];
     }
   }
@@ -154,7 +154,7 @@ export class DuplicateDetectorService {
         duplicateGroups
       };
     } catch (error) {
-      logger.error('Error getting duplicate stats:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error getting duplicate stats');
       return {
         totalDuplicates: 0,
         wastedSpace: 0,
@@ -205,7 +205,7 @@ export class DuplicateDetectorService {
 
       return groups;
     } catch (error) {
-      logger.error('Error getting duplicate groups:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error getting duplicate groups');
       return [];
     }
   }
@@ -265,7 +265,7 @@ export class DuplicateDetectorService {
         spaceSaved
       };
     } catch (error) {
-      logger.error('Error deduplicating group:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error deduplicating group');
       throw error;
     }
   }
@@ -292,7 +292,7 @@ export class DuplicateDetectorService {
           totalRemoved += result.removed.length;
           totalSpaceSaved += result.spaceSaved;
         } catch (error) {
-          logger.error(`Failed to deduplicate group ${group.hash}:`, error);
+          logger.error({ err: error instanceof Error ? error : new Error(String(error)), hash: group.hash }, 'Failed to deduplicate group');
         }
       }
 
@@ -304,7 +304,7 @@ export class DuplicateDetectorService {
         totalSpaceSaved
       };
     } catch (error) {
-      logger.error('Error in batch deduplication:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Error in batch deduplication');
       throw error;
     }
   }

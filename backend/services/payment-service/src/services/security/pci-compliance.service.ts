@@ -42,7 +42,7 @@ export class PCIComplianceService {
     
     // Alert security team in production
     if (process.env.NODE_ENV === 'production') {
-      log.error('Security incident', { type });
+      log.error({ type }, 'Security incident');
     }
   }
   

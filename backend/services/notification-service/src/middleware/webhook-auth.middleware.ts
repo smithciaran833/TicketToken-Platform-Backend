@@ -28,7 +28,12 @@ export const verifyTwilioSignature = async (
       .update(Buffer.from(data, 'utf-8'))
       .digest('base64');
 
-    if (twilioSignature !== expectedSignature) {
+    // AUDIT FIX S2S-2: Use timing-safe comparison to prevent timing attacks
+    const signatureBuffer = Buffer.from(twilioSignature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    
+    if (signatureBuffer.length !== expectedBuffer.length || 
+        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
       logger.warn('Invalid Twilio webhook signature');
       return reply.status(401).send({ error: 'Invalid webhook signature' });
     }
@@ -58,7 +63,12 @@ export const verifySendGridSignature = async (
       .update(payload)
       .digest('base64');
 
-    if (signature !== expectedSignature) {
+    // AUDIT FIX S2S-2: Use timing-safe comparison to prevent timing attacks
+    const signatureBuffer = Buffer.from(signature);
+    const expectedBuffer = Buffer.from(expectedSignature);
+    
+    if (signatureBuffer.length !== expectedBuffer.length || 
+        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
       logger.warn('Invalid SendGrid webhook signature');
       return reply.status(401).send({ error: 'Invalid webhook signature' });
     }

@@ -1,12 +1,13 @@
 import Stripe from 'stripe';
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
+import { getConfig } from '../config/index';
 
 /**
  * SECURITY FIX (ST8): Lock Stripe API version to prevent breaking changes
  * Update this when explicitly upgrading Stripe API compatibility
  */
-export const STRIPE_API_VERSION = '2024-11-20.acacia' as const;
+export const STRIPE_API_VERSION = '2025-12-15.clover' as const;
 
 /**
  * SECURITY FIX (DS4): Simple circuit breaker for Stripe API calls
@@ -83,7 +84,7 @@ export const stripeCircuitBreaker = new StripeCircuitBreaker(5, 30000);
 
 // Export for webhook handler consistency
 export function createStripeClient(): Stripe {
-  const stripeKey = process.env.STRIPE_SECRET_KEY;
+  const stripeKey = getConfig().stripe.secretKey;
   if (!stripeKey) {
     throw new Error('STRIPE_SECRET_KEY not configured');
   }

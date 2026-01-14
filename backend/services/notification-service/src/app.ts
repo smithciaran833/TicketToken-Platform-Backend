@@ -7,6 +7,12 @@ import { env } from './config/env';
 import { logger } from './config/logger';
 import { errorHandler } from './middleware/error.middleware';
 import { tracingMiddleware } from './middleware/tracing.middleware';
+// AUDIT FIX LOG-M1/M2/M3: Import request logger middleware
+import {
+  requestLoggerOnRequest,
+  requestLoggerOnResponse,
+  addCorrelationIdHeader,
+} from './middleware/request-logger';
 
 // Import routes
 import notificationRoutes from './routes/notification.routes';
@@ -29,39 +35,44 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Register plugins
   await app.register(cors);
-  await app.register(helmet);
+  // AUDIT FIX SEC-H2: Configure helmet with HSTS
+  await app.register(helmet, {
+    hsts: {
+      maxAge: 31536000, // 1 year
+      includeSubDomains: true,
+      preload: true
+    },
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        styleSrc: ["'self'", "'unsafe-inline'"],
+        scriptSrc: ["'self'"],
+        imgSrc: ["'self'", 'data:'],
+        connectSrc: ["'self'"],
+        fontSrc: ["'self'"],
+        objectSrc: ["'none'"],
+        mediaSrc: ["'self'"],
+        frameSrc: ["'none'"]
+      }
+    }
+  });
   await app.register(formBody);
   await app.register(multipart);
 
   // Tracing middleware (must be first to capture all requests)
   app.addHook('onRequest', tracingMiddleware);
   
-  // Request logging
-  app.addHook('onRequest', async (request, reply) => {
-    const traceContext = (request as any).traceContext;
-    logger.info({
-      method: request.method,
-      url: request.url,
-      ip: request.ip,
-      userAgent: request.headers['user-agent'],
-      traceId: traceContext?.traceId,
-      spanId: traceContext?.spanId
-    });
-  });
-
-  // Response logging and metrics
+  // AUDIT FIX LOG-M1/M2/M3: Enhanced request logging with PII redaction
+  app.addHook('onRequest', requestLoggerOnRequest);
+  app.addHook('onRequest', addCorrelationIdHeader);
+  
+  // AUDIT FIX LOG-M3: Response logging with performance metrics
+  app.addHook('onResponse', requestLoggerOnResponse);
+  
+  // Track API metrics (excluding /metrics endpoint to avoid recursion)
   app.addHook('onResponse', async (request, reply) => {
-    const responseTime = reply.getResponseTime();
-    
-    logger.info({
-      method: request.method,
-      url: request.url,
-      statusCode: reply.statusCode,
-      responseTime: responseTime,
-    });
-    
-    // Track API metrics (excluding /metrics endpoint to avoid recursion)
     if (request.url !== '/metrics') {
+      const responseTime = reply.getResponseTime();
       metricsService.trackApiRequest(
         request.url,
         request.method,

@@ -3,7 +3,7 @@
 # ==============================================================================
 #
 # AUDIT FIX (DOCKER-DIGEST): Image Digest Pinning Best Practice
-# 
+#
 # For production deployments, replace tag-based image references with digests
 # to ensure reproducible builds and prevent supply chain attacks:
 #
@@ -22,7 +22,6 @@
 #   FROM node:20-alpine@sha256:1a526b9b6c18b2c5e4f1e0c33f4e4d8a7b3c9f...
 #
 # ==============================================================================
-
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY backend/shared ./backend/shared
@@ -36,14 +35,19 @@ RUN npm run build
 
 FROM node:20-alpine
 WORKDIR /app
+
+# Install dumb-init for proper signal handling
 RUN apk add --no-cache dumb-init
+
 # Maintain directory structure
 COPY --from=builder /app/backend/shared /app/backend/shared
 COPY --from=builder /app/backend/services/event-service/package.json /app/backend/services/event-service/package.json
 COPY --from=builder /app/backend/services/event-service/package-lock.json /app/backend/services/event-service/package-lock.json
+
 # Install from the correct directory where file:../../shared resolves
 WORKDIR /app/backend/services/event-service
-RUN npm ci
+RUN npm ci --production
+
 # Copy built artifacts
 COPY --from=builder /app/backend/services/event-service/dist ./dist
 
@@ -65,10 +69,32 @@ RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
     echo 'exec "$@"' >> /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
+# AUDIT FIX: Create tmp directory for any required temp files
+# This is needed because we'll mount the filesystem as read-only
+RUN mkdir -p /app/tmp && chmod 777 /app/tmp
+
+# Create non-root user for security
+RUN addgroup -g 1001 -S nodejs && \
+    adduser -S nodejs -u 1001 && \
+    chown -R nodejs:nodejs /app
+
 USER nodejs
+
+# AUDIT FIX (READ-ONLY-FS): Security hardening
+# In Kubernetes/Docker Compose, mount as read-only:
+#   securityContext:
+#     readOnlyRootFilesystem: true
+#   volumeMounts:
+#     - name: tmp
+#       mountPath: /app/tmp
+#
+# Or in docker run:
+#   docker run --read-only --tmpfs /app/tmp:rw,noexec,nosuid event-service
+
 EXPOSE 3003
+
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
 ENTRYPOINT ["/app/entrypoint.sh", "dumb-init", "--"]
 CMD ["node", "dist/index.js"]

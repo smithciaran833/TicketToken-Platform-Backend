@@ -4,10 +4,27 @@ import { InfluxDBMetricsService } from './influxdb-metrics.service';
 export class MetricsMigrationService {
   private influxService: InfluxDBMetricsService;
   private mongoClient: MongoClient;
+  private isConnected = false;
 
   constructor() {
     this.influxService = new InfluxDBMetricsService();
     this.mongoClient = new MongoClient(process.env.MONGODB_URL || 'mongodb://localhost:27017');
+  }
+
+  // Ensure MongoDB connection is established (connection pooling)
+  private async ensureConnected(): Promise<void> {
+    if (!this.isConnected) {
+      await this.mongoClient.connect();
+      this.isConnected = true;
+    }
+  }
+
+  // Graceful shutdown - call this when service shuts down
+  async close(): Promise<void> {
+    if (this.isConnected) {
+      await this.mongoClient.close();
+      this.isConnected = false;
+    }
   }
 
   // Dual write: Write to both MongoDB and InfluxDB
@@ -30,7 +47,7 @@ export class MetricsMigrationService {
 
     // Also write to MongoDB (during migration phase)
     try {
-      await this.mongoClient.connect();
+      await this.ensureConnected();
       const db = this.mongoClient.db('analytics');
       const collection = db.collection(data.type === 'user_action' ? 'user_behavior' : 'event_analytics');
       
@@ -41,14 +58,13 @@ export class MetricsMigrationService {
       });
     } catch (error) {
       console.error('MongoDB write failed:', error);
-    } finally {
-      await this.mongoClient.close();
     }
+    // Note: Connection is kept open for connection pooling - call close() on service shutdown
   }
 
   // Migrate historical data from MongoDB to InfluxDB
   async migrateHistoricalData(startDate: Date, endDate: Date) {
-    await this.mongoClient.connect();
+    await this.ensureConnected();
     const db = this.mongoClient.db('analytics');
 
     console.log('Migrating user_behavior...');
@@ -103,12 +119,12 @@ export class MetricsMigrationService {
     await this.influxService.flush();
     console.log(`✅ Migrated ${events.length} event metrics`);
 
-    await this.mongoClient.close();
+    // Note: Connection is kept open for connection pooling - call close() on service shutdown
     console.log('🎉 Migration complete!');
   }
 
   async validateMigration(eventId: string, date: Date) {
-    await this.mongoClient.connect();
+    await this.ensureConnected();
     const db = this.mongoClient.db('analytics');
     const collection = db.collection('event_analytics');
 
@@ -122,7 +138,7 @@ export class MetricsMigrationService {
 
     const influxData = await this.influxService.getEventSalesTimeSeries(eventId, 24);
 
-    await this.mongoClient.close();
+    // Note: Connection is kept open for connection pooling - call close() on service shutdown
 
     return {
       mongodb_count: mongoCount,

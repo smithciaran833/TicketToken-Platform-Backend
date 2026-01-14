@@ -3,9 +3,18 @@ import { transferService } from '../services/transfer.service';
 import { transferModel } from '../models/transfer.model';
 import { stripePaymentService } from '../services/stripe-payment.service';
 import { logger } from '../utils/logger';
+import { cache } from '../config/redis';
 import Stripe from 'stripe';
 
 const log = logger.child({ component: 'WebhookController' });
+
+/**
+ * Webhook Controller for Marketplace Service
+ * 
+ * Issues Fixed:
+ * - IDP-3: Webhook dedup in-memory → Moved to Redis for persistence across restarts
+ * - WH-H1: In-memory idempotency → Redis-backed with proper TTL
+ */
 
 interface PaymentCompletedBody {
   paymentIntentId: string;
@@ -17,9 +26,78 @@ interface PaymentCompletedBody {
   transferDestination?: string;
 }
 
+// AUDIT FIX IDP-3 + FIX #6/#7: Redis key prefix for webhook deduplication
+const WEBHOOK_DEDUP_PREFIX = 'marketplace:webhook:processed:';
+const WEBHOOK_DEDUP_TTL_SECONDS = 3600; // 1 hour
+
 export class WebhookController {
-  private processedEvents = new Set<string>(); // Simple in-memory idempotency check
-  private readonly IDEMPOTENCY_TTL = 3600000; // 1 hour
+  /**
+   * FIX #6/#7: Atomic idempotency check using Redis SETNX
+   * Uses SET with NX (only set if not exists) and EX (expiry) for atomic operation
+   * Returns true if this is a NEW event (not processed before)
+   * Returns false if event was already processed
+   */
+  private async tryAcquireEventLock(eventId: string): Promise<boolean> {
+    const key = `${WEBHOOK_DEDUP_PREFIX}${eventId}`;
+    
+    try {
+      // Use Redis SET with NX (only if not exists) and EX (expiry) for atomic operation
+      // This is the standard Redis pattern for distributed locks/idempotency
+      const result = await cache.setNX(key, 'processing', WEBHOOK_DEDUP_TTL_SECONDS);
+      
+      if (result) {
+        log.debug('Acquired event lock', { eventId });
+        return true; // New event, lock acquired
+      } else {
+        log.debug('Event lock already exists', { eventId });
+        return false; // Already processed or being processed
+      }
+    } catch (error: any) {
+      // FIX #7: If Redis is unavailable, we log and FAIL OPEN (allow processing)
+      // This is safer than blocking all webhooks, but we log loudly
+      log.error('Redis SETNX failed - ALLOWING processing (potential duplicate risk)', {
+        eventId,
+        error: error.message
+      });
+      // Return true to allow processing but log the risk
+      return true;
+    }
+  }
+
+  /**
+   * Mark event as successfully processed (update lock value)
+   */
+  private async markEventProcessed(eventId: string): Promise<void> {
+    const key = `${WEBHOOK_DEDUP_PREFIX}${eventId}`;
+    
+    try {
+      // Update the value to indicate completed processing
+      await cache.set(key, 'completed', WEBHOOK_DEDUP_TTL_SECONDS);
+    } catch (error: any) {
+      log.warn('Failed to update event status to completed', { 
+        eventId, 
+        error: error.message 
+      });
+      // Non-critical - lock is already in place
+    }
+  }
+
+  /**
+   * Release lock on failure (allows retry)
+   */
+  private async releaseEventLock(eventId: string): Promise<void> {
+    const key = `${WEBHOOK_DEDUP_PREFIX}${eventId}`;
+    
+    try {
+      await cache.del(key);
+      log.debug('Released event lock for retry', { eventId });
+    } catch (error: any) {
+      log.warn('Failed to release event lock', { 
+        eventId, 
+        error: error.message 
+      });
+    }
+  }
 
   /**
    * Handle Stripe payment_intent.succeeded webhook
@@ -53,9 +131,10 @@ export class WebhookController {
       return reply.status(400).send({ error: 'Invalid signature' });
     }
 
-    // Idempotency check - don't process the same event twice
-    if (this.processedEvents.has(event.id)) {
-      log.info('Event already processed (idempotency check)', { eventId: event.id });
+    // FIX #6/#7: Atomic idempotency check using Redis SETNX
+    const lockAcquired = await this.tryAcquireEventLock(event.id);
+    if (!lockAcquired) {
+      log.info('Event already processed or in progress (idempotency check)', { eventId: event.id });
       return reply.send({ received: true, status: 'already_processed' });
     }
 
@@ -91,9 +170,8 @@ export class WebhookController {
         // Execute the split payment transfers
         await transferService.completeFiatTransfer(transfer.id);
 
-        // Mark event as processed
-        this.processedEvents.add(event.id);
-        setTimeout(() => this.processedEvents.delete(event.id), this.IDEMPOTENCY_TTL);
+        // AUDIT FIX IDP-3: Mark event as processed in Redis
+        await this.markEventProcessed(event.id);
 
         log.info('Payment completed via Stripe webhook', {
           transferId: transfer.id,

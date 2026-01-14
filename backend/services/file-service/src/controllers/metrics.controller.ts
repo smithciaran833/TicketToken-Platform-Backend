@@ -8,7 +8,7 @@ export class MetricsController {
    * Get Prometheus metrics
    * GET /metrics
    */
-  async getMetrics(request: FastifyRequest, reply: FastifyReply) {
+  async getMetrics(_request: FastifyRequest, reply: FastifyReply) {
     try {
       const metrics = await metricsService.getMetrics();
       
@@ -16,7 +16,7 @@ export class MetricsController {
         .header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8')
         .send(metrics);
     } catch (error) {
-      logger.error('Failed to get metrics:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get metrics');
       reply.status(500).send({ error: 'Failed to retrieve metrics' });
     }
   }
@@ -25,12 +25,12 @@ export class MetricsController {
    * Get metrics as JSON
    * GET /metrics/json
    */
-  async getMetricsJSON(request: FastifyRequest, reply: FastifyReply) {
+  async getMetricsJSON(_request: FastifyRequest, reply: FastifyReply) {
     try {
       const metrics = await metricsService.getMetricsJSON();
       reply.send({ metrics });
     } catch (error) {
-      logger.error('Failed to get metrics JSON:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get metrics JSON');
       reply.status(500).send({ error: 'Failed to retrieve metrics' });
     }
   }
@@ -39,7 +39,7 @@ export class MetricsController {
    * Get service statistics
    * GET /metrics/stats
    */
-  async getStats(request: FastifyRequest, reply: FastifyReply) {
+  async getStats(_request: FastifyRequest, reply: FastifyReply) {
     try {
       // Get file statistics from database
       const fileStats = await db('files')
@@ -107,7 +107,7 @@ export class MetricsController {
         timestamp: new Date().toISOString()
       });
     } catch (error) {
-      logger.error('Failed to get stats:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get stats');
       reply.status(500).send({ error: 'Failed to retrieve statistics' });
     }
   }
@@ -116,7 +116,7 @@ export class MetricsController {
    * Get health check with detailed status
    * GET /metrics/health
    */
-  async getDetailedHealth(request: FastifyRequest, reply: FastifyReply) {
+  async getDetailedHealth(_request: FastifyRequest, reply: FastifyReply) {
     try {
       const health = {
         status: 'healthy',
@@ -135,7 +135,7 @@ export class MetricsController {
 
       reply.status(allHealthy ? 200 : 503).send(health);
     } catch (error) {
-      logger.error('Health check failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Health check failed');
       reply.status(503).send({
         status: 'unhealthy',
         error: error instanceof Error ? error.message : 'Unknown error',

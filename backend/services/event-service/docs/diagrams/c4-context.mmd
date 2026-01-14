@@ -1,0 +1,47 @@
+%% C4 Context Diagram - Event Service
+%% Shows how event-service fits into the overall system
+
+graph TB
+    subgraph "External Users"
+        EU[Event Organizers]
+        TH[Ticket Holders]
+        AD[Administrators]
+    end
+
+    subgraph "TicketToken Platform"
+        ES[Event Service<br/>Manages events, capacity,<br/>pricing, and schedules]
+    end
+
+    subgraph "External Systems"
+        VS[Venue Service<br/>Venue data and availability]
+        AS[Auth Service<br/>Authentication and authorization]
+        TS[Ticket Service<br/>Ticket issuance and transfers]
+        OS[Order Service<br/>Order processing]
+        PS[Payment Service<br/>Payment processing]
+        NS[Notification Service<br/>Email, SMS, Push]
+        SS[Search Service<br/>Event discovery]
+        BC[Blockchain<br/>NFT minting]
+    end
+
+    subgraph "Data Stores"
+        PG[(PostgreSQL<br/>Events, capacity, pricing)]
+        RD[(Redis<br/>Cache, rate limits)]
+        MG[(MongoDB<br/>Rich content)]
+    end
+
+    EU -->|Create/Manage Events| ES
+    TH -->|View Events| ES
+    AD -->|Admin Operations| ES
+
+    ES <-->|Venue Validation| VS
+    ES <-->|Auth Tokens| AS
+    ES -->|Event Updates| TS
+    ES -->|Pricing Info| OS
+    ES -->|Refund Triggers| PS
+    ES -->|Event Notifications| NS
+    ES -->|Index Events| SS
+    ES -->|Mint NFTs| BC
+
+    ES --> PG
+    ES --> RD
+    ES --> MG

@@ -1,5 +1,22 @@
 import { query } from '../../config/database';
 
+/**
+ * CONTRIBUTION TRACKER SERVICE
+ * 
+ * Tracks group payment contributions and analytics.
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * Most operations use payment-service owned tables (group_payments, group_payment_members).
+ * The getGroupAnalytics() method JOINs with events table for venue-scoped analytics.
+ * 
+ * Direct DB access is retained because:
+ * 1. group_payments and group_payment_members are payment-service owned
+ * 2. Analytics JOINs require efficient aggregation
+ * 3. Minimal cross-service data access (only venue_id from events)
+ * 
+ * Future: Consider eventServiceClient.getEventVenueId() for cleaner separation.
+ */
+
 export class ContributionTrackerService {
   async trackContribution(
     groupId: string,

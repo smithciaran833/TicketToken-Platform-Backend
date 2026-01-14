@@ -1,4 +1,4 @@
-import { getDb, getAnalyticsDb } from '../../config/database';
+import { getAnalyticsDb } from '../../config/database';
 import { logger } from '../../utils/logger';
 
 // Validation constants
@@ -10,7 +10,6 @@ const VALIDATION = {
 } as const;
 
 export class RevenueCalculator {
-  private mainDb = getDb();
   private analyticsDb = getAnalyticsDb();
 
   /**

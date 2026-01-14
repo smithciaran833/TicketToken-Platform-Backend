@@ -5,7 +5,8 @@ import cors from '@fastify/cors';
 import { v4 as uuidv4 } from 'uuid';
 import { Connection } from '@solana/web3.js';
 import { Pool } from 'pg';
-import { setTenantContext } from './middleware/tenant-context';
+import { tenantContextMiddleware, optionalTenantContextMiddleware } from './middleware/tenant-context';
+import { BaseError, isBaseError, NotFoundError, ErrorCode } from './errors';
 import healthRoutes from './routes/health.routes';
 import metricsRoutes from './routes/metrics.routes';
 import internalMintRoutes from './routes/internal-mint.routes';
@@ -18,6 +19,9 @@ import { logger } from './utils/logger';
 import BlockchainQueryService from './services/BlockchainQueryService';
 import TransactionConfirmationService from './services/TransactionConfirmationService';
 import RPCFailoverService from './services/RPCFailoverService';
+// AUDIT FIX #51, #53: Load management middleware
+import { loadSheddingMiddleware, getLoadStatus, getLoadSheddingMetrics } from './middleware/load-shedding';
+import { getBulkheadMetrics, getBulkheadTypeForRoute, createBulkheadMiddleware, BulkheadType } from './middleware/bulkhead';
 
 const SERVICE_NAME = process.env.SERVICE_NAME || 'blockchain-service';
 
@@ -29,12 +33,45 @@ let rpcFailover: RPCFailoverService | null = null;
 let blockchainQuery: BlockchainQueryService | null = null;
 let transactionConfirmation: TransactionConfirmationService | null = null;
 
+/**
+ * AUDIT FIX #30: Trusted proxy configuration
+ * 
+ * Instead of trustProxy: true (trust all), we restrict to known proxy IPs.
+ * Options:
+ * - Array of trusted IPs/CIDRs for explicit trust
+ * - Number (e.g., 1) to trust only N hops
+ * - Function for custom validation
+ * 
+ * Default: Trust only private network ranges (internal load balancers)
+ */
+const TRUSTED_PROXIES = process.env.TRUSTED_PROXIES
+  ? process.env.TRUSTED_PROXIES.split(',').map(s => s.trim())
+  : [
+      // Loopback
+      '127.0.0.1',
+      '::1',
+      // Private networks (internal LBs, Kubernetes, Docker)
+      '10.0.0.0/8',
+      '172.16.0.0/12',
+      '192.168.0.0/16',
+      // IPv6 private
+      'fc00::/7',
+      'fe80::/10'
+    ];
+
 export async function createApp(): Promise<FastifyInstance> {
   const app = fastify({
     logger: false,
-    trustProxy: true,
+    // AUDIT FIX #30: Restrict trustProxy to known proxy IPs
+    // This prevents IP spoofing attacks via X-Forwarded-For headers
+    trustProxy: TRUSTED_PROXIES,
     requestIdHeader: 'x-request-id',
     genReqId: () => uuidv4()
+  });
+
+  logger.info('Fastify configured with restricted trustProxy', {
+    trustedProxies: TRUSTED_PROXIES.length,
+    proxies: TRUSTED_PROXIES.slice(0, 3).concat(TRUSTED_PROXIES.length > 3 ? ['...'] : [])
   });
 
   // Register plugins
@@ -45,14 +82,15 @@ export async function createApp(): Promise<FastifyInstance> {
     timeWindow: '1 minute'
   });
 
-  // Tenant isolation middleware
-  app.addHook('onRequest', async (request, reply) => {
-    try {
-      await setTenantContext(request, reply);
-    } catch (error) {
-      logger.error('Failed to set tenant context', error);
-    }
-  });
+  // AUDIT FIX #53: Register load shedding middleware early in the chain
+  // This allows the service to gracefully degrade under high load
+  app.addHook('onRequest', loadSheddingMiddleware);
+  logger.info('Load shedding middleware registered');
+
+  // Note: Tenant context middleware is applied per-route based on authentication requirements
+  // - Public routes (health, metrics): No tenant context needed
+  // - Authenticated routes: Use tenantContextMiddleware via preHandler hook
+  // - Internal service routes: Validate tenant from JWT claims
 
   // Initialize infrastructure components
   logger.info('Initializing blockchain service infrastructure...');
@@ -196,18 +234,92 @@ export async function createApp(): Promise<FastifyInstance> {
     };
   });
 
-  // Error handler
-  app.setErrorHandler((error: FastifyError, request, reply) => {
-    logger.error('Unhandled error', { 
-      error: error.message, 
+  // Issue #6: 404 Not Found handler
+  app.setNotFoundHandler((request, reply) => {
+    const notFoundError = new NotFoundError('Route', request.url);
+    
+    logger.warn('Route not found', {
+      path: request.url,
+      method: request.method,
+      ip: request.ip,
+      requestId: request.id
+    });
+
+    reply
+      .code(404)
+      .type('application/problem+json')
+      .send(notFoundError.toProblemDetails(request.id as string, request.url));
+  });
+
+  // Issue #7, #8: RFC 7807 Error handler (no stack traces in production)
+  app.setErrorHandler((error: FastifyError | BaseError, request, reply) => {
+    const requestId = request.id as string;
+    const isProduction = process.env.NODE_ENV === 'production';
+    
+    // Log the error with full details (server-side only)
+    logger.error('Request error', {
+      error: error.message,
+      code: isBaseError(error) ? error.code : error.code,
       stack: error.stack,
       path: request.url,
-      method: request.method
+      method: request.method,
+      requestId,
+      statusCode: isBaseError(error) ? error.statusCode : error.statusCode || 500
     });
-    reply.status(500).send({
-      error: 'Internal Server Error',
-      message: error.message
-    });
+
+    // If it's our custom BaseError, use RFC 7807 format
+    if (isBaseError(error)) {
+      const problemDetails = error.toProblemDetails(requestId, request.url);
+      
+      // Issue #8: Don't include stack traces in production
+      if (!isProduction && error.stack) {
+        problemDetails.stack = error.stack;
+      }
+
+      return reply
+        .code(error.statusCode)
+        .type('application/problem+json')
+        .send(problemDetails);
+    }
+
+    // Handle Fastify validation errors
+    if (error.validation) {
+      return reply
+        .code(400)
+        .type('application/problem+json')
+        .send({
+          type: 'https://api.tickettoken.com/errors/VALIDATION_FAILED',
+          title: 'Validation Error',
+          status: 400,
+          detail: error.message,
+          code: ErrorCode.VALIDATION_FAILED,
+          instance: request.url,
+          timestamp: new Date().toISOString(),
+          traceId: requestId,
+          validationErrors: error.validation
+        });
+    }
+
+    // Generic error - RFC 7807 format without exposing internals
+    const statusCode = error.statusCode || 500;
+    const isServerError = statusCode >= 500;
+
+    return reply
+      .code(statusCode)
+      .type('application/problem+json')
+      .send({
+        type: `https://api.tickettoken.com/errors/${isServerError ? 'INTERNAL_ERROR' : 'BAD_REQUEST'}`,
+        title: isServerError ? 'Internal Server Error' : 'Bad Request',
+        status: statusCode,
+        // Issue #8: Don't expose internal error messages in production for 5xx
+        detail: isProduction && isServerError 
+          ? 'An unexpected error occurred. Please try again later.'
+          : error.message,
+        code: isServerError ? ErrorCode.INTERNAL_ERROR : ErrorCode.BAD_REQUEST,
+        instance: request.url,
+        timestamp: new Date().toISOString(),
+        traceId: requestId
+      });
   });
 
   return app;

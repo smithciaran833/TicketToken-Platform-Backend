@@ -1,0 +1,202 @@
+
+> @tickettoken/payment-service@1.0.0 test
+> jest --testPathPattern=tests/unit --passWithNoTests
+
+--------------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------
+File                                  | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s                                                                                           
+--------------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------
+All files                             |   23.51 |    21.16 |   24.96 |   23.64 |                                                                                                             
+ src                                  |       0 |        0 |       0 |       0 |                                                                                                             
+  app.ts                              |       0 |        0 |       0 |       0 | 1-86                                                                                                        
+ src/config                           |   16.55 |     8.44 |   22.78 |    16.7 |                                                                                                             
+  blockchain.ts                       |       0 |        0 |     100 |       0 | 1                                                                                                           
+  compliance.ts                       |       0 |      100 |     100 |       0 | 1                                                                                                           
+  database.ts                         |       0 |        0 |       0 |       0 | 1-45                                                                                                        
+  fees.ts                             |       0 |        0 |     100 |       0 | 1-45                                                                                                        
+  index.ts                            |       0 |        0 |       0 |       0 | 17-505                                                                                                      
+  opentelemetry.config.ts             |       0 |        0 |       0 |       0 | 17-279                                                                                                      
+  redis.ts                            |       0 |        0 |       0 |       0 | 8-61                                                                                                        
+  secrets-manager.ts                  |   66.08 |     64.1 |      72 |   65.78 | 58-63,74-78,115,142,179-188,217-222,271-290,305-332,409                                                     
+  secrets.ts                          |       0 |        0 |       0 |       0 | 1-30                                                                                                        
+  trusted-proxy.config.ts             |       0 |        0 |       0 |       0 | 9-314                                                                                                       
+ src/controllers                      |   12.23 |     9.69 |   19.67 |   12.45 |                                                                                                             
+  compliance.controller.ts            |       0 |        0 |       0 |       0 | 3-97                                                                                                        
+  group-payment.controller.ts         |   93.75 |      100 |     100 |   93.75 | 88-90                                                                                                       
+  intentsController.ts                |     100 |      100 |     100 |     100 |                                                                                                             
+  marketplace.controller.ts           |       0 |        0 |       0 |       0 | 3-142                                                                                                       
+  payment.controller.ts               |       0 |        0 |       0 |       0 | 3-338                                                                                                       
+  refundController.ts                 |       0 |        0 |       0 |       0 | 16-1013                                                                                                     
+  venue.controller.ts                 |     100 |      100 |     100 |     100 |                                                                                                             
+  webhook.controller.ts               |       0 |        0 |       0 |       0 | 2-285                                                                                                       
+ src/cron                             |   72.22 |    83.33 |   71.42 |   72.22 |                                                                                                             
+  payment-reconciliation.ts           |     100 |      100 |     100 |     100 |                                                                                                             
+  webhook-cleanup.ts                  |       0 |        0 |       0 |       0 | 2-27                                                                                                        
+ src/jobs                             |   30.65 |     34.9 |   30.15 |   31.04 |                                                                                                             
+  background-job-processor.ts         |   79.21 |    77.08 |    82.6 |   80.45 | 153-161,322,614-700                                                                                         
+  process-webhook-queue.ts            |       0 |        0 |       0 |       0 | 2-64                                                                                                        
+  retry-failed-payments.ts            |       0 |        0 |       0 |       0 | 3-57                                                                                                        
+  royalty-reconciliation.job.ts       |       0 |      100 |       0 |       0 | 1-51                                                                                                        
+  tenant-job-utils.ts                 |       0 |        0 |       0 |       0 | 11-467                                                                                                      
+  transfer-retry.job.ts               |       0 |        0 |       0 |       0 | 10-375                                                                                                      
+ src/middleware                       |    32.7 |    30.85 |   31.51 |   32.89 |                                                                                                             
+  auth.middleware.ts                  |       0 |        0 |       0 |       0 | 12-360                                                                                                      
+  auth.ts                             |       0 |        0 |       0 |       0 | 13-481                                                                                                      
+  error-handler.ts                    |       0 |        0 |       0 |       0 | 2-90                                                                                                        
+  global-error-handler.ts             |   84.45 |    71.92 |   66.66 |   85.41 | 226-227,335-349,362-370,486-494,503-504,509-510                                                             
+  idempotency.middleware.ts           |       0 |        0 |       0 |       0 | 14-320                                                                                                      
+  idempotency.ts                      |      94 |      100 |   66.66 |      94 | 125,145,159                                                                                                 
+  index.ts                            |       0 |      100 |     100 |       0 | 1-6                                                                                                         
+  internal-auth.ts                    |   82.35 |       75 |     100 |   82.35 | 11-15,53-54                                                                                                 
+  rate-limit.middleware.ts            |       0 |        0 |       0 |       0 | 15-504                                                                                                      
+  rate-limiter.ts                     |       0 |        0 |       0 |       0 | 2-51                                                                                                        
+  request-context.middleware.ts       |   88.05 |    88.88 |   88.88 |   88.05 | 190-213                                                                                                     
+  request-id.middleware.ts            |       0 |        0 |       0 |       0 | 7-71                                                                                                        
+  request-logger.ts                   |       0 |        0 |       0 |       0 | 2-64                                                                                                        
+  service-auth.middleware.ts          |       0 |        0 |       0 |       0 | 13-323                                                                                                      
+  tenant.middleware.ts                |   87.32 |    85.18 |    82.6 |   86.95 | 304-313,412,432-433,463-471,484-489                                                                         
+  tracing.middleware.ts               |       0 |        0 |       0 |       0 | 2-166                                                                                                       
+  validation.ts                       |       0 |        0 |       0 |       0 | 2-139                                                                                                       
+ src/models                           |       0 |        0 |       0 |       0 |                                                                                                             
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  refund.model.ts                     |       0 |        0 |       0 |       0 | 1-52                                                                                                        
+  transaction.model.ts                |       0 |        0 |       0 |       0 | 1-182                                                                                                       
+  venue-balance.model.ts              |       0 |        0 |       0 |       0 | 1-104                                                                                                       
+ src/processors                       |       0 |        0 |       0 |       0 |                                                                                                             
+  order-event-processor.ts            |       0 |        0 |       0 |       0 | 2-64                                                                                                        
+  payment-event-processor.ts          |       0 |        0 |       0 |       0 | 3-77                                                                                                        
+ src/routes                           |       0 |        0 |       0 |       0 |                                                                                                             
+  admin.routes.ts                     |       0 |        0 |       0 |       0 | 13-327                                                                                                      
+  compliance.routes.ts                |       0 |      100 |       0 |       0 | 2-34                                                                                                        
+  escrow.routes.ts                    |       0 |        0 |       0 |       0 | 11-318                                                                                                      
+  fee-calculator.routes.ts            |       0 |        0 |       0 |       0 | 2-64                                                                                                        
+  fraud.routes.ts                     |       0 |        0 |       0 |       0 | 2-338                                                                                                       
+  group-payment.routes.ts             |       0 |      100 |       0 |       0 | 2-45                                                                                                        
+  health.routes.ts                    |       0 |        0 |       0 |       0 | 20-548                                                                                                      
+  index.ts                            |       0 |      100 |       0 |       0 | 2-31                                                                                                        
+  intents.routes.ts                   |       0 |      100 |       0 |       0 | 2-18                                                                                                        
+  internal-tax.routes.ts              |       0 |      100 |       0 |       0 | 2-24                                                                                                        
+  internal.routes.ts                  |       0 |      100 |       0 |       0 | 2-26                                                                                                        
+  marketplace.routes.ts               |       0 |      100 |       0 |       0 | 2-60                                                                                                        
+  metrics.routes.ts                   |       0 |        0 |       0 |       0 | 9-443                                                                                                       
+  payment.routes.ts                   |       0 |      100 |       0 |       0 | 2-79                                                                                                        
+  refund.routes.ts                    |       0 |      100 |       0 |       0 | 14-599                                                                                                      
+  royalty.routes.ts                   |       0 |        0 |       0 |       0 | 2-161                                                                                                       
+  startup.routes.ts                   |       0 |        0 |       0 |       0 | 13-361                                                                                                      
+  venue.routes.ts                     |       0 |      100 |       0 |       0 | 2-34                                                                                                        
+  webhook.routes.ts                   |       0 |      100 |       0 |       0 | 2-13                                                                                                        
+ src/services                         |   50.22 |    37.55 |   45.35 |   51.02 |                                                                                                             
+  alerting.service.ts                 |       0 |        0 |       0 |       0 | 16-699                                                                                                      
+  cache-integration.ts                |       0 |        0 |       0 |       0 | 1-52                                                                                                        
+  cache.service.ts                    |     100 |      100 |     100 |     100 |                                                                                                             
+  chargeback-reserve.service.ts       |     100 |    96.55 |     100 |     100 | 255                                                                                                         
+  databaseService.ts                  |   61.95 |    75.75 |   47.05 |   62.35 | 82,87-88,92-93,97,101-102,110-114,125-139,159-167,204,210,232-233                                           
+  escrow.service.ts                   |     100 |      100 |     100 |     100 |                                                                                                             
+  event-ordering.service.ts           |   73.27 |    81.81 |   76.92 |   73.27 | 44-45,292-306,338-406,448-451                                                                               
+  fee-calculation.service.ts          |   96.33 |    85.36 |     100 |   96.22 | 552-558                                                                                                     
+  fee-calculator.service.ts           |       0 |        0 |       0 |       0 | 12-192                                                                                                      
+  launch-features.ts                  |       0 |        0 |       0 |       0 | 2-198                                                                                                       
+  metrics.service.ts                  |     100 |    88.88 |     100 |     100 | 304,324                                                                                                     
+  notification.service.ts             |       0 |        0 |       0 |       0 | 9-346                                                                                                       
+  payment-analytics.service.ts        |       0 |        0 |       0 |       0 | 7-329                                                                                                       
+  queueService.ts                     |     100 |      100 |     100 |     100 |                                                                                                             
+  redisService.ts                     |     100 |      100 |     100 |     100 |                                                                                                             
+  refund-policy.service.ts            |   98.21 |    78.94 |    87.5 |   98.21 | 237                                                                                                         
+  stripe-connect-transfer.service.ts  |       0 |        0 |       0 |       0 | 12-926                                                                                                      
+  transaction-timeout.service.ts      |   97.43 |     64.7 |   83.33 |   97.43 | 57,65                                                                                                       
+  webhookProcessor.ts                 |       0 |        0 |       0 |       0 | 2-109                                                                                                       
+ src/services/blockchain              |       0 |        0 |       0 |       0 |                                                                                                             
+  gas-estimator.service.ts            |       0 |        0 |       0 |       0 | 1-111                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  mint-batcher.service.ts             |       0 |        0 |       0 |       0 | 2-83                                                                                                        
+  nft-queue.service.ts                |       0 |        0 |       0 |       0 | 1-199                                                                                                       
+ src/services/compliance              |       0 |        0 |       0 |       0 |                                                                                                             
+  aml-checker.service.ts              |       0 |        0 |       0 |       0 | 1-314                                                                                                       
+  form-1099-da.service.ts             |       0 |        0 |       0 |       0 | 1-231                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  tax-calculator.service.ts           |       0 |        0 |       0 |       0 | 2-270                                                                                                       
+ src/services/core                    |   19.51 |    10.52 |   22.22 |   19.33 |                                                                                                             
+  fee-calculator.service.ts           |   98.48 |    77.77 |     100 |   98.46 | 112                                                                                                         
+  gas-fee-estimator.service.ts        |       0 |        0 |       0 |       0 | 6-316                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  payment-processor.service.ts        |       0 |        0 |       0 |       0 | 1-213                                                                                                       
+  tax-calculator.service.ts           |       0 |        0 |       0 |       0 | 6-228                                                                                                       
+  venue-analytics.service.ts          |       0 |        0 |       0 |       0 | 8-271                                                                                                       
+  venue-balance.service.ts            |       0 |        0 |       0 |       0 | 1-69                                                                                                        
+ src/services/fraud                   |       0 |        0 |       0 |       0 |                                                                                                             
+  advanced-fraud-detection.service.ts |       0 |        0 |       0 |       0 | 1-649                                                                                                       
+  device-fingerprint.service.ts       |       0 |        0 |       0 |       0 | 1-247                                                                                                       
+  fraud-review.service.ts             |       0 |        0 |       0 |       0 | 1-211                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  scalper-detector.service.ts         |       0 |        0 |       0 |       0 | 1-199                                                                                                       
+  velocity-checker.service.ts         |       0 |        0 |       0 |       0 | 1-68                                                                                                        
+ src/services/group                   |   31.76 |    58.33 |   34.28 |   31.51 |                                                                                                             
+  contribution-tracker.service.ts     |   88.88 |       80 |      80 |   88.88 | 103-110                                                                                                     
+  group-payment.service.ts            |       0 |        0 |       0 |       0 | 1-373                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  reminder-engine.service.ts          |   97.43 |    85.71 |     100 |   97.29 | 151                                                                                                         
+ src/services/high-demand             |       0 |        0 |       0 |       0 |                                                                                                             
+  bot-detector.service.ts             |       0 |        0 |       0 |       0 | 1-340                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  purchase-limiter.service.ts         |       0 |        0 |       0 |       0 | 1-211                                                                                                       
+  waiting-room.service.ts             |       0 |        0 |       0 |       0 | 1-392                                                                                                       
+ src/services/marketplace             |       0 |        0 |       0 |       0 |                                                                                                             
+  escrow.service.ts                   |       0 |        0 |       0 |       0 | 1-263                                                                                                       
+  index.ts                            |       0 |      100 |     100 |       0 | 1-3                                                                                                         
+  price-enforcer.service.ts           |       0 |        0 |       0 |       0 | 1-196                                                                                                       
+  royalty-splitter.service.ts         |       0 |        0 |       0 |       0 | 1-159                                                                                                       
+ src/services/mock                    |       0 |        0 |       0 |       0 |                                                                                                             
+  index.ts                            |       0 |      100 |     100 |       0 | 1-5                                                                                                         
+  mock-email.service.ts               |       0 |      100 |       0 |       0 | 1-19                                                                                                        
+  mock-fraud.service.ts               |       0 |        0 |       0 |       0 | 1-25                                                                                                        
+  mock-nft.service.ts                 |       0 |        0 |       0 |       0 | 1-34                                                                                                        
+  mock-stripe.service.ts              |       0 |        0 |       0 |       0 | 1-26                                                                                                        
+ src/services/providers               |       0 |      100 |       0 |       0 |                                                                                                             
+  stripeMock.ts                       |       0 |      100 |       0 |       0 | 2-33                                                                                                        
+ src/services/reconciliation          |       0 |        0 |       0 |       0 |                                                                                                             
+  reconciliation-service.ts           |       0 |        0 |       0 |       0 | 1-330                                                                                                       
+  royalty-reconciliation.service.ts   |       0 |        0 |       0 |       0 | 1-436                                                                                                       
+ src/services/security                |       0 |        0 |       0 |       0 |                                                                                                             
+  pci-compliance.service.ts           |       0 |        0 |       0 |       0 | 2-58                                                                                                        
+ src/services/state-machine           |   45.76 |    42.85 |   42.85 |   45.76 |                                                                                                             
+  order-state-machine.ts              |       0 |        0 |       0 |       0 | 1-42                                                                                                        
+  payment-state-machine.ts            |     100 |      100 |     100 |     100 |                                                                                                             
+  transitions.ts                      |       0 |        0 |       0 |       0 | 1-57                                                                                                        
+ src/services/webhooks                |       0 |        0 |       0 |       0 |                                                                                                             
+  outbound-webhook.ts                 |       0 |        0 |       0 |       0 | 1-46                                                                                                        
+ src/types                            |     100 |      100 |     100 |     100 |                                                                                                             
+  fraud.types.ts                      |     100 |      100 |     100 |     100 |                                                                                                             
+  group.types.ts                      |     100 |      100 |     100 |     100 |                                                                                                             
+  index.ts                            |     100 |      100 |     100 |     100 |                                                                                                             
+  marketplace.types.ts                |     100 |      100 |     100 |     100 |                                                                                                             
+  payment.types.ts                    |     100 |      100 |     100 |     100 |                                                                                                             
+ src/utils                            |   42.41 |    42.06 |   39.44 |   42.24 |                                                                                                             
+  circuit-breaker.ts                  |   94.17 |    97.05 |      90 |   94.11 | 93,296-308                                                                                                  
+  crypto.util.ts                      |   99.09 |    96.96 |     100 |     100 | 250                                                                                                         
+  database-transaction.util.ts        |   23.14 |     8.33 |    6.89 |   23.72 | 123-124,134-196,209-361,382-388,399-408,419-425,436-442,452-461,472-480,493-501,511,528-530,541-543,554-556 
+  errors.ts                           |     100 |      100 |     100 |     100 |                                                                                                             
+  graceful-degradation.ts             |       0 |        0 |       0 |       0 | 6-283                                                                                                       
+  http-client.util.ts                 |       0 |        0 |       0 |       0 | 10-446                                                                                                      
+  logger.ts                           |       0 |        0 |       0 |       0 | 18-603                                                                                                      
+  metrics.ts                          |       0 |        0 |       0 |       0 | 11-400                                                                                                      
+  money.ts                            |     100 |      100 |     100 |     100 |                                                                                                             
+  pci-log-scrubber.util.ts            |   74.46 |    63.46 |    61.9 |   73.62 | 117,211,227,235,243,296-325                                                                                 
+  retry.ts                            |   88.23 |    76.92 |   71.42 |   87.65 | 96,110-124,176,183,227                                                                                      
+  tracing.ts                          |       0 |        0 |       0 |       0 | 11-382                                                                                                      
+  validation.util.ts                  |   96.36 |     92.3 |     100 |   96.36 | 62,71                                                                                                       
+  webhook-signature.ts                |       0 |        0 |       0 |       0 | 11-360                                                                                                      
+ src/validators                       |   43.19 |    28.98 |   51.85 |   43.97 |                                                                                                             
+  payment-request.ts                  |       0 |        0 |       0 |       0 | 10-45                                                                                                       
+  payment.validator.ts                |   95.38 |      100 |     100 |   95.38 | 233,261,289                                                                                                 
+  refund.validator.ts                 |       0 |        0 |       0 |       0 | 16-394                                                                                                      
+  webhook-payload.ts                  |     100 |      100 |     100 |     100 |                                                                                                             
+ src/webhooks                         |       0 |        0 |       0 |       0 |                                                                                                             
+  stripe-connect-handlers.ts          |       0 |        0 |       0 |       0 | 11-483                                                                                                      
+  stripe-handler.ts                   |       0 |        0 |       0 |       0 | 3-537                                                                                                       
+  webhook.consumer.ts                 |       0 |        0 |       0 |       0 | 12-350                                                                                                      
+ src/workers                          |       0 |        0 |       0 |       0 |                                                                                                             
+  outbox.processor.ts                 |       0 |        0 |       0 |       0 | 1-309                                                                                                       
+  webhook.consumer.ts                 |       0 |        0 |       0 |       0 | 1-87                                                                                                        
+  webhook.processor.ts                |       0 |        0 |       0 |       0 | 1-134                                                                                                       
+--------------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------
+Running test teardown...
+Test teardown complete.

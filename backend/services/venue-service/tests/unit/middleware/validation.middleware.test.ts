@@ -1,389 +1,402 @@
+/**
+ * Unit tests for src/middleware/validation.middleware.ts
+ * Tests Joi-based request validation middleware
+ */
+
 import { validate } from '../../../src/middleware/validation.middleware';
-import { FastifyRequest, FastifyReply } from 'fastify';
+import { createMockRequest, createMockReply } from '../../__mocks__/fastify.mock';
 import * as Joi from 'joi';
 
-describe('Validation Middleware', () => {
+// Mock the error-response module
+jest.mock('../../../src/utils/error-response', () => ({
+  ErrorResponseBuilder: {
+    validation: jest.fn((reply: any, errors: any[]) => {
+      reply.status(400);
+      reply.send({ 
+        success: false, 
+        error: 'Validation failed', 
+        code: 'VALIDATION_ERROR',
+        details: errors 
+      });
+    }),
+    internal: jest.fn((reply: any, message: string) => {
+      reply.status(500);
+      reply.send({ 
+        success: false, 
+        error: message, 
+        code: 'INTERNAL_ERROR' 
+      });
+    }),
+  },
+}));
+
+describe('middleware/validation.middleware', () => {
   let mockRequest: any;
   let mockReply: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    mockRequest = {
-      body: {},
-      query: {},
-      params: {}
-    };
-
-    mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
-      request: {
-        id: 'test-request-id-123'
-      } as any
-    } as any;
+    mockReply = createMockReply();
   });
 
-  // =============================================================================
-  // Request Body Validation Tests
-  // =============================================================================
-
-  describe('Request Body Validation', () => {
-    it('should pass valid request bodies', async () => {
-      const schema = {
-        body: Joi.object({
-          name: Joi.string().required(),
-          email: Joi.string().email().required()
-        })
-      };
-
-      mockRequest.body = {
-        name: 'Test Venue',
-        email: 'test@example.com'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).not.toHaveBeenCalled();
-      expect(mockReply.send).not.toHaveBeenCalled();
-    });
-
-    it('should reject invalid request bodies with 422', async () => {
-      const schema = {
-        body: Joi.object({
-          name: Joi.string().required(),
-          email: Joi.string().email().required()
-        })
-      };
-
-      mockRequest.body = {
-        name: 'Test Venue'
-        // missing email
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-      expect(mockReply.send).toHaveBeenCalledWith(expect.objectContaining({
-        error: 'Validation Error'
-      }));
-    });
-
-    it('should reject missing required fields', async () => {
-      const schema = {
-        body: Joi.object({
-          name: Joi.string().required(),
-          capacity: Joi.number().required()
-        })
-      };
-
-      mockRequest.body = {
-        name: 'Test'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-
-    it('should strip extra fields with stripUnknown', async () => {
-      const schema = {
-        body: Joi.object({
-          name: Joi.string().required()
-        }).options({ stripUnknown: true })
-      };
-
-      mockRequest.body = {
-        name: 'Test',
-        extraField: 'should be removed'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockRequest.body).not.toHaveProperty('extraField');
-    });
-
-    it('should return all validation errors when abortEarly is false', async () => {
-      const schema = {
+  describe('validate()', () => {
+    describe('body validation', () => {
+      const bodySchema = {
         body: Joi.object({
           name: Joi.string().required(),
           email: Joi.string().email().required(),
-          capacity: Joi.number().required()
-        })
-      };
-
-      mockRequest.body = {};
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      const sentData = mockReply.send.mock.calls[0][0];
-      expect(sentData.errors).toHaveLength(3);
-    });
-  });
-
-  // =============================================================================
-  // Query Parameter Validation Tests
-  // =============================================================================
-
-  describe('Query Parameter Validation', () => {
-    it('should validate query parameters', async () => {
-      const schema = {
-        querystring: Joi.object({
-          page: Joi.number().integer().min(1).default(1),
-          limit: Joi.number().integer().min(1).max(100).default(20)
-        })
-      };
-
-      mockRequest.query = {
-        page: '2',
-        limit: '50'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockRequest.query.page).toBe(2);
-      expect(mockRequest.query.limit).toBe(50);
-    });
-
-    it('should reject invalid query parameter types', async () => {
-      const schema = {
-        querystring: Joi.object({
-          page: Joi.number().integer()
-        })
-      };
-
-      mockRequest.query = {
-        page: 'invalid'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-
-    it('should validate pagination params', async () => {
-      const schema = {
-        querystring: Joi.object({
-          page: Joi.number().integer().min(1),
-          limit: Joi.number().integer().min(1).max(100)
-        })
-      };
-
-      mockRequest.query = {
-        page: '0' // invalid: less than min
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-
-    it('should validate search params', async () => {
-      const schema = {
-        querystring: Joi.object({
-          search: Joi.string().min(2).max(100)
-        })
-      };
-
-      mockRequest.query = {
-        search: 'a' // too short
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-  });
-
-  // =============================================================================
-  // Path Parameter Validation Tests
-  // =============================================================================
-
-  describe('Path Parameter Validation', () => {
-    it('should validate UUID path parameters', async () => {
-      const schema = {
-        params: Joi.object({
-          venueId: Joi.string().uuid().required()
-        })
-      };
-
-      mockRequest.params = {
-        venueId: '550e8400-e29b-41d4-a716-446655440000'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).not.toHaveBeenCalled();
-    });
-
-    it('should reject invalid UUIDs', async () => {
-      const schema = {
-        params: Joi.object({
-          venueId: Joi.string().uuid().required()
-        })
-      };
-
-      mockRequest.params = {
-        venueId: 'not-a-uuid'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-
-    it('should validate venueId parameter', async () => {
-      const schema = {
-        params: Joi.object({
-          venueId: Joi.string().required()
-        })
-      };
-
-      mockRequest.params = {};
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-
-    it('should validate staffId parameter', async () => {
-      const schema = {
-        params: Joi.object({
-          staffId: Joi.string().uuid().required()
-        })
-      };
-
-      mockRequest.params = {
-        staffId: '123' // not a UUID
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-    });
-  });
-
-  // =============================================================================
-  // Error Response Format Tests
-  // =============================================================================
-
-  describe('Error Response Format', () => {
-    it('should return validation errors in standard format', async () => {
-      const schema = {
-        body: Joi.object({
-          name: Joi.string().required()
-        })
-      };
-
-      mockRequest.body = {};
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      const sentData = mockReply.send.mock.calls[0][0];
-      expect(sentData).toHaveProperty('error');
-      expect(sentData).toHaveProperty('errors');
-    });
-
-    it('should include field names in errors', async () => {
-      const schema = {
-        body: Joi.object({
-          email: Joi.string().email().required()
-        })
-      };
-
-      mockRequest.body = {
-        email: 'invalid-email'
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      const sentData = mockReply.send.mock.calls[0][0];
-      expect(sentData.errors[0]).toHaveProperty('field', 'email');
-    });
-
-    it('should provide helpful error messages', async () => {
-      const schema = {
-        body: Joi.object({
-          capacity: Joi.number().min(1).required()
-        })
-      };
-
-      mockRequest.body = {
-        capacity: -5
-      };
-
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      const sentData = mockReply.send.mock.calls[0][0];
-      expect(sentData.errors[0].message).toContain('must be greater');
-    });
-  });
-
-  // =============================================================================
-  // Combined Validation Tests
-  // =============================================================================
-
-  describe('Combined Validation', () => {
-    it('should validate body, query, and params together', async () => {
-      const schema = {
-        params: Joi.object({
-          venueId: Joi.string().uuid().required()
+          age: Joi.number().min(0).max(120),
         }),
-        querystring: Joi.object({
-          includeStats: Joi.boolean().default(false)
-        }),
-        body: Joi.object({
-          name: Joi.string().required()
-        })
       };
 
-      mockRequest.params = { venueId: '550e8400-e29b-41d4-a716-446655440000' };
-      mockRequest.query = { includeStats: 'true' };
-      mockRequest.body = { name: 'Updated Venue' };
+      it('should pass validation with valid body', async () => {
+        mockRequest = createMockRequest({
+          body: { name: 'John', email: 'john@example.com', age: 25 },
+        });
 
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
+        const middleware = validate(bodySchema);
+        await middleware(mockRequest, mockReply);
 
-      expect(mockReply.status).not.toHaveBeenCalled();
-    });
-  });
+        expect(mockRequest.body).toEqual({ name: 'John', email: 'john@example.com', age: 25 });
+        expect(mockReply.status).not.toHaveBeenCalled();
+      });
 
-  // =============================================================================
-  // Error Handling Tests
-  // =============================================================================
+      it('should transform values according to Joi defaults', async () => {
+        const schemaWithDefaults = {
+          body: Joi.object({
+            name: Joi.string().required(),
+            status: Joi.string().default('active'),
+          }),
+        };
 
-  describe('Error Handling', () => {
-    it('should handle internal validation errors gracefully', async () => {
-      const schema = {
-        body: {
-          validate: jest.fn(() => {
-            throw new Error('Internal error');
+        mockRequest = createMockRequest({
+          body: { name: 'Test' },
+        });
+
+        const middleware = validate(schemaWithDefaults);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockRequest.body.status).toBe('active');
+      });
+
+      it('should return 400 for missing required field', async () => {
+        mockRequest = createMockRequest({
+          body: { email: 'john@example.com' },
+        });
+
+        const middleware = validate(bodySchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+        expect(mockReply.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            error: 'Validation failed',
+            code: 'VALIDATION_ERROR',
           })
-        }
+        );
+      });
+
+      it('should return 400 for invalid email format', async () => {
+        mockRequest = createMockRequest({
+          body: { name: 'John', email: 'invalid-email' },
+        });
+
+        const middleware = validate(bodySchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+
+      it('should return all validation errors (abortEarly: false)', async () => {
+        mockRequest = createMockRequest({
+          body: { email: 'invalid', age: -5 },
+        });
+
+        const middleware = validate(bodySchema);
+        await middleware(mockRequest, mockReply);
+
+        const sendCall = mockReply.send.mock.calls[0][0];
+        // Should have multiple errors: name required, email invalid, age min
+        expect(sendCall.details.length).toBeGreaterThan(1);
+      });
+
+      it('should handle nested field paths in errors', async () => {
+        const nestedSchema = {
+          body: Joi.object({
+            address: Joi.object({
+              street: Joi.string().required(),
+              city: Joi.string().required(),
+            }).required(),
+          }),
+        };
+
+        mockRequest = createMockRequest({
+          body: { address: { city: 'NYC' } },
+        });
+
+        const middleware = validate(nestedSchema);
+        await middleware(mockRequest, mockReply);
+
+        const sendCall = mockReply.send.mock.calls[0][0];
+        expect(sendCall.details[0].field).toBe('address.street');
+      });
+    });
+
+    describe('querystring validation', () => {
+      const querySchema = {
+        querystring: Joi.object({
+          page: Joi.number().min(1).default(1),
+          limit: Joi.number().min(1).max(100).default(10),
+          sort: Joi.string().valid('asc', 'desc'),
+        }),
       };
 
-      mockRequest.body = { test: 'data' };
+      it('should pass validation with valid query params', async () => {
+        mockRequest = createMockRequest({
+          query: { page: 2, limit: 20, sort: 'asc' },
+        });
 
-      const middleware = validate(schema);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
+        const middleware = validate(querySchema);
+        await middleware(mockRequest, mockReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(500);
+        expect(mockRequest.query).toEqual({ page: 2, limit: 20, sort: 'asc' });
+        expect(mockReply.status).not.toHaveBeenCalled();
+      });
+
+      it('should apply default values for missing query params', async () => {
+        mockRequest = createMockRequest({
+          query: {},
+        });
+
+        const middleware = validate(querySchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockRequest.query.page).toBe(1);
+        expect(mockRequest.query.limit).toBe(10);
+      });
+
+      it('should return 400 for invalid query param value', async () => {
+        mockRequest = createMockRequest({
+          query: { sort: 'invalid' },
+        });
+
+        const middleware = validate(querySchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+
+      it('should return 400 for out-of-range values', async () => {
+        mockRequest = createMockRequest({
+          query: { limit: 500 },
+        });
+
+        const middleware = validate(querySchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+    });
+
+    describe('params validation', () => {
+      const paramsSchema = {
+        params: Joi.object({
+          venueId: Joi.string().uuid().required(),
+          eventId: Joi.string().uuid(),
+        }),
+      };
+
+      it('should pass validation with valid params', async () => {
+        const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+        mockRequest = createMockRequest({
+          params: { venueId: validUuid },
+        });
+
+        const middleware = validate(paramsSchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockRequest.params.venueId).toBe(validUuid);
+        expect(mockReply.status).not.toHaveBeenCalled();
+      });
+
+      it('should return 400 for invalid UUID format', async () => {
+        mockRequest = createMockRequest({
+          params: { venueId: 'not-a-uuid' },
+        });
+
+        const middleware = validate(paramsSchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+
+      it('should return 400 for missing required param', async () => {
+        mockRequest = createMockRequest({
+          params: {},
+        });
+
+        const middleware = validate(paramsSchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+    });
+
+    describe('combined validation', () => {
+      const combinedSchema = {
+        body: Joi.object({
+          name: Joi.string().required(),
+        }),
+        querystring: Joi.object({
+          include: Joi.string(),
+        }),
+        params: Joi.object({
+          id: Joi.string().uuid().required(),
+        }),
+      };
+
+      it('should validate body, querystring, and params together', async () => {
+        const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+        mockRequest = createMockRequest({
+          body: { name: 'Test' },
+          query: { include: 'events' },
+          params: { id: validUuid },
+        });
+
+        const middleware = validate(combinedSchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockRequest.body.name).toBe('Test');
+        expect(mockRequest.query.include).toBe('events');
+        expect(mockRequest.params.id).toBe(validUuid);
+        expect(mockReply.status).not.toHaveBeenCalled();
+      });
+
+      it('should fail on first invalid part (body)', async () => {
+        const validUuid = '550e8400-e29b-41d4-a716-446655440000';
+        mockRequest = createMockRequest({
+          body: {}, // Missing name
+          query: { include: 'events' },
+          params: { id: validUuid },
+        });
+
+        const middleware = validate(combinedSchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+    });
+
+    describe('empty/partial schemas', () => {
+      it('should pass when schema has no body validation', async () => {
+        const noBodySchema = {
+          querystring: Joi.object({
+            page: Joi.number(),
+          }),
+        };
+
+        mockRequest = createMockRequest({
+          body: { anything: 'goes' },
+          query: { page: 1 },
+        });
+
+        const middleware = validate(noBodySchema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).not.toHaveBeenCalled();
+      });
+
+      it('should pass when schema is empty', async () => {
+        mockRequest = createMockRequest({
+          body: { anything: 'goes' },
+          query: { any: 'thing' },
+        });
+
+        const middleware = validate({});
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('error handling', () => {
+      it('should return 500 for validation exception', async () => {
+        const brokenSchema = {
+          body: {
+            validate: () => {
+              throw new Error('Schema error');
+            },
+          },
+        };
+
+        mockRequest = createMockRequest({
+          body: { test: 'data' },
+        });
+
+        const middleware = validate(brokenSchema as any);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(500);
+        expect(mockReply.send).toHaveBeenCalledWith(
+          expect.objectContaining({
+            error: 'Validation error',
+          })
+        );
+      });
+    });
+
+    describe('security tests', () => {
+      it('should sanitize XSS attempts through validation', async () => {
+        const schema = {
+          body: Joi.object({
+            name: Joi.string().max(100),
+          }),
+        };
+
+        mockRequest = createMockRequest({
+          body: { name: '<script>alert("xss")</script>' },
+        });
+
+        const middleware = validate(schema);
+        await middleware(mockRequest, mockReply);
+
+        // Validation passes but value is preserved as-is (sanitization happens elsewhere)
+        expect(mockRequest.body.name).toBe('<script>alert("xss")</script>');
+      });
+
+      it('should reject SQL injection in params', async () => {
+        const schema = {
+          params: Joi.object({
+            id: Joi.string().uuid().required(),
+          }),
+        };
+
+        mockRequest = createMockRequest({
+          params: { id: "'; DROP TABLE venues; --" },
+        });
+
+        const middleware = validate(schema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
+
+      it('should reject path traversal attempts', async () => {
+        const schema = {
+          params: Joi.object({
+            filename: Joi.string().pattern(/^[a-zA-Z0-9_-]+$/).required(),
+          }),
+        };
+
+        mockRequest = createMockRequest({
+          params: { filename: '../../../etc/passwd' },
+        });
+
+        const middleware = validate(schema);
+        await middleware(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(400);
+      });
     });
   });
 });

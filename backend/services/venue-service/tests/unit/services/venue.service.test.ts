@@ -1,470 +1,807 @@
-import { VenueService } from '../../../src/services/venue.service';
-import { IVenue } from '../../../src/models/venue.model';
+/**
+ * Unit tests for src/services/venue.service.ts
+ * Tests core venue operations with mocked dependencies
+ * Security: tenant isolation, access control, audit logging
+ */
 
-describe('Venue Service', () => {
+import { VenueService } from '../../../src/services/venue.service';
+import { createRedisMock } from '../../__mocks__/redis.mock';
+import { createKnexMock, configureMockReturn } from '../../__mocks__/knex.mock';
+
+// Mock the logger
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    child: jest.fn(() => ({
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    })),
+  },
+}));
+
+// Mock VenueAuditLogger
+jest.mock('../../../src/utils/venue-audit-logger', () => ({
+  VenueAuditLogger: jest.fn().mockImplementation(() => ({
+    log: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
+
+// Mock models
+jest.mock('../../../src/models/venue.model', () => ({
+  VenueModel: jest.fn().mockImplementation(() => ({
+    createWithDefaults: jest.fn(),
+    findById: jest.fn(),
+    findBySlug: jest.fn(),
+    update: jest.fn(),
+    softDelete: jest.fn(),
+    searchVenues: jest.fn(),
+    getVenueStats: jest.fn(),
+  })),
+  IVenue: {},
+}));
+
+jest.mock('../../../src/models/staff.model', () => ({
+  StaffModel: jest.fn().mockImplementation(() => ({
+    addStaffMember: jest.fn(),
+    findByVenueAndUser: jest.fn(),
+    hasPermission: jest.fn(),
+    getVenueStaff: jest.fn(),
+    delete: jest.fn(),
+  })),
+}));
+
+jest.mock('../../../src/models/settings.model', () => ({
+  SettingsModel: jest.fn().mockImplementation(() => ({})),
+}));
+
+describe('services/venue.service', () => {
   let venueService: VenueService;
-  let mockDb: any;
-  let mockRedis: any;
+  let mockRedis: ReturnType<typeof createRedisMock>;
+  let mockDb: ReturnType<typeof createKnexMock>;
   let mockCacheService: any;
   let mockEventPublisher: any;
   let mockLogger: any;
+
+  // Track mock model instances
   let mockVenueModel: any;
   let mockStaffModel: any;
-  let mockSettingsModel: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Mock database
-    mockDb = jest.fn();
-    mockDb.transaction = jest.fn(async (callback) => {
-      const trx = { ...mockDb };
-      return await callback(trx);
-    });
     
-    // Mock Redis
-    mockRedis = {
-      get: jest.fn(),
-      setex: jest.fn(),
-      del: jest.fn()
-    };
-
-    // Mock cache service
+    mockRedis = createRedisMock();
+    mockDb = createKnexMock();
+    
     mockCacheService = {
       get: jest.fn(),
-      set: jest.fn()
+      set: jest.fn(),
+      del: jest.fn(),
+      clearVenueCache: jest.fn(),
+      setTenantContext: jest.fn(),
     };
-
-    // Mock event publisher
+    
     mockEventPublisher = {
-      publishVenueCreated: jest.fn(),
-      publishVenueUpdated: jest.fn(),
-      publishVenueDeleted: jest.fn()
+      publishVenueCreated: jest.fn().mockResolvedValue(undefined),
+      publishVenueUpdated: jest.fn().mockResolvedValue(undefined),
+      publishVenueDeleted: jest.fn().mockResolvedValue(undefined),
     };
-
-    // Mock logger
+    
     mockLogger = {
+      debug: jest.fn(),
       info: jest.fn(),
+      warn: jest.fn(),
       error: jest.fn(),
-      warn: jest.fn()
     };
 
     // Create service instance
     venueService = new VenueService({
       db: mockDb,
-      redis: mockRedis,
+      redis: mockRedis as any,
       cacheService: mockCacheService,
       eventPublisher: mockEventPublisher,
-      logger: mockLogger
+      logger: mockLogger,
     });
 
-    // Mock the models that get created internally
-    mockDb.mockReturnValue = jest.fn().mockReturnThis();
+    // Get references to model mocks
+    const { VenueModel } = require('../../../src/models/venue.model');
+    const { StaffModel } = require('../../../src/models/staff.model');
+    mockVenueModel = VenueModel.mock.results[VenueModel.mock.results.length - 1]?.value;
+    mockStaffModel = StaffModel.mock.results[StaffModel.mock.results.length - 1]?.value;
   });
 
-  // =============================================================================
-  // Create Venue Tests
-  // =============================================================================
+  describe('createVenue()', () => {
+    const venueData = {
+      name: 'Test Arena',
+      slug: 'test-arena',
+      venue_type: 'stadium' as const,
+    };
+    const ownerId = 'user-123';
+    const tenantId = 'tenant-456';
 
-  describe('createVenue', () => {
-    it('should create venue with valid data', async () => {
-      const venueData = {
-        name: 'Test Venue',
-        slug: 'test-venue',
-        venue_type: 'theater',
-        max_capacity: 500
-      };
-
-      const createdVenue = {
-        id: 'venue-123',
-        ...venueData,
-        status: 'ACTIVE',
-        created_by: 'user-123',
-        tenant_id: 'tenant-123'
-      };
-
-      mockDb.transaction = jest.fn(async (callback) => {
-        const trx = {
-          ...mockDb,
-          insert: jest.fn().mockResolvedValue([createdVenue])
+    it('should create venue with transaction', async () => {
+      const createdVenue = { id: 'venue-1', ...venueData };
+      
+      // Mock transaction with proper trx function behavior
+      mockDb.transaction.mockImplementation(async (callback: any) => {
+        const { VenueModel } = require('../../../src/models/venue.model');
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        // Reset and configure mocks for transaction
+        const trxVenueModel = {
+          createWithDefaults: jest.fn().mockResolvedValue(createdVenue),
         };
-        trx.mockReturnValue = jest.fn().mockReturnValue({
-          insert: trx.insert,
-          returning: jest.fn().mockResolvedValue([createdVenue])
+        const trxStaffModel = {
+          addStaffMember: jest.fn().mockResolvedValue({ id: 'staff-1' }),
+        };
+        
+        VenueModel.mockImplementation(() => trxVenueModel);
+        StaffModel.mockImplementation(() => trxStaffModel);
+        
+        // Mock trx as a callable function that returns a query builder for table access
+        const mockTrx: any = (tableName: string) => ({
+          insert: jest.fn().mockResolvedValue([1]),
         });
-        return await callback(trx);
+        
+        return callback(mockTrx);
       });
 
-      const result = await venueService.createVenue(venueData, 'user-123', 'tenant-123');
-
-      expect(mockEventPublisher.publishVenueCreated).toHaveBeenCalled();
-      expect(mockLogger.info).toHaveBeenCalled();
-    });
-
-    it('should set default values (status: ACTIVE)', async () => {
-      const venueData = {
-        name: 'Test Venue'
-      };
-
-      mockDb.transaction = jest.fn(async (callback) => {
-        const trx = mockDb;
-        return await callback(trx);
-      });
-
-      await venueService.createVenue(venueData, 'user-123', 'tenant-123');
-
-      expect(venueData).toBeDefined();
-    });
-
-    it('should set tenant_id', async () => {
-      const venueData = { name: 'Test' };
-
-      mockDb.transaction = jest.fn(async (callback) => {
-        const trx = mockDb;
-        return await callback(trx);
-      });
-
-      await venueService.createVenue(venueData, 'user-123', 'tenant-abc');
-
-      expect(venueData).toBeDefined();
-    });
-
-    it('should publish venue.created event to RabbitMQ', async () => {
-      const venueData = { name: 'Test', id: 'venue-123' };
-
-      mockDb.transaction = jest.fn(async (callback) => {
-        return await callback(mockDb);
-      });
-
-      await venueService.createVenue(venueData, 'user-123', 'tenant-123');
-
-      expect(mockEventPublisher.publishVenueCreated).toHaveBeenCalled();
-    });
-  });
-
-  // =============================================================================
-  // Get Venue Tests
-  // =============================================================================
-
-  describe('getVenue', () => {
-    it('should return venue when found', async () => {
-      const venue = {
-        id: 'venue-123',
-        name: 'Test Venue',
-        status: 'ACTIVE'
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-
-      // Mock checkVenueAccess
-      jest.spyOn(venueService, 'checkVenueAccess').mockResolvedValue(true);
-
-      const result = await venueService.getVenue('venue-123', 'user-123');
+      const result = await venueService.createVenue(venueData, ownerId, tenantId);
 
       expect(result).toBeDefined();
+      expect(mockDb.transaction).toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.objectContaining({ ownerId }),
+        'Venue created successfully'
+      );
     });
 
-    it('should return null when venue not found', async () => {
-      mockRedis.get.mockResolvedValue(null);
+    it('should add owner as staff with owner role', async () => {
+      const createdVenue = { id: 'venue-1', ...venueData };
+      let addStaffCalled = false;
+      
+      mockDb.transaction.mockImplementation(async (callback: any) => {
+        const { StaffModel } = require('../../../src/models/staff.model');
+        const { VenueModel } = require('../../../src/models/venue.model');
+        
+        const trxStaffModel = {
+          addStaffMember: jest.fn().mockImplementation((data: any) => {
+            addStaffCalled = true;
+            expect(data.role).toBe('owner');
+            expect(data.user_id).toBe(ownerId);
+            expect(data.permissions).toContain('*');
+            return { id: 'staff-1' };
+          }),
+        };
+        
+        VenueModel.mockImplementation(() => ({
+          createWithDefaults: jest.fn().mockResolvedValue(createdVenue),
+        }));
+        StaffModel.mockImplementation(() => trxStaffModel);
+        
+        const mockTrx: any = jest.fn().mockReturnValue({
+          insert: jest.fn().mockResolvedValue([1]),
+        });
+        
+        return callback(mockTrx);
+      });
 
-      const result = await venueService.getVenue('nonexistent', 'user-123');
+      await venueService.createVenue(venueData, ownerId, tenantId);
+      
+      expect(addStaffCalled).toBe(true);
+    });
+
+    it('should publish venue created event', async () => {
+      const createdVenue = { id: 'venue-1', ...venueData };
+      
+      mockDb.transaction.mockImplementation(async (callback: any) => {
+        const { VenueModel } = require('../../../src/models/venue.model');
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        VenueModel.mockImplementation(() => ({
+          createWithDefaults: jest.fn().mockResolvedValue(createdVenue),
+        }));
+        StaffModel.mockImplementation(() => ({
+          addStaffMember: jest.fn().mockResolvedValue({ id: 'staff-1' }),
+        }));
+        
+        const mockTrx: any = jest.fn().mockReturnValue({
+          insert: jest.fn().mockResolvedValue([1]),
+        });
+        
+        return callback(mockTrx);
+      });
+
+      await venueService.createVenue(venueData, ownerId, tenantId);
+
+      expect(mockEventPublisher.publishVenueCreated).toHaveBeenCalledWith(
+        'venue-1',
+        createdVenue,
+        ownerId
+      );
+    });
+
+    it('should handle event publishing failure gracefully', async () => {
+      const createdVenue = { id: 'venue-1', ...venueData };
+      mockEventPublisher.publishVenueCreated.mockRejectedValue(new Error('Publish failed'));
+      
+      mockDb.transaction.mockImplementation(async (callback: any) => {
+        const { VenueModel } = require('../../../src/models/venue.model');
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        VenueModel.mockImplementation(() => ({
+          createWithDefaults: jest.fn().mockResolvedValue(createdVenue),
+        }));
+        StaffModel.mockImplementation(() => ({
+          addStaffMember: jest.fn().mockResolvedValue({ id: 'staff-1' }),
+        }));
+        
+        const mockTrx: any = jest.fn().mockReturnValue({
+          insert: jest.fn().mockResolvedValue([1]),
+        });
+        
+        return callback(mockTrx);
+      });
+
+      // Should not throw even if publishing fails
+      const result = await venueService.createVenue(venueData, ownerId, tenantId);
+
+      expect(result).toBeDefined();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        'Failed to publish venue created event',
+        expect.any(Object)
+      );
+    });
+
+    it('should set tenant_id on venue', async () => {
+      let capturedVenueData: any;
+      
+      mockDb.transaction.mockImplementation(async (callback: any) => {
+        const { VenueModel } = require('../../../src/models/venue.model');
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        VenueModel.mockImplementation(() => ({
+          createWithDefaults: jest.fn().mockImplementation((data: any) => {
+            capturedVenueData = data;
+            return { id: 'venue-1', ...data };
+          }),
+        }));
+        StaffModel.mockImplementation(() => ({
+          addStaffMember: jest.fn().mockResolvedValue({ id: 'staff-1' }),
+        }));
+        
+        const mockTrx: any = jest.fn().mockReturnValue({
+          insert: jest.fn().mockResolvedValue([1]),
+        });
+        
+        return callback(mockTrx);
+      });
+
+      await venueService.createVenue(venueData, ownerId, tenantId);
+
+      expect(capturedVenueData.tenant_id).toBe(tenantId);
+      expect(capturedVenueData.created_by).toBe(ownerId);
+    });
+  });
+
+  describe('getVenue()', () => {
+    const venueId = 'venue-123';
+    const userId = 'user-456';
+    const testVenue = {
+      id: venueId,
+      name: 'Test Venue',
+      status: 'ACTIVE',
+    };
+
+    beforeEach(() => {
+      // Reset model mocks
+      const { VenueModel } = require('../../../src/models/venue.model');
+      const { StaffModel } = require('../../../src/models/staff.model');
+      
+      mockVenueModel = {
+        findById: jest.fn(),
+      };
+      mockStaffModel = {
+        findByVenueAndUser: jest.fn(),
+      };
+      
+      VenueModel.mockImplementation(() => mockVenueModel);
+      StaffModel.mockImplementation(() => mockStaffModel);
+    });
+
+    it('should return cached venue on cache hit', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify(testVenue));
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: true });
+      mockVenueModel.findById.mockResolvedValue(testVenue);
+
+      const result = await venueService.getVenue(venueId, userId);
+
+      expect(result).toEqual(testVenue);
+      expect(mockRedis.get).toHaveBeenCalledWith(`venue:${venueId}:details`);
+    });
+
+    it('should fetch from database on cache miss', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRedis.setex.mockResolvedValue('OK');
+      mockVenueModel.findById.mockResolvedValue(testVenue);
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: true });
+
+      const result = await venueService.getVenue(venueId, userId);
+
+      expect(result).toEqual(testVenue);
+      expect(mockVenueModel.findById).toHaveBeenCalledWith(venueId);
+    });
+
+    it('should cache venue after database fetch', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRedis.setex.mockResolvedValue('OK');
+      mockVenueModel.findById.mockResolvedValue(testVenue);
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: true });
+
+      await venueService.getVenue(venueId, userId);
+
+      expect(mockRedis.setex).toHaveBeenCalledWith(
+        `venue:${venueId}:details`,
+        300,
+        JSON.stringify(testVenue)
+      );
+    });
+
+    it('should return null for non-existent venue', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockVenueModel.findById.mockResolvedValue(null);
+
+      const result = await venueService.getVenue(venueId, userId);
 
       expect(result).toBeNull();
     });
 
-    it('should throw error when access denied', async () => {
+    it('should throw ForbiddenError when user has no access', async () => {
       mockRedis.get.mockResolvedValue(null);
-      
-      jest.spyOn(venueService, 'checkVenueAccess').mockResolvedValue(false);
+      mockVenueModel.findById.mockResolvedValue(testVenue);
+      mockStaffModel.findByVenueAndUser.mockResolvedValue(null);
 
-      await expect(
-        venueService.getVenue('venue-123', 'user-999')
-      ).rejects.toThrow('Access denied');
+      await expect(venueService.getVenue(venueId, userId)).rejects.toThrow('Access denied to this venue');
     });
 
-    it('should use cached venue when available', async () => {
-      const cachedVenue = JSON.stringify({
-        id: 'venue-123',
-        name: 'Cached Venue'
-      });
+    it('should check access even for cached venues', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify(testVenue));
+      mockStaffModel.findByVenueAndUser.mockResolvedValue(null);
+      mockVenueModel.findById.mockResolvedValue(testVenue);
 
-      mockRedis.get.mockResolvedValue(cachedVenue);
-      jest.spyOn(venueService, 'checkVenueAccess').mockResolvedValue(true);
-
-      await venueService.getVenue('venue-123', 'user-123');
-
-      expect(mockRedis.get).toHaveBeenCalledWith('venue:venue-123:details');
+      await expect(venueService.getVenue(venueId, userId)).rejects.toThrow('Access denied');
     });
   });
 
-  // =============================================================================
-  // List Venues Tests
-  // =============================================================================
+  describe('updateVenue()', () => {
+    const venueId = 'venue-123';
+    const userId = 'user-456';
+    const updates = { name: 'Updated Venue' };
 
-  describe('listVenues', () => {
-    it('should return paginated list', async () => {
-      const query = {
-        limit: 20,
-        offset: 0
+    beforeEach(() => {
+      const { VenueModel } = require('../../../src/models/venue.model');
+      const { StaffModel } = require('../../../src/models/staff.model');
+      
+      mockVenueModel = {
+        findBySlug: jest.fn().mockResolvedValue(null),
+        update: jest.fn().mockResolvedValue({ id: venueId, ...updates }),
       };
+      mockStaffModel = {
+        hasPermission: jest.fn().mockResolvedValue(true),
+      };
+      
+      VenueModel.mockImplementation(() => mockVenueModel);
+      StaffModel.mockImplementation(() => mockStaffModel);
+    });
 
-      jest.spyOn(venueService, 'searchVenues').mockResolvedValue([]);
+    it('should update venue when user has permission', async () => {
+      const result = await venueService.updateVenue(venueId, updates, userId);
 
-      const result = await venueService.listVenues(query);
+      expect(result.name).toBe('Updated Venue');
+      expect(mockStaffModel.hasPermission).toHaveBeenCalledWith(venueId, userId, 'venue:update');
+    });
+
+    it('should throw ForbiddenError when user lacks permission', async () => {
+      mockStaffModel.hasPermission.mockResolvedValue(false);
+
+      await expect(venueService.updateVenue(venueId, updates, userId)).rejects.toThrow('Permission denied');
+    });
+
+    it('should reject duplicate slug', async () => {
+      mockVenueModel.findBySlug.mockResolvedValue({ id: 'other-venue' });
+
+      await expect(
+        venueService.updateVenue(venueId, { slug: 'existing-slug' }, userId)
+      ).rejects.toThrow('Slug already in use');
+    });
+
+    it('should allow same slug for same venue', async () => {
+      mockVenueModel.findBySlug.mockResolvedValue({ id: venueId });
+
+      await expect(
+        venueService.updateVenue(venueId, { slug: 'same-slug' }, userId)
+      ).resolves.not.toThrow();
+    });
+
+    it('should clear cache after update', async () => {
+      mockRedis.del.mockResolvedValue(1);
+
+      await venueService.updateVenue(venueId, updates, userId);
+
+      expect(mockRedis.del).toHaveBeenCalled();
+    });
+
+    it('should publish venue updated event', async () => {
+      await venueService.updateVenue(venueId, updates, userId);
+
+      expect(mockEventPublisher.publishVenueUpdated).toHaveBeenCalledWith(
+        venueId,
+        updates,
+        userId
+      );
+    });
+  });
+
+  describe('deleteVenue()', () => {
+    const venueId = 'venue-123';
+    const userId = 'user-456';
+
+    beforeEach(() => {
+      const { VenueModel } = require('../../../src/models/venue.model');
+      const { StaffModel } = require('../../../src/models/staff.model');
+      
+      mockVenueModel = {
+        softDelete: jest.fn().mockResolvedValue(undefined),
+      };
+      mockStaffModel = {
+        findByVenueAndUser: jest.fn().mockResolvedValue({ role: 'owner' }),
+      };
+      
+      VenueModel.mockImplementation(() => mockVenueModel);
+      StaffModel.mockImplementation(() => mockStaffModel);
+
+      // Mock canDeleteVenue queries
+      mockDb._mockChain.first.mockResolvedValue({ count: '0' });
+    });
+
+    it('should delete venue when owner', async () => {
+      await venueService.deleteVenue(venueId, userId);
+
+      expect(mockVenueModel.softDelete).toHaveBeenCalledWith(venueId);
+    });
+
+    it('should reject deletion by non-owner', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ role: 'manager' });
+
+      await expect(venueService.deleteVenue(venueId, userId)).rejects.toThrow('Only venue owners can delete venues');
+    });
+
+    it('should reject deletion when staff not found', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue(null);
+
+      await expect(venueService.deleteVenue(venueId, userId)).rejects.toThrow('Only venue owners can delete venues');
+    });
+
+    it('should publish venue deleted event', async () => {
+      await venueService.deleteVenue(venueId, userId);
+
+      expect(mockEventPublisher.publishVenueDeleted).toHaveBeenCalledWith(venueId, userId);
+    });
+
+    it('should clear cache after deletion', async () => {
+      mockRedis.del.mockResolvedValue(1);
+
+      await venueService.deleteVenue(venueId, userId);
+
+      expect(mockRedis.del).toHaveBeenCalled();
+    });
+  });
+
+  describe('checkVenueAccess()', () => {
+    const venueId = 'venue-123';
+    const userId = 'user-456';
+
+    beforeEach(() => {
+      const { VenueModel } = require('../../../src/models/venue.model');
+      const { StaffModel } = require('../../../src/models/staff.model');
+      
+      mockVenueModel = {
+        findById: jest.fn(),
+      };
+      mockStaffModel = {
+        findByVenueAndUser: jest.fn(),
+      };
+      
+      VenueModel.mockImplementation(() => mockVenueModel);
+      StaffModel.mockImplementation(() => mockStaffModel);
+    });
+
+    it('should return true for active staff and active venue', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: true });
+      mockVenueModel.findById.mockResolvedValue({ status: 'ACTIVE' });
+
+      const result = await venueService.checkVenueAccess(venueId, userId);
+
+      expect(result).toBe(true);
+    });
+
+    it('should return false when staff not found', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue(null);
+
+      const result = await venueService.checkVenueAccess(venueId, userId);
+
+      expect(result).toBe(false);
+    });
+
+    it('should return false when staff is inactive', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: false });
+
+      const result = await venueService.checkVenueAccess(venueId, userId);
+
+      expect(result).toBe(false);
+    });
+
+    it('should return false when venue not found', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: true });
+      mockVenueModel.findById.mockResolvedValue(null);
+
+      const result = await venueService.checkVenueAccess(venueId, userId);
+
+      expect(result).toBe(false);
+    });
+
+    it('should return false when venue is inactive', async () => {
+      mockStaffModel.findByVenueAndUser.mockResolvedValue({ is_active: true });
+      mockVenueModel.findById.mockResolvedValue({ status: 'INACTIVE' });
+
+      const result = await venueService.checkVenueAccess(venueId, userId);
+
+      expect(result).toBe(false);
+    });
+  });
+
+  describe('searchVenues()', () => {
+    it('should call model searchVenues with filters', async () => {
+      const { VenueModel } = require('../../../src/models/venue.model');
+      const mockSearch = jest.fn().mockResolvedValue([{ id: 'venue-1' }]);
+      
+      VenueModel.mockImplementation(() => ({
+        searchVenues: mockSearch,
+      }));
+
+      const result = await venueService.searchVenues('arena', { city: 'New York' });
+
+      expect(mockSearch).toHaveBeenCalledWith('arena', { city: 'New York' });
+      expect(result).toHaveLength(1);
+    });
+  });
+
+  describe('getVenueStats()', () => {
+    const venueId = 'venue-123';
+    const mockStats = { totalEvents: 10, totalTicketsSold: 1000 };
+
+    beforeEach(() => {
+      const { VenueModel } = require('../../../src/models/venue.model');
+      
+      VenueModel.mockImplementation(() => ({
+        getVenueStats: jest.fn().mockResolvedValue(mockStats),
+      }));
+    });
+
+    it('should return cached stats on hit', async () => {
+      mockRedis.get.mockResolvedValue(JSON.stringify(mockStats));
+
+      const result = await venueService.getVenueStats(venueId);
+
+      expect(result).toEqual(mockStats);
+      expect(mockRedis.get).toHaveBeenCalledWith(`venue:${venueId}:stats`);
+    });
+
+    it('should fetch from model on cache miss', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRedis.setex.mockResolvedValue('OK');
+
+      const result = await venueService.getVenueStats(venueId);
+
+      expect(result).toEqual(mockStats);
+    });
+
+    it('should cache stats for 1 minute', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRedis.setex.mockResolvedValue('OK');
+
+      await venueService.getVenueStats(venueId);
+
+      expect(mockRedis.setex).toHaveBeenCalledWith(
+        `venue:${venueId}:stats`,
+        60,
+        JSON.stringify(mockStats)
+      );
+    });
+  });
+
+  describe('Staff Management', () => {
+    const venueId = 'venue-123';
+    const requesterId = 'user-owner';
+    const newStaffData = { userId: 'user-new', role: 'manager', permissions: ['venue:read'] };
+
+    describe('addStaffMember()', () => {
+      beforeEach(() => {
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        mockStaffModel = {
+          findByVenueAndUser: jest.fn(),
+          addStaffMember: jest.fn().mockResolvedValue({ id: 'staff-new' }),
+        };
+        
+        StaffModel.mockImplementation(() => mockStaffModel);
+      });
+
+      it('should allow owner to add staff', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue({ role: 'owner' });
+
+        await venueService.addStaffMember(venueId, newStaffData, requesterId);
+
+        expect(mockStaffModel.addStaffMember).toHaveBeenCalledWith({
+          venue_id: venueId,
+          user_id: newStaffData.userId,
+          role: newStaffData.role,
+          permissions: newStaffData.permissions,
+        });
+      });
+
+      it('should allow manager to add staff', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue({ role: 'manager' });
+
+        await expect(
+          venueService.addStaffMember(venueId, newStaffData, requesterId)
+        ).resolves.not.toThrow();
+      });
+
+      it('should reject staff addition by regular staff', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue({ role: 'staff' });
+
+        await expect(
+          venueService.addStaffMember(venueId, newStaffData, requesterId)
+        ).rejects.toThrow('Only owners and managers can add staff');
+      });
+
+      it('should reject when requester not found', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue(null);
+
+        await expect(
+          venueService.addStaffMember(venueId, newStaffData, requesterId)
+        ).rejects.toThrow('Only owners and managers can add staff');
+      });
+    });
+
+    describe('getVenueStaff()', () => {
+      beforeEach(() => {
+        const { VenueModel } = require('../../../src/models/venue.model');
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        mockVenueModel = {
+          findById: jest.fn().mockResolvedValue({ status: 'ACTIVE' }),
+        };
+        mockStaffModel = {
+          findByVenueAndUser: jest.fn().mockResolvedValue({ is_active: true }),
+          getVenueStaff: jest.fn().mockResolvedValue([
+            { id: 'staff-1', role: 'owner' },
+            { id: 'staff-2', role: 'manager' },
+          ]),
+        };
+        
+        VenueModel.mockImplementation(() => mockVenueModel);
+        StaffModel.mockImplementation(() => mockStaffModel);
+      });
+
+      it('should return staff list when user has access', async () => {
+        const result = await venueService.getVenueStaff(venueId, requesterId);
+
+        expect(result).toHaveLength(2);
+        expect(mockStaffModel.getVenueStaff).toHaveBeenCalledWith(venueId);
+      });
+
+      it('should throw when user lacks access', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue(null);
+
+        await expect(venueService.getVenueStaff(venueId, requesterId)).rejects.toThrow('Access denied');
+      });
+    });
+
+    describe('removeStaffMember()', () => {
+      const staffIdToRemove = 'staff-to-remove';
+
+      beforeEach(() => {
+        const { StaffModel } = require('../../../src/models/staff.model');
+        
+        mockStaffModel = {
+          findByVenueAndUser: jest.fn().mockResolvedValue({ id: 'requester-staff', role: 'owner' }),
+          delete: jest.fn().mockResolvedValue(undefined),
+        };
+        
+        StaffModel.mockImplementation(() => mockStaffModel);
+      });
+
+      it('should allow owner to remove staff', async () => {
+        await venueService.removeStaffMember(venueId, staffIdToRemove, requesterId);
+
+        expect(mockStaffModel.delete).toHaveBeenCalledWith(staffIdToRemove);
+      });
+
+      it('should reject removal by non-owner', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue({ id: 'requester-staff', role: 'manager' });
+
+        await expect(
+          venueService.removeStaffMember(venueId, staffIdToRemove, requesterId)
+        ).rejects.toThrow('Only owners can remove staff');
+      });
+
+      it('should reject self-removal', async () => {
+        mockStaffModel.findByVenueAndUser.mockResolvedValue({ id: staffIdToRemove, role: 'owner' });
+
+        await expect(
+          venueService.removeStaffMember(venueId, staffIdToRemove, requesterId)
+        ).rejects.toThrow('Cannot remove yourself');
+      });
+    });
+  });
+
+  describe('listUserVenues()', () => {
+    const userId = 'user-123';
+
+    it('should return empty array when user has no venues', async () => {
+      mockDb._mockChain.select.mockResolvedValue([]);
+
+      const result = await venueService.listUserVenues(userId);
 
       expect(result).toEqual([]);
     });
-
-    it('should filter by venue_type', async () => {
-      const query = {
-        type: 'theater'
-      };
-
-      jest.spyOn(venueService, 'searchVenues').mockResolvedValue([]);
-
-      await venueService.listVenues(query);
-
-      expect(venueService.searchVenues).toHaveBeenCalled();
-    });
-
-    it('should support search by name/city/description', async () => {
-      const query = {
-        search: 'Madison Square'
-      };
-
-      jest.spyOn(venueService, 'searchVenues').mockResolvedValue([]);
-
-      await venueService.listVenues(query);
-
-      expect(venueService.searchVenues).toHaveBeenCalledWith('Madison Square', expect.any(Object));
-    });
   });
 
-  // =============================================================================
-  // Update Venue Tests
-  // =============================================================================
+  describe('updateOnboardingProgress()', () => {
+    const venueId = 'venue-123';
 
-  describe('updateVenue', () => {
-    it('should update venue successfully', async () => {
-      const updates = {
-        name: 'Updated Name',
-        capacity: 600
+    beforeEach(() => {
+      const { VenueModel } = require('../../../src/models/venue.model');
+      
+      mockVenueModel = {
+        findById: jest.fn().mockResolvedValue({ id: venueId, onboarding: {} }),
+        update: jest.fn().mockResolvedValue({ id: venueId }),
       };
-
-      const result = await venueService.updateVenue('venue-123', updates, 'user-123');
-
-      expect(mockEventPublisher.publishVenueUpdated).toHaveBeenCalled();
+      
+      VenueModel.mockImplementation(() => mockVenueModel);
+      mockRedis.del.mockResolvedValue(1);
     });
 
-    it('should update updated_at timestamp', async () => {
-      const updates = { name: 'New Name' };
+    it('should update onboarding step', async () => {
+      await venueService.updateOnboardingProgress(venueId, 'basic_info', true);
 
-      await venueService.updateVenue('venue-123', updates, 'user-123');
-
-      expect(updates).toBeDefined();
+      expect(mockVenueModel.update).toHaveBeenCalledWith(
+        venueId,
+        expect.objectContaining({
+          onboarding: { basic_info: true },
+        })
+      );
     });
 
-    it('should validate venue exists before update', async () => {
-      await expect(
-        venueService.updateVenue('nonexistent', {}, 'user-123')
-      ).rejects.toThrow();
-    });
-
-    it('should publish venue.updated event', async () => {
-      const updates = { name: 'Updated' };
-
-      await venueService.updateVenue('venue-123', updates, 'user-123');
-
-      expect(mockEventPublisher.publishVenueUpdated).toHaveBeenCalled();
-    });
-  });
-
-  // =============================================================================
-  // Delete Venue Tests
-  // =============================================================================
-
-  describe('deleteVenue', () => {
-    it('should soft delete venue', async () => {
-      await venueService.deleteVenue('venue-123', 'owner-123');
-
-      expect(mockEventPublisher.publishVenueDeleted).toHaveBeenCalled();
-    });
-
-    it('should not actually delete from database', async () => {
-      await venueService.deleteVenue('venue-123', 'owner-123');
-
-      // Soft delete means deleted_at is set, not actual deletion
-      expect(mockDb).toBeDefined();
-    });
-
-    it('should publish venue.deleted event', async () => {
-      await venueService.deleteVenue('venue-123', 'owner-123');
-
-      expect(mockEventPublisher.publishVenueDeleted).toHaveBeenCalledWith('venue-123', 'owner-123');
-    });
-  });
-
-  // =============================================================================
-  // Business Logic Tests
-  // =============================================================================
-
-  describe('Business Logic Validation', () => {
-    it('should validate max_capacity > 0', async () => {
-      const venueData = {
-        name: 'Test',
-        max_capacity: -10
-      };
+    it('should throw when venue not found', async () => {
+      mockVenueModel.findById.mockResolvedValue(null);
 
       await expect(
-        venueService.createVenue(venueData, 'user-123', 'tenant-123')
-      ).rejects.toThrow();
-    });
-  });
-
-  // =============================================================================
-  // Access Control Tests  
-  // =============================================================================
-
-  describe('checkVenueAccess', () => {
-    it('should return true when user has access', async () => {
-      const result = await venueService.checkVenueAccess('venue-123', 'user-123');
-
-      expect(typeof result).toBe('boolean');
+        venueService.updateOnboardingProgress(venueId, 'basic_info', true)
+      ).rejects.toThrow('Venue not found');
     });
 
-    it('should return false when user lacks access', async () => {
-      const result = await venueService.checkVenueAccess('venue-123', 'unauthorized-user');
-
-      expect(typeof result).toBe('boolean');
-    });
-
-    it('should return false for inactive venues', async () => {
-      const result = await venueService.checkVenueAccess('inactive-venue', 'user-123');
-
-      expect(typeof result).toBe('boolean');
-    });
-  });
-
-  // =============================================================================
-  // Staff Management Tests
-  // =============================================================================
-
-  describe('addStaffMember', () => {
-    it('should add staff member with proper permissions', async () => {
-      const staffData = {
-        userId: 'user-456',
-        role: 'manager',
-        permissions: ['venue:read', 'venue:update']
-      };
-
-      await venueService.addStaffMember('venue-123', staffData, 'owner-123');
-
-      expect(mockLogger.info).toHaveBeenCalled();
-    });
-
-    it('should only allow owners and managers to add staff', async () => {
-      const staffData = {
-        userId: 'user-456',
-        role: 'staff'
-      };
-
-      await expect(
-        venueService.addStaffMember('venue-123', staffData, 'regular-user')
-      ).rejects.toThrow();
-    });
-  });
-
-  describe('getVenueStaff', () => {
-    it('should return list of staff members', async () => {
-      jest.spyOn(venueService, 'checkVenueAccess').mockResolvedValue(true);
-
-      const result = await venueService.getVenueStaff('venue-123', 'user-123');
-
-      expect(Array.isArray(result)).toBe(true);
-    });
-
-    it('should require access to view staff', async () => {
-      jest.spyOn(venueService, 'checkVenueAccess').mockResolvedValue(false);
-
-      await expect(
-        venueService.getVenueStaff('venue-123', 'unauthorized')
-      ).rejects.toThrow('Access denied');
-    });
-  });
-
-  describe('removeStaffMember', () => {
-    it('should only allow owners to remove staff', async () => {
-      await expect(
-        venueService.removeStaffMember('venue-123', 'staff-id', 'non-owner')
-      ).rejects.toThrow();
-    });
-
-    it('should not allow removing yourself', async () => {
-      await expect(
-        venueService.removeStaffMember('venue-123', 'owner-123', 'owner-123')
-      ).rejects.toThrow('Cannot remove yourself');
-    });
-  });
-
-  // =============================================================================
-  // Cache Management Tests
-  // =============================================================================
-
-  describe('Cache Management', () => {
-    it('should clear venue cache on update', async () => {
-      await venueService.updateVenue('venue-123', { name: 'New' }, 'user-123');
+    it('should clear cache after update', async () => {
+      await venueService.updateOnboardingProgress(venueId, 'basic_info', true);
 
       expect(mockRedis.del).toHaveBeenCalled();
-    });
-
-    it('should clear venue cache on delete', async () => {
-      await venueService.deleteVenue('venue-123', 'owner-123');
-
-      expect(mockRedis.del).toHaveBeenCalled();
-    });
-  });
-
-  // =============================================================================
-  // Onboarding Tests
-  // =============================================================================
-
-  describe('updateOnboardingProgress', () => {
-    it('should update onboarding step completion', async () => {
-      await venueService.updateOnboardingProgress('venue-123', 'basic_info', true);
-
-      expect(mockRedis.del).toHaveBeenCalled();
-    });
-
-    it('should calculate onboarding status correctly', async () => {
-      await venueService.updateOnboardingProgress('venue-123', 'layout', true);
-
-      expect(mockLogger.info).toBeDefined();
-    });
-  });
-
-  // =============================================================================
-  // Error Handling Tests
-  // =============================================================================
-
-  describe('Error Handling', () => {
-    it('should handle database errors gracefully', async () => {
-      mockDb.transaction = jest.fn().mockRejectedValue(new Error('DB Error'));
-
-      await expect(
-        venueService.createVenue({ name: 'Test' }, 'user-123', 'tenant-123')
-      ).rejects.toThrow();
-
-      expect(mockLogger.error).toHaveBeenCalled();
-    });
-
-    it('should log errors appropriately', async () => {
-      mockDb.transaction = jest.fn().mockRejectedValue(new Error('Test Error'));
-
-      try {
-        await venueService.createVenue({ name: 'Test' }, 'user-123', 'tenant-123');
-      } catch (error) {
-        expect(mockLogger.error).toHaveBeenCalled();
-      }
     });
   });
 });
+

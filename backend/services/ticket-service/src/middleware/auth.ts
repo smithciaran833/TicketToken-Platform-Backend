@@ -70,6 +70,18 @@ export const requireRole = (roles: string[]) => {
     const user = (request as any).user;
     
     if (!user) {
+      // MEDIUM Fix: Log AuthZ failures
+      log.warn('Authorization failure: No user context', {
+        security: {
+          event: 'authz_failure',
+          reason: 'no_user_context',
+          severity: 'medium',
+          url: request.url,
+          method: request.method,
+          ip: request.ip,
+          timestamp: new Date().toISOString(),
+        }
+      });
       throw new UnauthorizedError('Unauthorized');
     }
 
@@ -84,6 +96,23 @@ export const requireRole = (roles: string[]) => {
     if (roles.includes('venue_manager') && user.permissions?.some((p: string) => p.startsWith('venue:'))) {
       return;
     }
+
+    // MEDIUM Fix: Log AuthZ failures with full context
+    log.warn('Authorization failure: Insufficient permissions', {
+      security: {
+        event: 'authz_failure',
+        reason: 'insufficient_permissions',
+        severity: 'medium',
+        userId: user.id || user.sub,
+        userRole: user.role,
+        requiredRoles: roles,
+        userPermissions: user.permissions,
+        url: request.url,
+        method: request.method,
+        ip: request.ip,
+        timestamp: new Date().toISOString(),
+      }
+    });
 
     return reply.status(403).send({ error: 'Insufficient permissions' });
   };

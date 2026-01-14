@@ -215,7 +215,7 @@ export class TenantAwareQueryBuilder {
   /**
    * Create a query builder for a table with automatic tenant filtering
    */
-  table<T = any>(tableName: string): Knex.QueryBuilder<T> {
+  table<T extends {} = any>(tableName: string): Knex.QueryBuilder<T> {
     return this.db(tableName).where('tenant_id', this.tenantId) as Knex.QueryBuilder<T>;
   }
 

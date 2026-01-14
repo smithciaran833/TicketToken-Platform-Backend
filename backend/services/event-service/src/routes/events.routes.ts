@@ -4,20 +4,25 @@ import { tenantHook } from '../middleware/tenant';
 import { idempotencyPreHandler } from '../middleware/idempotency.middleware';
 import * as eventsController from '../controllers/events.controller';
 import { uuidPattern, dateTimePattern } from '../schemas/common.schema';
-import { 
-  eventStatuses, 
-  visibilityTypes, 
+import {
+  eventStatuses,
+  visibilityTypes,
   eventTypes,
   eventRouteResponses,
-  eventListRouteResponses 
+  eventListRouteResponses,
+  eventResponseSchema,
+  eventListResponseSchema,
+  createEventResponseSchema,
+  deleteEventResponseSchema,
+  publishEventResponseSchema
 } from '../schemas/event.schema';
 
 /**
  * Event routes with comprehensive input validation schemas.
- * 
+ *
  * CRITICAL: All schemas include additionalProperties: false to prevent
  * prototype pollution attacks (SEC1, RD6).
- * 
+ *
  * Audit Fixes:
  * - RD5: Response schemas defined to prevent data leakage
  * - SD3: URL validation with format: uri
@@ -45,6 +50,12 @@ export default async function eventsRoutes(app: FastifyInstance) {
           sort_by: { type: 'string', enum: ['created_at', 'name', 'priority', 'views'] },
           sort_order: { type: 'string', enum: ['asc', 'desc'] }
         }
+      },
+      // RD5: Response schema to prevent data leakage
+      response: {
+        200: eventListResponseSchema,
+        400: eventListRouteResponses[400],
+        401: eventListRouteResponses[401]
       }
     }
   }, eventsController.listEvents as any);
@@ -60,6 +71,13 @@ export default async function eventsRoutes(app: FastifyInstance) {
         properties: {
           id: { type: 'string', pattern: uuidPattern }
         }
+      },
+      // RD5: Response schema
+      response: {
+        200: eventResponseSchema,
+        400: eventRouteResponses[400],
+        401: eventRouteResponses[401],
+        404: eventRouteResponses[404]
       }
     }
   }, eventsController.getEvent as any);
@@ -170,6 +188,13 @@ export default async function eventsRoutes(app: FastifyInstance) {
           },
           custom_metadata: { type: 'object', additionalProperties: true, maxProperties: 50 }
         }
+      },
+      // RD5: Response schema
+      response: {
+        201: createEventResponseSchema,
+        400: eventRouteResponses[400],
+        401: eventRouteResponses[401],
+        409: eventRouteResponses[409]
       }
     }
   }, eventsController.createEvent as any);
@@ -220,6 +245,14 @@ export default async function eventsRoutes(app: FastifyInstance) {
             maxProperties: 50
           }
         }
+      },
+      // RD5: Response schema
+      response: {
+        200: eventResponseSchema,
+        400: eventRouteResponses[400],
+        401: eventRouteResponses[401],
+        404: eventRouteResponses[404],
+        409: eventRouteResponses[409]
       }
     }
   }, eventsController.updateEvent as any);
@@ -235,6 +268,13 @@ export default async function eventsRoutes(app: FastifyInstance) {
         properties: {
           id: { type: 'string', pattern: uuidPattern }
         }
+      },
+      // RD5: Response schema
+      response: {
+        200: deleteEventResponseSchema,
+        400: eventRouteResponses[400],
+        401: eventRouteResponses[401],
+        404: eventRouteResponses[404]
       }
     }
   }, eventsController.deleteEvent as any);
@@ -250,6 +290,14 @@ export default async function eventsRoutes(app: FastifyInstance) {
         properties: {
           id: { type: 'string', pattern: uuidPattern }
         }
+      },
+      // RD5: Response schema
+      response: {
+        200: publishEventResponseSchema,
+        400: eventRouteResponses[400],
+        401: eventRouteResponses[401],
+        404: eventRouteResponses[404],
+        409: eventRouteResponses[409]
       }
     }
   }, eventsController.publishEvent as any);
@@ -274,6 +322,12 @@ export default async function eventsRoutes(app: FastifyInstance) {
           limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
           offset: { type: 'integer', minimum: 0, default: 0 }
         }
+      },
+      // RD5: Response schema
+      response: {
+        200: eventListResponseSchema,
+        400: eventListRouteResponses[400],
+        401: eventListRouteResponses[401]
       }
     }
   }, eventsController.getVenueEvents as any);

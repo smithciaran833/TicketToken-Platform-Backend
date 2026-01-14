@@ -1,4 +1,3 @@
-import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { getPool } from '../config/database.config';
 import { storageService } from '../storage/storage.service';
@@ -70,7 +69,7 @@ export class AdminController {
       });
 
     } catch (error) {
-      logger.error('Failed to get stats:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get stats');
       
       // Log failure
       await auditService.logAdminAction(
@@ -104,7 +103,6 @@ export class AdminController {
       `);
 
       let cleaned = 0;
-      let failed = 0;
       const cleanedFileIds: string[] = [];
 
       for (const file of files.rows) {
@@ -164,7 +162,7 @@ export class AdminController {
       });
 
     } catch (error) {
-      logger.error('Cleanup failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Cleanup failed');
       
       // Log failure
       await auditService.logAdminAction(
@@ -234,7 +232,7 @@ export class AdminController {
       });
 
     } catch (error) {
-      logger.error('Bulk delete failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Bulk delete failed');
       
       // Log failure
       await auditService.logAdminAction(
@@ -291,7 +289,7 @@ export class AdminController {
       });
 
     } catch (error) {
-      logger.error('Failed to get audit logs:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get audit logs');
       reply.status(500).send({ error: 'Failed to get audit logs' });
     }
   }

@@ -1,5 +1,4 @@
 import { FILE_CONSTANTS, ERROR_MESSAGES } from '../config/constants';
-import { logger } from '../utils/logger';
 
 export class FileValidator {
   validateSize(size: number, mimeType: string): void {

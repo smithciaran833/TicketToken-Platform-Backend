@@ -16,6 +16,7 @@ interface OrderData {
   tickets: Ticket[];
   eventId: string;
   userId: string;
+  tenantId: string;
 }
 
 export class PaymentIntegration {
@@ -24,7 +25,7 @@ export class PaymentIntegration {
    * This should be triggered by your payment service
    */
   static async onPaymentComplete(orderData: OrderData) {
-    const { orderId, tickets, eventId, userId } = orderData;
+    const { orderId, tickets, eventId, userId, tenantId } = orderData;
 
     logger.info(`💳 Payment completed for order ${orderId}, triggering mints for ${tickets.length} tickets`);
 
@@ -33,6 +34,7 @@ export class PaymentIntegration {
     for (const ticket of tickets) {
       const mintData = {
         ticketId: ticket.id,
+        tenantId,
         orderId,
         eventId,
         userId,

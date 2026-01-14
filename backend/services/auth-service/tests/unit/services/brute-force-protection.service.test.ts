@@ -1,164 +1,137 @@
 import { BruteForceProtectionService } from '../../../src/services/brute-force-protection.service';
-import Redis from 'ioredis';
 
-// Mock Redis
-jest.mock('ioredis');
+// Mock dependencies
+const mockRedis = {
+  get: jest.fn(),
+  set: jest.fn(),
+  setex: jest.fn(),
+  del: jest.fn(),
+  ttl: jest.fn(),
+};
+
+const mockRateLimiter = {
+  fixedWindow: jest.fn(),
+};
+
+const mockKeyBuilder = {
+  failedAuth: jest.fn((id: string) => `bf:attempts:${id}`),
+  authLock: jest.fn((id: string) => `bf:lock:${id}`),
+};
+
+jest.mock('../../../src/config/redis', () => ({
+  getRedis: () => mockRedis,
+}));
+
+jest.mock('@tickettoken/shared', () => ({
+  getRateLimiter: () => mockRateLimiter,
+  getKeyBuilder: () => mockKeyBuilder,
+}));
 
 describe('BruteForceProtectionService', () => {
   let service: BruteForceProtectionService;
-  let mockRedis: jest.Mocked<Redis>;
 
   beforeEach(() => {
-    // Create fresh mock Redis instance
-    mockRedis = {
-      get: jest.fn(),
-      incr: jest.fn(),
-      expire: jest.fn(),
-      setex: jest.fn(),
-      del: jest.fn(),
-      ttl: jest.fn(),
-    } as any;
-
-    service = new BruteForceProtectionService(mockRedis);
     jest.clearAllMocks();
+    service = new BruteForceProtectionService();
   });
 
   describe('recordFailedAttempt', () => {
     const identifier = 'user@example.com';
 
-    describe('when account is already locked', () => {
-      it('should return locked status with lockoutUntil date', async () => {
-        const ttlSeconds = 600; // 10 minutes remaining
-        mockRedis.get.mockResolvedValue('locked');
-        mockRedis.ttl.mockResolvedValue(ttlSeconds);
+    it('returns locked=true with remaining time when already locked', async () => {
+      mockRedis.get.mockResolvedValue('locked');
+      mockRedis.ttl.mockResolvedValue(600); // 10 minutes remaining
 
-        const result = await service.recordFailedAttempt(identifier);
+      const result = await service.recordFailedAttempt(identifier);
 
-        expect(result.locked).toBe(true);
-        expect(result.remainingAttempts).toBe(0);
-        expect(result.lockoutUntil).toBeInstanceOf(Date);
-        expect(mockRedis.get).toHaveBeenCalledWith(`auth_lock:${identifier}`);
-        expect(mockRedis.ttl).toHaveBeenCalledWith(`auth_lock:${identifier}`);
-      });
+      expect(result.locked).toBe(true);
+      expect(result.remainingAttempts).toBe(0);
+      expect(result.lockoutUntil).toBeInstanceOf(Date);
+      expect(mockRateLimiter.fixedWindow).not.toHaveBeenCalled();
     });
 
-    describe('when recording first failed attempt', () => {
-      it('should increment counter and set expiry', async () => {
-        mockRedis.get.mockResolvedValue(null);
-        mockRedis.incr.mockResolvedValue(1);
-
-        const result = await service.recordFailedAttempt(identifier);
-
-        expect(result.locked).toBe(false);
-        expect(result.remainingAttempts).toBe(4);
-        expect(result.lockoutUntil).toBeUndefined();
-        expect(mockRedis.incr).toHaveBeenCalledWith(`failed_auth:${identifier}`);
-        expect(mockRedis.expire).toHaveBeenCalledWith(`failed_auth:${identifier}`, 900);
+    it('returns locked=false with remaining attempts when under limit', async () => {
+      mockRedis.get.mockResolvedValue(null); // Not locked
+      mockRateLimiter.fixedWindow.mockResolvedValue({
+        allowed: true,
+        remaining: 3,
       });
+
+      const result = await service.recordFailedAttempt(identifier);
+
+      expect(result.locked).toBe(false);
+      expect(result.remainingAttempts).toBe(3);
+      expect(result.lockoutUntil).toBeUndefined();
     });
 
-    describe('when recording subsequent failed attempts', () => {
-      it('should increment counter without setting expiry on second attempt', async () => {
-        mockRedis.get.mockResolvedValue(null);
-        mockRedis.incr.mockResolvedValue(2);
-
-        const result = await service.recordFailedAttempt(identifier);
-
-        expect(result.locked).toBe(false);
-        expect(result.remainingAttempts).toBe(3);
-        expect(mockRedis.incr).toHaveBeenCalledWith(`failed_auth:${identifier}`);
-        expect(mockRedis.expire).not.toHaveBeenCalled();
+    it('locks account when limit exceeded', async () => {
+      mockRedis.get.mockResolvedValue(null); // Not locked yet
+      mockRateLimiter.fixedWindow.mockResolvedValue({
+        allowed: false,
+        remaining: 0,
       });
 
-      it('should return correct remaining attempts on third attempt', async () => {
-        mockRedis.get.mockResolvedValue(null);
-        mockRedis.incr.mockResolvedValue(3);
+      const result = await service.recordFailedAttempt(identifier);
 
-        const result = await service.recordFailedAttempt(identifier);
-
-        expect(result.locked).toBe(false);
-        expect(result.remainingAttempts).toBe(2);
-      });
-
-      it('should return correct remaining attempts on fourth attempt', async () => {
-        mockRedis.get.mockResolvedValue(null);
-        mockRedis.incr.mockResolvedValue(4);
-
-        const result = await service.recordFailedAttempt(identifier);
-
-        expect(result.locked).toBe(false);
-        expect(result.remainingAttempts).toBe(1);
-      });
+      expect(result.locked).toBe(true);
+      expect(result.remainingAttempts).toBe(0);
+      expect(result.lockoutUntil).toBeInstanceOf(Date);
+      expect(mockRedis.setex).toHaveBeenCalledWith(
+        `bf:lock:${identifier}`,
+        15 * 60, // 15 minutes
+        'locked'
+      );
+      expect(mockRedis.del).toHaveBeenCalledWith(`bf:attempts:${identifier}`);
     });
 
-    describe('when max attempts reached', () => {
-      it('should lock account on fifth attempt', async () => {
-        mockRedis.get.mockResolvedValue(null);
-        mockRedis.incr.mockResolvedValue(5);
+    it('uses correct keys from keyBuilder', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRateLimiter.fixedWindow.mockResolvedValue({ allowed: true, remaining: 4 });
 
-        const result = await service.recordFailedAttempt(identifier);
+      await service.recordFailedAttempt(identifier);
 
-        expect(result.locked).toBe(true);
-        expect(result.remainingAttempts).toBe(0);
-        expect(result.lockoutUntil).toBeInstanceOf(Date);
-        expect(mockRedis.setex).toHaveBeenCalledWith(`auth_lock:${identifier}`, 900, 'locked');
-        expect(mockRedis.del).toHaveBeenCalledWith(`failed_auth:${identifier}`);
-      });
+      expect(mockKeyBuilder.failedAuth).toHaveBeenCalledWith(identifier);
+      expect(mockKeyBuilder.authLock).toHaveBeenCalledWith(identifier);
+    });
 
-      it('should lock account when attempts exceed max', async () => {
-        mockRedis.get.mockResolvedValue(null);
-        mockRedis.incr.mockResolvedValue(6);
+    it('calls rateLimiter.fixedWindow with correct params', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      mockRateLimiter.fixedWindow.mockResolvedValue({ allowed: true, remaining: 4 });
 
-        const result = await service.recordFailedAttempt(identifier);
+      await service.recordFailedAttempt(identifier);
 
-        expect(result.locked).toBe(true);
-        expect(result.remainingAttempts).toBe(0);
-        expect(mockRedis.setex).toHaveBeenCalledWith(`auth_lock:${identifier}`, 900, 'locked');
-      });
+      expect(mockRateLimiter.fixedWindow).toHaveBeenCalledWith(
+        `bf:attempts:${identifier}`,
+        5, // maxAttempts
+        15 * 60 * 1000 // attemptWindow in ms
+      );
     });
   });
 
   describe('clearFailedAttempts', () => {
-    const identifier = 'user@example.com';
-
-    it('should delete failed attempts key from Redis', async () => {
-      await service.clearFailedAttempts(identifier);
-
-      expect(mockRedis.del).toHaveBeenCalledWith(`failed_auth:${identifier}`);
-      expect(mockRedis.del).toHaveBeenCalledTimes(1);
-    });
-
-    it('should work even if key does not exist', async () => {
-      mockRedis.del.mockResolvedValue(0);
+    it('deletes the attempts key', async () => {
+      const identifier = 'user@example.com';
 
       await service.clearFailedAttempts(identifier);
 
-      expect(mockRedis.del).toHaveBeenCalledWith(`failed_auth:${identifier}`);
+      expect(mockKeyBuilder.failedAuth).toHaveBeenCalledWith(identifier);
+      expect(mockRedis.del).toHaveBeenCalledWith(`bf:attempts:${identifier}`);
     });
   });
 
   describe('isLocked', () => {
     const identifier = 'user@example.com';
 
-    it('should return true when account is locked', async () => {
+    it('returns true when lock key exists', async () => {
       mockRedis.get.mockResolvedValue('locked');
 
       const result = await service.isLocked(identifier);
 
       expect(result).toBe(true);
-      expect(mockRedis.get).toHaveBeenCalledWith(`auth_lock:${identifier}`);
+      expect(mockKeyBuilder.authLock).toHaveBeenCalledWith(identifier);
     });
 
-    it('should return false when account is not locked', async () => {
-      mockRedis.get.mockResolvedValue(null);
-
-      const result = await service.isLocked(identifier);
-
-      expect(result).toBe(false);
-      expect(mockRedis.get).toHaveBeenCalledWith(`auth_lock:${identifier}`);
-    });
-
-    it('should return false when lock key does not exist', async () => {
+    it('returns false when lock key does not exist', async () => {
       mockRedis.get.mockResolvedValue(null);
 
       const result = await service.isLocked(identifier);
@@ -170,55 +143,38 @@ describe('BruteForceProtectionService', () => {
   describe('getLockInfo', () => {
     const identifier = 'user@example.com';
 
-    describe('when account is locked', () => {
-      it('should return locked status with remaining time', async () => {
-        const remainingTime = 600; // 10 minutes
-        mockRedis.ttl.mockResolvedValue(remainingTime);
+    it('returns locked=true with remainingTime when locked', async () => {
+      mockRedis.ttl.mockResolvedValue(300); // 5 minutes
 
-        const result = await service.getLockInfo(identifier);
+      const result = await service.getLockInfo(identifier);
 
-        expect(result.locked).toBe(true);
-        expect(result.remainingTime).toBe(remainingTime);
-        expect(mockRedis.ttl).toHaveBeenCalledWith(`auth_lock:${identifier}`);
-      });
-
-      it('should return correct remaining time for different durations', async () => {
-        mockRedis.ttl.mockResolvedValue(300); // 5 minutes
-
-        const result = await service.getLockInfo(identifier);
-
-        expect(result.locked).toBe(true);
-        expect(result.remainingTime).toBe(300);
-      });
+      expect(result.locked).toBe(true);
+      expect(result.remainingTime).toBe(300);
     });
 
-    describe('when account is not locked', () => {
-      it('should return not locked when ttl is 0', async () => {
-        mockRedis.ttl.mockResolvedValue(0);
+    it('returns locked=false when TTL is 0 or negative', async () => {
+      mockRedis.ttl.mockResolvedValue(0);
 
-        const result = await service.getLockInfo(identifier);
+      const result = await service.getLockInfo(identifier);
 
-        expect(result.locked).toBe(false);
-        expect(result.remainingTime).toBeUndefined();
-      });
+      expect(result.locked).toBe(false);
+      expect(result.remainingTime).toBeUndefined();
+    });
 
-      it('should return not locked when ttl is negative', async () => {
-        mockRedis.ttl.mockResolvedValue(-1);
+    it('returns locked=false when TTL is -1 (key does not exist)', async () => {
+      mockRedis.ttl.mockResolvedValue(-1);
 
-        const result = await service.getLockInfo(identifier);
+      const result = await service.getLockInfo(identifier);
 
-        expect(result.locked).toBe(false);
-        expect(result.remainingTime).toBeUndefined();
-      });
+      expect(result.locked).toBe(false);
+    });
 
-      it('should return not locked when key does not exist (ttl -2)', async () => {
-        mockRedis.ttl.mockResolvedValue(-2);
+    it('returns locked=false when TTL is -2 (key has no expiry)', async () => {
+      mockRedis.ttl.mockResolvedValue(-2);
 
-        const result = await service.getLockInfo(identifier);
+      const result = await service.getLockInfo(identifier);
 
-        expect(result.locked).toBe(false);
-        expect(result.remainingTime).toBeUndefined();
-      });
+      expect(result.locked).toBe(false);
     });
   });
 });

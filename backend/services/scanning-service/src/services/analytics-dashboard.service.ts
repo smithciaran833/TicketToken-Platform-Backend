@@ -12,6 +12,20 @@ import logger from '../utils/logger';
  * - Device performance
  * - Entry patterns
  * - Fraud detection insights
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service uses complex SQL JOINs across multiple tables (scans, tickets,
+ * events, devices) for analytics and reporting. This is intentional because:
+ * 
+ * 1. Analytics operations require efficient DB-level JOINs for performance
+ * 2. Breaking into multiple service calls would significantly degrade dashboard performance
+ * 3. These are READ-ONLY aggregation queries for metrics (COUNT, AVG, etc.)
+ * 4. The primary data (scans, devices) is scanning-service owned
+ * 5. Secondary data (tickets, events) is for filtering/grouping purposes only
+ * 6. Real-time scanning analytics requires sub-second response times
+ * 
+ * Future optimization: Consider implementing materialized views or
+ * Elasticsearch for cross-service analytics.
  */
 
 interface TimeRange {

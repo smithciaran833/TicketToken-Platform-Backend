@@ -44,7 +44,7 @@ export const wallet = walletKeypair;
 
 // Initialize Metaplex instance for NFT operations
 export const metaplex = Metaplex.make(connection).use({
-  install(metaplex) {
+  install(metaplex: any) {
     metaplex.identity().setDriver({
       publicKey: wallet.publicKey,
       secretKey: wallet.secretKey,

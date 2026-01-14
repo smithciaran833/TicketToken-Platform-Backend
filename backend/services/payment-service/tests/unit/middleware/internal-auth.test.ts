@@ -1,163 +1,74 @@
-import { FastifyRequest, FastifyReply } from 'fastify';
+/**
+ * Unit Tests for Internal Auth Middleware
+ * 
+ * Tests HMAC-based internal service authentication.
+ */
+
 import * as crypto from 'crypto';
 
-// =============================================================================
-// MOCKS
-// =============================================================================
+// Store original env
+const originalEnv = process.env.INTERNAL_SERVICE_SECRET;
 
-const mockLogger = {
-  child: jest.fn().mockReturnThis(),
-  warn: jest.fn(),
-  debug: jest.fn(),
-};
+// Set secret before importing
+process.env.INTERNAL_SERVICE_SECRET = 'test-secret-that-is-at-least-32-characters-long';
 
+// Mock dependencies
 jest.mock('../../../src/utils/logger', () => ({
-  logger: mockLogger,
+  logger: {
+    child: jest.fn().mockReturnValue({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    }),
+  },
 }));
 
-// =============================================================================
-// TEST SUITE
-// =============================================================================
+import { internalAuth } from '../../../src/middleware/internal-auth';
 
-describe('internal-auth middleware', () => {
-  let internalAuth: any;
+describe('Internal Auth Middleware', () => {
   let mockRequest: any;
   let mockReply: any;
-  let originalEnv: NodeJS.ProcessEnv;
+  const TEST_SECRET = 'test-secret-that-is-at-least-32-characters-long';
 
   beforeEach(() => {
     jest.clearAllMocks();
-    originalEnv = { ...process.env };
-    
-    jest.isolateModules(() => {
-      const authModule = require('../../../src/middleware/internal-auth');
-      internalAuth = authModule.internalAuth;
-    });
+    process.env.INTERNAL_SERVICE_SECRET = TEST_SECRET;
 
     mockRequest = {
-      headers: {},
-      url: '/test',
+      url: '/api/internal/payments',
       method: 'POST',
-      body: {},
-    } as any;
+      body: { orderId: 'order-123' },
+      headers: {},
+    };
 
     mockReply = {
       status: jest.fn().mockReturnThis(),
       send: jest.fn().mockReturnThis(),
-    } as any;
+    };
   });
 
-  afterEach(() => {
-    process.env = originalEnv;
+  afterAll(() => {
+    process.env.INTERNAL_SERVICE_SECRET = originalEnv;
   });
 
-  // ===========================================================================
-  // Success Cases - 5 test cases
-  // ===========================================================================
+  /**
+   * Generate valid HMAC signature
+   */
+  function generateSignature(serviceName: string, timestamp: string, method: string, url: string, body: any): string {
+    const payload = `${serviceName}:${timestamp}:${method}:${url}:${JSON.stringify(body)}`;
+    return crypto
+      .createHmac('sha256', TEST_SECRET)
+      .update(payload)
+      .digest('hex');
+  }
 
-  describe('Success Cases', () => {
-    it('should authenticate with valid signature', async () => {
-      const serviceName = 'order-service';
-      const timestamp = Date.now().toString();
-      const payload = `${serviceName}:${timestamp}:${mockRequest.method}:${mockRequest.url}:${JSON.stringify(mockRequest.body)}`;
-      const signature = crypto
-        .createHmac('sha256', process.env.INTERNAL_SERVICE_SECRET || 'internal-service-secret-change-in-production')
-        .update(payload)
-        .digest('hex');
-
-      mockRequest.headers['x-internal-service'] = serviceName;
-      mockRequest.headers['x-internal-timestamp'] = timestamp;
-      mockRequest.headers['x-internal-signature'] = signature;
-
-      await internalAuth(mockRequest, mockReply);
-
-      expect(mockRequest.internalService).toBe(serviceName);
-      expect(mockReply.status).not.toHaveBeenCalled();
-    });
-
-    it('should accept temp-signature in development', async () => {
-      process.env.NODE_ENV = 'development';
-      
-      jest.isolateModules(() => {
-        internalAuth = require('../../../src/middleware/internal-auth').internalAuth;
-      });
-
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = Date.now().toString();
-      mockRequest.headers['x-internal-signature'] = 'temp-signature';
-
-      await internalAuth(mockRequest, mockReply);
-
-      expect(mockRequest.internalService).toBe('test-service');
-      expect(mockReply.status).not.toHaveBeenCalled();
-    });
-
-    it('should attach service name to request', async () => {
-      const serviceName = 'payment-processor';
-      const timestamp = Date.now().toString();
-      const payload = `${serviceName}:${timestamp}:${mockRequest.method}:${mockRequest.url}:${JSON.stringify(mockRequest.body)}`;
-      const signature = crypto
-        .createHmac('sha256', 'internal-service-secret-change-in-production')
-        .update(payload)
-        .digest('hex');
-
-      mockRequest.headers['x-internal-service'] = serviceName;
-      mockRequest.headers['x-internal-timestamp'] = timestamp;
-      mockRequest.headers['x-internal-signature'] = signature;
-
-      await internalAuth(mockRequest, mockReply);
-
-      expect(mockRequest.internalService).toBe(serviceName);
-    });
-
-    it('should validate timestamp within 5 minutes', async () => {
-      const serviceName = 'test-service';
-      const timestamp = (Date.now() - 4 * 60 * 1000).toString(); // 4 minutes ago
-      const payload = `${serviceName}:${timestamp}:${mockRequest.method}:${mockRequest.url}:${JSON.stringify(mockRequest.body)}`;
-      const signature = crypto
-        .createHmac('sha256', 'internal-service-secret-change-in-production')
-        .update(payload)
-        .digest('hex');
-
-      mockRequest.headers['x-internal-service'] = serviceName;
-      mockRequest.headers['x-internal-timestamp'] = timestamp;
-      mockRequest.headers['x-internal-signature'] = signature;
-
-      await internalAuth(mockRequest, mockReply);
-
-      expect(mockReply.status).not.toHaveBeenCalled();
-    });
-
-    it('should log successful authentication', async () => {
-      const serviceName = 'test-service';
-      const timestamp = Date.now().toString();
-      const payload = `${serviceName}:${timestamp}:${mockRequest.method}:${mockRequest.url}:${JSON.stringify(mockRequest.body)}`;
-      const signature = crypto
-        .createHmac('sha256', 'internal-service-secret-change-in-production')
-        .update(payload)
-        .digest('hex');
-
-      mockRequest.headers['x-internal-service'] = serviceName;
-      mockRequest.headers['x-internal-timestamp'] = timestamp;
-      mockRequest.headers['x-internal-signature'] = signature;
-
-      await internalAuth(mockRequest, mockReply);
-
-      expect(mockLogger.debug).toHaveBeenCalledWith(
-        'Internal request authenticated',
-        expect.any(Object)
-      );
-    });
-  });
-
-  // ===========================================================================
-  // Error Cases - Missing Headers - 4 test cases
-  // ===========================================================================
-
-  describe('Error Cases - Missing Headers', () => {
-    it('should reject request without service name', async () => {
-      mockRequest.headers['x-internal-timestamp'] = Date.now().toString();
-      mockRequest.headers['x-internal-signature'] = 'signature';
+  describe('Missing Headers', () => {
+    it('should reject request without x-internal-service header', async () => {
+      mockRequest.headers = {
+        'x-internal-timestamp': Date.now().toString(),
+        'x-internal-signature': 'some-signature',
+      };
 
       await internalAuth(mockRequest, mockReply);
 
@@ -165,46 +76,48 @@ describe('internal-auth middleware', () => {
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Missing authentication headers' });
     });
 
-    it('should reject request without timestamp', async () => {
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-signature'] = 'signature';
+    it('should reject request without x-internal-timestamp header', async () => {
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-signature': 'some-signature',
+      };
 
       await internalAuth(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Missing authentication headers' });
     });
 
-    it('should reject request without signature', async () => {
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = Date.now().toString();
+    it('should reject request without x-internal-signature header', async () => {
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': Date.now().toString(),
+      };
 
       await internalAuth(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Missing authentication headers' });
     });
 
-    it('should log warning for missing headers', async () => {
+    it('should reject request with no headers', async () => {
+      mockRequest.headers = {};
+
       await internalAuth(mockRequest, mockReply);
 
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Internal request missing required headers',
-        expect.any(Object)
-      );
+      expect(mockReply.status).toHaveBeenCalledWith(401);
     });
   });
 
-  // ===========================================================================
-  // Error Cases - Invalid Timestamp - 3 test cases
-  // ===========================================================================
-
-  describe('Error Cases - Invalid Timestamp', () => {
-    it('should reject expired timestamp', async () => {
-      const serviceName = 'test-service';
-      const timestamp = (Date.now() - 6 * 60 * 1000).toString(); // 6 minutes ago
-
-      mockRequest.headers['x-internal-service'] = serviceName;
-      mockRequest.headers['x-internal-timestamp'] = timestamp;
-      mockRequest.headers['x-internal-signature'] = 'signature';
+  describe('Timestamp Validation', () => {
+    it('should reject expired timestamp (older than 5 minutes)', async () => {
+      const expiredTimestamp = (Date.now() - 6 * 60 * 1000).toString(); // 6 minutes ago
+      
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': expiredTimestamp,
+        'x-internal-signature': 'any-signature',
+      };
 
       await internalAuth(mockRequest, mockReply);
 
@@ -212,39 +125,66 @@ describe('internal-auth middleware', () => {
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Request expired' });
     });
 
-    it('should reject invalid timestamp format', async () => {
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = 'invalid';
-      mockRequest.headers['x-internal-signature'] = 'signature';
+    it('should reject future timestamp (more than 5 minutes ahead)', async () => {
+      const futureTimestamp = (Date.now() + 6 * 60 * 1000).toString(); // 6 minutes in future
+      
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': futureTimestamp,
+        'x-internal-signature': 'any-signature',
+      };
 
       await internalAuth(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Request expired' });
     });
 
-    it('should log warning for invalid timestamp', async () => {
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = (Date.now() - 10 * 60 * 1000).toString();
-      mockRequest.headers['x-internal-signature'] = 'signature';
+    it('should reject invalid (non-numeric) timestamp', async () => {
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': 'not-a-number',
+        'x-internal-signature': 'any-signature',
+      };
 
       await internalAuth(mockRequest, mockReply);
 
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Internal request with invalid timestamp',
-        expect.any(Object)
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Request expired' });
+    });
+
+    it('should accept timestamp within 5 minutes', async () => {
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'order-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
       );
+      
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      // Should not return error
+      expect(mockReply.status).not.toHaveBeenCalledWith(401);
     });
   });
 
-  // ===========================================================================
-  // Error Cases - Invalid Signature - 3 test cases
-  // ===========================================================================
-
-  describe('Error Cases - Invalid Signature', () => {
+  describe('Signature Validation', () => {
     it('should reject invalid signature', async () => {
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = Date.now().toString();
-      mockRequest.headers['x-internal-signature'] = 'wrong-signature';
+      const timestamp = Date.now().toString();
+      
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': 'invalid-signature-that-is-hex'.padEnd(64, '0'),
+      };
 
       await internalAuth(mockRequest, mockReply);
 
@@ -252,33 +192,257 @@ describe('internal-auth middleware', () => {
       expect(mockReply.send).toHaveBeenCalledWith({ error: 'Invalid signature' });
     });
 
-    it('should reject temp-signature in production', async () => {
-      process.env.NODE_ENV = 'production';
+    it('should accept valid HMAC signature', async () => {
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'ticket-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
+      );
       
-      jest.isolateModules(() => {
-        internalAuth = require('../../../src/middleware/internal-auth').internalAuth;
-      });
+      mockRequest.headers = {
+        'x-internal-service': 'ticket-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
 
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = Date.now().toString();
-      mockRequest.headers['x-internal-signature'] = 'temp-signature';
+      await internalAuth(mockRequest, mockReply);
+
+      expect(mockRequest.internalService).toBe('ticket-service');
+    });
+
+    it('should reject signature with wrong service name', async () => {
+      const timestamp = Date.now().toString();
+      // Generate signature for 'order-service' but send as 'ticket-service'
+      const signature = generateSignature(
+        'order-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
+      );
+      
+      mockRequest.headers = {
+        'x-internal-service': 'ticket-service', // Different from signature
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
 
       await internalAuth(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(401);
     });
 
-    it('should log warning for invalid signature', async () => {
-      mockRequest.headers['x-internal-service'] = 'test-service';
-      mockRequest.headers['x-internal-timestamp'] = Date.now().toString();
-      mockRequest.headers['x-internal-signature'] = 'invalid';
+    it('should reject signature with tampered body', async () => {
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'order-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        { orderId: 'order-123' } // Original body
+      );
+      
+      mockRequest.body = { orderId: 'order-456' }; // Tampered body
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
 
       await internalAuth(mockRequest, mockReply);
 
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Invalid internal service signature',
-        expect.any(Object)
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+    });
+
+    it('should reject signature with wrong method', async () => {
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'order-service',
+        timestamp,
+        'GET', // Generated for GET
+        mockRequest.url,
+        mockRequest.body
       );
+      
+      mockRequest.method = 'POST'; // But request is POST
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+    });
+  });
+
+  describe('Successful Authentication', () => {
+    it('should set internalService on request', async () => {
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'notification-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
+      );
+      
+      mockRequest.headers = {
+        'x-internal-service': 'notification-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      expect(mockRequest.internalService).toBe('notification-service');
+    });
+
+    it('should authenticate different services', async () => {
+      const services = ['order-service', 'ticket-service', 'event-service', 'auth-service'];
+      
+      for (const service of services) {
+        const timestamp = Date.now().toString();
+        const signature = generateSignature(
+          service,
+          timestamp,
+          mockRequest.method,
+          mockRequest.url,
+          mockRequest.body
+        );
+        
+        mockRequest.headers = {
+          'x-internal-service': service,
+          'x-internal-timestamp': timestamp,
+          'x-internal-signature': signature,
+        };
+
+        await internalAuth(mockRequest, mockReply);
+
+        expect(mockRequest.internalService).toBe(service);
+      }
+    });
+
+    it('should work with GET request (no body)', async () => {
+      mockRequest.method = 'GET';
+      mockRequest.url = '/api/internal/status';
+      mockRequest.body = undefined;
+      
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'health-check',
+        timestamp,
+        'GET',
+        '/api/internal/status',
+        undefined
+      );
+      
+      mockRequest.headers = {
+        'x-internal-service': 'health-check',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      expect(mockRequest.internalService).toBe('health-check');
+    });
+  });
+
+  describe('Timing-Safe Comparison', () => {
+    it('should use constant-time comparison (no timing attacks)', async () => {
+      // This test verifies the middleware uses timing-safe comparison
+      // by checking that the signature validation completes
+      const timestamp = Date.now().toString();
+      
+      // Generate a valid signature
+      const validSignature = generateSignature(
+        'test-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
+      );
+      
+      // Try with almost-correct signature (only last char different)
+      const almostValid = validSignature.slice(0, -1) + (validSignature.slice(-1) === 'a' ? 'b' : 'a');
+      
+      mockRequest.headers = {
+        'x-internal-service': 'test-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': almostValid,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      // Should still reject
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+    });
+  });
+
+  describe('Complex Bodies', () => {
+    it('should handle nested object bodies', async () => {
+      mockRequest.body = {
+        order: {
+          id: 'order-123',
+          items: [
+            { ticketId: 't1', quantity: 2 },
+            { ticketId: 't2', quantity: 1 },
+          ],
+        },
+        customer: {
+          email: 'test@example.com',
+        },
+      };
+      
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'order-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
+      );
+      
+      mockRequest.headers = {
+        'x-internal-service': 'order-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      expect(mockRequest.internalService).toBe('order-service');
+    });
+
+    it('should handle array bodies', async () => {
+      mockRequest.body = [
+        { id: 1, action: 'create' },
+        { id: 2, action: 'update' },
+      ];
+      
+      const timestamp = Date.now().toString();
+      const signature = generateSignature(
+        'batch-service',
+        timestamp,
+        mockRequest.method,
+        mockRequest.url,
+        mockRequest.body
+      );
+      
+      mockRequest.headers = {
+        'x-internal-service': 'batch-service',
+        'x-internal-timestamp': timestamp,
+        'x-internal-signature': signature,
+      };
+
+      await internalAuth(mockRequest, mockReply);
+
+      expect(mockRequest.internalService).toBe('batch-service');
     });
   });
 });

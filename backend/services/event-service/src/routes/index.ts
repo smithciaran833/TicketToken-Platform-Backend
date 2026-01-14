@@ -10,10 +10,14 @@ import reportRoutes from './reports.routes';
 import venueAnalyticsRoutes from './venue-analytics.routes';
 import healthRoutes from './health.routes';
 import cancellationRoutes from './cancellation.routes';
+import internalRoutes from './internal.routes';
 
 export default async function routes(app: FastifyInstance) {
   // Register health routes (no prefix, no auth)
   await app.register(healthRoutes);
+  
+  // Register internal routes (S2S only, no user auth)
+  await app.register(internalRoutes);
   
   // Register all route modules
   await app.register(eventsRoutes);

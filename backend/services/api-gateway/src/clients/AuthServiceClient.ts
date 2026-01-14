@@ -3,6 +3,7 @@ import { FastifyInstance } from 'fastify';
 import { AuthServiceUser, AuthServiceErrorResponse } from '../types/auth-service.types';
 import { serviceUrls } from '../config/services';
 import { getCircuitBreaker } from '../middleware/circuit-breaker.middleware';
+import { generateInternalAuthHeaders } from '../utils/internal-auth';
 
 export class AuthServiceClient {
   private httpClient: AxiosInstance;
@@ -12,13 +13,12 @@ export class AuthServiceClient {
   constructor(server: FastifyInstance) {
     this.server = server;
     this.serviceUrl = serviceUrls.auth;
-    
+
     this.httpClient = axios.create({
       baseURL: this.serviceUrl,
       timeout: 5000,
       headers: {
-        'Content-Type': 'application/json',
-        'x-gateway-internal': 'true'
+        'Content-Type': 'application/json'
       }
     });
   }
@@ -29,15 +29,19 @@ export class AuthServiceClient {
    */
   async getUserById(userId: string): Promise<AuthServiceUser | null> {
     const circuitBreaker = getCircuitBreaker('auth-service');
-    
+    const path = `/users/${userId}`;
+
     try {
       const makeRequest = async () => {
-        const response = await this.httpClient.get<AuthServiceUser>(`/users/${userId}`);
+        const internalHeaders = generateInternalAuthHeaders('GET', path);
+        const response = await this.httpClient.get<AuthServiceUser>(path, {
+          headers: internalHeaders
+        });
         return response.data;
       };
 
       // Use circuit breaker if available, otherwise make direct request
-      const user = circuitBreaker 
+      const user = circuitBreaker
         ? (await circuitBreaker.fire(makeRequest) as AuthServiceUser)
         : await makeRequest();
 
@@ -53,12 +57,16 @@ export class AuthServiceClient {
    */
   async validateToken(token: string): Promise<{ valid: boolean; user?: AuthServiceUser }> {
     const circuitBreaker = getCircuitBreaker('auth-service');
+    const path = '/auth/validate';
+    const body = { token };
 
     try {
       const makeRequest = async () => {
+        const internalHeaders = generateInternalAuthHeaders('POST', path, body);
         const response = await this.httpClient.post<{ valid: boolean; user?: AuthServiceUser }>(
-          '/auth/validate',
-          { token }
+          path,
+          body,
+          { headers: internalHeaders }
         );
         return response.data;
       };
@@ -79,14 +87,14 @@ export class AuthServiceClient {
   private handleError(error: any, method: string, defaultReturn?: any): any {
     if (axios.isAxiosError(error)) {
       const axiosError = error as AxiosError<AuthServiceErrorResponse>;
-      
+
       if (axiosError.code === 'ECONNREFUSED' || axiosError.code === 'ETIMEDOUT') {
         this.server.log.error({
           method,
           error: 'Auth service unavailable',
           code: axiosError.code
         }, 'AuthServiceClient error');
-        
+
         // Service unavailable - return null to indicate failure
         return defaultReturn !== undefined ? defaultReturn : null;
       }
@@ -117,6 +125,7 @@ export class AuthServiceClient {
 
   /**
    * Health check for auth service
+   * Note: Health checks don't need internal auth - they're public endpoints
    */
   async healthCheck(): Promise<boolean> {
     try {

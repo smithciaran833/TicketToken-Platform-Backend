@@ -1,4 +1,6 @@
-FROM node:20-alpine AS builder
+# Pinned to digest for reproducible builds
+# To update: docker pull node:20-alpine && docker inspect --format='{{index .RepoDigests 0}}' node:20-alpine
+FROM node:20-alpine@sha256:7a91aa397f2e2dfbfcdad2e2d72599f374e0b0172be1d86eeb73f1d33f36a4b2 AS builder
 
 WORKDIR /app
 
@@ -11,18 +13,20 @@ COPY backend/services/minting-service ./backend/services/minting-service
 
 # Install shared dependencies
 WORKDIR /app/backend/shared
-RUN npm install
+RUN npm install && npm cache clean --force
 
 WORKDIR /app/backend/services/minting-service
-RUN npm install
+RUN npm install && npm cache clean --force
 RUN npm run build
 
 # Production stage
-FROM node:20-alpine
+# Pinned to digest for reproducible builds
+FROM node:20-alpine@sha256:7a91aa397f2e2dfbfcdad2e2d72599f374e0b0172be1d86eeb73f1d33f36a4b2
 
 WORKDIR /app
 
-RUN apk add --no-cache dumb-init
+# Install dumb-init and clean apk cache
+RUN apk add --no-cache dumb-init && rm -rf /var/cache/apk/*
 
 # Copy built application
 COPY --from=builder /app/backend/services/minting-service/dist ./dist
@@ -48,6 +52,9 @@ RUN mkdir -p /app/logs && \
     addgroup -g 1001 -S nodejs && \
     adduser -S nodejs -u 1001 && \
     chown -R nodejs:nodejs /app
+
+# Remove SUID/SGID binaries for security hardening
+RUN find / -perm /6000 -type f -exec chmod a-s {} \; 2>/dev/null || true
 
 USER nodejs
 

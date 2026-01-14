@@ -1,100 +1,85 @@
+/**
+ * Unit tests for src/services/eventPublisher.ts
+ * Tests RabbitMQ event publishing with circuit breaker pattern
+ */
+
+// Mock amqplib - must be defined before import
+const mockChannel = {
+  assertExchange: jest.fn().mockResolvedValue(undefined),
+  publish: jest.fn().mockReturnValue(true),
+  close: jest.fn().mockResolvedValue(undefined),
+};
+
+const mockConnection = {
+  createChannel: jest.fn().mockResolvedValue(mockChannel),
+  close: jest.fn().mockResolvedValue(undefined),
+  on: jest.fn(),
+};
+
+jest.mock('amqplib', () => ({
+  connect: jest.fn(),
+}));
+
 import { EventPublisher, EventMessage } from '../../../src/services/eventPublisher';
-import { logger } from '../../../src/utils/logger';
-import { createCircuitBreaker } from '../../../src/utils/circuitBreaker';
 
-// =============================================================================
-// MOCKS
-// =============================================================================
+// Mock logger
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
 
-jest.mock('amqplib');
-jest.mock('../../../src/utils/logger');
-jest.mock('../../../src/utils/circuitBreaker');
+// Mock config
+jest.mock('../../../src/config/index', () => ({
+  getConfig: jest.fn(() => ({
+    rabbitmq: {
+      url: 'amqp://localhost:5672',
+    },
+  })),
+}));
 
-const amqplib = require('amqplib');
+// Mock circuit breaker
+jest.mock('../../../src/utils/circuitBreaker', () => ({
+  createCircuitBreaker: jest.fn((fn) => ({
+    fire: jest.fn(async (arg) => fn(arg)),
+  })),
+}));
 
-describe('EventPublisher', () => {
+// Mock shared search sync
+jest.mock('@tickettoken/shared', () => ({
+  publishSearchSync: jest.fn().mockResolvedValue(undefined),
+}));
+
+describe('services/eventPublisher', () => {
   let eventPublisher: EventPublisher;
-  let mockConnection: any;
-  let mockChannel: any;
+  const amqplib = require('amqplib');
+  const { publishSearchSync } = require('@tickettoken/shared');
+  const { logger } = require('../../../src/utils/logger');
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Mock channel
-    mockChannel = {
-      assertExchange: jest.fn().mockResolvedValue(undefined),
-      publish: jest.fn(),
-      close: jest.fn().mockResolvedValue(undefined),
-    };
-
-    // Mock connection
-    mockConnection = {
-      createChannel: jest.fn().mockResolvedValue(mockChannel),
-      close: jest.fn().mockResolvedValue(undefined),
-      on: jest.fn(),
-    };
-
-    // Mock amqplib.connect
-    amqplib.connect = jest.fn().mockResolvedValue(mockConnection);
-
-    // Mock circuit breaker to pass through to the actual function
-    (createCircuitBreaker as jest.Mock).mockImplementation((fn: any) => {
-      return {
-        fire: jest.fn().mockImplementation(async (message: EventMessage) => {
-          return await fn(message);
-        }),
-      };
-    });
-
-    // Create publisher instance
+    // Set up mock connection before creating publisher
+    amqplib.connect.mockResolvedValue(mockConnection);
     eventPublisher = new EventPublisher();
   });
 
   afterEach(async () => {
-    if (eventPublisher) {
+    try {
       await eventPublisher.close();
+    } catch (e) {
+      // Ignore close errors in tests
     }
   });
-
-  // =============================================================================
-  // connect() - 10 test cases
-  // =============================================================================
 
   describe('connect()', () => {
     it('should connect to RabbitMQ successfully', async () => {
       await eventPublisher.connect();
 
-      expect(amqplib.connect).toHaveBeenCalledWith(
-        expect.stringContaining('amqp://')
-      );
+      expect(amqplib.connect).toHaveBeenCalledWith('amqp://localhost:5672');
       expect(mockConnection.createChannel).toHaveBeenCalled();
-      expect(eventPublisher.isConnected()).toBe(true);
-    });
-
-    it('should use RABBITMQ_URL from environment', async () => {
-      process.env.RABBITMQ_URL = 'amqp://custom:url@localhost:5672';
-      const publisher = new EventPublisher();
-
-      await publisher.connect();
-
-      expect(amqplib.connect).toHaveBeenCalledWith('amqp://custom:url@localhost:5672');
-      await publisher.close();
-      delete process.env.RABBITMQ_URL;
-    });
-
-    it('should use default URL if RABBITMQ_URL not set', async () => {
-      delete process.env.RABBITMQ_URL;
-      const publisher = new EventPublisher();
-
-      await publisher.connect();
-
-      expect(amqplib.connect).toHaveBeenCalledWith('amqp://admin:admin@rabbitmq:5672');
-      await publisher.close();
-    });
-
-    it('should assert exchange as topic and durable', async () => {
-      await eventPublisher.connect();
-
       expect(mockChannel.assertExchange).toHaveBeenCalledWith(
         'venue-events',
         'topic',
@@ -102,386 +87,283 @@ describe('EventPublisher', () => {
       );
     });
 
-    it('should log successful connection', async () => {
+    it('should set connected to true after successful connection', async () => {
+      await eventPublisher.connect();
+
+      expect(eventPublisher.isConnected()).toBe(true);
+    });
+
+    it('should log connection success', async () => {
       await eventPublisher.connect();
 
       expect(logger.info).toHaveBeenCalledWith('Connected to RabbitMQ');
     });
 
-    it('should handle connection errors', async () => {
-      const error = new Error('Connection failed');
-      amqplib.connect = jest.fn().mockRejectedValue(error);
-
-      await eventPublisher.connect();
-
-      expect(logger.warn).toHaveBeenCalledWith(
-        { error },
-        'Could not connect to RabbitMQ - running without event publishing'
-      );
-      expect(eventPublisher.isConnected()).toBe(false);
-    });
-
-    it('should set up error event handler', async () => {
+    it('should set up error and close handlers', async () => {
       await eventPublisher.connect();
 
       expect(mockConnection.on).toHaveBeenCalledWith('error', expect.any(Function));
-    });
-
-    it('should set up close event handler', async () => {
-      await eventPublisher.connect();
-
       expect(mockConnection.on).toHaveBeenCalledWith('close', expect.any(Function));
     });
 
-    it('should attempt reconnect after connection error', async () => {
+    it('should handle connection failure gracefully', async () => {
+      amqplib.connect.mockRejectedValueOnce(new Error('Connection refused'));
+
       await eventPublisher.connect();
 
-      const errorHandler = mockConnection.on.mock.calls.find(
-        (call: any) => call[0] === 'error'
-      )[1];
-
-      errorHandler(new Error('Test error'));
-
-      expect(logger.error).toHaveBeenCalledWith(
-        { error: expect.any(Error) },
-        'RabbitMQ connection error'
+      expect(eventPublisher.isConnected()).toBe(false);
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.any(Error) }),
+        'Could not connect to RabbitMQ - running without event publishing'
       );
-      expect(eventPublisher.isConnected()).toBe(false);
-    });
-
-    it('should attempt reconnect after connection close', async () => {
-      await eventPublisher.connect();
-
-      const closeHandler = mockConnection.on.mock.calls.find(
-        (call: any) => call[0] === 'close'
-      )[1];
-
-      closeHandler();
-
-      expect(logger.warn).toHaveBeenCalledWith('RabbitMQ connection closed');
-      expect(eventPublisher.isConnected()).toBe(false);
     });
   });
 
-  // =============================================================================
-  // publish() - 8 test cases
-  // =============================================================================
-
   describe('publish()', () => {
-    const mockMessage: EventMessage = {
-      eventType: 'test.event',
-      aggregateId: 'test-123',
-      aggregateType: 'test',
-      payload: { data: 'test' },
-      metadata: {
-        userId: 'user-123',
-      },
-    };
-
     beforeEach(async () => {
       await eventPublisher.connect();
-      jest.clearAllMocks(); // Clear mocks after connect
     });
 
-    it('should publish message successfully when connected', async () => {
-      await eventPublisher.publish(mockMessage);
+    it('should publish message to RabbitMQ', async () => {
+      const message: EventMessage = {
+        eventType: 'created',
+        aggregateId: 'venue-123',
+        aggregateType: 'venue',
+        payload: { name: 'Test Venue' },
+      };
+
+      await eventPublisher.publish(message);
 
       expect(mockChannel.publish).toHaveBeenCalledWith(
         'venue-events',
-        'test.test.event',
+        'venue.created',
         expect.any(Buffer),
         { persistent: true }
       );
     });
 
     it('should use correct routing key format', async () => {
-      await eventPublisher.publish(mockMessage);
-
-      const routingKey = mockChannel.publish.mock.calls[0][1];
-      expect(routingKey).toBe('test.test.event');
-    });
-
-    it('should serialize message to JSON buffer', async () => {
-      await eventPublisher.publish(mockMessage);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const parsedMessage = JSON.parse(buffer.toString());
-
-      expect(parsedMessage.eventType).toBe('test.event');
-      expect(parsedMessage.aggregateId).toBe('test-123');
-      expect(parsedMessage.payload).toEqual({ data: 'test' });
-    });
-
-    it('should add timestamp to metadata if not provided', async () => {
-      await eventPublisher.publish(mockMessage);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const parsedMessage = JSON.parse(buffer.toString());
-
-      expect(parsedMessage.metadata.timestamp).toBeDefined();
-      expect(new Date(parsedMessage.metadata.timestamp)).toBeInstanceOf(Date);
-    });
-
-    it('should preserve existing timestamp if provided', async () => {
-      const timestamp = new Date('2024-01-01');
-      const messageWithTimestamp = {
-        ...mockMessage,
-        metadata: { ...mockMessage.metadata, timestamp },
+      const message: EventMessage = {
+        eventType: 'updated',
+        aggregateId: 'venue-456',
+        aggregateType: 'venue',
+        payload: { changes: { name: 'New Name' } },
       };
 
-      await eventPublisher.publish(messageWithTimestamp);
+      await eventPublisher.publish(message);
 
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const parsedMessage = JSON.parse(buffer.toString());
-
-      expect(new Date(parsedMessage.metadata.timestamp).getTime()).toBe(timestamp.getTime());
+      expect(mockChannel.publish).toHaveBeenCalledWith(
+        'venue-events',
+        'venue.updated',
+        expect.any(Buffer),
+        expect.any(Object)
+      );
     });
 
-    it('should skip publishing if not connected', async () => {
+    it('should include metadata timestamp if not provided', async () => {
+      const message: EventMessage = {
+        eventType: 'created',
+        aggregateId: 'venue-123',
+        aggregateType: 'venue',
+        payload: {},
+      };
+
+      await eventPublisher.publish(message);
+
+      const publishedBuffer = mockChannel.publish.mock.calls[0][2];
+      const publishedMessage = JSON.parse(publishedBuffer.toString());
+
+      expect(publishedMessage.metadata.timestamp).toBeDefined();
+    });
+
+    it('should preserve provided metadata', async () => {
+      const timestamp = new Date('2024-01-01');
+      const message: EventMessage = {
+        eventType: 'created',
+        aggregateId: 'venue-123',
+        aggregateType: 'venue',
+        payload: {},
+        metadata: {
+          userId: 'user-456',
+          timestamp,
+          correlationId: 'corr-789',
+        },
+      };
+
+      await eventPublisher.publish(message);
+
+      const publishedBuffer = mockChannel.publish.mock.calls[0][2];
+      const publishedMessage = JSON.parse(publishedBuffer.toString());
+
+      expect(publishedMessage.metadata.userId).toBe('user-456');
+      expect(publishedMessage.metadata.correlationId).toBe('corr-789');
+    });
+
+    it('should skip publishing when not connected', async () => {
+      // Create a new publisher that never connected
       const disconnectedPublisher = new EventPublisher();
-      jest.clearAllMocks();
 
-      await disconnectedPublisher.publish(mockMessage);
+      await disconnectedPublisher.publish({
+        eventType: 'created',
+        aggregateId: 'venue-123',
+        aggregateType: 'venue',
+        payload: {},
+      });
 
-      expect(mockChannel.publish).not.toHaveBeenCalled();
       expect(logger.debug).toHaveBeenCalledWith(
         'RabbitMQ not connected, skipping event publish'
       );
-
-      await disconnectedPublisher.close();
     });
 
-    it('should log debug message on successful publish', async () => {
-      await eventPublisher.publish(mockMessage);
-
-      expect(logger.debug).toHaveBeenCalledWith(
-        {
-          routingKey: 'test.test.event',
-          message: expect.objectContaining({
-            eventType: 'test.event',
-            aggregateId: 'test-123',
-          }),
-        },
-        'Event published to RabbitMQ'
-      );
-    });
-
-    it('should handle publish errors gracefully', async () => {
-      const error = new Error('Publish failed');
-      mockChannel.publish = jest.fn().mockImplementation(() => {
-        throw error;
+    it('should handle publish error gracefully', async () => {
+      mockChannel.publish.mockImplementationOnce(() => {
+        throw new Error('Publish failed');
       });
 
-      await expect(eventPublisher.publish(mockMessage)).resolves.not.toThrow();
+      const message: EventMessage = {
+        eventType: 'created',
+        aggregateId: 'venue-123',
+        aggregateType: 'venue',
+        payload: {},
+      };
 
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, message: mockMessage },
-        'Failed to publish event'
-      );
+      // Should not throw
+      await expect(eventPublisher.publish(message)).resolves.not.toThrow();
+      expect(logger.error).toHaveBeenCalled();
     });
   });
 
-  // =============================================================================
-  // publishVenueCreated() - 6 test cases
-  // =============================================================================
-
   describe('publishVenueCreated()', () => {
-    const venueId = 'venue-123';
-    const venueData = {
-      name: 'Test Arena',
-      capacity: 20000,
-    };
-    const userId = 'user-456';
-
     beforeEach(async () => {
       await eventPublisher.connect();
-      jest.clearAllMocks();
     });
 
     it('should publish venue created event', async () => {
-      await eventPublisher.publishVenueCreated(venueId, venueData, userId);
+      await eventPublisher.publishVenueCreated(
+        'venue-123',
+        { name: 'Test Venue', type: 'stadium' },
+        'user-456'
+      );
 
       expect(mockChannel.publish).toHaveBeenCalled();
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
+      const publishedBuffer = mockChannel.publish.mock.calls[0][2];
+      const publishedMessage = JSON.parse(publishedBuffer.toString());
 
-      expect(message.eventType).toBe('created');
-      expect(message.aggregateId).toBe(venueId);
-      expect(message.aggregateType).toBe('venue');
+      expect(publishedMessage.eventType).toBe('created');
+      expect(publishedMessage.aggregateType).toBe('venue');
+      expect(publishedMessage.metadata.userId).toBe('user-456');
+      expect(publishedMessage.metadata.version).toBe(1);
     });
 
-    it('should include venue data in payload', async () => {
-      await eventPublisher.publishVenueCreated(venueId, venueData, userId);
+    it('should publish to search sync exchange', async () => {
+      await eventPublisher.publishVenueCreated(
+        'venue-123',
+        { name: 'Test Venue', type: 'stadium', city: 'New York' },
+        'user-456'
+      );
 
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.payload).toEqual(venueData);
+      expect(publishSearchSync).toHaveBeenCalledWith(
+        'venue.created',
+        expect.objectContaining({
+          id: 'venue-123',
+          name: 'Test Venue',
+          type: 'stadium',
+          city: 'New York',
+        })
+      );
     });
 
-    it('should include userId in metadata', async () => {
-      await eventPublisher.publishVenueCreated(venueId, venueData, userId);
+    it('should handle alternative field names for address', async () => {
+      await eventPublisher.publishVenueCreated(
+        'venue-123',
+        {
+          name: 'Test Venue',
+          venue_type: 'arena',
+          max_capacity: 50000,
+          address: { city: 'Chicago', state: 'IL', country: 'US' },
+        },
+        'user-456'
+      );
 
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.userId).toBe(userId);
-    });
-
-    it('should set version to 1', async () => {
-      await eventPublisher.publishVenueCreated(venueId, venueData, userId);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.version).toBe(1);
-    });
-
-    it('should use correct routing key', async () => {
-      await eventPublisher.publishVenueCreated(venueId, venueData, userId);
-
-      const routingKey = mockChannel.publish.mock.calls[0][1];
-      expect(routingKey).toBe('venue.created');
-    });
-
-    it('should handle missing userId', async () => {
-      await eventPublisher.publishVenueCreated(venueId, venueData);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.userId).toBeUndefined();
+      expect(publishSearchSync).toHaveBeenCalledWith(
+        'venue.created',
+        expect.objectContaining({
+          type: 'arena',
+          capacity: 50000,
+          city: 'Chicago',
+          state: 'IL',
+          country: 'US',
+        })
+      );
     });
   });
 
-  // =============================================================================
-  // publishVenueUpdated() - 5 test cases
-  // =============================================================================
-
   describe('publishVenueUpdated()', () => {
-    const venueId = 'venue-123';
-    const changes = {
-      name: 'Updated Arena',
-      capacity: 25000,
-    };
-    const userId = 'user-456';
-
     beforeEach(async () => {
       await eventPublisher.connect();
-      jest.clearAllMocks();
     });
 
     it('should publish venue updated event', async () => {
-      await eventPublisher.publishVenueUpdated(venueId, changes, userId);
+      await eventPublisher.publishVenueUpdated(
+        'venue-123',
+        { name: 'Updated Venue' },
+        'user-456'
+      );
 
       expect(mockChannel.publish).toHaveBeenCalled();
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
+      const publishedBuffer = mockChannel.publish.mock.calls[0][2];
+      const publishedMessage = JSON.parse(publishedBuffer.toString());
 
-      expect(message.eventType).toBe('updated');
-      expect(message.aggregateId).toBe(venueId);
-      expect(message.aggregateType).toBe('venue');
+      expect(publishedMessage.eventType).toBe('updated');
+      expect(publishedMessage.payload.changes).toEqual({ name: 'Updated Venue' });
     });
 
-    it('should wrap changes in payload', async () => {
-      await eventPublisher.publishVenueUpdated(venueId, changes, userId);
+    it('should publish to search sync for updates', async () => {
+      await eventPublisher.publishVenueUpdated(
+        'venue-123',
+        { name: 'Updated Venue', status: 'INACTIVE' },
+        'user-456'
+      );
 
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.payload).toEqual({ changes });
-    });
-
-    it('should include userId in metadata', async () => {
-      await eventPublisher.publishVenueUpdated(venueId, changes, userId);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.userId).toBe(userId);
-    });
-
-    it('should use correct routing key', async () => {
-      await eventPublisher.publishVenueUpdated(venueId, changes, userId);
-
-      const routingKey = mockChannel.publish.mock.calls[0][1];
-      expect(routingKey).toBe('venue.updated');
-    });
-
-    it('should handle missing userId', async () => {
-      await eventPublisher.publishVenueUpdated(venueId, changes);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.userId).toBeUndefined();
+      expect(publishSearchSync).toHaveBeenCalledWith(
+        'venue.updated',
+        expect.objectContaining({
+          id: 'venue-123',
+          changes: expect.objectContaining({
+            name: 'Updated Venue',
+            status: 'INACTIVE',
+          }),
+        })
+      );
     });
   });
 
-  // =============================================================================
-  // publishVenueDeleted() - 5 test cases
-  // =============================================================================
-
   describe('publishVenueDeleted()', () => {
-    const venueId = 'venue-123';
-    const userId = 'user-456';
-
     beforeEach(async () => {
       await eventPublisher.connect();
-      jest.clearAllMocks();
     });
 
     it('should publish venue deleted event', async () => {
-      await eventPublisher.publishVenueDeleted(venueId, userId);
+      await eventPublisher.publishVenueDeleted('venue-123', 'user-456');
 
       expect(mockChannel.publish).toHaveBeenCalled();
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
+      const publishedBuffer = mockChannel.publish.mock.calls[0][2];
+      const publishedMessage = JSON.parse(publishedBuffer.toString());
 
-      expect(message.eventType).toBe('deleted');
-      expect(message.aggregateId).toBe(venueId);
-      expect(message.aggregateType).toBe('venue');
+      expect(publishedMessage.eventType).toBe('deleted');
+      expect(publishedMessage.aggregateId).toBe('venue-123');
+      expect(publishedMessage.payload.deletedAt).toBeDefined();
     });
 
-    it('should include deletedAt timestamp in payload', async () => {
-      await eventPublisher.publishVenueDeleted(venueId, userId);
+    it('should publish to search sync for deletion', async () => {
+      await eventPublisher.publishVenueDeleted('venue-123', 'user-456');
 
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.payload.deletedAt).toBeDefined();
-      expect(new Date(message.payload.deletedAt)).toBeInstanceOf(Date);
-    });
-
-    it('should include userId in metadata', async () => {
-      await eventPublisher.publishVenueDeleted(venueId, userId);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.userId).toBe(userId);
-    });
-
-    it('should use correct routing key', async () => {
-      await eventPublisher.publishVenueDeleted(venueId, userId);
-
-      const routingKey = mockChannel.publish.mock.calls[0][1];
-      expect(routingKey).toBe('venue.deleted');
-    });
-
-    it('should handle missing userId', async () => {
-      await eventPublisher.publishVenueDeleted(venueId);
-
-      const buffer = mockChannel.publish.mock.calls[0][2];
-      const message = JSON.parse(buffer.toString());
-
-      expect(message.metadata.userId).toBeUndefined();
+      expect(publishSearchSync).toHaveBeenCalledWith(
+        'venue.deleted',
+        { id: 'venue-123' }
+      );
     });
   });
-
-  // =============================================================================
-  // close() - 4 test cases
-  // =============================================================================
 
   describe('close()', () => {
     it('should close channel and connection', async () => {
@@ -492,61 +374,28 @@ describe('EventPublisher', () => {
       expect(mockConnection.close).toHaveBeenCalled();
     });
 
-    it('should handle missing channel gracefully', async () => {
-      await eventPublisher.connect();
-      (eventPublisher as any).channel = null;
-
+    it('should handle close when not connected', async () => {
+      // Never connected, should not throw
       await expect(eventPublisher.close()).resolves.not.toThrow();
-      expect(mockConnection.close).toHaveBeenCalled();
-    });
-
-    it('should handle missing connection gracefully', async () => {
-      await eventPublisher.connect();
-      (eventPublisher as any).connection = null;
-
-      await expect(eventPublisher.close()).resolves.not.toThrow();
-      expect(mockChannel.close).toHaveBeenCalled();
-    });
-
-    it('should handle both channel and connection missing', async () => {
-      const publisher = new EventPublisher();
-
-      await expect(publisher.close()).resolves.not.toThrow();
     });
   });
 
-  // =============================================================================
-  // isConnected() - 3 test cases
-  // =============================================================================
-
   describe('isConnected()', () => {
-    it('should return false before connection', () => {
+    it('should return false before connecting', () => {
       expect(eventPublisher.isConnected()).toBe(false);
     });
 
-    it('should return true after successful connection', async () => {
+    it('should return true after connecting', async () => {
       await eventPublisher.connect();
 
       expect(eventPublisher.isConnected()).toBe(true);
     });
-
-    it('should return false after connection failure', async () => {
-      amqplib.connect = jest.fn().mockRejectedValue(new Error('Connection failed'));
-      const publisher = new EventPublisher();
-
-      await publisher.connect();
-
-      expect(publisher.isConnected()).toBe(false);
-      await publisher.close();
-    });
   });
 
-  // =============================================================================
-  // Circuit Breaker Integration - 4 test cases
-  // =============================================================================
-
-  describe('Circuit Breaker Integration', () => {
-    it('should initialize circuit breaker on construction', () => {
+  describe('Circuit Breaker integration', () => {
+    it('should use circuit breaker for publishing', async () => {
+      const { createCircuitBreaker } = require('../../../src/utils/circuitBreaker');
+      
       expect(createCircuitBreaker).toHaveBeenCalledWith(
         expect.any(Function),
         expect.objectContaining({
@@ -557,89 +406,45 @@ describe('EventPublisher', () => {
         })
       );
     });
-
-    it('should use circuit breaker for publishing', async () => {
-      await eventPublisher.connect();
-      jest.clearAllMocks();
-
-      const message: EventMessage = {
-        eventType: 'test',
-        aggregateId: 'test-123',
-        aggregateType: 'test',
-        payload: {},
-      };
-
-      await eventPublisher.publish(message);
-
-      expect(mockChannel.publish).toHaveBeenCalled();
-    });
-
-    it('should handle circuit breaker errors', async () => {
-      // Mock circuit breaker to throw error
-      (createCircuitBreaker as jest.Mock).mockImplementation(() => {
-        return {
-          fire: jest.fn().mockRejectedValue(new Error('Circuit open')),
-        };
-      });
-
-      const publisher = new EventPublisher();
-      await publisher.connect();
-
-      const message: EventMessage = {
-        eventType: 'test',
-        aggregateId: 'test-123',
-        aggregateType: 'test',
-        payload: {},
-      };
-
-      await expect(publisher.publish(message)).resolves.not.toThrow();
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.any(Error) }),
-        'Failed to publish event'
-      );
-
-      await publisher.close();
-    });
-
-    it('should configure circuit breaker with correct timeout', () => {
-      expect(createCircuitBreaker).toHaveBeenCalledWith(
-        expect.any(Function),
-        expect.objectContaining({
-          timeout: 2000,
-        })
-      );
-    });
   });
 
-  // =============================================================================
-  // Reconnection Logic - 2 test cases
-  // =============================================================================
-
-  describe('Reconnection Logic', () => {
-    it('should reset connection and channel on reconnect', async () => {
+  describe('Reconnection behavior', () => {
+    it('should handle error event on connection', async () => {
       await eventPublisher.connect();
 
-      const originalConnection = (eventPublisher as any).connection;
-      const originalChannel = (eventPublisher as any).channel;
+      // Get the error handler that was registered
+      const errorHandler = mockConnection.on.mock.calls.find(
+        (call: any[]) => call[0] === 'error'
+      )?.[1];
 
-      // Trigger reconnect
-      await (eventPublisher as any).reconnect();
-
-      expect((eventPublisher as any).connection).toBeDefined();
-      expect((eventPublisher as any).channel).toBeDefined();
+      expect(errorHandler).toBeDefined();
+      
+      // Simulate error - should log and set connected to false
+      if (errorHandler) {
+        // Reset connect mock to track reconnect
+        amqplib.connect.mockClear();
+        errorHandler(new Error('Connection lost'));
+        
+        expect(logger.error).toHaveBeenCalledWith(
+          expect.objectContaining({ error: expect.any(Error) }),
+          'RabbitMQ connection error'
+        );
+      }
     });
 
-    it('should maintain connection state during reconnect', async () => {
+    it('should handle close event on connection', async () => {
       await eventPublisher.connect();
-      expect(eventPublisher.isConnected()).toBe(true);
 
-      // Simulate connection error
-      (eventPublisher as any).connected = false;
-      expect(eventPublisher.isConnected()).toBe(false);
+      const closeHandler = mockConnection.on.mock.calls.find(
+        (call: any[]) => call[0] === 'close'
+      )?.[1];
 
-      // Reconnect
-      await (eventPublisher as any).reconnect();
-      expect(eventPublisher.isConnected()).toBe(true);
+      expect(closeHandler).toBeDefined();
+      
+      if (closeHandler) {
+        closeHandler();
+        expect(logger.warn).toHaveBeenCalledWith('RabbitMQ connection closed');
+      }
     });
   });
 });

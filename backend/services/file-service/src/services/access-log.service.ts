@@ -22,7 +22,7 @@ export class AccessLogService {
         [fileId, userId, accessType, ipAddress, userAgent, responseCode, bytesSent]
       );
     } catch (error) {
-      logger.error('Failed to log file access:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to log file access');
     }
   }
   

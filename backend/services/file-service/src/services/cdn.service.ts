@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { cacheService, CacheTTL, CachePrefix } from './cache.service';
+import { cacheService, CachePrefix } from './cache.service';
 
 /**
  * CDN Service for CloudFront/CDN integration
@@ -125,7 +125,7 @@ export class CDNService {
       logger.info(`Cache invalidation completed for ${paths.length} paths`);
       return true;
     } catch (error) {
-      logger.error('CDN cache invalidation failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'CDN cache invalidation failed');
       return false;
     }
   }
@@ -143,7 +143,7 @@ export class CDNService {
       
       return true;
     } catch (error) {
-      logger.error(`Failed to invalidate cache for file ${fileId}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), fileId }, 'Failed to invalidate cache for file');
       return false;
     }
   }
@@ -212,7 +212,7 @@ export class CDNService {
     }
 
     try {
-      logger.warn('Purging entire CDN cache');
+      logger.warn({}, 'Purging entire CDN cache');
       
       // In production, this would trigger a CloudFront invalidation
       // For all paths: /*
@@ -224,7 +224,7 @@ export class CDNService {
       logger.info('CDN cache purged successfully');
       return true;
     } catch (error) {
-      logger.error('Failed to purge CDN cache:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to purge CDN cache');
       return false;
     }
   }
@@ -265,7 +265,7 @@ export class CDNService {
         // In production, make actual HTTP HEAD request
         logger.debug(`Warmed cache for: ${url}`);
       } catch (error) {
-        logger.error(`Failed to warm cache for ${key}:`, error);
+        logger.error({ err: error instanceof Error ? error : new Error(String(error)), key }, 'Failed to warm cache');
       }
     });
 

@@ -103,8 +103,15 @@ export class FeeService {
 
   /**
    * Calculate fees for a sale (all amounts in INTEGER CENTS)
+   * 
+   * AUDIT FIX PAY-1: Add validation to ensure payment split sums correctly
    */
   calculateFees(salePriceCents: number, venueRoyaltyPercentage?: number): FeeCalculation {
+    // Input validation
+    if (!Number.isInteger(salePriceCents) || salePriceCents < 0) {
+      throw new Error(`Invalid sale price: ${salePriceCents}. Must be a non-negative integer (cents).`);
+    }
+
     const platformFeePercentage = constants.FEES.PLATFORM_FEE_PERCENTAGE;
     const venueFeePercentage = venueRoyaltyPercentage || constants.FEES.DEFAULT_VENUE_FEE_PERCENTAGE;
 
@@ -116,6 +123,33 @@ export class FeeService {
     const venueFeeCents = percentOfCents(salePriceCents, venueFeeBps);
     const totalFeesCents = platformFeeCents + venueFeeCents;
     const sellerPayoutCents = salePriceCents - totalFeesCents;
+
+    // AUDIT FIX PAY-1: Validate that payment splits sum correctly
+    const calculatedSum = platformFeeCents + venueFeeCents + sellerPayoutCents;
+    if (calculatedSum !== salePriceCents) {
+      this.log.error('Payment split validation failed', {
+        salePriceCents,
+        platformFeeCents,
+        venueFeeCents,
+        sellerPayoutCents,
+        calculatedSum,
+        difference: salePriceCents - calculatedSum
+      });
+      throw new Error(
+        `Payment split validation failed: ${platformFeeCents} + ${venueFeeCents} + ${sellerPayoutCents} = ${calculatedSum}, expected ${salePriceCents}`
+      );
+    }
+
+    // AUDIT FIX PAY-H1: Ensure no negative payouts
+    if (sellerPayoutCents < 0) {
+      this.log.error('Negative seller payout calculated', {
+        salePriceCents,
+        platformFeeCents,
+        venueFeeCents,
+        sellerPayoutCents
+      });
+      throw new Error(`Invalid fee configuration: seller payout would be negative (${sellerPayoutCents} cents)`);
+    }
 
     return {
       salePrice: salePriceCents,

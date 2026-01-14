@@ -1,0 +1,69 @@
+# =============================================================================
+# Docker Ignore for Integration Service
+# =============================================================================
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Test files
+tests/
+__tests__/
+*.test.ts
+*.spec.ts
+coverage/
+.nyc_output/
+
+# Development files
+.env
+.env.local
+.env.development
+.env.test
+*.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+Jenkinsfile
+azure-pipelines.yml
+
+# Docker files (avoid recursive copy)
+Dockerfile*
+docker-compose*.yml
+.docker/
+
+# Misc
+.DS_Store
+*.log
+tmp/
+temp/
+
+# Secrets (should never be in container)
+*.pem
+*.key
+.secrets
+.env.production

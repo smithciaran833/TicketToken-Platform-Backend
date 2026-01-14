@@ -1,58 +1,64 @@
-// Mock dependencies BEFORE imports
-jest.mock('../../../src/config/database', () => ({
-  db: jest.fn(),
-}));
-
-jest.mock('../../../src/services/venue-service.client', () => ({
-  VenueServiceClient: jest.fn().mockImplementation(() => ({
-    getVenue: jest.fn(),
-    validateVenueAccess: jest.fn(),
-  })),
-}));
-
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
-}));
+/**
+ * Capacity Controller Unit Tests
+ * 
+ * Tests the capacity controller handlers for:
+ * - getEventCapacity: Get all capacity sections for an event
+ * - getTotalCapacity: Get aggregated capacity totals
+ * - getCapacityById: Get specific capacity section
+ * - createCapacity: Create new capacity section
+ * - updateCapacity: Update capacity section
+ * - checkAvailability: Check if quantity is available
+ * - reserveCapacity: Reserve capacity with optional price lock
+ */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
-import * as capacityController from '../../../src/controllers/capacity.controller';
-import { CapacityService } from '../../../src/services/capacity.service';
-import { db } from '../../../src/config/database';
+import {
+  getEventCapacity,
+  getTotalCapacity,
+  getCapacityById,
+  createCapacity,
+  updateCapacity,
+  checkAvailability,
+  reserveCapacity
+} from '../../../src/controllers/capacity.controller';
 
-// Mock CapacityService
-jest.mock('../../../src/services/capacity.service');
+// Mock dependencies
+jest.mock('../../../src/config/database', () => ({
+  db: {}
+}));
+
+jest.mock('../../../src/services/capacity.service', () => ({
+  CapacityService: jest.fn().mockImplementation(() => ({
+    getEventCapacity: jest.fn(),
+    getCapacityById: jest.fn(),
+    createCapacity: jest.fn(),
+    updateCapacity: jest.fn(),
+    checkAvailability: jest.fn(),
+    reserveCapacity: jest.fn(),
+    getLockedPrice: jest.fn()
+  }))
+}));
+
+jest.mock('../../../src/middleware/error-handler', () => ({
+  createProblemError: jest.fn((status: number, code: string, detail: string) => {
+    const error = new Error(detail) as any;
+    error.statusCode = status;
+    error.code = code;
+    return error;
+  })
+}));
+
+import { CapacityService } from '../../../src/services/capacity.service';
 
 describe('Capacity Controller', () => {
+  let mockCapacityService: any;
   let mockRequest: Partial<FastifyRequest>;
   let mockReply: Partial<FastifyReply>;
-  let mockCapacityService: jest.Mocked<CapacityService>;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockRequest = {
-      params: {},
-      body: {},
-      headers: {},
-      log: {
-        info: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-      } as any,
-    };
-
-    mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
-    };
-
-    // Mock CapacityService instance
+    // Setup mock capacity service
     mockCapacityService = {
       getEventCapacity: jest.fn(),
       getCapacityById: jest.fn(),
@@ -60,243 +66,391 @@ describe('Capacity Controller', () => {
       updateCapacity: jest.fn(),
       checkAvailability: jest.fn(),
       reserveCapacity: jest.fn(),
-      getLockedPrice: jest.fn(),
-    } as any;
+      getLockedPrice: jest.fn()
+    };
 
-    (CapacityService as jest.MockedClass<typeof CapacityService>).mockImplementation(() => mockCapacityService);
+    // Mock the CapacityService constructor
+    (CapacityService as jest.Mock).mockImplementation(() => mockCapacityService);
+
+    // Setup mock request
+    mockRequest = {
+      params: {},
+      body: {},
+      headers: { authorization: 'Bearer test-token' }
+    };
+    (mockRequest as any).tenantId = 'tenant-123';
+
+    // Setup mock reply
+    mockReply = {
+      status: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
+    };
   });
 
   describe('getEventCapacity', () => {
-    it('should return event capacity sections', async () => {
-      const mockSections = [
-        { id: '1', section_name: 'VIP', total_capacity: 100 },
-        { id: '2', section_name: 'General', total_capacity: 500 },
+    it('should return capacity sections for an event', async () => {
+      const capacitySections = [
+        { id: 'cap-1', section_name: 'VIP', total_capacity: 100, available_capacity: 80 },
+        { id: 'cap-2', section_name: 'GA', total_capacity: 500, available_capacity: 450 }
       ];
+      mockCapacityService.getEventCapacity.mockResolvedValue(capacitySections);
+      (mockRequest.params as any) = { eventId: 'event-123' };
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.getEventCapacity.mockResolvedValue(mockSections as any);
+      await getEventCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await capacityController.getEventCapacity(
-        mockRequest as FastifyRequest<{ Params: { eventId: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockCapacityService.getEventCapacity).toHaveBeenCalledWith('event-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ capacity: mockSections });
+      expect(mockCapacityService.getEventCapacity).toHaveBeenCalledWith('event-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ capacity: capacitySections });
     });
 
-    it('should handle errors', async () => {
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.getEventCapacity.mockRejectedValue(new Error('Database error'));
+    it('should return empty array when no capacity sections exist', async () => {
+      mockCapacityService.getEventCapacity.mockResolvedValue([]);
+      (mockRequest.params as any) = { eventId: 'event-123' };
 
-      await capacityController.getEventCapacity(
-        mockRequest as FastifyRequest<{ Params: { eventId: string } }>,
-        mockReply as FastifyReply
-      );
+      await getEventCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(500);
-      expect(mockReply.send).toHaveBeenCalledWith({
-        error: 'Failed to get event capacity',
-        message: 'Database error',
-      });
+      expect(mockReply.send).toHaveBeenCalledWith({ capacity: [] });
     });
   });
 
   describe('getTotalCapacity', () => {
-    it('should return total capacity aggregates', async () => {
-      const mockSections = [
-        { total_capacity: 100, available_capacity: 50, reserved_capacity: 30, sold_count: 20 },
-        { total_capacity: 500, available_capacity: 200, reserved_capacity: 150, sold_count: 150 },
+    it('should return aggregated capacity totals', async () => {
+      const capacitySections = [
+        { total_capacity: 100, available_capacity: 80, reserved_capacity: 10, sold_count: 10 },
+        { total_capacity: 500, available_capacity: 450, reserved_capacity: 20, sold_count: 30 }
       ];
+      mockCapacityService.getEventCapacity.mockResolvedValue(capacitySections);
+      (mockRequest.params as any) = { eventId: 'event-123' };
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.getEventCapacity.mockResolvedValue(mockSections as any);
-
-      await capacityController.getTotalCapacity(
-        mockRequest as FastifyRequest<{ Params: { eventId: string } }>,
-        mockReply as FastifyReply
-      );
+      await getTotalCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockReply.send).toHaveBeenCalledWith({
         total_capacity: 600,
-        available_capacity: 250,
-        reserved_capacity: 180,
-        sold_count: 170,
+        available_capacity: 530,
+        reserved_capacity: 30,
+        sold_count: 40
+      });
+    });
+
+    it('should return zeros when no capacity exists', async () => {
+      mockCapacityService.getEventCapacity.mockResolvedValue([]);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await getTotalCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({
+        total_capacity: 0,
+        available_capacity: 0,
+        reserved_capacity: 0,
+        sold_count: 0
+      });
+    });
+
+    it('should handle null values in capacity data', async () => {
+      const capacitySections = [
+        { total_capacity: null, available_capacity: 80, reserved_capacity: null, sold_count: 10 }
+      ];
+      mockCapacityService.getEventCapacity.mockResolvedValue(capacitySections);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await getTotalCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({
+        total_capacity: 0,
+        available_capacity: 80,
+        reserved_capacity: 0,
+        sold_count: 10
       });
     });
   });
 
   describe('getCapacityById', () => {
-    it('should return capacity by id', async () => {
-      const mockCapacity = { id: 'cap-1', section_name: 'VIP', total_capacity: 100 };
+    it('should return capacity section when found', async () => {
+      const capacity = { id: 'cap-123', section_name: 'VIP', total_capacity: 100 };
+      mockCapacityService.getCapacityById.mockResolvedValue(capacity);
+      (mockRequest.params as any) = { id: 'cap-123' };
 
-      mockRequest.params = { id: 'cap-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.getCapacityById.mockResolvedValue(mockCapacity as any);
+      await getCapacityById(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await capacityController.getCapacityById(
-        mockRequest as FastifyRequest<{ Params: { id: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockCapacityService.getCapacityById).toHaveBeenCalledWith('cap-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ capacity: mockCapacity });
+      expect(mockCapacityService.getCapacityById).toHaveBeenCalledWith('cap-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ capacity });
     });
 
-    it('should return 404 if capacity not found', async () => {
-      mockRequest.params = { id: 'cap-999' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.getCapacityById.mockRejectedValue(new Error('Capacity not found'));
+    it('should throw NOT_FOUND when capacity does not exist', async () => {
+      mockCapacityService.getCapacityById.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
 
-      await capacityController.getCapacityById(
-        mockRequest as FastifyRequest<{ Params: { id: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(404);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Capacity not found' });
+      await expect(
+        getCapacityById(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Capacity not found');
     });
   });
 
   describe('createCapacity', () => {
-    it('should create capacity', async () => {
-      const mockCapacity = { id: 'cap-1', section_name: 'VIP', total_capacity: 100 };
-      const requestBody = { section_name: 'VIP', total_capacity: 100 };
+    const validCapacityData = {
+      section_name: 'VIP Section',
+      section_code: 'VIP',
+      total_capacity: 100
+    };
 
-      mockRequest.params = { eventId: 'event-1' };
-      mockRequest.body = requestBody;
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.createCapacity.mockResolvedValue(mockCapacity as any);
+    it('should create capacity successfully', async () => {
+      const createdCapacity = { id: 'cap-123', ...validCapacityData };
+      mockCapacityService.createCapacity.mockResolvedValue(createdCapacity);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+      mockRequest.body = validCapacityData;
 
-      await capacityController.createCapacity(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await createCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockCapacityService.createCapacity).toHaveBeenCalledWith(
-        { ...requestBody, event_id: 'event-1' },
-        'tenant-1',
-        'Bearer token'
+        { ...validCapacityData, event_id: 'event-123' },
+        'tenant-123',
+        'Bearer test-token'
       );
       expect(mockReply.status).toHaveBeenCalledWith(201);
-      expect(mockReply.send).toHaveBeenCalledWith({ capacity: mockCapacity });
+      expect(mockReply.send).toHaveBeenCalledWith({ capacity: createdCapacity });
     });
 
-    it('should return 422 for validation errors', async () => {
-      mockRequest.params = { eventId: 'event-1' };
-      mockRequest.body = { section_name: 'VIP', total_capacity: -10 };
-      (mockRequest as any).tenantId = 'tenant-1';
+    it('should create capacity with schedule_id', async () => {
+      const capacityWithSchedule = { ...validCapacityData, schedule_id: 'sched-123' };
+      const createdCapacity = { id: 'cap-123', ...capacityWithSchedule };
+      mockCapacityService.createCapacity.mockResolvedValue(createdCapacity);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+      mockRequest.body = capacityWithSchedule;
 
-      const validationError: any = new Error('Validation failed');
-      validationError.details = [{ field: 'total_capacity', message: 'Must be positive' }];
-      mockCapacityService.createCapacity.mockRejectedValue(validationError);
+      await createCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await capacityController.createCapacity(
-        mockRequest as any,
-        mockReply as FastifyReply
+      expect(mockCapacityService.createCapacity).toHaveBeenCalledWith(
+        expect.objectContaining({ schedule_id: 'sched-123' }),
+        'tenant-123',
+        expect.any(String)
       );
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
-      expect(mockReply.send).toHaveBeenCalledWith({
-        error: 'Must be positive',
-        details: validationError.details,
-      });
     });
   });
 
   describe('updateCapacity', () => {
-    it('should update capacity', async () => {
-      const mockCapacity = { id: 'cap-1', section_name: 'VIP Updated', total_capacity: 150 };
+    const updateData = { section_name: 'Updated VIP', total_capacity: 150 };
 
-      mockRequest.params = { id: 'cap-1' };
-      mockRequest.body = { section_name: 'VIP Updated', total_capacity: 150 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.updateCapacity.mockResolvedValue(mockCapacity as any);
+    it('should update capacity successfully', async () => {
+      const updatedCapacity = { id: 'cap-123', ...updateData };
+      mockCapacityService.updateCapacity.mockResolvedValue(updatedCapacity);
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = updateData;
 
-      await capacityController.updateCapacity(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await updateCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockCapacityService.updateCapacity).toHaveBeenCalledWith(
-        'cap-1',
-        mockRequest.body,
-        'tenant-1'
+        'cap-123',
+        updateData,
+        'tenant-123'
       );
-      expect(mockReply.send).toHaveBeenCalledWith({ capacity: mockCapacity });
+      expect(mockReply.send).toHaveBeenCalledWith({ capacity: updatedCapacity });
+    });
+
+    it('should throw NOT_FOUND when capacity does not exist', async () => {
+      mockCapacityService.updateCapacity.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
+      mockRequest.body = updateData;
+
+      await expect(
+        updateCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Capacity not found');
+    });
+
+    it('should update is_active flag', async () => {
+      const deactivateData = { is_active: false };
+      mockCapacityService.updateCapacity.mockResolvedValue({ id: 'cap-123', is_active: false });
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = deactivateData;
+
+      await updateCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockCapacityService.updateCapacity).toHaveBeenCalledWith(
+        'cap-123',
+        { is_active: false },
+        'tenant-123'
+      );
     });
   });
 
   describe('checkAvailability', () => {
-    it('should check capacity availability', async () => {
-      mockRequest.params = { id: 'cap-1' };
-      mockRequest.body = { quantity: 10 };
-      (mockRequest as any).tenantId = 'tenant-1';
+    it('should return true when quantity is available', async () => {
       mockCapacityService.checkAvailability.mockResolvedValue(true);
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 5 };
 
-      await capacityController.checkAvailability(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await checkAvailability(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      expect(mockCapacityService.checkAvailability).toHaveBeenCalledWith('cap-1', 10, 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ available: true, quantity: 10 });
+      expect(mockCapacityService.checkAvailability).toHaveBeenCalledWith('cap-123', 5, 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ available: true, quantity: 5 });
+    });
+
+    it('should return false when quantity is not available', async () => {
+      mockCapacityService.checkAvailability.mockResolvedValue(false);
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 100 };
+
+      await checkAvailability(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({ available: false, quantity: 100 });
+    });
+
+    it('should throw INVALID_QUANTITY when quantity is less than 1', async () => {
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 0 };
+
+      await expect(
+        checkAvailability(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
+    });
+
+    it('should throw INVALID_QUANTITY when quantity is negative', async () => {
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: -5 };
+
+      await expect(
+        checkAvailability(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
+    });
+
+    it('should throw INVALID_QUANTITY when quantity is missing', async () => {
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = {};
+
+      await expect(
+        checkAvailability(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
     });
   });
 
   describe('reserveCapacity', () => {
-    it('should reserve capacity', async () => {
-      const mockCapacity = { id: 'cap-1', reserved_capacity: 10 };
+    it('should reserve capacity successfully', async () => {
+      const reservedCapacity = {
+        id: 'cap-123',
+        reserved_capacity: 5,
+        available_capacity: 95
+      };
+      mockCapacityService.reserveCapacity.mockResolvedValue(reservedCapacity);
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 5 };
 
-      mockRequest.params = { id: 'cap-1' };
-      mockRequest.body = { quantity: 10, reservation_minutes: 15 };
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockCapacityService.reserveCapacity.mockResolvedValue(mockCapacity as any);
-
-      await capacityController.reserveCapacity(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await reserveCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockCapacityService.reserveCapacity).toHaveBeenCalledWith(
-        'cap-1',
-        10,
-        'tenant-1',
-        15,
-        undefined,
-        'Bearer token'
+        'cap-123',
+        5,
+        'tenant-123',
+        15, // default reservation_minutes
+        undefined, // pricing_id
+        'Bearer test-token'
       );
       expect(mockReply.send).toHaveBeenCalledWith({
         message: 'Capacity reserved successfully',
-        capacity: mockCapacity,
-        locked_price: null,
+        capacity: reservedCapacity,
+        locked_price: null
       });
     });
 
-    it('should return 400 for insufficient capacity', async () => {
-      mockRequest.params = { id: 'cap-1' };
-      mockRequest.body = { quantity: 100 };
-      (mockRequest as any).tenantId = 'tenant-1';
+    it('should reserve capacity with custom reservation time', async () => {
+      mockCapacityService.reserveCapacity.mockResolvedValue({ id: 'cap-123' });
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 5, reservation_minutes: 30 };
 
-      const validationError: any = new Error('Insufficient capacity');
-      validationError.details = [{ field: 'quantity', message: 'Insufficient capacity available' }];
-      mockCapacityService.reserveCapacity.mockRejectedValue(validationError);
+      await reserveCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await capacityController.reserveCapacity(
-        mockRequest as any,
-        mockReply as FastifyReply
+      expect(mockCapacityService.reserveCapacity).toHaveBeenCalledWith(
+        'cap-123',
+        5,
+        'tenant-123',
+        30,
+        undefined,
+        'Bearer test-token'
       );
+    });
 
-      expect(mockReply.status).toHaveBeenCalledWith(400);
+    it('should reserve capacity with price lock', async () => {
+      const reservedCapacity = {
+        id: 'cap-123',
+        locked_price_data: { base_price: 50.00 }
+      };
+      const lockedPrice = { base_price: 50.00, locked_until: new Date() };
+      mockCapacityService.reserveCapacity.mockResolvedValue(reservedCapacity);
+      mockCapacityService.getLockedPrice.mockResolvedValue(lockedPrice);
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 5, pricing_id: 'price-123' };
+
+      await reserveCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockCapacityService.reserveCapacity).toHaveBeenCalledWith(
+        'cap-123',
+        5,
+        'tenant-123',
+        15,
+        'price-123',
+        'Bearer test-token'
+      );
+      expect(mockCapacityService.getLockedPrice).toHaveBeenCalledWith('cap-123', 'tenant-123');
       expect(mockReply.send).toHaveBeenCalledWith({
-        error: 'Insufficient capacity available',
-        details: validationError.details,
+        message: 'Capacity reserved successfully',
+        capacity: reservedCapacity,
+        locked_price: lockedPrice
       });
+    });
+
+    it('should throw NOT_FOUND when capacity does not exist', async () => {
+      mockCapacityService.reserveCapacity.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
+      mockRequest.body = { quantity: 5 };
+
+      await expect(
+        reserveCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Capacity not found');
+    });
+
+    it('should throw INVALID_QUANTITY when quantity is invalid', async () => {
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 0 };
+
+      await expect(
+        reserveCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Quantity must be at least 1');
+    });
+
+    it('should handle missing authorization header', async () => {
+      mockRequest.headers = {};
+      mockCapacityService.reserveCapacity.mockResolvedValue({ id: 'cap-123' });
+      (mockRequest.params as any) = { id: 'cap-123' };
+      mockRequest.body = { quantity: 5 };
+
+      await reserveCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockCapacityService.reserveCapacity).toHaveBeenCalledWith(
+        'cap-123',
+        5,
+        'tenant-123',
+        15,
+        undefined,
+        ''
+      );
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle service errors gracefully', async () => {
+      mockCapacityService.getEventCapacity.mockRejectedValue(new Error('Database error'));
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await expect(
+        getEventCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Database error');
+    });
+
+    it('should create new CapacityService instance for each request', async () => {
+      mockCapacityService.getEventCapacity.mockResolvedValue([]);
+      (mockRequest.params as any) = { eventId: 'event-123' };
+
+      await getEventCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+      await getEventCapacity(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(CapacityService).toHaveBeenCalledTimes(2);
     });
   });
 });

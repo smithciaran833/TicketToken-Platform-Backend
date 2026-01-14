@@ -3,8 +3,7 @@ import { BaseController } from './base.controller';
 import { db, analyticsDb } from '../config/database';
 import { getRedis } from '../config/redis';
 import { getChannel } from '../config/rabbitmq';
-import { getMongoDB, getMongoClient } from '../config/mongodb';
-import { config } from '../config';
+import { getMongoClient } from '../config/mongodb';
 import { logger } from '../utils/logger';
 
 interface HealthStatus {
@@ -177,8 +176,9 @@ class HealthController extends BaseController {
     try {
       const channel = getChannel();
       
-      // Verify channel is still open
-      if (!channel || channel.connection.connection.stream.destroyed) {
+      // Verify channel is still open - use optional chaining to safely access nested properties
+      const isDestroyed = (channel as any)?.connection?.connection?.stream?.destroyed;
+      if (!channel || isDestroyed) {
         throw new Error('RabbitMQ channel is closed');
       }
       

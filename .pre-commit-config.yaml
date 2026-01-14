@@ -1,0 +1,81 @@
+# HIGH: Pre-commit hooks for security and code quality
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # General hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: ['--branch', 'main', '--branch', 'master']
+
+  # Secret detection
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.1
+    hooks:
+      - id: gitleaks
+        name: Detect secrets with gitleaks
+        description: Detect hardcoded secrets using gitleaks
+
+  # Alternative secret detection (trufflehog)
+  - repo: https://github.com/trufflesecurity/trufflehog
+    rev: v3.63.5
+    hooks:
+      - id: trufflehog
+        name: Detect secrets with trufflehog
+        entry: trufflehog git file://. --only-verified --fail
+        stages: [commit]
+
+  # JavaScript/TypeScript linting
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        entry: npx eslint --fix
+        language: system
+        files: \.(js|jsx|ts|tsx)$
+        exclude: node_modules/
+
+      - id: prettier
+        name: Prettier
+        entry: npx prettier --write
+        language: system
+        files: \.(js|jsx|ts|tsx|json|md|yaml|yml)$
+        exclude: node_modules/
+
+  # TypeScript type checking
+  - repo: local
+    hooks:
+      - id: typecheck
+        name: TypeScript Type Check
+        entry: bash -c 'cd backend/services/order-service && npx tsc --noEmit'
+        language: system
+        files: \.tsx?$
+        pass_filenames: false
+
+  # Prevent committing sensitive patterns
+  - repo: local
+    hooks:
+      - id: check-secrets-patterns
+        name: Check for secret patterns
+        entry: bash -c 'grep -rn --include="*.ts" --include="*.js" --include="*.json" -E "(password|secret|api_key|apikey|access_token|private_key)\s*[=:]\s*[\"'\''][^\"'\'']{8,}[\"'\'']" . && exit 1 || exit 0'
+        language: system
+        pass_filenames: false
+
+      - id: check-env-files
+        name: Prevent .env commits
+        entry: bash -c 'git diff --cached --name-only | grep -E "^\.env" && echo "ERROR: .env files should not be committed" && exit 1 || exit 0'
+        language: system
+        pass_filenames: false
+
+# Configuration
+default_stages: [commit]
+fail_fast: false

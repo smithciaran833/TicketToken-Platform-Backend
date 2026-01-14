@@ -4,8 +4,7 @@ import path from 'path';
 // Load .env from project root
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
-import { secretsManager } from '../../../../shared/utils/secrets-manager';
-import { SECRETS_CONFIG } from '../../../../shared/config/secrets.config';
+import { secretsManager, SECRETS_CONFIG } from '@tickettoken/shared';
 
 export async function loadSecrets() {
   const serviceName = process.env.SERVICE_NAME || 'unknown-service';

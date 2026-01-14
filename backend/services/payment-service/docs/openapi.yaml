@@ -1,0 +1,708 @@
+openapi: 3.0.3
+info:
+  title: Payment Service API
+  description: |
+    TicketToken Payment Service - Handles payment processing, refunds, and Stripe Connect transfers.
+    
+    ## Authentication
+    All endpoints (except webhooks and health checks) require a Bearer JWT token.
+    
+    ## Multi-Tenancy
+    All operations are tenant-scoped. The tenant ID is extracted from the JWT token.
+    
+    ## Idempotency
+    POST endpoints require an `Idempotency-Key` header to prevent duplicate processing.
+  version: 1.0.0
+  contact:
+    name: TicketToken Engineering
+    email: engineering@tickettoken.com
+  license:
+    name: Proprietary
+servers:
+  - url: https://api.tickettoken.com/v1/payments
+    description: Production
+  - url: https://staging-api.tickettoken.com/v1/payments
+    description: Staging
+  - url: http://localhost:3005
+    description: Local Development
+
+tags:
+  - name: Payments
+    description: Payment intent operations
+  - name: Refunds
+    description: Refund operations
+  - name: Transfers
+    description: Stripe Connect transfer operations
+  - name: Connected Accounts
+    description: Stripe Connect account management
+  - name: Health
+    description: Service health endpoints
+  - name: Webhooks
+    description: Stripe webhook handling
+
+paths:
+  # ==========================================================================
+  # Payments
+  # ==========================================================================
+  /api/v1/payments/intents:
+    post:
+      summary: Create Payment Intent
+      description: Create a new Stripe payment intent for ticket purchase
+      operationId: createPaymentIntent
+      tags: [Payments]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreatePaymentIntentRequest'
+      responses:
+        '201':
+          description: Payment intent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentIntent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/v1/payments/{paymentId}:
+    get:
+      summary: Get Payment
+      description: Retrieve payment details by ID
+      operationId: getPayment
+      tags: [Payments]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+      responses:
+        '200':
+          description: Payment details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/payments/{paymentId}/capture:
+    post:
+      summary: Capture Payment
+      description: Capture a previously authorized payment
+      operationId: capturePayment
+      tags: [Payments]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Payment captured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/payments/{paymentId}/cancel:
+    post:
+      summary: Cancel Payment
+      description: Cancel a payment intent that hasn't been captured
+      operationId: cancelPayment
+      tags: [Payments]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/PaymentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Payment cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Payment'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # Refunds
+  # ==========================================================================
+  /api/v1/refunds:
+    post:
+      summary: Create Refund
+      description: Create a refund for a payment
+      operationId: createRefund
+      tags: [Refunds]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateRefundRequest'
+      responses:
+        '201':
+          description: Refund created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Refund'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/refunds/{refundId}:
+    get:
+      summary: Get Refund
+      description: Retrieve refund details by ID
+      operationId: getRefund
+      tags: [Refunds]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/RefundId'
+      responses:
+        '200':
+          description: Refund details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Refund'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # Transfers
+  # ==========================================================================
+  /api/v1/transfers:
+    post:
+      summary: Create Transfer
+      description: Transfer funds to a connected account
+      operationId: createTransfer
+      tags: [Transfers]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTransferRequest'
+      responses:
+        '201':
+          description: Transfer created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/transfers/{transferId}:
+    get:
+      summary: Get Transfer
+      description: Retrieve transfer details by ID
+      operationId: getTransfer
+      tags: [Transfers]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/TransferId'
+      responses:
+        '200':
+          description: Transfer details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # Connected Accounts
+  # ==========================================================================
+  /api/v1/connected-accounts:
+    post:
+      summary: Create Connected Account
+      description: Create a new Stripe Connect account for a venue/artist
+      operationId: createConnectedAccount
+      tags: [Connected Accounts]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateConnectedAccountRequest'
+      responses:
+        '201':
+          description: Connected account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectedAccount'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/v1/connected-accounts/{accountId}:
+    get:
+      summary: Get Connected Account
+      description: Retrieve connected account details
+      operationId: getConnectedAccount
+      tags: [Connected Accounts]
+      security:
+        - BearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/AccountId'
+      responses:
+        '200':
+          description: Connected account details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConnectedAccount'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ==========================================================================
+  # Webhooks
+  # ==========================================================================
+  /webhooks/stripe:
+    post:
+      summary: Stripe Webhook
+      description: Receive Stripe webhook events
+      operationId: handleStripeWebhook
+      tags: [Webhooks]
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook received
+
+  # ==========================================================================
+  # Health
+  # ==========================================================================
+  /health:
+    get:
+      summary: Basic Health
+      description: Basic service health check
+      operationId: health
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/live:
+    get:
+      summary: Liveness Probe
+      description: Kubernetes liveness probe
+      operationId: liveness
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service alive
+
+  /health/ready:
+    get:
+      summary: Readiness Probe
+      description: Kubernetes readiness probe (checks DB and Redis)
+      operationId: readiness
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service ready
+        '503':
+          description: Service not ready
+
+  /health/startup:
+    get:
+      summary: Startup Probe
+      description: Kubernetes startup probe
+      operationId: startup
+      tags: [Health]
+      security: []
+      responses:
+        '200':
+          description: Service started
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from auth service
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Unique key for idempotent request handling
+
+    PaymentId:
+      name: paymentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Payment ID
+
+    RefundId:
+      name: refundId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Refund ID
+
+    TransferId:
+      name: transferId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+      description: Transfer ID
+
+    AccountId:
+      name: accountId
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Stripe Connect account ID
+
+  schemas:
+    # ==========================================================================
+    # Request Schemas
+    # ==========================================================================
+    CreatePaymentIntentRequest:
+      type: object
+      required:
+        - amount
+        - currency
+        - orderId
+      properties:
+        amount:
+          type: integer
+          minimum: 50
+          description: Amount in cents
+        currency:
+          type: string
+          enum: [usd]
+          default: usd
+        orderId:
+          type: string
+          format: uuid
+        customerId:
+          type: string
+        metadata:
+          type: object
+          additionalProperties: true
+
+    CreateRefundRequest:
+      type: object
+      required:
+        - paymentId
+      properties:
+        paymentId:
+          type: string
+          format: uuid
+        amount:
+          type: integer
+          minimum: 1
+          description: Partial refund amount in cents (omit for full refund)
+        reason:
+          type: string
+          enum: [duplicate, fraudulent, requested_by_customer, other]
+        metadata:
+          type: object
+
+    CreateTransferRequest:
+      type: object
+      required:
+        - amount
+        - destinationAccountId
+      properties:
+        amount:
+          type: integer
+          minimum: 1
+        destinationAccountId:
+          type: string
+          description: Stripe Connect account ID
+        orderId:
+          type: string
+          format: uuid
+        sourceTransaction:
+          type: string
+          description: Stripe charge ID to transfer from
+        metadata:
+          type: object
+
+    CreateConnectedAccountRequest:
+      type: object
+      required:
+        - type
+        - email
+      properties:
+        type:
+          type: string
+          enum: [venue, artist]
+        email:
+          type: string
+          format: email
+        businessName:
+          type: string
+        metadata:
+          type: object
+
+    # ==========================================================================
+    # Response Schemas
+    # ==========================================================================
+    Payment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        stripePaymentIntentId:
+          type: string
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [requires_payment_method, requires_confirmation, requires_action, processing, succeeded, canceled, requires_capture]
+        orderId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PaymentIntent:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        clientSecret:
+          type: string
+          description: Client secret for Stripe.js
+        amount:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+
+    Refund:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        stripeRefundId:
+          type: string
+        paymentId:
+          type: string
+          format: uuid
+        amount:
+          type: integer
+        status:
+          type: string
+          enum: [pending, succeeded, failed, canceled]
+        reason:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Transfer:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        stripeTransferId:
+          type: string
+        destinationAccountId:
+          type: string
+        amount:
+          type: integer
+        status:
+          type: string
+          enum: [pending, completed, failed, reversed]
+        orderId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+
+    ConnectedAccount:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        stripeAccountId:
+          type: string
+        type:
+          type: string
+          enum: [venue, artist]
+        email:
+          type: string
+        chargesEnabled:
+          type: boolean
+        payoutsEnabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unhealthy]
+        version:
+          type: string
+        uptime:
+          type: number
+        checks:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+              latency:
+                type: number
+
+    # ==========================================================================
+    # Error Schema (RFC 7807)
+    # ==========================================================================
+    ProblemDetails:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI reference identifying the problem type
+        title:
+          type: string
+          description: Short human-readable summary
+        status:
+          type: integer
+          description: HTTP status code
+        detail:
+          type: string
+          description: Human-readable explanation
+        instance:
+          type: string
+          format: uri
+          description: URI reference identifying this occurrence
+        code:
+          type: string
+          description: Application-specific error code
+      required:
+        - type
+        - title
+        - status
+
+  responses:
+    BadRequest:
+      description: Bad Request
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Forbidden:
+      description: Forbidden
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    NotFound:
+      description: Not Found
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    Conflict:
+      description: Conflict (e.g., idempotency conflict)
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    InternalError:
+      description: Internal Server Error
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'

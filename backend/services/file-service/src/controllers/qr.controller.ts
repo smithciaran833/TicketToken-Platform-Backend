@@ -1,4 +1,3 @@
-import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { qrCodeService } from '../services/qr-code.service';
 import { logger } from '../utils/logger';
@@ -19,7 +18,7 @@ export class QRController {
       
       reply.type('image/png').send(buffer);
     } catch (error: any) {
-      logger.error('QR generation failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'QR generation failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -44,7 +43,7 @@ export class QRController {
         mimeType: 'image/png'
       });
     } catch (error: any) {
-      logger.error('QR generation failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'QR generation failed');
       reply.status(500).send({ error: error.message });
     }
   }

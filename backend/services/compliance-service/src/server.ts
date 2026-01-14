@@ -1,8 +1,17 @@
-import Fastify, { FastifyInstance } from 'fastify';
+/**
+ * Server Configuration for Compliance Service
+ * 
+ * AUDIT FIXES:
+ * - RL-1: Rate limiting NOT REGISTERED → Now registered via setupRateLimiting()
+ * - ERR-3: Not RFC 7807 format → Updated error handler
+ * - LOG-2: No correlation ID → Added request ID middleware
+ */
+import Fastify, { FastifyInstance, FastifyError, FastifyRequest, FastifyReply } from 'fastify';
 import helmet from '@fastify/helmet';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { logger } from './utils/logger';
+import { randomUUID } from 'crypto';
 
 // Import routes
 import { healthRoutes } from './routes/health.routes';
@@ -20,26 +29,70 @@ import { gdprRoutes } from './routes/gdpr.routes';
 
 // Middleware
 import { authenticate, requireAdmin, requireComplianceOfficer } from './middleware/auth.middleware';
+import { setupRateLimiting } from './middleware/rate-limit.middleware';
 
 export async function createServer(): Promise<FastifyInstance> {
   const app = Fastify({
     logger: false,
     trustProxy: true,
-    bodyLimit: 10485760 // 10MB for file uploads
+    bodyLimit: 10485760, // 10MB for file uploads
+    requestIdHeader: 'x-request-id',
+    genReqId: () => randomUUID()
   });
 
   // Register plugins
   await app.register(helmet);
-  await app.register(cors);
+  await app.register(cors, {
+    origin: process.env.CORS_ORIGIN || '*',
+    credentials: process.env.CORS_CREDENTIALS === 'true'
+  });
   await app.register(multipart, {
     limits: {
       fileSize: 10 * 1024 * 1024 // 10MB limit
     }
   });
 
-  // Request logging
+  // ==========================================================================
+  // AUDIT FIX RL-1: Register rate limiting (was previously DORMANT)
+  // ==========================================================================
+  await setupRateLimiting(app);
+  logger.info('Rate limiting registered');
+
+  // ==========================================================================
+  // AUDIT FIX LOG-2: Add correlation ID / request ID to all requests
+  // ==========================================================================
   app.addHook('onRequest', async (request, reply) => {
-    console.log(`📥 ${request.method} ${request.url}`);
+    // Ensure requestId is set
+    request.requestId = request.id as string;
+    // Store start time for response time calculation
+    (request as any).startTime = Date.now();
+    
+    // Log incoming request
+    logger.info({
+      requestId: request.requestId,
+      method: request.method,
+      url: request.url,
+      ip: request.ip,
+      userAgent: request.headers['user-agent']
+    }, 'Incoming request');
+  });
+
+  // Add request ID to response headers
+  app.addHook('onSend', async (request, reply, payload) => {
+    reply.header('X-Request-Id', request.requestId);
+    return payload;
+  });
+
+  // Log response
+  app.addHook('onResponse', async (request, reply) => {
+    const responseTime = (request as any).startTime ? Date.now() - (request as any).startTime : 0;
+    logger.info({
+      requestId: request.requestId,
+      method: request.method,
+      url: request.url,
+      statusCode: reply.statusCode,
+      responseTime
+    }, 'Request completed');
   });
 
   // Health routes (no auth required)
@@ -83,11 +136,23 @@ export async function createServer(): Promise<FastifyInstance> {
         return reply.send({
           success: true,
           message: 'Retention policies enforced',
-          tenantId
+          tenantId,
+          requestId: request.requestId
         });
       } catch (error: any) {
-        console.error('Retention enforcement error:', error);
-        return reply.code(500).send({ error: error.message });
+        logger.error({
+          requestId: request.requestId,
+          error: error.message,
+          stack: error.stack
+        }, 'Retention enforcement error');
+        
+        return reply.code(500).send({
+          type: 'urn:error:compliance-service:internal',
+          title: 'Internal Server Error',
+          status: 500,
+          detail: 'Failed to enforce retention policies',
+          instance: request.requestId
+        });
       }
     });
 
@@ -100,7 +165,13 @@ export async function createServer(): Promise<FastifyInstance> {
         const { customerId, saleAmount, ticketId } = request.body as any;
 
         if (!customerId || !saleAmount || !ticketId) {
-          return reply.code(400).send({ error: 'Missing required fields' });
+          return reply.code(400).send({
+            type: 'urn:error:compliance-service:validation',
+            title: 'Validation Error',
+            status: 400,
+            detail: 'Missing required fields: customerId, saleAmount, ticketId',
+            instance: request.requestId
+          });
         }
 
         const result = await customerTaxService.trackNFTSale(
@@ -109,10 +180,21 @@ export async function createServer(): Promise<FastifyInstance> {
           ticketId
         );
 
-        return reply.send({ success: true, data: result });
+        return reply.send({ success: true, data: result, requestId: request.requestId });
       } catch (error: any) {
-        console.error('NFT tax tracking error:', error);
-        return reply.code(500).send({ error: error.message });
+        logger.error({
+          requestId: request.requestId,
+          error: error.message,
+          stack: error.stack
+        }, 'NFT tax tracking error');
+        
+        return reply.code(500).send({
+          type: 'urn:error:compliance-service:internal',
+          title: 'Internal Server Error',
+          status: 500,
+          detail: error.message,
+          instance: request.requestId
+        });
       }
     });
 
@@ -123,7 +205,13 @@ export async function createServer(): Promise<FastifyInstance> {
         const { state, originalPrice, resalePrice } = request.body as any;
 
         if (!state || originalPrice === undefined || resalePrice === undefined) {
-          return reply.code(400).send({ error: 'Missing required fields' });
+          return reply.code(400).send({
+            type: 'urn:error:compliance-service:validation',
+            title: 'Validation Error',
+            status: 400,
+            detail: 'Missing required fields: state, originalPrice, resalePrice',
+            instance: request.requestId
+          });
         }
 
         const result = await stateComplianceService.validateResale(
@@ -132,10 +220,21 @@ export async function createServer(): Promise<FastifyInstance> {
           resalePrice
         );
 
-        return reply.send({ success: true, data: result });
+        return reply.send({ success: true, data: result, requestId: request.requestId });
       } catch (error: any) {
-        console.error('State compliance error:', error);
-        return reply.code(500).send({ error: error.message });
+        logger.error({
+          requestId: request.requestId,
+          error: error.message,
+          stack: error.stack
+        }, 'State compliance error');
+        
+        return reply.code(500).send({
+          type: 'urn:error:compliance-service:internal',
+          title: 'Internal Server Error',
+          status: 500,
+          detail: error.message,
+          instance: request.requestId
+        });
       }
     });
   });
@@ -144,25 +243,75 @@ export async function createServer(): Promise<FastifyInstance> {
   app.get('/cache/stats', { onRequest: authenticate }, async (request, reply) => {
     const { serviceCache } = require('./services/cache-integration');
     const stats = serviceCache.getStats();
-    return reply.send(stats);
+    return reply.send({ ...stats, requestId: request.requestId });
   });
 
   app.delete('/cache/flush', { onRequest: authenticate }, async (request, reply) => {
     const { serviceCache } = require('./services/cache-integration');
     await serviceCache.flush();
-    return reply.send({ success: true, message: 'Cache flushed' });
+    return reply.send({ success: true, message: 'Cache flushed', requestId: request.requestId });
   });
 
-  // 404 handler
-  app.setNotFoundHandler((request, reply) => {
-    reply.code(404).send({ error: 'Route not found' });
+  // ==========================================================================
+  // AUDIT FIX ERR-3: RFC 7807 404 handler
+  // ==========================================================================
+  app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
+    reply.code(404).send({
+      type: 'urn:error:compliance-service:not-found',
+      title: 'Not Found',
+      status: 404,
+      detail: `Route ${request.method} ${request.url} not found`,
+      instance: request.requestId
+    });
   });
 
-  // Error handler
-  app.setErrorHandler((error, request, reply) => {
-    console.error('❌ Error:', error);
-    reply.code(500).send({ error: 'Internal server error' });
+  // ==========================================================================
+  // AUDIT FIX ERR-3: RFC 7807 error handler
+  // ==========================================================================
+  app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
+    logger.error({
+      requestId: request.requestId,
+      error: error.message,
+      stack: error.stack,
+      code: error.code,
+      statusCode: error.statusCode
+    }, 'Request error');
+
+    // Handle validation errors
+    if (error.validation) {
+      return reply.code(400).send({
+        type: 'urn:error:compliance-service:validation',
+        title: 'Validation Error',
+        status: 400,
+        detail: error.message,
+        instance: request.requestId,
+        validationErrors: error.validation
+      });
+    }
+
+    // Handle rate limit errors
+    if (error.statusCode === 429) {
+      return reply.code(429).send({
+        type: 'urn:error:compliance-service:rate-limit',
+        title: 'Too Many Requests',
+        status: 429,
+        detail: error.message,
+        instance: request.requestId
+      });
+    }
+
+    // Default RFC 7807 error response
+    const statusCode = error.statusCode || 500;
+    return reply.code(statusCode).send({
+      type: `urn:error:compliance-service:${statusCode === 500 ? 'internal' : 'error'}`,
+      title: statusCode === 500 ? 'Internal Server Error' : 'Error',
+      status: statusCode,
+      detail: statusCode === 500 ? 'An unexpected error occurred' : error.message,
+      instance: request.requestId
+    });
   });
 
   return app;
 }
+
+export default createServer;

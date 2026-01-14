@@ -28,7 +28,10 @@ export const authMiddleware = async (
       });
     }
 
-    const decoded = jwt.verify(token, env.JWT_SECRET) as any;
+    // AUDIT FIX SEC-1: Specify allowed algorithms to prevent algorithm confusion attacks
+    const decoded = jwt.verify(token, env.JWT_SECRET, {
+      algorithms: ['HS256', 'HS384', 'HS512']
+    }) as any;
 
     request.user = {
       id: decoded.userId || decoded.id,
@@ -70,7 +73,10 @@ export const optionalAuthMiddleware = async (
     const token = request.headers.authorization?.replace('Bearer ', '');
 
     if (token) {
-      const decoded = jwt.verify(token, env.JWT_SECRET) as any;
+      // AUDIT FIX SEC-1: Specify allowed algorithms
+      const decoded = jwt.verify(token, env.JWT_SECRET, {
+        algorithms: ['HS256', 'HS384', 'HS512']
+      }) as any;
       request.user = {
         id: decoded.userId || decoded.id,
         email: decoded.email,

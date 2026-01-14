@@ -1,118 +1,171 @@
 import Joi from 'joi';
 
-// Jurisdiction schemas
+/**
+ * RD1: Input validation schemas for tax routes
+ * All schemas use .unknown(false) to reject extra fields (SEC1, SEC2)
+ */
+
+// Common field patterns
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const countryCodePattern = /^[A-Z]{2}$/;
+const currencyCodePattern = /^[A-Z]{3}$/;
+
+// UUID parameter validation
+export const uuidParamSchema = Joi.object({
+  jurisdictionId: Joi.string().pattern(uuidPattern).optional(),
+  exemptionId: Joi.string().pattern(uuidPattern).optional(),
+  customerId: Joi.string().pattern(uuidPattern).optional(),
+  orderId: Joi.string().pattern(uuidPattern).optional(),
+  reportId: Joi.string().pattern(uuidPattern).optional(),
+}).unknown(false);
+
+// Create Tax Jurisdiction
 export const createJurisdictionSchema = Joi.object({
-  jurisdiction_code: Joi.string().max(50).required(),
-  jurisdiction_name: Joi.string().max(255).required(),
-  jurisdiction_type: Joi.string().valid('COUNTRY', 'STATE', 'COUNTY', 'CITY', 'SPECIAL_DISTRICT').required(),
-  parent_jurisdiction_id: Joi.string().uuid().optional(),
-  country_code: Joi.string().length(2).required(),
-  state_code: Joi.string().max(10).optional(),
-  county_name: Joi.string().max(100).optional(),
-  city_name: Joi.string().max(100).optional(),
-  postal_codes: Joi.array().items(Joi.string()).optional(),
-  metadata: Joi.object().optional()
-});
+  name: Joi.string().min(1).max(100).required(),
+  code: Joi.string().min(1).max(20).required(),
+  country: Joi.string().pattern(countryCodePattern).required(),
+  state: Joi.string().max(50).optional().allow(null),
+  city: Joi.string().max(100).optional().allow(null),
+  postalCodePattern: Joi.string().max(100).optional().allow(null),
+  isActive: Joi.boolean().default(true),
+  priority: Joi.number().integer().min(0).max(1000).default(0),
+}).unknown(false);
 
+// Update Tax Jurisdiction
 export const updateJurisdictionSchema = Joi.object({
-  jurisdiction_name: Joi.string().max(255).optional(),
-  jurisdiction_type: Joi.string().valid('COUNTRY', 'STATE', 'COUNTY', 'CITY', 'SPECIAL_DISTRICT').optional(),
-  state_code: Joi.string().max(10).optional(),
-  county_name: Joi.string().max(100).optional(),
-  city_name: Joi.string().max(100).optional(),
-  postal_codes: Joi.array().items(Joi.string()).optional(),
-  metadata: Joi.object().optional(),
-  active: Joi.boolean().optional()
-}).min(1);
+  name: Joi.string().min(1).max(100).optional(),
+  code: Joi.string().min(1).max(20).optional(),
+  state: Joi.string().max(50).optional().allow(null),
+  city: Joi.string().max(100).optional().allow(null),
+  postalCodePattern: Joi.string().max(100).optional().allow(null),
+  isActive: Joi.boolean().optional(),
+  priority: Joi.number().integer().min(0).max(1000).optional(),
+}).unknown(false);
 
-// Tax rate schemas
+// Create Tax Rate
 export const createTaxRateSchema = Joi.object({
-  jurisdiction_id: Joi.string().uuid().required(),
-  tax_type: Joi.string().valid('SALES_TAX', 'VAT', 'GST', 'ENTERTAINMENT_TAX', 'AMUSEMENT_TAX', 'TOURISM_TAX', 'FACILITY_FEE').required(),
-  rate_percentage: Joi.number().min(0).max(100).precision(6).required(),
-  effective_from: Joi.date().required(),
-  effective_to: Joi.date().greater(Joi.ref('effective_from')).optional(),
-  applies_to_tickets: Joi.boolean().optional(),
-  applies_to_fees: Joi.boolean().optional(),
-  applies_to_shipping: Joi.boolean().optional(),
-  minimum_amount_cents: Joi.number().integer().min(0).optional(),
-  maximum_amount_cents: Joi.number().integer().min(0).optional(),
-  compound_order: Joi.number().integer().min(1).optional(),
-  metadata: Joi.object().optional()
-});
+  jurisdictionId: Joi.string().pattern(uuidPattern).required(),
+  categoryId: Joi.string().pattern(uuidPattern).optional().allow(null),
+  name: Joi.string().min(1).max(100).required(),
+  rate: Joi.number().min(0).max(100).precision(4).required(), // percentage (0-100)
+  effectiveFrom: Joi.date().iso().optional(),
+  effectiveUntil: Joi.date().iso().optional().allow(null),
+  isCompound: Joi.boolean().default(false),
+  isInclusive: Joi.boolean().default(false),
+  description: Joi.string().max(500).optional().allow(null),
+}).unknown(false);
 
-// Tax category schemas
+// Create Tax Category
 export const createCategorySchema = Joi.object({
-  category_code: Joi.string().max(50).required(),
-  category_name: Joi.string().max(255).required(),
-  description: Joi.string().optional(),
-  is_exempt: Joi.boolean().optional(),
-  requires_exemption_certificate: Joi.boolean().optional()
-});
+  name: Joi.string().min(1).max(100).required(),
+  code: Joi.string().min(1).max(20).required(),
+  description: Joi.string().max(500).optional().allow(null),
+  isDefault: Joi.boolean().default(false),
+}).unknown(false);
 
-// Tax exemption schemas
+// Create Tax Exemption
 export const createExemptionSchema = Joi.object({
-  customer_id: Joi.string().uuid().required(),
-  exemption_type: Joi.string().valid('NON_PROFIT', 'GOVERNMENT', 'RESELLER', 'DIPLOMATIC', 'EDUCATIONAL', 'RELIGIOUS').required(),
-  exemption_certificate_number: Joi.string().max(255).optional(),
-  issuing_authority: Joi.string().max(255).optional(),
-  jurisdiction_id: Joi.string().uuid().optional(),
-  valid_from: Joi.date().required(),
-  valid_to: Joi.date().greater(Joi.ref('valid_from')).optional(),
-  certificate_file_url: Joi.string().uri().optional(),
-  notes: Joi.string().optional(),
-  metadata: Joi.object().optional()
-});
+  customerId: Joi.string().pattern(uuidPattern).required(),
+  jurisdictionId: Joi.string().pattern(uuidPattern).optional().allow(null),
+  exemptionType: Joi.string().valid(
+    'NONPROFIT',
+    'GOVERNMENT',
+    'RESELLER',
+    'EDUCATIONAL',
+    'DIPLOMATIC',
+    'OTHER'
+  ).required(),
+  certificateNumber: Joi.string().max(100).optional().allow(null),
+  expirationDate: Joi.date().iso().optional().allow(null),
+  documentUrl: Joi.string().uri().max(500).optional().allow(null),
+  notes: Joi.string().max(1000).optional().allow(null),
+}).unknown(false);
 
-// Tax calculation schemas
+// Calculate Tax Request
 export const calculateTaxSchema = Joi.object({
-  order_id: Joi.string().uuid().required(),
-  billing_address: Joi.object({
-    line1: Joi.string().required(),
-    line2: Joi.string().optional(),
-    city: Joi.string().required(),
-    state: Joi.string().optional(),
-    postal_code: Joi.string().required(),
-    country: Joi.string().required()
-  }).required(),
-  shipping_address: Joi.object({
-    line1: Joi.string().required(),
-    line2: Joi.string().optional(),
-    city: Joi.string().required(),
-    state: Joi.string().optional(),
-    postal_code: Joi.string().required(),
-    country: Joi.string().required()
-  }).optional(),
-  line_items: Joi.array().items(
+  orderId: Joi.string().pattern(uuidPattern).optional(),
+  customerId: Joi.string().pattern(uuidPattern).optional(),
+  items: Joi.array().items(
     Joi.object({
-      amount_cents: Joi.number().integer().min(0).required(),
-      category_code: Joi.string().optional(),
-      description: Joi.string().required()
-    })
+      ticketTypeId: Joi.string().pattern(uuidPattern).required(),
+      quantity: Joi.number().integer().min(1).max(100).required(),
+      unitPriceCents: Joi.number().integer().min(0).required(),
+      categoryId: Joi.string().pattern(uuidPattern).optional().allow(null),
+    }).unknown(false)
   ).min(1).required(),
-  customer_exemption_id: Joi.string().uuid().optional()
-});
+  billingAddress: Joi.object({
+    country: Joi.string().pattern(countryCodePattern).required(),
+    state: Joi.string().max(50).optional().allow(null),
+    city: Joi.string().max(100).optional().allow(null),
+    postalCode: Joi.string().max(20).optional().allow(null),
+    address1: Joi.string().max(200).optional().allow(null),
+    address2: Joi.string().max(200).optional().allow(null),
+  }).unknown(false).required(),
+  shippingAddress: Joi.object({
+    country: Joi.string().pattern(countryCodePattern).required(),
+    state: Joi.string().max(50).optional().allow(null),
+    city: Joi.string().max(100).optional().allow(null),
+    postalCode: Joi.string().max(20).optional().allow(null),
+    address1: Joi.string().max(200).optional().allow(null),
+    address2: Joi.string().max(200).optional().allow(null),
+  }).unknown(false).optional(),
+  currency: Joi.string().pattern(currencyCodePattern).default('USD'),
+}).unknown(false);
 
-// Tax provider config schemas
+// Configure Tax Provider
 export const configureProviderSchema = Joi.object({
-  provider_name: Joi.string().valid('MANUAL', 'AVALARA', 'TAXJAR', 'VERTEX').required(),
-  api_key: Joi.string().optional(),
-  account_id: Joi.string().max(255).optional(),
-  company_code: Joi.string().max(100).optional(),
-  environment: Joi.string().valid('sandbox', 'production').optional(),
-  enabled: Joi.boolean().optional(),
-  auto_commit: Joi.boolean().optional(),
-  configuration: Joi.object().optional()
-});
+  provider: Joi.string().valid('manual', 'avalara', 'taxjar', 'vertex').required(),
+  apiKey: Joi.string().max(200).when('provider', {
+    is: 'manual',
+    then: Joi.optional().allow(null),
+    otherwise: Joi.required(),
+  }),
+  apiSecret: Joi.string().max(200).optional().allow(null),
+  companyCode: Joi.string().max(100).optional().allow(null),
+  environment: Joi.string().valid('sandbox', 'production').default('sandbox'),
+  isEnabled: Joi.boolean().default(true),
+}).unknown(false);
 
-// Tax report schemas
+// Generate Tax Report
 export const generateReportSchema = Joi.object({
-  report_type: Joi.string().valid('SALES_TAX', 'VAT_RETURN', 'GST_RETURN').required(),
-  jurisdiction_id: Joi.string().uuid().optional(),
-  period_start: Joi.date().required(),
-  period_end: Joi.date().greater(Joi.ref('period_start')).required()
-});
+  reportType: Joi.string().valid(
+    'SALES_TAX_SUMMARY',
+    'SALES_TAX_DETAIL',
+    'EXEMPTION_REPORT',
+    'JURISDICTION_BREAKDOWN',
+    'MONTHLY_FILING'
+  ).required(),
+  startDate: Joi.date().iso().required(),
+  endDate: Joi.date().iso().required(),
+  jurisdictionId: Joi.string().pattern(uuidPattern).optional().allow(null),
+  format: Joi.string().valid('json', 'csv', 'pdf').default('json'),
+}).unknown(false);
 
+// File Tax Report
 export const fileReportSchema = Joi.object({
-  filing_reference: Joi.string().max(255).required()
-});
+  filingDate: Joi.date().iso().optional(),
+  confirmationNumber: Joi.string().max(100).optional().allow(null),
+  notes: Joi.string().max(1000).optional().allow(null),
+}).unknown(false);
+
+// Query parameters for list endpoints
+export const listQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  offset: Joi.number().integer().min(0).default(0),
+  isActive: Joi.boolean().optional(),
+  jurisdictionId: Joi.string().pattern(uuidPattern).optional(),
+}).unknown(false);
+
+export default {
+  createJurisdictionSchema,
+  updateJurisdictionSchema,
+  createTaxRateSchema,
+  createCategorySchema,
+  createExemptionSchema,
+  calculateTaxSchema,
+  configureProviderSchema,
+  generateReportSchema,
+  fileReportSchema,
+  listQuerySchema,
+  uuidParamSchema,
+};

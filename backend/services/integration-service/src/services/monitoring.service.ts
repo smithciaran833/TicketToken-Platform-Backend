@@ -77,27 +77,41 @@ export class MonitoringService {
         integration.integration_type
       );
 
-      // Update or insert health record
-      await db('integration_health')
-        .insert({
-          venue_id: integration.venue_id,
-          integration_type: integration.integration_type,
-          success_rate: metrics.successRate,
-          average_sync_time_ms: metrics.avgSyncTime,
-          last_success_at: isHealthy ? new Date() : undefined,
-          last_failure_at: !isHealthy ? new Date() : undefined,
-          sync_count_24h: metrics.syncCount,
-          success_count_24h: metrics.successCount,
-          failure_count_24h: metrics.failureCount,
-          api_calls_24h: metrics.apiCalls,
-          queue_depth: await this.getQueueDepth(
-            integration.venue_id,
-            integration.integration_type
-          ),
-          calculated_at: new Date()
-        })
-        .onConflict(['venue_id', 'integration_type'])
-        .merge();
+      // Update or insert health record - use upsert pattern
+      const existingHealth = await db('integration_health')
+        .where({ venue_id: integration.venue_id, integration_type: integration.integration_type })
+        .first();
+
+      const queueDepth = await this.getQueueDepth(
+        integration.venue_id,
+        integration.integration_type
+      );
+
+      const healthData = {
+        success_rate: metrics.successRate,
+        average_sync_time_ms: metrics.avgSyncTime,
+        last_success_at: isHealthy ? new Date() : undefined,
+        last_failure_at: !isHealthy ? new Date() : undefined,
+        sync_count_24h: metrics.syncCount,
+        success_count_24h: metrics.successCount,
+        failure_count_24h: metrics.failureCount,
+        api_calls_24h: metrics.apiCalls,
+        queue_depth: queueDepth,
+        calculated_at: new Date()
+      };
+
+      if (existingHealth) {
+        await db('integration_health')
+          .where({ venue_id: integration.venue_id, integration_type: integration.integration_type })
+          .update({ ...healthData, updated_at: new Date() });
+      } else {
+        await db('integration_health')
+          .insert({
+            venue_id: integration.venue_id,
+            integration_type: integration.integration_type,
+            ...healthData
+          });
+      }
 
       // Update integration status if health changed
       const newHealthStatus = this.determineHealthStatus(
@@ -211,15 +225,17 @@ export class MonitoringService {
         .groupBy('status');
 
       // Store in Redis for quick access
-      await redisClient.setex(
-        'integration:metrics:platform',
-        300, // 5 minutes
-        JSON.stringify({
-          integrations: result,
-          queues: queueMetrics,
-          timestamp: new Date()
-        })
-      );
+      if (redisClient) {
+        await redisClient.setex(
+          'integration:metrics:platform',
+          300, // 5 minutes
+          JSON.stringify({
+            integrations: result,
+            queues: queueMetrics,
+            timestamp: new Date()
+          })
+        );
+      }
 
       logger.info('Platform metrics calculated', {
         total: result?.total || 0,
@@ -284,15 +300,20 @@ export class MonitoringService {
   async getHealthSummary(): Promise<any> {
     try {
       // Get cached metrics from Redis
-      const cached = await redisClient.get('integration:metrics:platform');
-      if (cached) {
-        return JSON.parse(cached);
+      if (redisClient) {
+        const cached = await redisClient.get('integration:metrics:platform');
+        if (cached) {
+          return JSON.parse(cached);
+        }
       }
 
       // Calculate fresh if not cached
       await this.calculateMetrics();
-      const fresh = await redisClient.get('integration:metrics:platform');
-      return fresh ? JSON.parse(fresh) : null;
+      if (redisClient) {
+        const fresh = await redisClient.get('integration:metrics:platform');
+        return fresh ? JSON.parse(fresh) : null;
+      }
+      return null;
     } catch (error) {
       logger.error('Failed to get health summary', error);
       return null;

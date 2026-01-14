@@ -1,121 +1,190 @@
 import Joi from 'joi';
-import { RefundRuleType, RegulationType } from '../types/refund-policy.types';
 
-// Policy schemas
-export const createRefundPolicySchema = Joi.object({
-  policy_name: Joi.string().min(3).max(255).required(),
-  description: Joi.string().max(1000).optional().allow(null, ''),
-  refund_window_hours: Joi.number().integer().min(0).max(87600).required(), // Max ~10 years
-  pro_rated: Joi.boolean().required(),
-  conditions: Joi.object().optional().allow(null),
-  event_type: Joi.string().max(100).optional().allow(null, ''),
-  ticket_type: Joi.string().max(100).optional().allow(null, '')
-});
+/**
+ * RD1: Input validation schemas for refund-policy routes
+ * All schemas use .unknown(false) to reject extra fields (SEC1, SEC2)
+ */
 
-export const updateRefundPolicySchema = Joi.object({
-  policy_name: Joi.string().min(3).max(255).optional(),
-  description: Joi.string().max(1000).optional().allow(null, ''),
-  refund_window_hours: Joi.number().integer().min(0).max(87600).optional(),
-  pro_rated: Joi.boolean().optional(),
-  conditions: Joi.object().optional().allow(null),
-  event_type: Joi.string().max(100).optional().allow(null, ''),
-  ticket_type: Joi.string().max(100).optional().allow(null, '')
-}).min(1);
+// Common field patterns
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Rule schemas
-const timeBasedRuleConfigSchema = Joi.object({
-  tiers: Joi.array().items(
+// UUID parameter validation
+export const policyParamSchema = Joi.object({
+  policyId: Joi.string().pattern(uuidPattern).required(),
+}).unknown(false);
+
+export const ruleParamSchema = Joi.object({
+  ruleId: Joi.string().pattern(uuidPattern).required(),
+}).unknown(false);
+
+export const policyRuleParamSchema = Joi.object({
+  policyId: Joi.string().pattern(uuidPattern).required(),
+}).unknown(false);
+
+export const reasonParamSchema = Joi.object({
+  reasonId: Joi.string().pattern(uuidPattern).required(),
+}).unknown(false);
+
+// Create Refund Policy
+export const createPolicySchema = Joi.object({
+  name: Joi.string().min(1).max(100).required(),
+  description: Joi.string().max(500).optional().allow(null),
+  eventTypes: Joi.array().items(Joi.string().max(50)).optional(),
+  isDefault: Joi.boolean().default(false),
+  isActive: Joi.boolean().default(true),
+  effectiveFrom: Joi.date().iso().optional(),
+  effectiveUntil: Joi.date().iso().optional().allow(null),
+  priority: Joi.number().integer().min(0).max(1000).default(0),
+}).unknown(false);
+
+// Update Refund Policy
+export const updatePolicySchema = Joi.object({
+  name: Joi.string().min(1).max(100).optional(),
+  description: Joi.string().max(500).optional().allow(null),
+  eventTypes: Joi.array().items(Joi.string().max(50)).optional(),
+  isDefault: Joi.boolean().optional(),
+  isActive: Joi.boolean().optional(),
+  effectiveFrom: Joi.date().iso().optional(),
+  effectiveUntil: Joi.date().iso().optional().allow(null),
+  priority: Joi.number().integer().min(0).max(1000).optional(),
+}).unknown(false);
+
+// Create Policy Rule
+export const createRuleSchema = Joi.object({
+  policyId: Joi.string().pattern(uuidPattern).required(),
+  name: Joi.string().min(1).max(100).required(),
+  ruleType: Joi.string().valid(
+    'TIME_BASED',
+    'PERCENTAGE',
+    'TIERED',
+    'FLAT_FEE',
+    'EVENT_STATUS',
+    'TICKET_TYPE'
+  ).required(),
+  conditionType: Joi.string().valid(
+    'HOURS_BEFORE_EVENT',
+    'DAYS_BEFORE_EVENT',
+    'EVENT_CANCELLED',
+    'EVENT_POSTPONED',
+    'EVENT_RESCHEDULED',
+    'ALWAYS'
+  ).required(),
+  conditionValue: Joi.number().optional().allow(null), // e.g., hours/days before event
+  refundPercentage: Joi.number().min(0).max(100).precision(2).optional(),
+  flatFeeAmountCents: Joi.number().integer().min(0).optional(),
+  tierValues: Joi.array().items(
     Joi.object({
-      hours_before_event: Joi.number().integer().min(0).required(),
-      refund_percentage: Joi.number().min(0).max(100).required()
-    })
-  ).min(1).required()
-});
+      minHours: Joi.number().integer().min(0).required(),
+      maxHours: Joi.number().integer().min(0).optional(),
+      percentage: Joi.number().min(0).max(100).precision(2).required(),
+    }).unknown(false)
+  ).optional(),
+  isActive: Joi.boolean().default(true),
+  priority: Joi.number().integer().min(0).max(1000).default(0),
+  description: Joi.string().max(500).optional().allow(null),
+}).unknown(false);
 
-const percentageRuleConfigSchema = Joi.object({
-  percentage: Joi.number().min(0).max(100).required(),
-  apply_to: Joi.string().valid('ORDER_TOTAL', 'TICKET_PRICE_ONLY', 'EXCLUDING_FEES').required()
-});
-
-const tieredRuleConfigSchema = Joi.object({
-  tiers: Joi.array().items(
+// Update Policy Rule
+export const updateRuleSchema = Joi.object({
+  name: Joi.string().min(1).max(100).optional(),
+  ruleType: Joi.string().valid(
+    'TIME_BASED',
+    'PERCENTAGE',
+    'TIERED',
+    'FLAT_FEE',
+    'EVENT_STATUS',
+    'TICKET_TYPE'
+  ).optional(),
+  conditionType: Joi.string().valid(
+    'HOURS_BEFORE_EVENT',
+    'DAYS_BEFORE_EVENT',
+    'EVENT_CANCELLED',
+    'EVENT_POSTPONED',
+    'EVENT_RESCHEDULED',
+    'ALWAYS'
+  ).optional(),
+  conditionValue: Joi.number().optional().allow(null),
+  refundPercentage: Joi.number().min(0).max(100).precision(2).optional(),
+  flatFeeAmountCents: Joi.number().integer().min(0).optional(),
+  tierValues: Joi.array().items(
     Joi.object({
-      min_amount_cents: Joi.number().integer().min(0).optional(),
-      max_amount_cents: Joi.number().integer().min(0).optional(),
-      refund_percentage: Joi.number().min(0).max(100).required()
-    })
-  ).min(1).required()
-});
+      minHours: Joi.number().integer().min(0).required(),
+      maxHours: Joi.number().integer().min(0).optional(),
+      percentage: Joi.number().min(0).max(100).precision(2).required(),
+    }).unknown(false)
+  ).optional(),
+  isActive: Joi.boolean().optional(),
+  priority: Joi.number().integer().min(0).max(1000).optional(),
+  description: Joi.string().max(500).optional().allow(null),
+}).unknown(false);
 
-const flatFeeRuleConfigSchema = Joi.object({
-  fee_cents: Joi.number().integer().min(0).required(),
-  deduct_from_refund: Joi.boolean().required()
-});
+// Create Refund Reason
+export const createReasonSchema = Joi.object({
+  code: Joi.string().min(1).max(50).required()
+    .pattern(/^[A-Z0-9_]+$/)
+    .messages({ 'string.pattern.base': 'Code must be uppercase letters, numbers, and underscores only' }),
+  name: Joi.string().min(1).max(100).required(),
+  description: Joi.string().max(500).optional().allow(null),
+  requiresEvidence: Joi.boolean().default(false),
+  evidenceTypes: Joi.array().items(
+    Joi.string().valid('SCREENSHOT', 'EMAIL', 'DOCUMENT', 'PHOTO', 'OTHER')
+  ).optional(),
+  isUserSelectable: Joi.boolean().default(true),
+  isActive: Joi.boolean().default(true),
+  displayOrder: Joi.number().integer().min(0).max(1000).default(0),
+}).unknown(false);
 
-export const createRefundPolicyRuleSchema = Joi.object({
-  policy_id: Joi.string().uuid().required(),
-  rule_type: Joi.string().valid(...Object.values(RefundRuleType)).required(),
-  rule_config: Joi.alternatives().conditional('rule_type', [
-    { is: RefundRuleType.TIME_BASED, then: timeBasedRuleConfigSchema },
-    { is: RefundRuleType.PERCENTAGE, then: percentageRuleConfigSchema },
-    { is: RefundRuleType.TIERED, then: tieredRuleConfigSchema },
-    { is: RefundRuleType.FLAT_FEE, then: flatFeeRuleConfigSchema },
-    { is: RefundRuleType.NO_REFUND, then: Joi.object().optional() }
-  ]).required(),
-  priority: Joi.number().integer().min(0).max(100).optional()
-});
+// Update Refund Reason
+export const updateReasonSchema = Joi.object({
+  code: Joi.string().min(1).max(50).optional()
+    .pattern(/^[A-Z0-9_]+$/)
+    .messages({ 'string.pattern.base': 'Code must be uppercase letters, numbers, and underscores only' }),
+  name: Joi.string().min(1).max(100).optional(),
+  description: Joi.string().max(500).optional().allow(null),
+  requiresEvidence: Joi.boolean().optional(),
+  evidenceTypes: Joi.array().items(
+    Joi.string().valid('SCREENSHOT', 'EMAIL', 'DOCUMENT', 'PHOTO', 'OTHER')
+  ).optional(),
+  isUserSelectable: Joi.boolean().optional(),
+  isActive: Joi.boolean().optional(),
+  displayOrder: Joi.number().integer().min(0).max(1000).optional(),
+}).unknown(false);
 
-export const updateRefundPolicyRuleSchema = Joi.object({
-  rule_type: Joi.string().valid(...Object.values(RefundRuleType)).optional(),
-  rule_config: Joi.when('rule_type', {
-    is: Joi.exist(),
-    then: Joi.alternatives().conditional('rule_type', [
-      { is: RefundRuleType.TIME_BASED, then: timeBasedRuleConfigSchema },
-      { is: RefundRuleType.PERCENTAGE, then: percentageRuleConfigSchema },
-      { is: RefundRuleType.TIERED, then: tieredRuleConfigSchema },
-      { is: RefundRuleType.FLAT_FEE, then: flatFeeRuleConfigSchema },
-      { is: RefundRuleType.NO_REFUND, then: Joi.object().optional() }
-    ])
-  }),
-  priority: Joi.number().integer().min(0).max(100).optional()
-}).min(1);
+// Check Refund Eligibility
+export const checkEligibilitySchema = Joi.object({
+  orderId: Joi.string().pattern(uuidPattern).required(),
+  reasonCode: Joi.string().max(50).optional(),
+  requestedAmountCents: Joi.number().integer().min(1).optional(),
+  itemIds: Joi.array().items(Joi.string().pattern(uuidPattern)).optional(),
+}).unknown(false);
 
-// Reason schemas
-export const createRefundReasonSchema = Joi.object({
-  reason_code: Joi.string().min(2).max(50).required(),
-  reason_text: Joi.string().min(3).max(255).required(),
-  description: Joi.string().max(1000).optional().allow(null, ''),
-  requires_documentation: Joi.boolean().optional(),
-  internal_only: Joi.boolean().optional(),
-  auto_approve: Joi.boolean().optional(),
-  priority: Joi.number().integer().min(0).max(100).optional()
-});
+// Query parameters for list endpoints
+export const listPoliciesQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  offset: Joi.number().integer().min(0).default(0),
+  isActive: Joi.boolean().optional(),
+  eventType: Joi.string().max(50).optional(),
+}).unknown(false);
 
-export const updateRefundReasonSchema = Joi.object({
-  reason_code: Joi.string().min(2).max(50).optional(),
-  reason_text: Joi.string().min(3).max(255).optional(),
-  description: Joi.string().max(1000).optional().allow(null, ''),
-  requires_documentation: Joi.boolean().optional(),
-  internal_only: Joi.boolean().optional(),
-  auto_approve: Joi.boolean().optional(),
-  priority: Joi.number().integer().min(0).max(100).optional()
-}).min(1);
+export const listReasonsQuerySchema = Joi.object({
+  limit: Joi.number().integer().min(1).max(100).default(20),
+  offset: Joi.number().integer().min(0).default(0),
+  isActive: Joi.boolean().optional(),
+  isUserSelectable: Joi.boolean().optional(),
+}).unknown(false);
 
-// Eligibility check schema
-export const checkRefundEligibilitySchema = Joi.object({
-  order_id: Joi.string().uuid().required(),
-  reason_id: Joi.string().uuid().optional(),
-  requested_amount_cents: Joi.number().integer().min(0).optional(),
-  event_date: Joi.date().iso().optional()
-});
-
-// Query parameters
-export const policyQuerySchema = Joi.object({
-  active_only: Joi.boolean().optional(),
-  event_type: Joi.string().max(100).optional(),
-  ticket_type: Joi.string().max(100).optional()
-});
-
-export const reasonQuerySchema = Joi.object({
-  include_internal: Joi.boolean().optional()
-});
+export default {
+  policyParamSchema,
+  ruleParamSchema,
+  policyRuleParamSchema,
+  reasonParamSchema,
+  createPolicySchema,
+  updatePolicySchema,
+  createRuleSchema,
+  updateRuleSchema,
+  createReasonSchema,
+  updateReasonSchema,
+  checkEligibilitySchema,
+  listPoliciesQuerySchema,
+  listReasonsQuerySchema,
+};

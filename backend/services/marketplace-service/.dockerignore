@@ -1,0 +1,124 @@
+# AUDIT FIX DEP-1: Prevent secrets and unnecessary files from being copied into Docker image
+
+# Environment files (may contain secrets)
+.env
+.env.*
+.env.local
+.env.development
+.env.staging
+.env.production
+*.env
+
+# Secrets
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+.secrets/
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Documentation (not needed in production)
+docs/
+*.md
+!README.md
+CHANGELOG.md
+LICENSE
+
+# Tests
+tests/
+__tests__/
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+coverage/
+.nyc_output/
+jest.config.*
+
+# Development dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm/
+
+# TypeScript source maps (optional - remove if you need debugging)
+*.map
+
+# Build artifacts (we'll build fresh in Docker)
+dist/
+build/
+*.tsbuildinfo
+
+# Local development
+.docker/
+docker-compose*.yml
+docker-compose*.yaml
+Makefile
+
+# Audit/Security results
+audit-results/
+.secrets.baseline
+.pre-commit-config.yaml
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+.temp/
+*.tmp
+
+# OS files
+Thumbs.db
+ehthumbs.db
+
+# Package manager locks (use whichever one you prefer)
+# Uncomment if you don't want yarn.lock or package-lock.json in image
+# yarn.lock
+# package-lock.json
+
+# CI/CD configuration
+.github/
+.gitlab-ci.yml
+.travis.yml
+.circleci/
+bitbucket-pipelines.yml
+azure-pipelines.yml
+Jenkinsfile
+
+# Kubernetes/Helm configs (deploy separately)
+k8s/
+kubernetes/
+helm/
+charts/
+*.yaml
+!package.json
+
+# Terraform/Infrastructure
+terraform/
+*.tf
+*.tfstate
+*.tfvars
+
+# Benchmarks and load tests
+benchmark/
+benchmarks/
+load-tests/

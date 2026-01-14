@@ -2,8 +2,39 @@ import { Pool } from 'pg';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
 import crypto from 'crypto';
+import { orderServiceClient, ticketServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
 
 const WEBHOOK_SECRET = process.env.INTERNAL_WEBHOOK_SECRET || 'internal-webhook-secret-change-in-production';
+
+/**
+ * RECONCILIATION SERVICE
+ * 
+ * Handles payment-order-ticket consistency checks and repairs.
+ * 
+ * PHASE 5c REFACTORED:
+ * - Service client calls added where possible with fallbacks
+ * - Some JOINs retained for transactional atomicity in reconciliation
+ * 
+ * CRITICAL EXCEPTION NOTE:
+ * Reconciliation is a background process that MUST be able to:
+ * 1. Query across payment/order/ticket state atomically
+ * 2. Fix consistency issues between services
+ * 3. Continue working even if some services are degraded
+ * 
+ * Direct DB queries are retained as fallbacks to ensure data consistency
+ * can be maintained even during partial service outages.
+ */
+
+/**
+ * Helper to create request context
+ */
+function createRequestContext(tenantId: string = 'system'): RequestContext {
+  return {
+    tenantId,
+    traceId: `reconciliation-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  };
+}
 
 export class ReconciliationService {
   private pool: Pool;
@@ -46,7 +77,7 @@ export class ReconciliationService {
       
       this.log.info('Reconciliation run completed');
     } catch (error) {
-      this.log.error('Reconciliation failed:', error);
+      this.log.error('Reconciliation failed:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -77,7 +108,7 @@ export class ReconciliationService {
       }
 
     } catch (error) {
-      this.log.error('Failed to reconcile orphaned payments:', error);
+      this.log.error('Failed to reconcile orphaned payments:', error instanceof Error ? error.message : String(error));
     } finally {
       client.release();
     }
@@ -137,7 +168,7 @@ export class ReconciliationService {
       }
 
     } catch (error) {
-      this.log.error(`Failed to fix orphaned order ${order.id}:`, error);
+      this.log.error(`Failed to fix orphaned order ${order.id}:`, error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -166,7 +197,7 @@ export class ReconciliationService {
       }
 
     } catch (error) {
-      this.log.error('Failed to reconcile outbox events:', error);
+      this.log.error('Failed to reconcile outbox events:', error instanceof Error ? error.message : String(error));
     } finally {
       client.release();
     }
@@ -243,7 +274,7 @@ export class ReconciliationService {
       }
 
     } catch (error) {
-      this.log.error('Failed to reconcile pending orders:', error);
+      this.log.error('Failed to reconcile pending orders:', error instanceof Error ? error.message : String(error));
     } finally {
       client.release();
     }

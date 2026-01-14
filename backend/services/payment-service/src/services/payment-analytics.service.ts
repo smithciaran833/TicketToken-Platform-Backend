@@ -53,9 +53,6 @@ export class PaymentAnalyticsService {
     this.pool = pool;
   }
 
-  /**
-   * Get comprehensive payment insights for date range
-   */
   async getPaymentInsights(
     tenantId: string,
     startDate: Date,
@@ -73,35 +70,26 @@ export class PaymentAnalyticsService {
           this.getPerformanceMetrics(tenantId, startDate, endDate),
         ]);
 
-        return {
-          overview,
-          trends,
-          breakdown,
-          performance,
-        };
+        return { overview, trends, breakdown, performance };
       },
-      600 // 10 minute cache
+      600
     );
   }
 
-  /**
-   * Get overview metrics
-   */
   private async getOverviewMetrics(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<OverviewMetrics> {
     const query = `
-      SELECT 
+      SELECT
         COUNT(*) as total_transactions,
         SUM(amount_cents) as total_revenue_cents,
         AVG(amount_cents) as avg_transaction_cents,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END)::FLOAT / 
+        COUNT(CASE WHEN status = 'completed' THEN 1 END)::FLOAT /
           NULLIF(COUNT(*), 0) as success_rate
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
@@ -117,24 +105,20 @@ export class PaymentAnalyticsService {
     };
   }
 
-  /**
-   * Get trend data (daily aggregates)
-   */
   private async getTrendData(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<TrendData[]> {
     const query = `
-      SELECT 
+      SELECT
         DATE(created_at) as date,
         COUNT(*) as transaction_count,
         SUM(amount_cents) as revenue_cents,
-        COUNT(CASE WHEN status = 'completed' THEN 1 END)::FLOAT / 
+        COUNT(CASE WHEN status = 'completed' THEN 1 END)::FLOAT /
           NULLIF(COUNT(*), 0) as success_rate
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
       GROUP BY DATE(created_at)
       ORDER BY date ASC
     `;
@@ -149,52 +133,31 @@ export class PaymentAnalyticsService {
     }));
   }
 
-  /**
-   * Get payment breakdown by various dimensions
-   */
   private async getPaymentBreakdown(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<PaymentBreakdown> {
-    // By payment method
     const methodQuery = `
-      SELECT 
-        payment_method as method,
-        COUNT(*) as count,
-        SUM(amount_cents) as revenue_cents
+      SELECT payment_method as method, COUNT(*) as count, SUM(amount_cents) as revenue_cents
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
-      GROUP BY payment_method
-      ORDER BY count DESC
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
+      GROUP BY payment_method ORDER BY count DESC
     `;
 
-    // By status
     const statusQuery = `
-      SELECT 
-        status,
-        COUNT(*) as count,
-        SUM(amount_cents) as revenue_cents
+      SELECT status, COUNT(*) as count, SUM(amount_cents) as revenue_cents
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
-      GROUP BY status
-      ORDER BY count DESC
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
+      GROUP BY status ORDER BY count DESC
     `;
 
-    // By venue tier (if available)
     const tierQuery = `
-      SELECT 
-        COALESCE(v.tier, 'unknown') as tier,
-        COUNT(pt.*) as count,
-        SUM(pt.amount_cents) as revenue_cents
+      SELECT COALESCE(v.tier, 'unknown') as tier, COUNT(pt.*) as count, SUM(pt.amount_cents) as revenue_cents
       FROM payment_transactions pt
       LEFT JOIN venues v ON pt.venue_id = v.venue_id
-      WHERE pt.tenant_id = $1
-        AND pt.created_at BETWEEN $2 AND $3
-      GROUP BY tier
-      ORDER BY count DESC
+      WHERE pt.tenant_id = $1 AND pt.created_at BETWEEN $2 AND $3
+      GROUP BY tier ORDER BY count DESC
     `;
 
     const [methodResult, statusResult, tierResult] = await Promise.all([
@@ -222,25 +185,20 @@ export class PaymentAnalyticsService {
     };
   }
 
-  /**
-   * Get performance metrics
-   */
   private async getPerformanceMetrics(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<PerformanceMetrics> {
     const query = `
-      SELECT 
+      SELECT
         AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) as avg_processing_ms,
         PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) as p95_processing_ms,
         PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) as p99_processing_ms,
         COUNT(CASE WHEN status = 'failed' THEN 1 END)::FLOAT / NULLIF(COUNT(*), 0) as error_rate,
         COUNT(CASE WHEN status = 'timeout' THEN 1 END)::FLOAT / NULLIF(COUNT(*), 0) as timeout_rate
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
-        AND completed_at IS NOT NULL
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 AND completed_at IS NOT NULL
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
@@ -255,9 +213,6 @@ export class PaymentAnalyticsService {
     };
   }
 
-  /**
-   * Get real-time payment activity (last hour)
-   */
   async getRealtimeActivity(tenantId: string): Promise<any> {
     const cacheKey = `analytics:realtime:${tenantId}`;
 
@@ -265,16 +220,14 @@ export class PaymentAnalyticsService {
       cacheKey,
       async () => {
         const query = `
-          SELECT 
+          SELECT
             DATE_TRUNC('minute', created_at) as minute,
             COUNT(*) as count,
             SUM(amount_cents) as revenue_cents,
             COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful
           FROM payment_transactions
-          WHERE tenant_id = $1
-            AND created_at >= NOW() - INTERVAL '1 hour'
-          GROUP BY minute
-          ORDER BY minute DESC
+          WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '1 hour'
+          GROUP BY minute ORDER BY minute DESC
         `;
 
         const result = await this.pool.query(query, [tenantId]);
@@ -286,13 +239,10 @@ export class PaymentAnalyticsService {
           successCount: parseInt(row.successful),
         }));
       },
-      60 // 1 minute cache for real-time data
+      60
     );
   }
 
-  /**
-   * Get top revenue generating venues
-   */
   async getTopVenues(
     tenantId: string,
     startDate: Date,
@@ -300,20 +250,16 @@ export class PaymentAnalyticsService {
     limit: number = 10
   ): Promise<any[]> {
     const query = `
-      SELECT 
-        v.venue_id,
-        v.name as venue_name,
+      SELECT
+        v.venue_id, v.name as venue_name,
         COUNT(pt.*) as transaction_count,
         SUM(pt.amount_cents) as total_revenue_cents,
         AVG(pt.amount_cents) as avg_transaction_cents
       FROM payment_transactions pt
       JOIN venues v ON pt.venue_id = v.venue_id
-      WHERE pt.tenant_id = $1
-        AND pt.created_at BETWEEN $2 AND $3
-        AND pt.status = 'completed'
+      WHERE pt.tenant_id = $1 AND pt.created_at BETWEEN $2 AND $3 AND pt.status = 'completed'
       GROUP BY v.venue_id, v.name
-      ORDER BY total_revenue_cents DESC
-      LIMIT $4
+      ORDER BY total_revenue_cents DESC LIMIT $4
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate, limit]);
@@ -327,28 +273,17 @@ export class PaymentAnalyticsService {
     }));
   }
 
-  /**
-   * Get payment failure analysis
-   */
   async getFailureAnalysis(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<any> {
     const query = `
-      SELECT 
-        error_code,
-        error_message,
-        payment_method,
-        COUNT(*) as count,
-        SUM(amount_cents) as failed_revenue_cents
+      SELECT error_code, error_message, payment_method, COUNT(*) as count, SUM(amount_cents) as failed_revenue_cents
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
-        AND status IN ('failed', 'declined')
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 AND status IN ('failed', 'declined')
       GROUP BY error_code, error_message, payment_method
-      ORDER BY count DESC
-      LIMIT 20
+      ORDER BY count DESC LIMIT 20
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
@@ -362,32 +297,20 @@ export class PaymentAnalyticsService {
     }));
   }
 
-  /**
-   * Export analytics data as CSV
-   */
   async exportAnalytics(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<string> {
     const query = `
-      SELECT 
-        transaction_id,
-        created_at,
-        amount_cents,
-        status,
-        payment_method,
-        venue_id,
-        user_id
+      SELECT transaction_id, created_at, amount_cents, status, payment_method, venue_id, user_id
       FROM payment_transactions
-      WHERE tenant_id = $1
-        AND created_at BETWEEN $2 AND $3
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
       ORDER BY created_at DESC
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
 
-    // Generate CSV
     const headers = ['Transaction ID', 'Date', 'Amount (cents)', 'Status', 'Method', 'Venue ID', 'User ID'];
     const rows = result.rows.map((row) => [
       row.transaction_id,
@@ -399,15 +322,9 @@ export class PaymentAnalyticsService {
       row.user_id || '',
     ]);
 
-    const csv = [
-      headers.join(','),
-      ...rows.map((row) => row.join(',')),
-    ].join('\n');
+    const csv = [headers.join(','), ...rows.map((row) => row.join(','))].join('\n');
 
-    logger.info('Analytics exported', {
-      tenantId,
-      rowCount: rows.length,
-    });
+    logger.info({ tenantId, rowCount: rows.length }, 'Analytics exported');
 
     return csv;
   }

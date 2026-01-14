@@ -179,18 +179,45 @@ export class MetricsService {
         return cached;
       }
 
-      // Get from database (always read from PostgreSQL for now)
-      // TODO: Add InfluxDB query support for reads
-      const dbMetrics = await MetricModel.getMetrics(
-        venueId,
-        metricType,
-        dateRange.startDate,
-        dateRange.endDate,
-        granularity
-      );
+      let metrics: Metric[] = [];
 
-      // Map to service type
-      const metrics = dbMetrics.map(m => this.mapDBMetricToMetric(m));
+      // Read based on backend configuration
+      if (this.metricsBackend === 'influxdb') {
+        // InfluxDB-only mode: read from InfluxDB
+        try {
+          const influxMetrics = await influxDBService.queryMetrics(
+            venueId,
+            metricType,
+            dateRange.startDate,
+            dateRange.endDate,
+            granularity
+          );
+          
+          metrics = influxMetrics.map(m => ({
+            id: m.id,
+            venueId: m.venueId,
+            metricType: m.metricType,
+            value: m.value,
+            timestamp: m.timestamp,
+            granularity: granularity || { unit: 'minute' as const, value: 1 },
+            dimensions: m.dimensions,
+            metadata: {}
+          }));
+        } catch (error) {
+          this.log.error('InfluxDB read failed, falling back to empty result', { error, venueId, metricType });
+          metrics = [];
+        }
+      } else {
+        // PostgreSQL or dual mode: read from PostgreSQL (primary source of truth for reads)
+        const dbMetrics = await MetricModel.getMetrics(
+          venueId,
+          metricType,
+          dateRange.startDate,
+          dateRange.endDate,
+          granularity
+        );
+        metrics = dbMetrics.map(m => this.mapDBMetricToMetric(m));
+      }
 
       // Cache results
       await CacheModel.set(cacheKey, metrics, CONSTANTS.CACHE_TTL.METRICS);
@@ -257,15 +284,33 @@ export class MetricsService {
     aggregation: 'sum' | 'avg' | 'min' | 'max' | 'count'
   ): Promise<number> {
     try {
-      // Always read from PostgreSQL for now
-      // TODO: Add InfluxDB query support
-      const result = await MetricModel.aggregateMetrics(
-        venueId,
-        metricType,
-        aggregation,
-        dateRange.startDate,
-        dateRange.endDate
-      );
+      let result: { [key: string]: number };
+
+      // Read based on backend configuration
+      if (this.metricsBackend === 'influxdb') {
+        // InfluxDB-only mode: aggregate from InfluxDB
+        try {
+          result = await influxDBService.aggregateMetrics(
+            venueId,
+            metricType,
+            aggregation,
+            dateRange.startDate,
+            dateRange.endDate
+          );
+        } catch (error) {
+          this.log.error('InfluxDB aggregation failed, returning 0', { error, venueId, metricType });
+          return 0;
+        }
+      } else {
+        // PostgreSQL or dual mode: aggregate from PostgreSQL (primary source of truth)
+        result = await MetricModel.aggregateMetrics(
+          venueId,
+          metricType,
+          aggregation,
+          dateRange.startDate,
+          dateRange.endDate
+        );
+      }
 
       return result[aggregation] || 0;
     } catch (error) {

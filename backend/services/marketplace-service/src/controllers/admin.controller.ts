@@ -1,9 +1,36 @@
-import { FastifyReply } from 'fastify';
+import { FastifyReply, FastifyRequest } from 'fastify';
 import { AuthRequest } from '../middleware/auth.middleware';
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
 
+// FIX #14: Default pagination constants
+const DEFAULT_LIMIT = 50;
+const MAX_LIMIT = 200;
+const MIN_BAN_DURATION_DAYS = 1;
+const MAX_BAN_DURATION_DAYS = 3650; // 10 years
+
+interface PaginationQuery {
+  limit?: string;
+  offset?: string;
+}
+
+interface BanUserBody {
+  userId: string;
+  reason: string;
+  duration?: number; // days
+}
+
 export class AdminController {
+  /**
+   * Helper to parse and validate pagination parameters
+   * FIX #14: Added pagination support
+   */
+  private parsePagination(query: PaginationQuery): { limit: number; offset: number } {
+    const limit = Math.min(Math.max(parseInt(query.limit || String(DEFAULT_LIMIT), 10) || DEFAULT_LIMIT, 1), MAX_LIMIT);
+    const offset = Math.max(parseInt(query.offset || '0', 10) || 0, 0);
+    return { limit, offset };
+  }
+
   async getStats(request: AuthRequest, reply: FastifyReply) {
     try {
       const stats = await db('marketplace_listings')
@@ -22,14 +49,34 @@ export class AdminController {
     }
   }
 
+  /**
+   * FIX #14: Added pagination support for disputes
+   */
   async getDisputes(request: AuthRequest, reply: FastifyReply) {
     try {
+      const { limit, offset } = this.parsePagination(request.query as PaginationQuery);
+
+      // Get total count
+      const [{ count }] = await db('marketplace_disputes')
+        .whereIn('status', ['open', 'investigating'])
+        .count('id as count');
+
       const disputes = await db('marketplace_disputes')
         .whereIn('status', ['open', 'investigating'])
         .orderBy('created_at', 'desc')
-        .limit(50);
+        .limit(limit)
+        .offset(offset);
 
-      reply.send({ success: true, data: disputes });
+      reply.send({
+        success: true,
+        data: disputes,
+        pagination: {
+          total: parseInt(String(count), 10),
+          limit,
+          offset,
+          hasMore: offset + limit < parseInt(String(count), 10)
+        }
+      });
     } catch (error) {
       logger.error('Error getting disputes:', error);
       throw error;
@@ -58,36 +105,106 @@ export class AdminController {
     }
   }
 
+  /**
+   * FIX #14: Added pagination support for flagged users
+   */
   async getFlaggedUsers(request: AuthRequest, reply: FastifyReply) {
     try {
+      const { limit, offset } = this.parsePagination(request.query as PaginationQuery);
+
+      // Get total count of unique flagged users
+      const [{ count }] = await db('anti_bot_violations')
+        .countDistinct('user_id as count');
+
       const flagged = await db('anti_bot_violations')
         .select('user_id', db.raw('COUNT(*) as violation_count'), db.raw('MAX(flagged_at) as last_flagged'))
         .groupBy('user_id')
         .orderBy('violation_count', 'desc')
-        .limit(50);
+        .limit(limit)
+        .offset(offset);
 
-      reply.send({ success: true, data: flagged });
+      reply.send({
+        success: true,
+        data: flagged,
+        pagination: {
+          total: parseInt(String(count), 10),
+          limit,
+          offset,
+          hasMore: offset + limit < parseInt(String(count), 10)
+        }
+      });
     } catch (error) {
       logger.error('Error getting flagged users:', error);
       throw error;
     }
   }
 
+  /**
+   * FIX #15: Added ban duration validation
+   */
   async banUser(request: AuthRequest, reply: FastifyReply) {
     try {
-      const { userId, reason, duration } = request.body as { userId: string; reason: string; duration?: number };
+      const { userId, reason, duration } = request.body as BanUserBody;
+
+      // Validate required fields
+      if (!userId || typeof userId !== 'string') {
+        return reply.status(400).send({ error: 'userId is required and must be a string' });
+      }
+
+      if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+        return reply.status(400).send({ error: 'reason is required and must be a non-empty string' });
+      }
+
+      // FIX #15: Validate duration if provided
+      if (duration !== undefined && duration !== null) {
+        if (typeof duration !== 'number' || !Number.isFinite(duration)) {
+          return reply.status(400).send({ error: 'duration must be a valid number' });
+        }
+
+        if (duration < MIN_BAN_DURATION_DAYS) {
+          return reply.status(400).send({ 
+            error: `duration must be at least ${MIN_BAN_DURATION_DAYS} day(s)` 
+          });
+        }
+
+        if (duration > MAX_BAN_DURATION_DAYS) {
+          return reply.status(400).send({ 
+            error: `duration cannot exceed ${MAX_BAN_DURATION_DAYS} days (10 years). Use no duration for permanent ban.` 
+          });
+        }
+      }
+
+      // Calculate expiry date
+      const expiresAt = duration 
+        ? new Date(Date.now() + duration * 24 * 60 * 60 * 1000) 
+        : null; // null = permanent ban
 
       await db('marketplace_blacklist').insert({
         id: require('uuid').v4(),
         user_id: userId,
-        reason,
+        reason: reason.trim(),
         banned_by: request.user?.id,
         banned_at: new Date(),
-        expires_at: duration ? new Date(Date.now() + duration * 86400000) : null,
+        expires_at: expiresAt,
         is_active: true
       });
 
-      reply.send({ success: true, message: 'User banned' });
+      logger.info('User banned', { 
+        userId, 
+        bannedBy: request.user?.id, 
+        duration: duration || 'permanent',
+        expiresAt 
+      });
+
+      reply.send({ 
+        success: true, 
+        message: 'User banned',
+        details: {
+          userId,
+          duration: duration ? `${duration} days` : 'permanent',
+          expiresAt
+        }
+      });
     } catch (error) {
       logger.error('Error banning user:', error);
       throw error;

@@ -26,7 +26,7 @@ export class CacheService {
     this.getWithBreaker = withCircuitBreaker(
       (key: string) => withRetry(
         () => this.redis.get(key),
-        { maxAttempts: 2, initialDelay: 50 }
+        { maxRetries: 2, initialDelay: 50 }
       ),
       { name: 'redis-get', timeout: 1000 }
     );
@@ -39,7 +39,7 @@ export class CacheService {
           }
           return this.redis.set(key, value);
         },
-        { maxAttempts: 2, initialDelay: 50 }
+        { maxRetries: 2, initialDelay: 50 }
       ),
       { name: 'redis-set', timeout: 1000 }
     );
@@ -47,7 +47,7 @@ export class CacheService {
     this.delWithBreaker = withCircuitBreaker(
       (key: string) => withRetry(
         () => this.redis.del(key),
-        { maxAttempts: 2, initialDelay: 50 }
+        { maxRetries: 2, initialDelay: 50 }
       ),
       { name: 'redis-del', timeout: 1000 }
     );
@@ -55,7 +55,7 @@ export class CacheService {
     this.existsWithBreaker = withCircuitBreaker(
       (key: string) => withRetry(
         () => this.redis.exists(key),
-        { maxAttempts: 2, initialDelay: 50 }
+        { maxRetries: 2, initialDelay: 50 }
       ),
       { name: 'redis-exists', timeout: 1000 }
     );
@@ -63,7 +63,7 @@ export class CacheService {
     this.scanWithBreaker = withCircuitBreaker(
       (cursor: string, pattern: string, count: number) => withRetry(
         () => this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', count),
-        { maxAttempts: 2, initialDelay: 50 }
+        { maxRetries: 2, initialDelay: 50 }
       ),
       { name: 'redis-scan', timeout: 2000 }
     );

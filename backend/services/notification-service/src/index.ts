@@ -7,11 +7,19 @@ import { initializeMongoDB, closeMongoDB } from './config/mongodb';
 import { rabbitmqService } from './config/rabbitmq';
 import { eventHandler } from './events/event-handler';
 import { FastifyInstance } from 'fastify';
+// AUDIT FIX CFG-H1: Import config validation
+import { assertValidConfig } from './config/validate';
+// AUDIT FIX HC-H1: Import startup marker
+import { markStartupComplete } from './routes/health.routes';
 
 let server: FastifyInstance | null = null;
 
 async function startServer() {
   try {
+    // AUDIT FIX CFG-H1: Validate configuration before starting
+    logger.info('Validating configuration...');
+    assertValidConfig();
+
     logger.info('Running database migrations...');
     await db.migrate.latest();
 
@@ -32,6 +40,9 @@ async function startServer() {
       port: env.PORT,
       host: '0.0.0.0',
     });
+
+    // AUDIT FIX HC-H1: Mark startup complete for /health/startup probe
+    markStartupComplete();
 
     logger.info(`${env.SERVICE_NAME} is running on port ${env.PORT}`);
     logger.info(`Environment: ${env.NODE_ENV}`);

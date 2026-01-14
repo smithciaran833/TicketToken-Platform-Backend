@@ -2,6 +2,26 @@ import { getPool } from '../config/database';
 import crypto from 'crypto';
 import logger from '../utils/logger';
 
+/**
+ * OFFLINE CACHE SERVICE
+ * 
+ * Generates offline validation caches for events to enable
+ * scanning when network connectivity is unavailable.
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service reads tickets/events data and updates tickets.qr_hmac_secret.
+ * This is intentional because:
+ * 
+ * 1. Offline cache generation is a batch operation run before events start
+ * 2. The JOIN queries are needed to gather all ticket data efficiently
+ * 3. The qr_hmac_secret UPDATE is a one-time cryptographic operation
+ * 4. Breaking into service calls would add latency to time-critical offline sync
+ * 5. The offline_validation_cache table is scanning-service owned
+ * 
+ * Future: Consider adding ticketServiceClient.getTicketsForOfflineCache() method
+ * that returns all necessary data in one call with optional HMAC secret generation.
+ */
+
 interface TicketData {
   ticketNumber: string;
   status: string;

@@ -1,14 +1,13 @@
 import { createCache } from '@tickettoken/shared';
+import { config } from '../config';
 
-const serviceName = process.env.SERVICE_NAME || 'integration-service';
-
-// Initialize cache with service-specific config
+// Initialize cache with service-specific config from centralized config
 const cacheSystem = createCache({
   redis: {
-    host: process.env.REDIS_HOST || 'redis',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD,
-    keyPrefix: `${serviceName}:`,
+    host: config.redis.host,
+    port: config.redis.port,
+    password: config.redis.password,
+    keyPrefix: `${config.server.serviceName}:`,
   },
   ttls: {
     session: 5 * 60,

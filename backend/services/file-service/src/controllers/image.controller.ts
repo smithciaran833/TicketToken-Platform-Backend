@@ -1,19 +1,24 @@
-import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import sharp from 'sharp';
 import { fileModel } from '../models/file.model';
 import { storageService } from '../storage/storage.service';
 import { logger } from '../utils/logger';
+import { getTenantId } from '../middleware/tenant-context';
 
 export class ImageController {
   async resize(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id } = request.params as { id: string };
       const { width, height, fit } = request.body as any;
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -36,7 +41,7 @@ export class ImageController {
       });
       
     } catch (error: any) {
-      logger.error('Resize failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Resize failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -45,10 +50,15 @@ export class ImageController {
     try {
       const { id } = request.params as { id: string };
       const { x, y, width, height } = request.body as any;
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -66,7 +76,7 @@ export class ImageController {
       });
       
     } catch (error: any) {
-      logger.error('Crop failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Crop failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -75,10 +85,15 @@ export class ImageController {
     try {
       const { id } = request.params as { id: string };
       const { angle } = request.body as { angle: number };
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -97,7 +112,7 @@ export class ImageController {
       });
       
     } catch (error: any) {
-      logger.error('Rotate failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Rotate failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -105,11 +120,16 @@ export class ImageController {
   async watermark(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id } = request.params as { id: string };
-      const { text, position } = request.body as any;
+      const { text, position: _position } = request.body as any;
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -124,7 +144,7 @@ export class ImageController {
                 fill="white" 
                 fill-opacity="0.5"
                 text-anchor="middle"
-                transform="rotate(-45 ${metadata.width!/2} ${metadata.height!/2})">
+                transform="rotate(-45 ${(metadata.width ?? 0)/2} ${(metadata.height ?? 0)/2})">
             ${text || 'WATERMARK'}
           </text>
         </svg>
@@ -146,7 +166,7 @@ export class ImageController {
       });
       
     } catch (error: any) {
-      logger.error('Watermark failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Watermark failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -154,10 +174,15 @@ export class ImageController {
   async getMetadata(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id } = request.params as { id: string };
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -176,7 +201,7 @@ export class ImageController {
       });
       
     } catch (error: any) {
-      logger.error('Get metadata failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Get metadata failed');
       reply.status(500).send({ error: error.message });
     }
   }

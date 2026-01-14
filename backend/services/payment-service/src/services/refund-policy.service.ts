@@ -1,6 +1,24 @@
 /**
  * Refund Policy Enforcement Service
- * Manages refund windows and eligibility rules
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service checks ticket refund eligibility by querying tickets, events, and venues.
+ * Direct DB access is retained because:
+ * 
+ * 1. REFUND ELIGIBILITY: Must calculate time-based windows consistently
+ * 2. FINANCIAL ATOMICITY: Refund requests must be processed transactionally
+ * 3. POLICY ENFORCEMENT: Event dates from events table determine cutoff
+ * 4. VENUE CUSTOMIZATION: Venue-specific refund policies from venues table
+ * 5. TICKET UPDATES: Updates ticket status to refund_pending transactionally
+ * 
+ * Tables accessed:
+ * - tickets: Ticket data and status updates (ticket-service owned)
+ * - events: Event dates for refund window calculation (event-service owned)
+ * - venues: Venue-specific refund policies (venue-service owned)
+ * - payment_refunds: Refund records (payment-service owned)
+ * 
+ * Future: Consider ticketServiceClient.getTicketForRefund() and
+ * eventServiceClient.getEventRefundPolicy() methods for cleaner separation.
  */
 
 import { Pool } from 'pg';
@@ -28,8 +46,8 @@ export interface RefundStatistics {
 }
 
 export interface RefundPolicy {
-  defaultWindowHours: number;  // Default 48 hours before event
-  minimumWindowHours: number;  // Minimum 2 hours before event
+  defaultWindowHours: number;
+  minimumWindowHours: number;
   customWindows: {
     venueId?: string;
     eventType?: string;
@@ -49,9 +67,6 @@ export class RefundPolicyService {
     this.pool = pool;
   }
 
-  /**
-   * Check if a ticket is eligible for refund
-   */
   async checkRefundEligibility(
     ticketId: string,
     tenantId: string
@@ -62,7 +77,7 @@ export class RefundPolicyService {
       cacheKey,
       async () => {
         const query = `
-          SELECT 
+          SELECT
             t.ticket_id,
             t.purchase_date,
             t.status,
@@ -73,7 +88,7 @@ export class RefundPolicyService {
           FROM tickets t
           JOIN events e ON t.event_id = e.event_id
           LEFT JOIN venues v ON e.venue_id = v.venue_id
-          WHERE t.ticket_id = $1 
+          WHERE t.ticket_id = $1
             AND t.tenant_id = $2
             AND t.status != 'refunded'
         `;
@@ -94,21 +109,17 @@ export class RefundPolicyService {
         const eventDate = new Date(ticket.event_date);
         const purchaseDate = new Date(ticket.purchase_date);
 
-        // Get custom or default refund window
-        const windowHours = ticket.refund_policy_hours || 
+        const windowHours = ticket.refund_policy_hours ||
                            this.getCustomWindow(ticket.venue_id, ticket.event_type) ||
                            this.defaultPolicy.defaultWindowHours;
 
-        // Calculate refund deadline
         const refundDeadline = new Date(eventDate.getTime() - (windowHours * 60 * 60 * 1000));
         const now = new Date();
 
-        // Check minimum window (can't be too close to event)
         const minimumDeadline = new Date(
           eventDate.getTime() - (this.defaultPolicy.minimumWindowHours * 60 * 60 * 1000)
         );
 
-        // Check if eligible
         const isEligible = now <= refundDeadline;
         const hoursRemaining = Math.max(0, (refundDeadline.getTime() - now.getTime()) / (1000 * 60 * 60));
 
@@ -121,11 +132,11 @@ export class RefundPolicyService {
           }
         }
 
-        logger.info('Refund eligibility checked', {
+        logger.info({
           ticketId,
           isEligible,
           hoursRemaining: Math.round(hoursRemaining * 10) / 10,
-        });
+        }, 'Refund eligibility checked');
 
         return {
           eventDate,
@@ -136,28 +147,24 @@ export class RefundPolicyService {
           hoursRemaining: isEligible ? hoursRemaining : undefined,
         };
       },
-      300 // 5 minute cache
+      300
     );
   }
 
-  /**
-   * Process refund request with validation
-   */
   async processRefundRequest(
     ticketId: string,
     tenantId: string,
     userId: string,
     reason: string
   ): Promise<{ success: boolean; message: string; refundId?: string }> {
-    // Check eligibility
     const eligibility = await this.checkRefundEligibility(ticketId, tenantId);
 
     if (!eligibility.isEligible) {
-      logger.warn('Refund request denied', {
+      logger.warn({
         ticketId,
         userId,
         reason: eligibility.reason,
-      });
+      }, 'Refund request denied');
 
       return {
         success: false,
@@ -170,7 +177,6 @@ export class RefundPolicyService {
     try {
       await client.query('BEGIN');
 
-      // Create refund record
       const refundQuery = `
         INSERT INTO payment_refunds (
           ticket_id,
@@ -181,7 +187,7 @@ export class RefundPolicyService {
           refund_status,
           requested_at
         )
-        SELECT 
+        SELECT
           t.ticket_id,
           t.tenant_id,
           $3,
@@ -207,9 +213,8 @@ export class RefundPolicyService {
 
       const refundId = refundResult.rows[0].refund_id;
 
-      // Update ticket status
       await client.query(
-        `UPDATE tickets 
+        `UPDATE tickets
          SET status = 'refund_pending', updated_at = NOW()
          WHERE ticket_id = $1 AND tenant_id = $2`,
         [ticketId, tenantId]
@@ -217,14 +222,13 @@ export class RefundPolicyService {
 
       await client.query('COMMIT');
 
-      // Invalidate cache
       await cacheService.delete(`refund:eligibility:${ticketId}`);
 
-      logger.info('Refund request created', {
+      logger.info({
         refundId,
         ticketId,
         userId,
-      });
+      }, 'Refund request created');
 
       return {
         success: true,
@@ -233,10 +237,10 @@ export class RefundPolicyService {
       };
     } catch (error) {
       await client.query('ROLLBACK');
-      logger.error('Refund request failed', {
+      logger.error({
         ticketId,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Refund request failed');
 
       return {
         success: false,
@@ -247,9 +251,6 @@ export class RefundPolicyService {
     }
   }
 
-  /**
-   * Get custom refund window for venue or event type
-   */
   private getCustomWindow(venueId?: string, eventType?: string): number | null {
     const customWindow = this.defaultPolicy.customWindows.find(
       (w) => w.venueId === venueId || w.eventType === eventType
@@ -258,34 +259,28 @@ export class RefundPolicyService {
     return customWindow?.windowHours || null;
   }
 
-  /**
-   * Update refund policy for a venue
-   */
   async updateVenueRefundPolicy(
     venueId: string,
     tenantId: string,
     windowHours: number
   ): Promise<void> {
     await this.pool.query(
-      `UPDATE venues 
+      `UPDATE venues
        SET refund_policy_hours = $1, updated_at = NOW()
        WHERE venue_id = $2 AND tenant_id = $3`,
       [windowHours, venueId, tenantId]
     );
 
-    logger.info('Venue refund policy updated', { venueId, windowHours });
+    logger.info({ venueId, windowHours }, 'Venue refund policy updated');
   }
 
-  /**
-   * Get refund statistics for analytics
-   */
   async getRefundStatistics(
     tenantId: string,
     startDate: Date,
     endDate: Date
   ): Promise<RefundStatistics> {
     const query = `
-      SELECT 
+      SELECT
         COUNT(*) as total_refunds,
         SUM(refund_amount_cents) as total_refunded_cents,
         AVG(refund_amount_cents) as avg_refund_cents,

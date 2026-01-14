@@ -1,15 +1,25 @@
 import { FastifyError, FastifyRequest, FastifyReply } from 'fastify';
 import { logger } from '../utils/logger';
 import { ValidationError } from '../utils/validators';
+import { DomainError } from '../errors/domain-errors';
+
+const isProduction = process.env.NODE_ENV === 'production';
 
 export async function errorHandler(
-  error: FastifyError | ValidationError,
+  error: FastifyError | ValidationError | DomainError,
   request: FastifyRequest,
   reply: FastifyReply
 ) {
+  // CEC2: Extract error code if available
+  const errorCode = (error as DomainError).code || 
+                    (error as FastifyError).code ||
+                    'UNKNOWN_ERROR';
+
+  // GEH5: Only include stack trace in non-production environments
   logger.error('Unhandled error', {
     error: error.message,
-    stack: error.stack,
+    code: errorCode,
+    ...(isProduction ? {} : { stack: error.stack }),
     url: request.url,
     method: request.method,
     requestId: request.id,

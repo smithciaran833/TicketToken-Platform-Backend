@@ -1,4 +1,4 @@
-import axios, { AxiosInstance } from 'axios';
+import axios from 'axios';
 import { credentialEncryptionService } from '../credential-encryption.service';
 
 export interface MailchimpContact {
@@ -17,12 +17,14 @@ export interface MailchimpSyncResult {
 }
 
 export class MailchimpSyncService {
-  private client: AxiosInstance | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private client: any = null;
 
   /**
    * Initialize Mailchimp API client with credentials
    */
-  private async initializeClient(venueId: string): Promise<AxiosInstance> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async initializeClient(venueId: string): Promise<any> {
     if (this.client) {
       return this.client;
     }
@@ -262,7 +264,8 @@ export class MailchimpSyncService {
    * Wait for batch operation to complete
    */
   private async waitForBatchCompletion(
-    client: AxiosInstance,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    client: any,
     batchId: string,
     maxWaitTime: number = 30000
   ): Promise<void> {

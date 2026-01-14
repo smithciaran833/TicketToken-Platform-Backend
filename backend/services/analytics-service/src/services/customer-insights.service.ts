@@ -1,6 +1,36 @@
+/**
+ * Customer Insights Service
+ * 
+ * AUDIT FIX: MT-1, CACHE-2 - Added tenant_id to all cache keys
+ * to prevent cross-tenant data leakage
+ * 
+ * PHASE 5c BYPASS EXCEPTION - READ-REPLICA PATTERN:
+ * Analytics-service is a read-only reporting layer that computes customer
+ * intelligence metrics. Direct DB access is retained because:
+ * 
+ * 1. READ-ONLY: All queries are SELECT for customer analytics, no writes to source
+ * 2. ANALYTICS DOMAIN: Customer segmentation/RFM/CLV is this service's purpose
+ * 3. COMPLEX AGGREGATIONS: Cohort analysis and RFM scoring need direct SQL
+ * 4. CACHING: Results are cached in analytics-owned tables for fast retrieval
+ * 5. ISOLATION: Should use read replica to avoid load on primary databases
+ * 
+ * Tables accessed (READ-ONLY):
+ * - users: Customer profile data (auth-service owned)
+ * - orders: Purchase history for RFM scores (order-service owned)
+ * - events: Event info for preferences (event-service owned)
+ * 
+ * Analytics-owned tables (READ/WRITE):
+ * - customer_rfm_scores: Computed RFM metrics
+ * - customer_segments: Aggregated segment data
+ * - customer_lifetime_value: CLV predictions
+ * 
+ * RECOMMENDED: Configure to use read replica connection string in production.
+ */
+
 import { getDb } from '../config/database';
 import { logger } from '../utils/logger';
 import Redis from 'ioredis';
+import { BadRequestError } from '../errors';
 
 const redis = new Redis({
   host: process.env.REDIS_HOST || 'localhost',
@@ -16,6 +46,26 @@ redis.on('error', (err) => {
   logger.error('Redis connection error:', err);
 });
 
+// =============================================================================
+// AUDIT FIX: MT-1, CACHE-2 - Tenant-Isolated Cache Key Generation
+// =============================================================================
+
+/**
+ * Generate a cache key with tenant isolation
+ * Format: analytics:{tenantId}:{keyType}:{resourceId}
+ */
+function makeCacheKey(tenantId: string, keyType: string, resourceId: string): string {
+  if (!tenantId) {
+    throw new BadRequestError('Tenant ID is required for cache operations');
+  }
+  // Validate inputs to prevent cache key injection
+  const safePattern = /^[a-zA-Z0-9_-]+$/;
+  if (!safePattern.test(tenantId) || !safePattern.test(keyType) || !safePattern.test(resourceId)) {
+    throw new BadRequestError('Invalid characters in cache key components');
+  }
+  return `analytics:${tenantId}:${keyType}:${resourceId}`;
+}
+
 export class CustomerInsightsService {
   private static instance: CustomerInsightsService;
   private log = logger.child({ component: 'CustomerInsightsService' });
@@ -29,13 +79,20 @@ export class CustomerInsightsService {
 
   /**
    * Get customer profile with RFM scores from cache
+   * 
+   * AUDIT FIX: MT-1 - Added required tenantId parameter
    */
-  async getCustomerProfile(userId: string) {
+  async getCustomerProfile(userId: string, tenantId: string) {
+    // AUDIT FIX: MT-1 - Require tenant context
+    if (!tenantId) {
+      throw new BadRequestError('Tenant ID is required');
+    }
+    
     try {
       const db = getDb();
       
-      // Check Redis cache first
-      const cacheKey = `customer_profile:${userId}`;
+      // AUDIT FIX: CACHE-2 - Cache key now includes tenant_id
+      const cacheKey = makeCacheKey(tenantId, 'customer_profile', userId);
       const cached = await redis.get(cacheKey);
       if (cached) {
         this.log.debug('Customer profile cache hit', { userId });
@@ -120,13 +177,19 @@ export class CustomerInsightsService {
 
   /**
    * Get customer segments from cache table
+   * 
+   * AUDIT FIX: MT-1 - Added required tenantId parameter
    */
-  async segmentCustomers(venueId: string) {
+  async segmentCustomers(venueId: string, tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestError('Tenant ID is required');
+    }
+    
     try {
       const db = getDb();
 
-      // Check Redis cache first
-      const cacheKey = `customer_segments:${venueId}`;
+      // AUDIT FIX: CACHE-2 - Cache key now includes tenant_id
+      const cacheKey = makeCacheKey(tenantId, 'customer_segments', venueId);
       const cached = await redis.get(cacheKey);
       if (cached) {
         this.log.debug('Customer segments cache hit', { venueId });
@@ -243,13 +306,19 @@ export class CustomerInsightsService {
 
   /**
    * Get event preferences for a customer
+   * 
+   * AUDIT FIX: MT-1 - Added required tenantId parameter
    */
-  async getEventPreferences(userId: string) {
+  async getEventPreferences(userId: string, tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestError('Tenant ID is required');
+    }
+    
     try {
       const db = getDb();
 
-      // Check Redis cache
-      const cacheKey = `event_preferences:${userId}`;
+      // AUDIT FIX: CACHE-2 - Cache key now includes tenant_id
+      const cacheKey = makeCacheKey(tenantId, 'event_preferences', userId);
       const cached = await redis.get(cacheKey);
       if (cached) {
         return JSON.parse(cached);
@@ -403,13 +472,19 @@ export class CustomerInsightsService {
 
   /**
    * Get customer lifetime value predictions
+   * 
+   * AUDIT FIX: MT-1 - Added required tenantId parameter
    */
-  async getCustomerCLV(customerId: string) {
+  async getCustomerCLV(customerId: string, tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestError('Tenant ID is required');
+    }
+    
     try {
       const db = getDb();
 
-      // Check cache first
-      const cacheKey = `customer_clv:${customerId}`;
+      // AUDIT FIX: CACHE-2 - Cache key now includes tenant_id
+      const cacheKey = makeCacheKey(tenantId, 'customer_clv', customerId);
       const cached = await redis.get(cacheKey);
       if (cached) {
         return JSON.parse(cached);
@@ -500,26 +575,66 @@ export class CustomerInsightsService {
 
   /**
    * Clear cache for a customer or venue
+   * 
+   * AUDIT FIX: MT-1 - Added required tenantId parameter for tenant isolation
    */
-  async clearCache(type: 'customer' | 'venue', id: string) {
+  async clearCache(type: 'customer' | 'venue', id: string, tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestError('Tenant ID is required');
+    }
+    
     try {
       if (type === 'customer') {
+        // AUDIT FIX: CACHE-2 - Use tenant-prefixed cache keys
         const keys = [
-          `customer_profile:${id}`,
-          `event_preferences:${id}`,
-          `customer_clv:${id}`,
+          makeCacheKey(tenantId, 'customer_profile', id),
+          makeCacheKey(tenantId, 'event_preferences', id),
+          makeCacheKey(tenantId, 'customer_clv', id),
         ];
         await redis.del(...keys);
       } else if (type === 'venue') {
         const keys = [
-          `customer_segments:${id}`,
+          makeCacheKey(tenantId, 'customer_segments', id),
         ];
         await redis.del(...keys);
       }
       
-      this.log.info('Cache cleared', { type, id });
+      this.log.info('Cache cleared', { type, id, tenantId });
     } catch (error) {
-      this.log.error('Failed to clear cache', { error, type, id });
+      this.log.error('Failed to clear cache', { error, type, id, tenantId });
+    }
+  }
+  
+  /**
+   * Clear all cache for a tenant (for tenant offboarding or cache reset)
+   * Uses pattern matching to delete all tenant keys
+   * 
+   * AUDIT FIX: MT-1 - Tenant-scoped cache invalidation
+   */
+  async clearTenantCache(tenantId: string) {
+    if (!tenantId) {
+      throw new BadRequestError('Tenant ID is required');
+    }
+    
+    try {
+      const pattern = `analytics:${tenantId}:*`;
+      let cursor = '0';
+      let totalDeleted = 0;
+      
+      do {
+        const [newCursor, keys] = await redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+        cursor = newCursor;
+        
+        if (keys.length > 0) {
+          await redis.del(...keys);
+          totalDeleted += keys.length;
+        }
+      } while (cursor !== '0');
+      
+      this.log.info('Tenant cache cleared', { tenantId, keysDeleted: totalDeleted });
+    } catch (error) {
+      this.log.error('Failed to clear tenant cache', { error, tenantId });
+      throw error;
     }
   }
 }

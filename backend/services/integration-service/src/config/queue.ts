@@ -16,11 +16,11 @@ export const queues = {
 
 export async function initializeQueues() {
   Object.entries(queues).forEach(([priority, queue]) => {
-    queue.on('completed', (job) => {
+    queue.on('completed', (job: { id: string | number }) => {
       logger.info(`Job completed in ${priority} queue`, { jobId: job.id });
     });
 
-    queue.on('failed', (job, err) => {
+    queue.on('failed', (job: { id: string | number }, err: Error) => {
       logger.error(`Job failed in ${priority} queue`, { jobId: job.id, error: err.message });
     });
   });

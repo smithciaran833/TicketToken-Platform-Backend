@@ -212,9 +212,9 @@ export class OAuthService {
           userId = userResult.rows[0].id;
 
           await client.query(
-            `INSERT INTO oauth_connections (id, user_id, provider, provider_user_id, profile_data, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-            [crypto.randomUUID(), userId, profile.provider, profile.id, JSON.stringify(profile)]
+            `INSERT INTO oauth_connections (id, user_id, tenant_id, provider, provider_user_id, profile_data, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [crypto.randomUUID(), userId, finalTenantId, profile.provider, profile.id, JSON.stringify(profile)]
           );
         } else {
           userId = crypto.randomUUID();
@@ -238,9 +238,9 @@ export class OAuthService {
           );
 
           await client.query(
-            `INSERT INTO oauth_connections (id, user_id, provider, provider_user_id, profile_data, created_at, updated_at)
-             VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-            [crypto.randomUUID(), userId, profile.provider, profile.id, JSON.stringify(profile)]
+            `INSERT INTO oauth_connections (id, user_id, tenant_id, provider, provider_user_id, profile_data, created_at, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+            [crypto.randomUUID(), userId, finalTenantId, profile.provider, profile.id, JSON.stringify(profile)]
           );
         }
       }
@@ -260,13 +260,13 @@ export class OAuthService {
     }
   }
 
-  private async createSession(userId: string, ipAddress?: string, userAgent?: string, tenantId?: string): Promise<string> {
+  private async createSession(userId: string, tenantId: string, ipAddress?: string, userAgent?: string): Promise<string> {
     const sessionId = crypto.randomUUID();
 
     await pool.query(
-      `INSERT INTO user_sessions (id, user_id, started_at, ip_address, user_agent, metadata)
-       VALUES ($1, $2, CURRENT_TIMESTAMP, $3, $4, $5)`,
-      [sessionId, userId, ipAddress, userAgent, JSON.stringify({})]
+      `INSERT INTO user_sessions (id, user_id, tenant_id, started_at, ip_address, user_agent, metadata)
+       VALUES ($1, $2, $3, CURRENT_TIMESTAMP, $4, $5, $6)`,
+      [sessionId, userId, tenantId, ipAddress, userAgent, JSON.stringify({})]
     );
 
     // Audit session creation
@@ -287,7 +287,7 @@ export class OAuthService {
     }
 
     const user = await this.findOrCreateUser(profile, tenantId);
-    const sessionId = await this.createSession(user.id, ipAddress, userAgent, user.tenant_id);
+    const sessionId = await this.createSession(user.id, user.tenant_id, ipAddress, userAgent);
     const tokens = await this.jwtService.generateTokenPair(user);
 
     return {
@@ -354,9 +354,9 @@ export class OAuthService {
     }
 
     await pool.query(
-      `INSERT INTO oauth_connections (id, user_id, provider, provider_user_id, profile_data, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-      [crypto.randomUUID(), userId, provider, profile.id, JSON.stringify(profile)]
+      `INSERT INTO oauth_connections (id, user_id, tenant_id, provider, provider_user_id, profile_data, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+      [crypto.randomUUID(), userId, userTenantId, provider, profile.id, JSON.stringify(profile)]
     );
 
     return {

@@ -1,6 +1,16 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { createHmac, timingSafeEqual, randomBytes } from 'crypto';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+// Import new S2S auth with JWT tokens, circuit breaker, per-service credentials
+import { 
+  serviceAuth, 
+  circuitBreaker, 
+  generateServiceToken,
+  computeBodyHash,
+  SERVICE_CREDENTIALS,
+  CircuitBreakerState
+} from '../config/service-auth';
 
 interface ServiceResponse<T = any> {
   success: boolean;
@@ -30,6 +40,109 @@ class InterServiceClientClass {
     this.startHealthChecks();
   }
 
+  /**
+   * SECURITY: Generate HMAC signature for service-to-service authentication
+   * The signature includes: service name, timestamp, URL, and optionally request body
+   * This prevents replay attacks and ensures request integrity
+   */
+  private generateSignature(
+    serviceName: string,
+    timestamp: string,
+    url: string,
+    body?: string
+  ): string {
+    const secret = config.internalServiceSecret;
+    if (!secret) {
+      this.log.warn('INTERNAL_SERVICE_SECRET not configured - S2S auth disabled');
+      return '';
+    }
+
+    // Include body hash in signature to prevent tampering
+    const bodyHash = body ? createHmac('sha256', secret).update(body).digest('hex') : '';
+    const payload = `${serviceName}:${timestamp}:${url}:${bodyHash}`;
+    
+    return createHmac('sha256', secret).update(payload).digest('hex');
+  }
+
+  /**
+   * SECURITY: Timing-safe comparison of HMAC signatures
+   * Uses crypto.timingSafeEqual to prevent timing attacks
+   * 
+   * IMPORTANT: Regular === comparison leaks timing information that attackers
+   * can use to guess the correct signature byte-by-byte
+   */
+  public verifySignature(
+    expectedSignature: string,
+    actualSignature: string
+  ): boolean {
+    if (!expectedSignature || !actualSignature) {
+      return false;
+    }
+
+    try {
+      const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+      const actualBuffer = Buffer.from(actualSignature, 'hex');
+
+      // SECURITY: Length check must happen before timingSafeEqual
+      // timingSafeEqual throws if lengths differ, so we return false instead
+      if (expectedBuffer.length !== actualBuffer.length) {
+        return false;
+      }
+
+      return timingSafeEqual(expectedBuffer, actualBuffer);
+    } catch (error) {
+      this.log.error('Signature verification error', { error });
+      return false;
+    }
+  }
+
+  /**
+   * SECURITY: Validate incoming service-to-service request signature
+   * Checks timestamp to prevent replay attacks (5 minute window)
+   */
+  public validateIncomingSignature(
+    serviceName: string,
+    timestamp: string,
+    url: string,
+    providedSignature: string,
+    body?: string
+  ): boolean {
+    // Check timestamp freshness (prevent replay attacks)
+    const requestTime = parseInt(timestamp, 10);
+    const now = Date.now();
+    const maxAge = 5 * 60 * 1000; // 5 minutes
+
+    if (isNaN(requestTime) || Math.abs(now - requestTime) > maxAge) {
+      this.log.warn('S2S request timestamp out of range', {
+        serviceName,
+        requestTime,
+        now,
+        diff: Math.abs(now - requestTime)
+      });
+      return false;
+    }
+
+    const expectedSignature = this.generateSignature(serviceName, timestamp, url, body);
+    
+    if (!expectedSignature) {
+      // No secret configured - allow in development, deny in production
+      if (config.env === 'production') {
+        this.log.error('S2S auth required in production but secret not configured');
+        return false;
+      }
+      return true;
+    }
+
+    return this.verifySignature(expectedSignature, providedSignature);
+  }
+
+  /**
+   * Generate a nonce for request uniqueness
+   */
+  private generateNonce(): string {
+    return randomBytes(16).toString('hex');
+  }
+
   private initializeClients() {
     const services = ['auth', 'event', 'payment', 'notification'];
 
@@ -43,32 +156,89 @@ class InterServiceClientClass {
         }
       });
 
-      // Request interceptor to add tracing headers
+      // Request interceptor to add JWT tokens and circuit breaker
       client.interceptors.request.use(
-        (config) => {
-          // Add service headers
-          const additionalHeaders = {
+        (requestConfig) => {
+          // CIRCUIT BREAKER: Check if service requests are allowed
+          const fullServiceName = `${service}-service`;
+          if (!circuitBreaker.allowRequest(fullServiceName)) {
+            const state = circuitBreaker.getState(fullServiceName);
+            this.log.warn('Circuit breaker OPEN - request blocked', {
+              service: fullServiceName,
+              state: state.state,
+              nextAttempt: state.nextAttempt
+            });
+            throw new Error(`Circuit breaker OPEN for ${fullServiceName}`);
+          }
+
+          const timestamp = Date.now().toString();
+          const nonce = this.generateNonce();
+          const fullUrl = `${requestConfig.baseURL}${requestConfig.url}`;
+          const bodyString = requestConfig.data ? JSON.stringify(requestConfig.data) : '';
+          
+          // SECURITY FIX: Generate body hash for integrity verification
+          const bodyHash = bodyString ? computeBodyHash(bodyString) : undefined;
+          
+          // SECURITY FIX: Generate short-lived JWT token for S2S auth
+          // Fixes: "Short-lived tokens - Static API key"
+          // Fixes: "Audience validated - No audience validation"
+          // Fixes: "Request body in signature"
+          let jwtToken: string | undefined;
+          try {
+            jwtToken = generateServiceToken(fullServiceName, {
+              subject: requestConfig.url,
+              bodyHash,
+              expiresIn: 60  // 60 second expiry
+            });
+          } catch (err) {
+            this.log.warn('Failed to generate JWT token, falling back to HMAC', { error: err });
+          }
+          
+          // Also generate legacy HMAC signature for backwards compatibility
+          const signature = this.generateSignature(
+            'ticket-service',
+            timestamp,
+            fullUrl,
+            bodyString
+          );
+
+          // Add service headers with JWT and HMAC authentication
+          const additionalHeaders: Record<string, string> = {
             'X-Service': 'ticket-service',
             'X-Target-Service': service,
-            'X-Request-Id': Math.random().toString(36).substr(2, 9)
+            'X-Request-Id': this.generateNonce().substring(0, 16),
+            'X-Timestamp': timestamp,
+            'X-Nonce': nonce,
           };
 
-          config.headers = {
-            ...config.headers,
+          // Add JWT Bearer token (preferred)
+          if (jwtToken) {
+            additionalHeaders['Authorization'] = `Bearer ${jwtToken}`;
+          }
+
+          // Also add legacy signature for services not yet upgraded
+          if (signature) {
+            additionalHeaders['X-Signature'] = signature;
+          }
+
+          requestConfig.headers = {
+            ...requestConfig.headers,
             ...additionalHeaders
           } as any;
 
-          // Log outgoing request
+          // Log outgoing request (without sensitive data)
           this.log.debug('Outgoing request', {
             service,
-            method: config.method,
-            url: config.url
+            method: requestConfig.method,
+            url: requestConfig.url,
+            hasJwt: !!jwtToken,
+            hasSignature: !!signature
           });
 
           // Record request start time
-          (config as any).metadata = { startTime: Date.now() };
+          (requestConfig as any).metadata = { startTime: Date.now(), service: fullServiceName };
 
-          return config;
+          return requestConfig;
         },
         (error) => {
           this.log.error('Request interceptor error:', error);
@@ -76,16 +246,21 @@ class InterServiceClientClass {
         }
       );
 
-      // Response interceptor for logging and error handling
+      // Response interceptor for logging, error handling, and circuit breaker
       client.interceptors.response.use(
         (response) => {
-          const duration = Date.now() - ((response.config as any).metadata?.startTime || Date.now());
+          const metadata = (response.config as any).metadata || {};
+          const duration = Date.now() - (metadata.startTime || Date.now());
+          const fullServiceName = metadata.service || `${service}-service`;
 
           this.log.debug('Response received', {
-            service,
+            service: fullServiceName,
             status: response.status,
             duration
           });
+
+          // CIRCUIT BREAKER: Record success
+          circuitBreaker.recordSuccess(fullServiceName);
 
           // Mark service as healthy
           this.healthStatus.set(service, true);
@@ -93,18 +268,21 @@ class InterServiceClientClass {
           return response;
         },
         (error: AxiosError) => {
-          const duration = Date.now() - ((error.config as any)?.metadata?.startTime || Date.now());
+          const metadata = (error.config as any)?.metadata || {};
+          const duration = Date.now() - (metadata.startTime || Date.now());
+          const fullServiceName = metadata.service || `${service}-service`;
 
           this.log.error('Service request failed', {
-            service,
+            service: fullServiceName,
             error: error.message,
             status: error.response?.status,
             duration,
             url: error.config?.url
           });
 
-          // Mark service as unhealthy on certain errors
+          // CIRCUIT BREAKER: Record failure for 5xx errors and network errors
           if (!error.response || error.response.status >= 500) {
+            circuitBreaker.recordFailure(fullServiceName, error);
             this.healthStatus.set(service, false);
           }
 
@@ -300,6 +478,42 @@ class InterServiceClientClass {
 
   getHealthStatus(service: string): boolean {
     return this.healthStatus.get(service) || false;
+  }
+
+  // ==========================================================================
+  // CIRCUIT BREAKER METHODS - Fixes "Circuit breaker - Health tracking, no breaker"
+  // ==========================================================================
+
+  /**
+   * Get circuit breaker state for a specific service
+   */
+  getCircuitState(service: string): CircuitBreakerState {
+    const fullServiceName = service.endsWith('-service') ? service : `${service}-service`;
+    return circuitBreaker.getState(fullServiceName);
+  }
+
+  /**
+   * Get all circuit breaker states (for monitoring/health endpoints)
+   */
+  getAllCircuitStates(): Record<string, CircuitBreakerState> {
+    return circuitBreaker.getAllStates();
+  }
+
+  /**
+   * Manually reset a circuit breaker (admin operation)
+   */
+  resetCircuit(service: string): void {
+    const fullServiceName = service.endsWith('-service') ? service : `${service}-service`;
+    circuitBreaker.reset(fullServiceName);
+    this.log.info('Circuit breaker manually reset', { service: fullServiceName });
+  }
+
+  /**
+   * Check if a service request would be allowed by circuit breaker
+   */
+  isCircuitAllowed(service: string): boolean {
+    const fullServiceName = service.endsWith('-service') ? service : `${service}-service`;
+    return circuitBreaker.allowRequest(fullServiceName);
   }
 }
 

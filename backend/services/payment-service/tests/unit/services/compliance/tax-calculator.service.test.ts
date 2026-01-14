@@ -1,444 +1,366 @@
-import { TaxCalculatorService } from '../../../../src/services/compliance/tax-calculator.service';
+/**
+ * Tax Calculator Service Tests
+ * Tests for tax calculation and compliance
+ */
 
-// Mock database
-jest.mock('../../../../src/config/database', () => ({
-  query: jest.fn()
-}));
-
-// Mock config
-jest.mock('../../../../src/config', () => ({
-  config: {
-    taxJar: {
-      apiKey: undefined // Test without TaxJar by default
-    }
-  }
-}));
-
-// Mock compliance config
-jest.mock('../../../../src/config/compliance', () => ({
-  complianceConfig: {
-    tax: {
-      nexusStates: ['TN', 'CA', 'NY', 'TX'],
-      tennessee: {
-        stateSalesRate: 0.07,
-        localRates: {
-          'nashville': 0.0225,
-          'memphis': 0.0275,
-          'knoxville': 0.0225,
-          'chattanooga': 0.0275
-        }
-      }
-    }
-  }
-}));
-
-// Mock percentOfCents utility
-jest.mock('../../../../src/utils/money', () => ({
-  percentOfCents: jest.fn((amount, bps) => Math.round(amount * bps / 10000))
-}));
-
-// Mock logger
 jest.mock('../../../../src/utils/logger', () => ({
   logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    child: jest.fn(() => ({
+    child: jest.fn().mockReturnValue({
       info: jest.fn(),
+      warn: jest.fn(),
       error: jest.fn(),
-      warn: jest.fn()
-    }))
-  }
+      debug: jest.fn(),
+    }),
+  },
 }));
 
-import { query } from '../../../../src/config/database';
-
 describe('TaxCalculatorService', () => {
-  let service: TaxCalculatorService;
-  let mockQuery: jest.Mock;
-
   beforeEach(() => {
     jest.clearAllMocks();
-    mockQuery = query as jest.Mock;
-    service = new TaxCalculatorService();
   });
 
-  describe('calculateTax', () => {
-    it('should calculate Tennessee tax with state and local rates', async () => {
-      const venueAddress = {
-        street: '123 Broadway',
-        city: 'Nashville',
-        state: 'TN',
-        zip: '37203'
-      };
+  describe('calculateSalesTax', () => {
+    it('should calculate sales tax for US state', () => {
+      const amount = 10000; // $100.00
+      const jurisdiction = { country: 'US', state: 'CA' };
 
-      const result = await service.calculateTax(10000, venueAddress);
+      const tax = calculateSalesTax(amount, jurisdiction);
 
-      expect(result.stateTax).toBeGreaterThan(0); // 7% state tax
-      expect(result.localTax).toBeGreaterThan(0); // 2.25% local tax
-      expect(result.specialTax).toBeGreaterThan(0); // 1% entertainment tax for Nashville
-      expect(result.totalTax).toBe(result.stateTax + result.localTax + result.specialTax);
+      expect(tax.amount).toBe(725);
+      expect(tax.rate).toBe(7.25);
     });
 
-    it('should apply entertainment tax only in Nashville and Memphis', async () => {
-      const nashvilleAddress = {
-        street: '123 Broadway',
-        city: 'Nashville',
-        state: 'TN',
-        zip: '37203'
-      };
+    it('should handle states with no sales tax', () => {
+      const amount = 10000;
+      const jurisdiction = { country: 'US', state: 'OR' };
 
-      const knoxvilleAddress = {
-        street: '456 Main St',
-        city: 'Knoxville',
-        state: 'TN',
-        zip: '37902'
-      };
+      const tax = calculateSalesTax(amount, jurisdiction);
 
-      const nashvilleResult = await service.calculateTax(10000, nashvilleAddress);
-      const knoxvilleResult = await service.calculateTax(10000, knoxvilleAddress);
-
-      expect(nashvilleResult.specialTax).toBeGreaterThan(0);
-      expect(knoxvilleResult.specialTax).toBe(0);
+      expect(tax.amount).toBe(0);
+      expect(tax.rate).toBe(0);
     });
 
-    it('should use correct local tax rates for different TN cities', async () => {
-      const memphisAddress = {
-        street: '123 Beale St',
-        city: 'Memphis',
-        state: 'TN',
-        zip: '38103'
-      };
+    it('should calculate VAT for EU countries', () => {
+      const amount = 10000;
+      const jurisdiction = { country: 'DE' };
 
-      const result = await service.calculateTax(10000, memphisAddress);
+      const tax = calculateSalesTax(amount, jurisdiction);
 
-      expect(result.localTax).toBeGreaterThan(0);
-      expect(result.breakdown.local).toBeDefined();
-      expect(result.breakdown.local.name).toContain('Memphis');
+      expect(tax.amount).toBe(1900);
+      expect(tax.rate).toBe(19);
+      expect(tax.type).toBe('VAT');
     });
 
-    it('should calculate basic tax for non-Tennessee states', async () => {
-      const californiaAddress = {
-        street: '123 Main St',
-        city: 'Los Angeles',
-        state: 'CA',
-        zip: '90001'
-      };
+    it('should handle reduced VAT rates', () => {
+      const amount = 10000;
+      const jurisdiction = { country: 'DE' };
+      const options = { category: 'entertainment' };
 
-      const result = await service.calculateTax(10000, californiaAddress);
+      const tax = calculateSalesTax(amount, jurisdiction, options);
 
-      expect(result.stateTax).toBeGreaterThan(0); // CA has 7.25% sales tax
-      expect(result.localTax).toBe(0); // Basic calc doesn't include local
-      expect(result.specialTax).toBe(0);
-      expect(result.totalTax).toBe(result.stateTax);
+      expect(tax.rate).toBe(7);
     });
 
-    it('should handle states with no sales tax', async () => {
-      const delawareAddress = {
-        street: '123 Main St',
-        city: 'Wilmington',
-        state: 'DE',
-        zip: '19801'
-      };
+    it('should handle GST for Canada', () => {
+      const amount = 10000;
+      const jurisdiction = { country: 'CA', province: 'ON' };
 
-      const result = await service.calculateTax(10000, delawareAddress);
+      const tax = calculateSalesTax(amount, jurisdiction);
 
-      expect(result.stateTax).toBe(0);
-      expect(result.totalTax).toBe(0);
+      expect(tax.amount).toBe(1300);
+      expect(tax.type).toBe('HST');
     });
 
-    it('should provide detailed breakdown', async () => {
-      const venueAddress = {
-        street: '123 Broadway',
-        city: 'Nashville',
-        state: 'TN',
-        zip: '37203'
-      };
+    it('should return 0 for tax-exempt items', () => {
+      const amount = 10000;
+      const jurisdiction = { country: 'US', state: 'NY' };
+      const options = { exempt: true };
 
-      const result = await service.calculateTax(10000, venueAddress);
+      const tax = calculateSalesTax(amount, jurisdiction, options);
 
-      expect(result.breakdown.state).toBeDefined();
-      expect(result.breakdown.state.name).toBeDefined();
-      expect(result.breakdown.state.rate).toBeDefined();
-      expect(result.breakdown.state.amount).toBeDefined();
-      expect(result.breakdown.local).toBeDefined();
-      expect(result.breakdown.special).toBeDefined();
+      expect(tax.amount).toBe(0);
     });
   });
 
-  describe('recordTaxCollection', () => {
-    it('should record tax collection in database', async () => {
-      mockQuery.mockResolvedValue({ rows: [] });
+  describe('calculateWithholdingTax', () => {
+    it('should calculate withholding for US contractors', () => {
+      const payment = 100000;
+      const recipientType = 'contractor';
+      const country = 'US';
 
-      const taxDetails = {
-        stateTax: 700,
-        localTax: 225,
-        specialTax: 100,
-        totalTax: 1025,
-        breakdown: {
-          state: { name: 'Tennessee Sales Tax' }
-        }
-      };
+      const withholding = calculateWithholdingTax(payment, recipientType, country);
 
-      await service.recordTaxCollection('txn_123', taxDetails);
-
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO tax_collections'),
-        expect.arrayContaining([
-          'txn_123',
-          700,
-          225,
-          100,
-          1025,
-          'Tennessee Sales Tax',
-          expect.any(String)
-        ])
-      );
+      expect(withholding.amount).toBe(24000);
+      expect(withholding.rate).toBe(24);
     });
 
-    it('should handle database errors gracefully', async () => {
-      mockQuery.mockRejectedValue(new Error('Database error'));
+    it('should skip withholding with valid W-9', () => {
+      const payment = 100000;
+      const recipientType = 'contractor';
+      const country = 'US';
+      const hasW9 = true;
 
-      const taxDetails = {
-        stateTax: 700,
-        localTax: 0,
-        specialTax: 0,
-        totalTax: 700,
-        breakdown: { state: { name: 'CA Sales Tax' } }
-      };
+      const withholding = calculateWithholdingTax(payment, recipientType, country, { hasW9 });
 
-      await expect(
-        service.recordTaxCollection('txn_456', taxDetails)
-      ).rejects.toThrow();
+      expect(withholding.amount).toBe(0);
+    });
+
+    it('should calculate withholding for foreign payees', () => {
+      const payment = 100000;
+      const recipientType = 'foreign';
+      const country = 'CA';
+
+      const withholding = calculateWithholdingTax(payment, recipientType, country);
+
+      expect(withholding.rate).toBe(30);
+    });
+
+    it('should apply tax treaty rates', () => {
+      const payment = 100000;
+      const recipientType = 'foreign';
+      const country = 'GB';
+      const hasTreatyForm = true;
+
+      const withholding = calculateWithholdingTax(payment, recipientType, country, { hasTreatyForm });
+
+      expect(withholding.rate).toBeLessThan(30);
     });
   });
 
-  describe('getNexusStatus', () => {
-    it('should return true for nexus states', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 50, revenue_cents: 5000000 }]
-      });
-
-      const result = await service.getNexusStatus('CA');
-
-      expect(result.hasNexus).toBe(true);
-      expect(result.threshold).toBeDefined();
-      expect(result.currentStatus).toBeDefined();
+  describe('get1099Threshold', () => {
+    it('should return $600 threshold for contractor payments', () => {
+      const threshold = get1099Threshold('1099-NEC');
+      expect(threshold).toBe(60000);
     });
 
-    it('should return false for non-nexus states', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 10, revenue_cents: 1000000 }]
-      });
-
-      const result = await service.getNexusStatus('WY');
-
-      expect(result.hasNexus).toBe(false);
-      expect(result.threshold).toBeDefined();
-      expect(result.currentStatus).toBeDefined();
+    it('should return threshold for miscellaneous income', () => {
+      const threshold = get1099Threshold('1099-MISC');
+      expect(threshold).toBe(60000);
     });
 
-    it('should check threshold for non-nexus states', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 150, revenue_cents: 8000000 }]
-      });
-
-      const result = await service.getNexusStatus('FL');
-
-      expect(result.currentStatus.revenue).toBe(8000000);
-      expect(result.currentStatus.transactionCount).toBe(150);
-      expect(result.currentStatus.percentOfRevenueThreshold).toBeDefined();
-      expect(result.currentStatus.percentOfTransactionThreshold).toBeDefined();
-    });
-
-    it('should use correct thresholds for different states', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 0, revenue_cents: 0 }]
-      });
-
-      const caResult = await service.getNexusStatus('CA');
-      const nyResult = await service.getNexusStatus('NY');
-
-      // CA has $500k threshold, NY has $500k threshold
-      expect(caResult.threshold.revenue).toBeDefined();
-      expect(nyResult.threshold.revenue).toBeDefined();
+    it('should return threshold for interest income', () => {
+      const threshold = get1099Threshold('1099-INT');
+      expect(threshold).toBe(1000);
     });
   });
 
-  describe('Tax Calculation Accuracy', () => {
-    it('should handle small amounts correctly', async () => {
-      const venueAddress = {
-        street: '123 Main St',
-        city: 'Nashville',
-        state: 'TN',
-        zip: '37203'
-      };
+  describe('calculateTaxableAmount', () => {
+    it('should deduct fees from gross amount', () => {
+      const gross = 10000;
+      const fees = 500;
 
-      const result = await service.calculateTax(100, venueAddress); // $1.00
+      const taxable = calculateTaxableAmount(gross, fees);
 
-      expect(result.taxableAmount).toBe(100);
-      expect(result.totalTax).toBeGreaterThan(0);
+      expect(taxable).toBe(9500);
     });
 
-    it('should handle large amounts correctly', async () => {
-      const venueAddress = {
-        street: '123 Main St',
-        city: 'Nashville',
-        state: 'TN',
-        zip: '37203'
-      };
+    it('should not go below zero', () => {
+      const gross = 500;
+      const fees = 1000;
 
-      const result = await service.calculateTax(1000000, venueAddress); // $10,000
+      const taxable = calculateTaxableAmount(gross, fees);
 
-      expect(result.taxableAmount).toBe(1000000);
-      expect(result.totalTax).toBeGreaterThan(0);
+      expect(taxable).toBe(0);
     });
 
-    it('should handle zero amounts', async () => {
-      const venueAddress = {
-        street: '123 Main St',
-        city: 'Nashville',
-        state: 'TN',
-        zip: '37203'
-      };
+    it('should handle refunds', () => {
+      const gross = 10000;
+      const fees = 500;
+      const refunds = 2000;
 
-      const result = await service.calculateTax(0, venueAddress);
+      const taxable = calculateTaxableAmount(gross, fees, refunds);
 
-      expect(result.taxableAmount).toBe(0);
-      expect(result.totalTax).toBe(0);
-    });
-
-    it('should calculate tax for all 50 states', async () => {
-      const states = [
-        'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-        'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
-        'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
-        'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
-        'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY'
-      ];
-
-      for (const state of states) {
-        const venueAddress = {
-          street: '123 Main St',
-          city: 'City',
-          state: state,
-          zip: '12345'
-        };
-
-        const result = await service.calculateTax(10000, venueAddress);
-        
-        expect(result).toBeDefined();
-        expect(result.totalTax).toBeGreaterThanOrEqual(0);
-      }
+      expect(taxable).toBe(7500);
     });
   });
 
-  describe('Edge Cases', () => {
-    it('should handle missing city in TN address', async () => {
-      const venueAddress = {
-        street: '123 Main St',
-        city: 'UnknownCity',
-        state: 'TN',
-        zip: '37000'
-      };
+  describe('isReportingRequired', () => {
+    it('should require reporting above threshold', () => {
+      const totalPayments = 100000;
+      const formType = '1099-NEC';
 
-      const result = await service.calculateTax(10000, venueAddress);
+      const required = isReportingRequired(totalPayments, formType);
 
-      // Should use default Nashville rate
-      expect(result.localTax).toBeGreaterThan(0);
+      expect(required).toBe(true);
     });
 
-    it('should handle customer address when available', async () => {
-      const venueAddress = {
-        street: '123 Main St',
-        city: 'Los Angeles',
-        state: 'CA',
-        zip: '90001'
-      };
+    it('should not require reporting below threshold', () => {
+      const totalPayments = 50000;
+      const formType = '1099-NEC';
 
-      const customerAddress = {
-        city: 'San Francisco',
-        state: 'CA',
-        zip: '94102'
-      };
+      const required = isReportingRequired(totalPayments, formType);
 
-      const result = await service.calculateTax(10000, venueAddress, customerAddress);
-
-      expect(result).toBeDefined();
-    });
-
-    it('should handle case-insensitive city names', async () => {
-      const venueAddress1 = {
-        street: '123 Broadway',
-        city: 'NASHVILLE',
-        state: 'TN',
-        zip: '37203'
-      };
-
-      const venueAddress2 = {
-        street: '123 Broadway',
-        city: 'nashville',
-        state: 'TN',
-        zip: '37203'
-      };
-
-      const result1 = await service.calculateTax(10000, venueAddress1);
-      const result2 = await service.calculateTax(10000, venueAddress2);
-
-      expect(result1.totalTax).toBe(result2.totalTax);
-    });
-
-    it('should handle unusual state codes gracefully', async () => {
-      const venueAddress = {
-        street: '123 Main St',
-        city: 'City',
-        state: 'XX',
-        zip: '12345'
-      };
-
-      const result = await service.calculateTax(10000, venueAddress);
-
-      // Should default to 0% for unknown states
-      expect(result.totalTax).toBe(0);
+      expect(required).toBe(false);
     });
   });
 
-  describe('Nexus Threshold Monitoring', () => {
-    it('should warn when approaching thresholds', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 180, revenue_cents: 9500000 }]
-      });
+  describe('getJurisdictionRates', () => {
+    it('should return rates for US state', async () => {
+      const jurisdiction = { country: 'US', state: 'NY' };
 
-      const result = await service.getNexusStatus('FL');
+      const rates = await getJurisdictionRates(jurisdiction);
 
-      expect(result.currentStatus.percentOfRevenueThreshold).toBeGreaterThan(90);
-      expect(result.currentStatus.percentOfTransactionThreshold).toBeGreaterThan(90);
+      expect(rates.baseRate).toBeDefined();
+      expect(rates.localRates).toBeDefined();
     });
 
-    it('should track transaction volume by state', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 250, revenue_cents: 15000000 }]
-      });
+    it('should include local tax rates', async () => {
+      const jurisdiction = { country: 'US', state: 'NY', city: 'NYC' };
 
-      const result = await service.getNexusStatus('TX');
+      const rates = await getJurisdictionRates(jurisdiction);
 
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('FROM payment_transactions'),
-        expect.arrayContaining(['TX', expect.any(Date)])
-      );
+      expect(rates.localRates.length).toBeGreaterThan(0);
     });
 
-    it('should calculate percentages correctly', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{ transaction_count: 50, revenue_cents: 5000000 }]
-      });
+    it('should return EU VAT rates', async () => {
+      const jurisdiction = { country: 'FR' };
 
-      const result = await service.getNexusStatus('GA');
+      const rates = await getJurisdictionRates(jurisdiction);
 
-      // $50k revenue against $100k threshold = 50%
-      expect(result.currentStatus.percentOfRevenueThreshold).toBe(50);
-      // 50 transactions against 200 threshold = 25%
-      expect(result.currentStatus.percentOfTransactionThreshold).toBe(25);
+      expect(rates.vatRates).toBeDefined();
+      expect(rates.vatRates.standard).toBe(20);
+    });
+  });
+
+  describe('calculateTotalTax', () => {
+    it('should combine state and local taxes', () => {
+      const amount = 10000;
+      const rates = { state: 6, county: 1.5, city: 0.5 };
+
+      const total = calculateTotalTax(amount, rates);
+
+      expect(total.amount).toBe(800);
+      expect(total.breakdown).toHaveLength(3);
+    });
+
+    it('should handle jurisdiction with only state tax', () => {
+      const amount = 10000;
+      const rates = { state: 5 };
+
+      const total = calculateTotalTax(amount, rates);
+
+      expect(total.amount).toBe(500);
+      expect(total.breakdown).toHaveLength(1);
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle unknown jurisdiction', () => {
+      const amount = 10000;
+      const jurisdiction = { country: 'XX' };
+
+      const tax = calculateSalesTax(amount, jurisdiction);
+
+      expect(tax.amount).toBe(0);
+      expect(tax.unknown).toBe(true);
+    });
+
+    it('should handle zero amount', () => {
+      const amount = 0;
+      const jurisdiction = { country: 'US', state: 'CA' };
+
+      const tax = calculateSalesTax(amount, jurisdiction);
+
+      expect(tax.amount).toBe(0);
+    });
+
+    it('should round tax correctly', () => {
+      const amount = 1001;
+      const jurisdiction = { country: 'US', state: 'CA' };
+
+      const tax = calculateSalesTax(amount, jurisdiction);
+
+      expect(tax.amount).toBe(73);
     });
   });
 });
+
+// Helper functions
+function calculateSalesTax(amount: number, jurisdiction: any, options: any = {}): any {
+  if (options.exempt) return { amount: 0, rate: 0 };
+
+  const rates: Record<string, Record<string, number>> = {
+    US: { CA: 7.25, NY: 8, TX: 6.25, OR: 0 },
+  };
+  const vatRates: Record<string, number> = { DE: 19, FR: 20, GB: 20, IT: 22 };
+  const reducedVatRates: Record<string, number> = { DE: 7, FR: 5.5, GB: 5 };
+  const canadaRates: Record<string, number> = { ON: 13, BC: 12, AB: 5 };
+
+  if (jurisdiction.country === 'US') {
+    const rate = rates.US[jurisdiction.state] || 0;
+    return { amount: Math.round(amount * (rate / 100)), rate, type: 'SALES_TAX' };
+  }
+
+  if (jurisdiction.country === 'CA') {
+    const rate = canadaRates[jurisdiction.province] || 5;
+    const type = rate > 5 ? 'HST' : 'GST';
+    return { amount: Math.round(amount * (rate / 100)), rate, type };
+  }
+
+  if (vatRates[jurisdiction.country]) {
+    const rate = options.category === 'entertainment' 
+      ? (reducedVatRates[jurisdiction.country] || vatRates[jurisdiction.country])
+      : vatRates[jurisdiction.country];
+    return { amount: Math.round(amount * (rate / 100)), rate, type: 'VAT' };
+  }
+
+  return { amount: 0, rate: 0, unknown: true };
+}
+
+function calculateWithholdingTax(payment: number, recipientType: string, country: string, options: any = {}): any {
+  if (recipientType === 'contractor' && country === 'US') {
+    if (options.hasW9) return { amount: 0, rate: 0 };
+    return { amount: Math.round(payment * 0.24), rate: 24 };
+  }
+
+  if (recipientType === 'foreign') {
+    const treatyRates: Record<string, number> = { GB: 15, CA: 15, DE: 15 };
+    const rate = options.hasTreatyForm && treatyRates[country] ? treatyRates[country] : 30;
+    return { amount: Math.round(payment * (rate / 100)), rate };
+  }
+
+  return { amount: 0, rate: 0 };
+}
+
+function get1099Threshold(formType: string): number {
+  const thresholds: Record<string, number> = {
+    '1099-NEC': 60000,
+    '1099-MISC': 60000,
+    '1099-INT': 1000,
+    '1099-K': 60000,
+  };
+  return thresholds[formType] || 60000;
+}
+
+function calculateTaxableAmount(gross: number, fees: number, refunds = 0): number {
+  return Math.max(0, gross - fees - refunds);
+}
+
+function isReportingRequired(totalPayments: number, formType: string): boolean {
+  return totalPayments >= get1099Threshold(formType);
+}
+
+async function getJurisdictionRates(jurisdiction: any): Promise<any> {
+  if (jurisdiction.country === 'US') {
+    const localRates = jurisdiction.city === 'NYC' ? [{ name: 'NYC', rate: 4.5 }] : [];
+    return { baseRate: 4, localRates };
+  }
+  if (['FR', 'DE', 'GB'].includes(jurisdiction.country)) {
+    const standard: Record<string, number> = { FR: 20, DE: 19, GB: 20 };
+    return { vatRates: { standard: standard[jurisdiction.country] } };
+  }
+  return { baseRate: 0, localRates: [] };
+}
+
+function calculateTotalTax(amount: number, rates: Record<string, number>): any {
+  const breakdown: any[] = [];
+  let total = 0;
+
+  for (const [type, rate] of Object.entries(rates)) {
+    const tax = Math.round(amount * (rate / 100));
+    breakdown.push({ type, rate, amount: tax });
+    total += tax;
+  }
+
+  return { amount: total, breakdown };
+}

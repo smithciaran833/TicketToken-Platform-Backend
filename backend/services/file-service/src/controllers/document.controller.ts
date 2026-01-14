@@ -1,19 +1,23 @@
-import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { fileModel } from '../models/file.model';
 import { storageService } from '../storage/storage.service';
-import { documentProcessor } from '../processors/document/document.processor';
 import { logger } from '../utils/logger';
+import { getTenantId } from '../middleware/tenant-context';
 import pdf from 'pdf-parse';
 
 export class DocumentController {
   async getPreview(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id } = request.params as { id: string };
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -32,7 +36,7 @@ export class DocumentController {
       }
       
     } catch (error: any) {
-      logger.error('Document preview failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Document preview failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -40,14 +44,19 @@ export class DocumentController {
   async getPage(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id, page } = request.params as { id: string; page: string };
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
       }
       
       if (file.mimeType !== 'application/pdf') {
         return reply.status(400).send({ error: 'Not a PDF file' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       // For full implementation, would extract specific page
@@ -62,7 +71,7 @@ export class DocumentController {
       });
       
     } catch (error: any) {
-      logger.error('Get page failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Get page failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -71,8 +80,9 @@ export class DocumentController {
     try {
       const { id } = request.params as { id: string };
       const { format } = request.body as { format: string };
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
       }
@@ -81,12 +91,12 @@ export class DocumentController {
       reply.send({
         success: true,
         message: `Conversion to ${format} would be processed here`,
-        originalFormat: file.mimeType,
+        originalFormat: file.mimeType ?? 'unknown',
         targetFormat: format
       });
       
     } catch (error: any) {
-      logger.error('Convert format failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Convert format failed');
       reply.status(500).send({ error: error.message });
     }
   }
@@ -94,10 +104,15 @@ export class DocumentController {
   async extractText(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { id } = request.params as { id: string };
+      const tenantId = getTenantId(request);
       
-      const file = await fileModel.findById(id);
+      const file = await fileModel.findById(id, tenantId);
       if (!file) {
         return reply.status(404).send({ error: 'File not found' });
+      }
+      
+      if (!file.storagePath) {
+        return reply.status(400).send({ error: 'File has no storage path' });
       }
       
       const buffer = await storageService.download(file.storagePath);
@@ -106,14 +121,14 @@ export class DocumentController {
       if (file.mimeType === 'application/pdf') {
         const data = await pdf(buffer);
         text = data.text;
-      } else if (file.mimeType.includes('text')) {
+      } else if (file.mimeType?.includes('text')) {
         text = buffer.toString('utf8');
       }
       
       reply.send({ text, length: text.length });
       
     } catch (error: any) {
-      logger.error('Extract text failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Extract text failed');
       reply.status(500).send({ error: error.message });
     }
   }

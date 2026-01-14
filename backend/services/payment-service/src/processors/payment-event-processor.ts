@@ -42,7 +42,7 @@ export class PaymentEventProcessor {
         await this.handlePaymentFailed(event);
         break;
       default:
-        log.info('Processing event type', { eventType: event.type });
+        log.info({ eventType: event.type }, 'Processing event type');
     }
   }
 

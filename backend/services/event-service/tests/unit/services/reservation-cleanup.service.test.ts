@@ -1,182 +1,281 @@
-// Mock venue-service.client BEFORE any imports to avoid ESM issues
-jest.mock('../../../src/services/venue-service.client', () => ({
-  VenueServiceClient: jest.fn().mockImplementation(() => ({
-    validateVenueAccess: jest.fn(),
-    getVenue: jest.fn(),
+/**
+ * Unit tests for ReservationCleanupService
+ * Tests background job for releasing expired reservations
+ */
+
+// Mock CapacityService
+const mockReleaseExpiredReservations = jest.fn();
+
+jest.mock('../../../src/services/capacity.service', () => ({
+  CapacityService: jest.fn().mockImplementation(() => ({
+    releaseExpiredReservations: mockReleaseExpiredReservations,
   })),
 }));
 
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
+jest.mock('pino', () => () => ({
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
 }));
 
 import { ReservationCleanupService } from '../../../src/services/reservation-cleanup.service';
-import { CapacityService } from '../../../src/services/capacity.service';
+import { Knex } from 'knex';
 
 describe('ReservationCleanupService', () => {
-  let cleanupService: ReservationCleanupService;
-  let mockDb: any;
-  let mockCapacityService: any;
+  let service: ReservationCleanupService;
+  let mockDb: Knex;
 
   beforeEach(() => {
     jest.clearAllMocks();
     jest.useFakeTimers();
-
-    mockDb = jest.fn();
-
-    cleanupService = new ReservationCleanupService(mockDb as any, 1);
-
-    // Mock the capacity service instance's releaseExpiredReservations method
-    mockCapacityService = (cleanupService as any).capacityService;
-    mockCapacityService.releaseExpiredReservations = jest.fn().mockResolvedValue(0);
+    
+    mockDb = {} as Knex;
+    mockReleaseExpiredReservations.mockResolvedValue(0);
+    
+    service = new ReservationCleanupService(mockDb, 1);
   });
 
   afterEach(() => {
+    service.stop();
     jest.useRealTimers();
   });
 
   describe('constructor', () => {
-    it('should initialize with default interval', () => {
-      const service = new ReservationCleanupService(mockDb as any);
-      const status = service.getStatus();
-
-      expect(status.intervalMinutes).toBe(1);
-      expect(status.isRunning).toBe(false);
+    it('should create service with default interval', () => {
+      const defaultService = new ReservationCleanupService(mockDb);
+      expect(defaultService.getStatus().intervalMinutes).toBe(1);
+      defaultService.stop();
     });
 
-    it('should initialize with custom interval', () => {
-      const service = new ReservationCleanupService(mockDb as any, 5);
-      const status = service.getStatus();
+    it('should create service with custom interval', () => {
+      const customService = new ReservationCleanupService(mockDb, 5);
+      expect(customService.getStatus().intervalMinutes).toBe(5);
+      customService.stop();
+    });
 
-      expect(status.intervalMinutes).toBe(5);
+    it('should not be running initially', () => {
+      expect(service.getStatus().isRunning).toBe(false);
     });
   });
 
   describe('start', () => {
-    it('should start the cleanup job', async () => {
-      mockCapacityService.releaseExpiredReservations.mockResolvedValue(5);
+    it('should start the cleanup job', () => {
+      service.start();
 
-      cleanupService.start();
-
-      // Wait for immediate cleanup to complete
-      await Promise.resolve();
-
-      expect(cleanupService.getStatus().isRunning).toBe(true);
-      expect(mockCapacityService.releaseExpiredReservations).toHaveBeenCalledTimes(1);
+      expect(service.getStatus().isRunning).toBe(true);
     });
 
-    it('should run cleanup on interval', async () => {
-      mockCapacityService.releaseExpiredReservations.mockResolvedValue(3);
+    it('should run cleanup immediately on start', () => {
+      service.start();
 
-      cleanupService.start();
-      await Promise.resolve();
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
+    });
 
-      // Fast-forward 1 minute
+    it('should schedule interval cleanup', () => {
+      service.start();
+      
+      // First call is immediate
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
+      
+      // Advance timer by interval
       jest.advanceTimersByTime(60 * 1000);
-      await Promise.resolve();
-
-      expect(mockCapacityService.releaseExpiredReservations).toHaveBeenCalledTimes(2);
+      
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(2);
     });
 
-    it('should not start if already running', async () => {
-      cleanupService.start();
-      await Promise.resolve();
+    it('should not start if already running', () => {
+      service.start();
+      service.start(); // Second start should be ignored
 
-      cleanupService.start();
-      await Promise.resolve();
+      expect(service.getStatus().isRunning).toBe(true);
+      // Should only have called once (from first start)
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
+    });
 
-      expect(mockCapacityService.releaseExpiredReservations).toHaveBeenCalledTimes(1);
+    it('should run cleanup at configured interval', () => {
+      const fiveMinService = new ReservationCleanupService(mockDb, 5);
+      fiveMinService.start();
+
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
+
+      // Advance by 1 minute - should not trigger
+      jest.advanceTimersByTime(60 * 1000);
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
+
+      // Advance by 4 more minutes - should trigger
+      jest.advanceTimersByTime(4 * 60 * 1000);
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(2);
+
+      fiveMinService.stop();
     });
   });
 
   describe('stop', () => {
-    it('should stop the cleanup job', async () => {
-      cleanupService.start();
-      await Promise.resolve();
+    it('should stop the cleanup job', () => {
+      service.start();
+      service.stop();
 
-      cleanupService.stop();
-
-      expect(cleanupService.getStatus().isRunning).toBe(false);
+      expect(service.getStatus().isRunning).toBe(false);
     });
 
-    it('should clear the interval', async () => {
-      mockCapacityService.releaseExpiredReservations.mockResolvedValue(2);
+    it('should prevent further scheduled cleanups', () => {
+      service.start();
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
 
-      cleanupService.start();
-      await Promise.resolve();
-
-      cleanupService.stop();
-
-      // Advance time and verify no more calls
-      const callsBefore = mockCapacityService.releaseExpiredReservations.mock.calls.length;
+      service.stop();
+      
+      // Advance timer - should not trigger new cleanup
       jest.advanceTimersByTime(60 * 1000);
-      await Promise.resolve();
-
-      expect(mockCapacityService.releaseExpiredReservations).toHaveBeenCalledTimes(callsBefore);
+      
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
     });
 
-    it('should warn if not running', () => {
-      cleanupService.stop();
-      // Just verify it doesn't throw
-      expect(cleanupService.getStatus().isRunning).toBe(false);
+    it('should do nothing if not running', () => {
+      // Should not throw
+      service.stop();
+      expect(service.getStatus().isRunning).toBe(false);
+    });
+
+    it('should allow restart after stop', () => {
+      service.start();
+      service.stop();
+      service.start();
+
+      expect(service.getStatus().isRunning).toBe(true);
+      // Called twice: once per start
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('triggerCleanup', () => {
     it('should manually trigger cleanup', async () => {
-      mockCapacityService.releaseExpiredReservations.mockResolvedValue(10);
+      const result = await service.triggerCleanup();
 
-      const result = await cleanupService.triggerCleanup();
-
-      expect(result).toBe(10);
-      expect(mockCapacityService.releaseExpiredReservations).toHaveBeenCalledTimes(1);
+      expect(mockReleaseExpiredReservations).toHaveBeenCalled();
+      expect(result).toBe(0);
     });
 
     it('should return count of released reservations', async () => {
-      mockCapacityService.releaseExpiredReservations.mockResolvedValue(7);
+      mockReleaseExpiredReservations.mockResolvedValue(5);
 
-      const result = await cleanupService.triggerCleanup();
+      const result = await service.triggerCleanup();
 
-      expect(result).toBe(7);
+      expect(result).toBe(5);
+    });
+
+    it('should work without starting the service', async () => {
+      expect(service.getStatus().isRunning).toBe(false);
+
+      const result = await service.triggerCleanup();
+
+      expect(mockReleaseExpiredReservations).toHaveBeenCalled();
+    });
+
+    it('should work while service is running', async () => {
+      service.start();
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(1);
+
+      await service.triggerCleanup();
+
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('getStatus', () => {
-    it('should return current status', () => {
-      const status = cleanupService.getStatus();
+    it('should return running status', () => {
+      expect(service.getStatus().isRunning).toBe(false);
 
-      expect(status).toEqual({
-        isRunning: false,
-        intervalMinutes: 1,
-      });
+      service.start();
+      expect(service.getStatus().isRunning).toBe(true);
+
+      service.stop();
+      expect(service.getStatus().isRunning).toBe(false);
     });
 
-    it('should reflect running status', async () => {
-      cleanupService.start();
-      await Promise.resolve();
+    it('should return interval minutes', () => {
+      const status = service.getStatus();
 
-      const status = cleanupService.getStatus();
+      expect(status.intervalMinutes).toBe(1);
+    });
 
-      expect(status.isRunning).toBe(true);
+    it('should return correct interval for custom service', () => {
+      const customService = new ReservationCleanupService(mockDb, 10);
+
+      expect(customService.getStatus().intervalMinutes).toBe(10);
+      
+      customService.stop();
     });
   });
 
-  describe('runCleanup (error handling)', () => {
-    it('should handle errors gracefully', async () => {
-      mockCapacityService.releaseExpiredReservations.mockRejectedValue(
-        new Error('Database error')
-      );
+  describe('error handling', () => {
+    it('should handle cleanup errors gracefully', async () => {
+      mockReleaseExpiredReservations.mockRejectedValue(new Error('Database error'));
 
-      cleanupService.start();
-      await Promise.resolve();
+      service.start();
 
-      // Should not throw - error is caught and logged
-      expect(cleanupService.getStatus().isRunning).toBe(true);
+      // Should not throw
+      jest.advanceTimersByTime(60 * 1000);
+
+      // Service should still be running
+      expect(service.getStatus().isRunning).toBe(true);
+    });
+
+    it('should continue cleanup after error', async () => {
+      mockReleaseExpiredReservations
+        .mockRejectedValueOnce(new Error('First error'))
+        .mockResolvedValue(3);
+
+      service.start();
+
+      // First cleanup (immediate) fails
+      jest.advanceTimersByTime(60 * 1000);
+
+      // Second cleanup should still run
+      expect(mockReleaseExpiredReservations).toHaveBeenCalledTimes(2);
+    });
+
+    it('should handle manual trigger error', async () => {
+      mockReleaseExpiredReservations.mockRejectedValue(new Error('Manual error'));
+
+      await expect(service.triggerCleanup()).rejects.toThrow('Manual error');
+    });
+  });
+
+  describe('multiple instances', () => {
+    it('should allow multiple independent services', () => {
+      const service1 = new ReservationCleanupService(mockDb, 1);
+      const service2 = new ReservationCleanupService(mockDb, 2);
+
+      service1.start();
+      service2.start();
+
+      expect(service1.getStatus().isRunning).toBe(true);
+      expect(service2.getStatus().isRunning).toBe(true);
+      expect(service1.getStatus().intervalMinutes).toBe(1);
+      expect(service2.getStatus().intervalMinutes).toBe(2);
+
+      service1.stop();
+      service2.stop();
+    });
+  });
+
+  describe('cleanup results logging', () => {
+    it('should complete with zero released reservations', async () => {
+      mockReleaseExpiredReservations.mockResolvedValue(0);
+
+      service.start();
+
+      // Just verify it runs without error
+      expect(mockReleaseExpiredReservations).toHaveBeenCalled();
+    });
+
+    it('should complete with multiple released reservations', async () => {
+      mockReleaseExpiredReservations.mockResolvedValue(10);
+
+      service.start();
+
+      expect(mockReleaseExpiredReservations).toHaveBeenCalled();
     });
   });
 });

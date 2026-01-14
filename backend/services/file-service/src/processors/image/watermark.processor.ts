@@ -1,5 +1,4 @@
 import sharp from 'sharp';
-import { logger } from '../../utils/logger';
 
 export interface WatermarkOptions {
   text?: string;

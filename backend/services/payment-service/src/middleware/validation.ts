@@ -79,11 +79,11 @@ const schemas = {
 
 export const validateRequest = (schemaName: keyof typeof schemas) => {
   return async (request: FastifyRequest, reply: FastifyReply) => {
-    log.info('Validating request schema', { schema: schemaName });
+    log.info({ schema: schemaName }, 'Validating request schema');
     const schema = schemas[schemaName];
 
     if (!schema) {
-      log.error('Validation schema not found', { schema: schemaName });
+      log.error({ schema: schemaName }, 'Validation schema not found');
       return reply.status(500).send({
         error: `Validation schema '${schemaName}' not found`
       });
@@ -100,7 +100,7 @@ export const validateRequest = (schemaName: keyof typeof schemas) => {
         message: detail.message
       }));
 
-      log.warn('Validation failed', { schema: schemaName, errors });
+      log.warn({ schema: schemaName, errors }, 'Validation failed');
 
       return reply.status(400).send({
         error: 'Validation failed',
@@ -109,9 +109,7 @@ export const validateRequest = (schemaName: keyof typeof schemas) => {
       });
     }
 
-    // Replace request body with validated and sanitized data
     request.body = value;
-    // Continue to next handler
   };
 };
 
@@ -129,7 +127,7 @@ export const validateQueryParams = (schema: Joi.Schema) => {
         message: detail.message
       }));
 
-      log.warn('Query validation failed', { errors });
+      log.warn({ errors }, 'Query validation failed');
 
       return reply.status(400).send({
         error: 'Invalid query parameters',
@@ -139,6 +137,5 @@ export const validateQueryParams = (schema: Joi.Schema) => {
     }
 
     request.query = value as any;
-    // Continue to next handler
   };
 };

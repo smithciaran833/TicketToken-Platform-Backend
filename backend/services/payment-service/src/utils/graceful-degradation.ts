@@ -37,17 +37,17 @@ export class GracefulDegradationManager {
    */
   updateServiceHealth(service: keyof ServiceHealth, isHealthy: boolean): void {
     this.serviceHealth[service] = isHealthy;
-    
+
     // Recalculate degradation level
     const previousLevel = this.currentLevel;
     this.currentLevel = this.calculateDegradationLevel();
 
     if (previousLevel !== this.currentLevel) {
-      logger.warn('Degradation level changed', {
+      logger.warn({
         from: previousLevel,
         to: this.currentLevel,
         serviceHealth: this.serviceHealth,
-      });
+      }, 'Degradation level changed');
     }
   }
 
@@ -119,10 +119,10 @@ export class GracefulDegradationManager {
     try {
       return await fn();
     } catch (error) {
-      logger.warn('Service call failed, using fallback', {
+      logger.warn({
         context,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Service call failed, using fallback');
       return fallback;
     }
   }
@@ -146,11 +146,11 @@ export function WithFallback<T>(fallbackValue: T, serviceName: string) {
       try {
         return await originalMethod.apply(this, args);
       } catch (error) {
-        logger.warn('Method failed, using fallback', {
+        logger.warn({
           service: serviceName,
           method: propertyKey,
           error: error instanceof Error ? error.message : 'Unknown error',
-        });
+        }, 'Method failed, using fallback');
         return fallbackValue;
       }
     };
@@ -172,10 +172,10 @@ export async function executeWithDegradation<T>(
   try {
     return await breaker.execute(fn);
   } catch (error) {
-    logger.warn('Circuit breaker open or execution failed, using fallback', {
+    logger.warn({
       serviceName,
       error: error instanceof Error ? error.message : 'Unknown error',
-    });
+    }, 'Circuit breaker open or execution failed, using fallback');
 
     // Update service health
     degradationManager.updateServiceHealth(
@@ -208,9 +208,9 @@ export async function calculateTaxWithFallback(
         return { taxCents, source: 'taxjar' };
       }
     } catch (error) {
-      logger.warn('TaxJar calculation failed', {
+      logger.warn({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'TaxJar calculation failed');
     }
   }
 
@@ -231,11 +231,11 @@ export async function calculateTaxWithFallback(
   const rate = fallbackRates[state] || 0.07; // Default 7%
   const taxCents = Math.round(amountCents * rate);
 
-  logger.info('Using fallback tax rate', {
+  logger.info({
     state,
     rate,
     taxCents,
-  });
+  }, 'Using fallback tax rate');
 
   return { taxCents, source: 'fallback' };
 }
@@ -259,19 +259,19 @@ export async function estimateGasWithFallback(
         return { feeCents, source: 'blockchain' };
       }
     } catch (error) {
-      logger.warn('Blockchain fee estimation failed', {
+      logger.warn({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Blockchain fee estimation failed');
     }
   }
 
   // Fallback to fixed rate
   const fallbackFeeCents = 50 * ticketCount; // 50 cents per ticket
 
-  logger.info('Using fallback gas fee', {
+  logger.info({
     ticketCount,
     feeCents: fallbackFeeCents,
-  });
+  }, 'Using fallback gas fee');
 
   return { feeCents: fallbackFeeCents, source: 'fallback' };
 }

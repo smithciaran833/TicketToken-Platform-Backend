@@ -36,11 +36,11 @@ export async function withRetry<T>(
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
     try {
       const result = await fn();
-      
+
       if (attempt > 1) {
-        logger.info('Retry succeeded', { attempt });
+        logger.info({ attempt }, 'Retry succeeded');
       }
-      
+
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
@@ -50,22 +50,22 @@ export async function withRetry<T>(
         const isRetryable = opts.retryableErrors.some((msg) =>
           lastError.message.includes(msg)
         );
-        
+
         if (!isRetryable) {
-          logger.warn('Non-retryable error encountered', {
+          logger.warn({
             error: lastError.message,
             attempt,
-          });
+          }, 'Non-retryable error encountered');
           throw lastError;
         }
       }
 
       // If this is the last attempt, throw the error
       if (attempt === opts.maxAttempts) {
-        logger.error('All retry attempts exhausted', {
+        logger.error({
           maxAttempts: opts.maxAttempts,
           error: lastError.message,
-        });
+        }, 'All retry attempts exhausted');
         throw lastError;
       }
 
@@ -75,12 +75,12 @@ export async function withRetry<T>(
         opts.maxDelayMs
       );
 
-      logger.warn('Retry attempt failed, waiting before retry', {
+      logger.warn({
         attempt,
         maxAttempts: opts.maxAttempts,
         delayMs: delay,
         error: lastError.message,
-      });
+      }, 'Retry attempt failed, waiting before retry');
 
       // Call onRetry callback if provided
       if (opts.onRetry) {
@@ -138,20 +138,20 @@ export async function withRetryJitter<T>(
   for (let attempt = 1; attempt <= opts.maxAttempts; attempt++) {
     try {
       const result = await fn();
-      
+
       if (attempt > 1) {
-        logger.info('Retry with jitter succeeded', { attempt });
+        logger.info({ attempt }, 'Retry with jitter succeeded');
       }
-      
+
       return result;
     } catch (error) {
       lastError = error instanceof Error ? error : new Error(String(error));
 
       if (attempt === opts.maxAttempts) {
-        logger.error('All retry attempts with jitter exhausted', {
+        logger.error({
           maxAttempts: opts.maxAttempts,
           error: lastError.message,
-        });
+        }, 'All retry attempts with jitter exhausted');
         throw lastError;
       }
 
@@ -160,17 +160,17 @@ export async function withRetryJitter<T>(
         opts.initialDelayMs * Math.pow(opts.backoffMultiplier, attempt - 1),
         opts.maxDelayMs
       );
-      
+
       // Add random jitter (±25%)
       const jitter = baseDelay * 0.25 * (Math.random() * 2 - 1);
       const delay = Math.max(0, baseDelay + jitter);
 
-      logger.warn('Retry with jitter attempt failed, waiting before retry', {
+      logger.warn({
         attempt,
         maxAttempts: opts.maxAttempts,
         delayMs: Math.round(delay),
         error: lastError.message,
-      });
+      }, 'Retry with jitter attempt failed, waiting before retry');
 
       if (opts.onRetry) {
         opts.onRetry(attempt, lastError);
@@ -214,11 +214,11 @@ export async function retryOnSpecificErrors<T>(
         opts.maxDelayMs
       );
 
-      logger.warn('Retrying on specific error type', {
+      logger.warn({
         attempt,
         errorType: lastError.constructor.name,
         delayMs: delay,
-      });
+      }, 'Retrying on specific error type');
 
       await sleep(delay);
     }
@@ -246,18 +246,18 @@ export async function retryBatch<T>(
       successes.push(result.value);
     } else {
       failures.push(result.reason);
-      logger.error('Batch operation failed after retries', {
+      logger.error({
         index,
         error: result.reason.message,
-      });
+      }, 'Batch operation failed after retries');
     }
   });
 
-  logger.info('Batch retry completed', {
+  logger.info({
     total: operations.length,
     successes: successes.length,
     failures: failures.length,
-  });
+  }, 'Batch retry completed');
 
   return { successes, failures };
 }

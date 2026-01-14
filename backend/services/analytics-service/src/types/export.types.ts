@@ -60,6 +60,11 @@ export interface ExportFilters {
     operator: string;
     value: any;
   }>;
+  // Widget and report-specific filters
+  widgetId?: string;
+  widgetType?: string;
+  templateId?: string;
+  metadata?: Record<string, any>;
 }
 
 export interface ExportOptions {
@@ -86,6 +91,9 @@ export interface ExportOptions {
     destination?: string;
     recipients?: string[];
   };
+  // Widget and template-specific options
+  widgetConfig?: Record<string, any>;
+  template?: Record<string, any>;
 }
 
 export interface ReportTemplate {

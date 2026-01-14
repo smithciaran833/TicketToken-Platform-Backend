@@ -4,7 +4,6 @@ import {
   GetObjectCommand, 
   DeleteObjectCommand,
   HeadObjectCommand,
-  ListObjectsV2Command 
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
@@ -64,7 +63,7 @@ export class S3StorageProvider implements StorageProvider {
         bucket: this.bucketName
       };
     } catch (error) {
-      logger.error('S3 upload failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'S3 upload failed');
       throw error;
     }
   }
@@ -102,7 +101,7 @@ export class S3StorageProvider implements StorageProvider {
         bucket: this.bucketName
       };
     } catch (error) {
-      logger.error('S3 stream upload failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'S3 stream upload failed');
       throw error;
     }
   }
@@ -124,7 +123,7 @@ export class S3StorageProvider implements StorageProvider {
       
       return Buffer.concat(chunks);
     } catch (error) {
-      logger.error('S3 download failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'S3 download failed');
       throw error;
     }
   }
@@ -139,7 +138,7 @@ export class S3StorageProvider implements StorageProvider {
       await this.client.send(command);
       logger.debug(`File deleted from S3: ${key}`);
     } catch (error) {
-      logger.error('S3 delete failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'S3 delete failed');
       throw error;
     }
   }

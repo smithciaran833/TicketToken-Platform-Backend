@@ -1,6 +1,13 @@
+/**
+ * RFM Calculator Worker
+ * 
+ * AUDIT FIX: CRON-1 - Add distributed locking to prevent duplicate calculations
+ */
+
 import schedule from 'node-schedule';
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
+import { acquireRFMLock, getDistributedLock } from '../utils/distributed-lock';
 
 interface CustomerData {
   customer_id: string;
@@ -11,29 +18,47 @@ interface CustomerData {
 }
 
 class RFMCalculatorWorker {
-  private isRunning: boolean = false;
+  // AUDIT FIX: CRON-1 - Removed local isRunning flag, using distributed lock instead
+  private scheduledJob: schedule.Job | null = null;
 
   async start() {
     logger.info('Starting RFM Calculator Worker');
 
     // Run every night at 2 AM
-    schedule.scheduleJob('0 2 * * *', async () => {
-      if (this.isRunning) {
-        logger.warn('RFM calculation already running, skipping...');
-        return;
-      }
-
+    this.scheduledJob = schedule.scheduleJob('0 2 * * *', async () => {
       logger.info('Starting scheduled RFM calculation');
       await this.calculateAllVenueRFM();
     });
 
-    // Also run on startup for immediate availability
-    logger.info('Running initial RFM calculation on startup');
-    await this.calculateAllVenueRFM();
+    // Also run on startup for immediate availability (with small delay to let Redis connect)
+    setTimeout(async () => {
+      logger.info('Running initial RFM calculation on startup');
+      await this.calculateAllVenueRFM();
+    }, 5000);
+  }
+
+  async stop() {
+    if (this.scheduledJob) {
+      this.scheduledJob.cancel();
+      this.scheduledJob = null;
+      logger.info('RFM Calculator Worker stopped');
+    }
+    // Release any held locks
+    await getDistributedLock().releaseAll();
   }
 
   async calculateAllVenueRFM() {
-    this.isRunning = true;
+    // AUDIT FIX: CRON-1 - Acquire distributed lock before processing
+    const lock = await acquireRFMLock(undefined, { 
+      ttl: 300000, // 5 minutes
+      retryCount: 0 // Don't retry - if locked, another instance is handling it
+    });
+    
+    if (!lock) {
+      logger.info('RFM calculation already running on another instance, skipping...');
+      return;
+    }
+    
     const startTime = Date.now();
 
     try {
@@ -70,7 +95,8 @@ class RFMCalculatorWorker {
     } catch (error) {
       logger.error('RFM calculation failed:', error);
     } finally {
-      this.isRunning = false;
+      // AUDIT FIX: CRON-1 - Release the distributed lock
+      await getDistributedLock().release(lock);
     }
   }
 

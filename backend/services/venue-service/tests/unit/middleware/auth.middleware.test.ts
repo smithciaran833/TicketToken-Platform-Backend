@@ -1,839 +1,513 @@
-import { authenticate, requireVenueAccess, AuthUser } from '../../../src/middleware/auth.middleware';
-import { FastifyRequest, FastifyReply } from 'fastify';
+/**
+ * Unit tests for src/middleware/auth.middleware.ts
+ * Tests JWT authentication, API key authentication, and venue access checks
+ * Security: SEC-DB6 (API key hashing), AE6 (issuer/audience validation)
+ */
 
-describe('Auth Middleware', () => {
-  let mockRequest: Partial<FastifyRequest>;
-  let mockReply: Partial<FastifyReply>;
-  let mockServer: any;
-  let mockDb: any;
+import { authenticate, requireVenueAccess, AuthUser } from '../../../src/middleware/auth.middleware';
+import { createMockRequest, createMockReply, createMockUser } from '../../__mocks__/fastify.mock';
+import { createRedisMock } from '../../__mocks__/redis.mock';
+import { createKnexMock } from '../../__mocks__/knex.mock';
+
+// Mock the logger
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    child: jest.fn(() => ({
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    })),
+  },
+}));
+
+// Mock crypto for hashing
+jest.mock('crypto', () => ({
+  createHash: jest.fn(() => ({
+    update: jest.fn().mockReturnThis(),
+    digest: jest.fn().mockReturnValue('hashed_api_key_value'),
+  })),
+}));
+
+describe('middleware/auth.middleware', () => {
+  let mockRequest: any;
+  let mockReply: any;
   let mockRedis: any;
-  let mockVenueService: any;
-  let consoleErrorSpy: jest.SpyInstance;
+  let mockDb: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Suppress console.error in tests
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-
-    // Mock database
-    mockDb = jest.fn();
-    mockDb.mockReturnValue({
-      where: jest.fn().mockReturnThis(),
-      first: jest.fn()
-    });
-
-    // Mock Redis
-    mockRedis = {
-      get: jest.fn(),
-      setex: jest.fn()
-    };
-
-    // Mock venue service
-    mockVenueService = {
-      checkVenueAccess: jest.fn()
-    };
-
-    // Mock Fastify server with JWT and container
-    mockServer = {
-      jwt: {
-        verify: jest.fn()
-      },
-      container: {
-        cradle: {
-          db: mockDb,
-          redis: mockRedis,
-          venueService: mockVenueService
-        }
-      }
-    };
-
-    // Mock request
-    mockRequest = {
-      headers: {},
-      server: mockServer,
-      params: {}
-    };
-
-    // Mock reply with chainable methods - FIXED: using status instead of code
-    mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
-      request: {
-        id: 'test-request-id-123'
-      } as any
-    } as any;
+    mockRedis = createRedisMock();
+    mockDb = createKnexMock();
+    mockReply = createMockReply();
+    // Ensure JWT env vars are reset to defaults
+    delete process.env.JWT_ISSUER;
+    delete process.env.JWT_AUDIENCE;
   });
 
-  afterEach(() => {
-    consoleErrorSpy.mockRestore();
-  });
+  describe('authenticate()', () => {
+    describe('JWT authentication', () => {
+      it('should authenticate with valid JWT token', async () => {
+        const decodedToken = {
+          sub: 'user-123',
+          email: 'test@example.com',
+          permissions: ['venue:read'],
+          tenant_id: 'tenant-456',
+          iss: 'tickettoken-auth-service',
+          aud: 'venue-service',
+        };
 
-  // =============================================================================
-  // JWT Authentication Tests
-  // =============================================================================
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer valid-token-here',
+          },
+        });
+        mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
 
-  describe('JWT Authentication', () => {
-    it('should authenticate with valid JWT token', async () => {
-      const validToken = 'valid.jwt.token';
-      mockRequest.headers = {
-        authorization: `Bearer ${validToken}`
-      };
+        await authenticate(mockRequest, mockReply);
 
-      const decodedToken = {
-        sub: 'user-123',
-        email: 'user@example.com',
-        permissions: ['read', 'write']
-      };
-
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockServer.jwt.verify).toHaveBeenCalledWith(validToken);
-      expect((mockRequest as any).user).toEqual({
-        id: 'user-123',
-        email: 'user@example.com',
-        permissions: ['read', 'write']
+        expect(mockRequest.user).toEqual({
+          id: 'user-123',
+          email: 'test@example.com',
+          permissions: ['venue:read'],
+          tenant_id: 'tenant-456',
+        });
       });
-      expect(mockReply.send).not.toHaveBeenCalled();
-    });
 
-    it('should handle JWT token without email', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer valid.token'
-      };
+      it('should throw UnauthorizedError when no token provided', async () => {
+        mockRequest = createMockRequest({
+          headers: {},
+        });
 
-      const decodedToken = {
-        sub: 'user-123',
-        permissions: ['read']
-      };
+        await expect(authenticate(mockRequest, mockReply)).rejects.toThrow('Missing authentication token');
+      });
 
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
+      it('should throw UnauthorizedError when JWT verification fails', async () => {
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer invalid-token',
+          },
+        });
+        mockRequest.server.jwt.verify.mockRejectedValue(new Error('Invalid token'));
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+        await expect(authenticate(mockRequest, mockReply)).rejects.toThrow('Invalid or expired token');
+      });
 
-      expect((mockRequest as any).user).toEqual({
-        id: 'user-123',
-        email: '',
-        permissions: ['read']
+      it('should throw UnauthorizedError for invalid issuer (AE6)', async () => {
+        const decodedToken = {
+          sub: 'user-123',
+          iss: 'malicious-issuer',
+          aud: 'venue-service',
+        };
+
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer token-with-bad-issuer',
+          },
+        });
+        mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
+
+        await expect(authenticate(mockRequest, mockReply)).rejects.toThrow('Invalid token issuer');
+      });
+
+      it('should throw UnauthorizedError for invalid audience (AE6)', async () => {
+        const decodedToken = {
+          sub: 'user-123',
+          iss: 'tickettoken-auth-service',
+          aud: 'wrong-service',
+        };
+
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer token-with-bad-audience',
+          },
+        });
+        mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
+
+        await expect(authenticate(mockRequest, mockReply)).rejects.toThrow('Invalid token audience');
+      });
+
+      it('should accept token with audience array containing venue-service', async () => {
+        const decodedToken = {
+          sub: 'user-123',
+          iss: 'tickettoken-auth-service',
+          aud: ['venue-service', 'event-service'],
+          email: 'test@example.com',
+        };
+
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer token-with-array-audience',
+          },
+        });
+        mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
+
+        await authenticate(mockRequest, mockReply);
+
+        expect(mockRequest.user.id).toBe('user-123');
+      });
+
+      it('should set default permissions when not provided', async () => {
+        const decodedToken = {
+          sub: 'user-123',
+          iss: 'tickettoken-auth-service',
+        };
+
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer minimal-token',
+          },
+        });
+        mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
+
+        await authenticate(mockRequest, mockReply);
+
+        expect(mockRequest.user.permissions).toEqual([]);
+        expect(mockRequest.user.email).toBe('');
+      });
+
+      it('should use custom JWT_ISSUER from environment', async () => {
+        const originalEnv = process.env.JWT_ISSUER;
+        process.env.JWT_ISSUER = 'custom-issuer';
+
+        const decodedToken = {
+          sub: 'user-123',
+          iss: 'custom-issuer',
+        };
+
+        mockRequest = createMockRequest({
+          headers: {
+            authorization: 'Bearer token',
+          },
+        });
+        mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
+
+        await authenticate(mockRequest, mockReply);
+
+        expect(mockRequest.user.id).toBe('user-123');
+
+        process.env.JWT_ISSUER = originalEnv;
       });
     });
 
-    it('should handle JWT token without permissions', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer valid.token'
-      };
+    describe('API key authentication', () => {
+      it('should authenticate with valid API key from cache', async () => {
+        const cachedUser = {
+          id: 'user-api',
+          email: 'api@example.com',
+          permissions: ['venue:read'],
+          tenant_id: 'tenant-api',
+        };
 
-      const decodedToken = {
-        sub: 'user-123',
-        email: 'user@example.com'
-      };
+        mockRedis.get.mockResolvedValue(JSON.stringify(cachedUser));
 
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
+        mockRequest = createMockRequest({
+          headers: {
+            'x-api-key': 'valid-api-key',
+          },
+        });
+        mockRequest.server.container.cradle.redis = mockRedis;
+        mockRequest.server.container.cradle.db = mockDb;
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+        await authenticate(mockRequest, mockReply);
 
-      expect((mockRequest as any).user).toEqual({
-        id: 'user-123',
-        email: 'user@example.com',
-        permissions: []
+        expect(mockRequest.user).toEqual(cachedUser);
+        expect(mockRedis.get).toHaveBeenCalledWith('api_key_hash:hashed_api_key_value');
       });
-    });
 
-    it('should reject invalid JWT token', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer invalid.token'
-      };
-
-      mockServer.jwt.verify.mockRejectedValue(new Error('Invalid signature'));
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid token'
-        })
-      );
-      expect((mockRequest as any).user).toBeUndefined();
-    });
-
-    it('should reject expired JWT token', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer expired.token'
-      };
-
-      mockServer.jwt.verify.mockRejectedValue(new Error('Token expired'));
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid token'
-        })
-      );
-    });
-
-    it('should reject malformed JWT token', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer malformed'
-      };
-
-      mockServer.jwt.verify.mockRejectedValue(new Error('Malformed token'));
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid token'
-        })
-      );
-    });
-
-    it('should reject missing Authorization header', async () => {
-      mockRequest.headers = {};
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Missing authentication'
-        })
-      );
-      expect(mockServer.jwt.verify).not.toHaveBeenCalled();
-    });
-
-    it('should reject empty token after Bearer prefix', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer '
-      };
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Missing authentication'
-        })
-      );
-    });
-  });
-
-  // =============================================================================
-  // API Key Authentication Tests
-  // =============================================================================
-
-  describe('API Key Authentication', () => {
-    it('should authenticate with valid API key from cache', async () => {
-      const apiKey = 'valid-api-key-123';
-      mockRequest.headers = {
-        'x-api-key': apiKey
-      };
-
-      const cachedUser = {
-        id: 'user-456',
-        email: 'api-user@example.com',
-        permissions: ['api:read', 'api:write']
-      };
-
-      mockRedis.get.mockResolvedValue(JSON.stringify(cachedUser));
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockRedis.get).toHaveBeenCalledWith(`api_key:${apiKey}`);
-      expect((mockRequest as any).user).toEqual(cachedUser);
-      expect(mockDb).not.toHaveBeenCalled();
-      expect(mockReply.send).not.toHaveBeenCalled();
-    });
-
-    it('should authenticate with valid API key from database', async () => {
-      const apiKey = 'valid-api-key-789';
-      mockRequest.headers = {
-        'x-api-key': apiKey
-      };
-
-      // Cache miss
-      mockRedis.get.mockResolvedValue(null);
-
-      // Mock database queries
-      const keyData = {
-        key: apiKey,
-        user_id: 'user-789',
-        is_active: true,
-        expires_at: new Date(Date.now() + 86400000), // expires tomorrow
-        permissions: ['api:read']
-      };
-
-      const userData = {
-        id: 'user-789',
-        email: 'db-user@example.com'
-      };
-
-      const mockKeyQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(keyData)
-      };
-
-      const mockUserQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(userData)
-      };
-
-      mockDb
-        .mockReturnValueOnce(mockKeyQuery) // First call for api_keys table
-        .mockReturnValueOnce(mockUserQuery); // Second call for users table
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockRedis.get).toHaveBeenCalledWith(`api_key:${apiKey}`);
-      expect(mockDb).toHaveBeenCalledWith('api_keys');
-      expect(mockDb).toHaveBeenCalledWith('users');
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        `api_key:${apiKey}`,
-        300,
-        JSON.stringify({
-          id: 'user-789',
+      it('should look up API key by hash in database (SEC-DB6)', async () => {
+        mockRedis.get.mockResolvedValue(null);
+        
+        const apiKeyData = {
+          user_id: 'user-db',
+          permissions: ['venue:read', 'venue:write'],
+        };
+        
+        const userData = {
+          id: 'user-db',
           email: 'db-user@example.com',
-          permissions: ['api:read']
-        })
-      );
-      expect((mockRequest as any).user).toEqual({
-        id: 'user-789',
-        email: 'db-user@example.com',
-        permissions: ['api:read']
-      });
-    });
+          tenant_id: 'tenant-db',
+        };
 
-    it('should reject invalid API key', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'invalid-key'
-      };
+        mockDb._mockChain.first
+          .mockResolvedValueOnce(apiKeyData)
+          .mockResolvedValueOnce(userData);
 
-      mockRedis.get.mockResolvedValue(null);
+        mockRedis.setex.mockResolvedValue('OK');
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(null) // Key not found
-      };
+        mockRequest = createMockRequest({
+          headers: {
+            'x-api-key': 'new-api-key',
+          },
+        });
+        mockRequest.server.container.cradle.redis = mockRedis;
+        mockRequest.server.container.cradle.db = mockDb;
 
-      mockDb.mockReturnValue(mockQuery);
+        await authenticate(mockRequest, mockReply);
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid API key'
-        })
-      );
-    });
-
-    it('should reject expired API key', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'expired-key'
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-
-      const expiredKeyData = {
-        key: 'expired-key',
-        user_id: 'user-123',
-        is_active: true,
-        expires_at: new Date(Date.now() - 86400000) // expired yesterday
-      };
-
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(null) // Where clause filters out expired keys
-      };
-
-      mockDb.mockReturnValue(mockQuery);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid API key'
-        })
-      );
-    });
-
-    it('should reject inactive API key', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'inactive-key'
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-
-      // is_active: false will be filtered by where clause
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(null)
-      };
-
-      mockDb.mockReturnValue(mockQuery);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-    });
-
-    it('should reject API key when user not found', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'orphaned-key'
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-
-      const keyData = {
-        key: 'orphaned-key',
-        user_id: 'non-existent-user',
-        is_active: true,
-        expires_at: new Date(Date.now() + 86400000)
-      };
-
-      const mockKeyQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(keyData)
-      };
-
-      const mockUserQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(null) // User not found
-      };
-
-      mockDb
-        .mockReturnValueOnce(mockKeyQuery)
-        .mockReturnValueOnce(mockUserQuery);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Invalid API key'
-        })
-      );
-    });
-
-    it('should handle API key without permissions', async () => {
-      const apiKey = 'key-no-perms';
-      mockRequest.headers = {
-        'x-api-key': apiKey
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-
-      const keyData = {
-        key: apiKey,
-        user_id: 'user-123',
-        is_active: true,
-        expires_at: new Date(Date.now() + 86400000),
-        permissions: null
-      };
-
-      const userData = {
-        id: 'user-123',
-        email: 'user@example.com'
-      };
-
-      const mockKeyQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(keyData)
-      };
-
-      const mockUserQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(userData)
-      };
-
-      mockDb
-        .mockReturnValueOnce(mockKeyQuery)
-        .mockReturnValueOnce(mockUserQuery);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect((mockRequest as any).user.permissions).toEqual([]);
-    });
-
-    it('should cache API key for 5 minutes after database lookup', async () => {
-      const apiKey = 'cache-test-key';
-      mockRequest.headers = {
-        'x-api-key': apiKey
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-
-      const keyData = {
-        key: apiKey,
-        user_id: 'user-123',
-        is_active: true,
-        expires_at: new Date(Date.now() + 86400000),
-        permissions: ['read']
-      };
-
-      const userData = {
-        id: 'user-123',
-        email: 'user@example.com'
-      };
-
-      const mockKeyQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(keyData)
-      };
-
-      const mockUserQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(userData)
-      };
-
-      mockDb
-        .mockReturnValueOnce(mockKeyQuery)
-        .mockReturnValueOnce(mockUserQuery);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        `api_key:${apiKey}`,
-        300, // 5 minutes
-        expect.any(String)
-      );
-    });
-  });
-
-  // =============================================================================
-  // Priority: API Key over JWT
-  // =============================================================================
-
-  describe('Authentication Priority', () => {
-    it('should prioritize API key over JWT when both are present', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'api-key-123',
-        authorization: 'Bearer jwt.token'
-      };
-
-      const cachedUser = {
-        id: 'api-user',
-        email: 'api@example.com',
-        permissions: ['api']
-      };
-
-      mockRedis.get.mockResolvedValue(JSON.stringify(cachedUser));
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockRedis.get).toHaveBeenCalled();
-      expect(mockServer.jwt.verify).not.toHaveBeenCalled();
-      expect((mockRequest as any).user).toEqual(cachedUser);
-    });
-  });
-
-  // =============================================================================
-  // Error Handling Tests
-  // =============================================================================
-
-  describe('Error Handling', () => {
-    it('should handle Redis connection failure gracefully', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'test-key'
-      };
-
-      mockRedis.get.mockRejectedValue(new Error('Redis connection failed'));
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Authentication failed'
-        })
-      );
-    });
-
-    it('should handle database connection failure', async () => {
-      mockRequest.headers = {
-        'x-api-key': 'test-key'
-      };
-
-      mockRedis.get.mockResolvedValue(null);
-      mockDb.mockImplementation(() => {
-        throw new Error('Database connection failed');
+        expect(mockRequest.user).toEqual({
+          id: 'user-db',
+          email: 'db-user@example.com',
+          permissions: ['venue:read', 'venue:write'],
+          tenant_id: 'tenant-db',
+        });
+        // Should cache using hashed key
+        expect(mockRedis.setex).toHaveBeenCalledWith(
+          'api_key_hash:hashed_api_key_value',
+          300,
+          expect.any(String)
+        );
       });
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+      it('should return 401 for invalid API key', async () => {
+        mockRedis.get.mockResolvedValue(null);
+        mockDb._mockChain.first.mockResolvedValue(null);
 
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Authentication failed'
-        })
-      );
-    });
+        mockRequest = createMockRequest({
+          headers: {
+            'x-api-key': 'invalid-key',
+          },
+        });
+        mockRequest.server.container.cradle.redis = mockRedis;
+        mockRequest.server.container.cradle.db = mockDb;
 
-    it('should handle JWT verification throwing unexpected error', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer token'
-      };
+        await authenticate(mockRequest, mockReply);
 
-      mockServer.jwt.verify.mockRejectedValue(new Error('Unexpected JWT error'));
+        expect(mockReply.status).toHaveBeenCalledWith(401);
+        expect(mockReply.send).toHaveBeenCalledWith(
+          expect.objectContaining({ error: 'Invalid API key' })
+        );
+      });
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+      it('should return 401 when user not found for API key', async () => {
+        mockRedis.get.mockResolvedValue(null);
+        
+        const apiKeyData = { user_id: 'nonexistent-user', permissions: [] };
+        
+        mockDb._mockChain.first
+          .mockResolvedValueOnce(apiKeyData)
+          .mockResolvedValueOnce(null); // User not found
 
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(consoleErrorSpy).toHaveBeenCalled();
+        mockRequest = createMockRequest({
+          headers: {
+            'x-api-key': 'api-key-no-user',
+          },
+        });
+        mockRequest.server.container.cradle.redis = mockRedis;
+        mockRequest.server.container.cradle.db = mockDb;
+
+        await authenticate(mockRequest, mockReply);
+
+        expect(mockReply.status).toHaveBeenCalledWith(401);
+      });
+
+      it('should prefer API key over JWT when both provided', async () => {
+        const cachedUser = {
+          id: 'api-user',
+          email: 'api@example.com',
+          permissions: [],
+          tenant_id: 'tenant-api',
+        };
+        
+        mockRedis.get.mockResolvedValue(JSON.stringify(cachedUser));
+
+        mockRequest = createMockRequest({
+          headers: {
+            'x-api-key': 'valid-api-key',
+            authorization: 'Bearer jwt-token',
+          },
+        });
+        mockRequest.server.container.cradle.redis = mockRedis;
+        mockRequest.server.container.cradle.db = mockDb;
+
+        await authenticate(mockRequest, mockReply);
+
+        // API key should be used, not JWT
+        expect(mockRequest.user.id).toBe('api-user');
+        expect(mockRequest.server.jwt.verify).not.toHaveBeenCalled();
+      });
     });
   });
 
-  // =============================================================================
-  // requireVenueAccess Tests
-  // =============================================================================
-
-  describe('requireVenueAccess', () => {
-    beforeEach(() => {
-      mockRequest.params = { venueId: 'venue-123' };
-    });
-
+  describe('requireVenueAccess()', () => {
     it('should allow access when user has venue access', async () => {
-      (mockRequest as any).user = {
-        id: 'user-123',
-        email: 'user@example.com',
-        permissions: []
-      };
+      mockRequest = createMockRequest({
+        params: { venueId: 'venue-123' },
+        user: createMockUser(),
+      });
+      mockRequest.server.container.cradle.venueService.checkVenueAccess.mockResolvedValue(true);
 
-      mockVenueService.checkVenueAccess.mockResolvedValue(true);
+      await requireVenueAccess(mockRequest, mockReply);
 
-      await requireVenueAccess(
-        mockRequest as FastifyRequest<{ Params: { venueId: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockVenueService.checkVenueAccess).toHaveBeenCalledWith('venue-123', 'user-123');
-      expect((mockRequest as any).user.venueId).toBe('venue-123');
-      expect(mockReply.send).not.toHaveBeenCalled();
+      expect(mockRequest.user.venueId).toBe('venue-123');
     });
 
-    it('should deny access when user does not have venue access', async () => {
-      (mockRequest as any).user = {
-        id: 'user-123',
-        email: 'user@example.com',
-        permissions: []
-      };
+    it('should return 401 when user not authenticated', async () => {
+      mockRequest = createMockRequest({
+        params: { venueId: 'venue-123' },
+        user: null,
+      });
 
-      mockVenueService.checkVenueAccess.mockResolvedValue(false);
+      await requireVenueAccess(mockRequest, mockReply);
 
-      await requireVenueAccess(
-        mockRequest as FastifyRequest<{ Params: { venueId: string } }>,
-        mockReply as FastifyReply
+      expect(mockReply.status).toHaveBeenCalledWith(401);
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({ error: 'Not authenticated' })
       );
+    });
+
+    it('should return 403 when user does not have venue access', async () => {
+      mockRequest = createMockRequest({
+        params: { venueId: 'venue-123' },
+        user: createMockUser(),
+      });
+      mockRequest.server.container.cradle.venueService.checkVenueAccess.mockResolvedValue(false);
+
+      await requireVenueAccess(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(403);
       expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Access denied'
-        })
-      );
-      expect((mockRequest as any).user.venueId).toBeUndefined();
-    });
-
-    it('should require authentication before checking venue access', async () => {
-      // No user set on request
-      (mockRequest as any).user = null;
-
-      await requireVenueAccess(
-        mockRequest as FastifyRequest<{ Params: { venueId: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Not authenticated'
-        })
-      );
-      expect(mockVenueService.checkVenueAccess).not.toHaveBeenCalled();
-    });
-
-    it('should handle undefined user gracefully', async () => {
-      // User is undefined
-      (mockRequest as any).user = undefined;
-
-      await requireVenueAccess(
-        mockRequest as FastifyRequest<{ Params: { venueId: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith(
-        expect.objectContaining({
-          error: 'Not authenticated'
-        })
+        expect.objectContaining({ error: 'Access denied' })
       );
     });
 
-    it('should store venueId on user object after successful access check', async () => {
-      (mockRequest as any).user = {
-        id: 'user-456',
-        email: 'owner@example.com',
-        permissions: ['venue:admin']
-      };
-
-      mockVenueService.checkVenueAccess.mockResolvedValue(true);
-
-      await requireVenueAccess(
-        mockRequest as FastifyRequest<{ Params: { venueId: string } }>,
-        mockReply as FastifyReply
-      );
-
-      expect((mockRequest as any).user).toEqual({
-        id: 'user-456',
-        email: 'owner@example.com',
-        permissions: ['venue:admin'],
-        venueId: 'venue-123'
+    it('should call venueService.checkVenueAccess with correct params', async () => {
+      mockRequest = createMockRequest({
+        params: { venueId: 'venue-xyz' },
+        user: createMockUser({ id: 'user-abc' }),
       });
-    });
+      mockRequest.server.container.cradle.venueService.checkVenueAccess.mockResolvedValue(true);
 
-    it('should handle venue service errors gracefully', async () => {
-      (mockRequest as any).user = {
-        id: 'user-123',
-        email: 'user@example.com',
-        permissions: []
-      };
+      await requireVenueAccess(mockRequest, mockReply);
 
-      mockVenueService.checkVenueAccess.mockRejectedValue(new Error('Database error'));
-
-      await expect(
-        requireVenueAccess(
-          mockRequest as FastifyRequest<{ Params: { venueId: string } }>,
-          mockReply as FastifyReply
-        )
-      ).rejects.toThrow('Database error');
+      expect(mockRequest.server.container.cradle.venueService.checkVenueAccess)
+        .toHaveBeenCalledWith('venue-xyz', 'user-abc');
     });
   });
 
-  // =============================================================================
-  // Token Extraction Tests
-  // =============================================================================
+  describe('Security tests', () => {
+    it('should hash API keys before lookup (SEC-DB6)', async () => {
+      const crypto = require('crypto');
+      mockRedis.get.mockResolvedValue(null);
+      mockDb._mockChain.first.mockResolvedValue(null);
 
-  describe('Token Extraction', () => {
-    it('should extract token from Bearer format correctly', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer my.jwt.token'
-      };
+      mockRequest = createMockRequest({
+        headers: {
+          'x-api-key': 'secret-api-key',
+        },
+      });
+      mockRequest.server.container.cradle.redis = mockRedis;
+      mockRequest.server.container.cradle.db = mockDb;
 
-      const decodedToken = {
-        sub: 'user-123',
-        email: 'user@example.com',
-        permissions: []
-      };
+      await authenticate(mockRequest, mockReply);
 
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockServer.jwt.verify).toHaveBeenCalledWith('my.jwt.token');
+      // Verify crypto.createHash was called
+      expect(crypto.createHash).toHaveBeenCalledWith('sha256');
     });
 
-    it('should handle token without Bearer prefix', async () => {
-      mockRequest.headers = {
-        authorization: 'just.a.token'
-      };
+    it('should never store plaintext API key in cache', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      
+      const apiKeyData = { user_id: 'user-1', permissions: [] };
+      const userData = { id: 'user-1', email: 'test@test.com', tenant_id: 't1' };
+      
+      mockDb._mockChain.first
+        .mockResolvedValueOnce(apiKeyData)
+        .mockResolvedValueOnce(userData);
+      mockRedis.setex.mockResolvedValue('OK');
 
-      const decodedToken = {
-        sub: 'user-123',
-        email: 'user@example.com',
-        permissions: []
-      };
+      mockRequest = createMockRequest({
+        headers: {
+          'x-api-key': 'plaintext-api-key',
+        },
+      });
+      mockRequest.server.container.cradle.redis = mockRedis;
+      mockRequest.server.container.cradle.db = mockDb;
 
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
+      await authenticate(mockRequest, mockReply);
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      // Should attempt to verify "just.a.token" after Bearer replacement
-      expect(mockServer.jwt.verify).toHaveBeenCalled();
+      // Cache key should use hash, not plaintext
+      const cacheCall = mockRedis.setex.mock.calls[0];
+      expect(cacheCall[0]).not.toContain('plaintext-api-key');
+      expect(cacheCall[0]).toContain('api_key_hash:');
     });
 
-    it('should handle case-sensitive Bearer prefix', async () => {
-      mockRequest.headers = {
-        authorization: 'bearer lowercase.token'
-      };
-
+    it('should validate token claims even without iss/aud', async () => {
       const decodedToken = {
         sub: 'user-123',
-        email: 'user@example.com',
-        permissions: []
+        // No iss or aud - should still work with defaults
       };
 
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
+      mockRequest = createMockRequest({
+        headers: {
+          authorization: 'Bearer token-no-claims',
+        },
+      });
+      mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+      await authenticate(mockRequest, mockReply);
 
-      // Should attempt verification (Bearer is case-sensitive, so this becomes "bearer lowercase.token")
-      expect(mockServer.jwt.verify).toHaveBeenCalled();
+      expect(mockRequest.user.id).toBe('user-123');
     });
   });
 
-  // =============================================================================
-  // User Context Setting Tests
-  // =============================================================================
-
-  describe('User Context Setting', () => {
-    it('should set complete user context from JWT', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer token'
-      };
-
+  describe('Edge cases', () => {
+    it('should handle Bearer prefix with extra spaces', async () => {
       const decodedToken = {
-        sub: 'user-abc',
-        email: 'complete@example.com',
-        permissions: ['read', 'write', 'admin'],
-        tenant_id: 'tenant-xyz',
-        role: 'admin'
+        sub: 'user-123',
+        iss: 'tickettoken-auth-service',
       };
 
-      mockServer.jwt.verify.mockResolvedValue(decodedToken);
+      mockRequest = createMockRequest({
+        headers: {
+          authorization: 'Bearer  extra-spaces-token',
+        },
+      });
+      mockRequest.server.jwt.verify.mockResolvedValue(decodedToken);
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+      await authenticate(mockRequest, mockReply);
 
-      expect((mockRequest as any).user).toBeDefined();
-      expect((mockRequest as any).user.id).toBe('user-abc');
-      expect((mockRequest as any).user.email).toBe('complete@example.com');
-      expect((mockRequest as any).user.permissions).toEqual(['read', 'write', 'admin']);
+      expect(mockRequest.user.id).toBe('user-123');
     });
 
-    it('should set user context from API key', async () => {
-      const apiKey = 'api-key-complete';
-      mockRequest.headers = {
-        'x-api-key': apiKey
-      };
+    it('should handle expired API key', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      // Query with expires_at filter returns null
+      mockDb._mockChain.first.mockResolvedValue(null);
 
-      const cachedUser = {
-        id: 'api-user-123',
-        email: 'api@example.com',
-        permissions: ['api:access']
-      };
+      mockRequest = createMockRequest({
+        headers: {
+          'x-api-key': 'expired-key',
+        },
+      });
+      mockRequest.server.container.cradle.redis = mockRedis;
+      mockRequest.server.container.cradle.db = mockDb;
 
-      mockRedis.get.mockResolvedValue(JSON.stringify(cachedUser));
+      await authenticate(mockRequest, mockReply);
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect((mockRequest as any).user).toEqual(cachedUser);
+      expect(mockReply.status).toHaveBeenCalledWith(401);
     });
 
-    it('should not set user context on authentication failure', async () => {
-      mockRequest.headers = {
-        authorization: 'Bearer invalid'
-      };
+    it('should handle inactive API key', async () => {
+      mockRedis.get.mockResolvedValue(null);
+      // Query with is_active filter returns null
+      mockDb._mockChain.first.mockResolvedValue(null);
 
-      mockServer.jwt.verify.mockRejectedValue(new Error('Invalid'));
+      mockRequest = createMockRequest({
+        headers: {
+          'x-api-key': 'inactive-key',
+        },
+      });
+      mockRequest.server.container.cradle.redis = mockRedis;
+      mockRequest.server.container.cradle.db = mockDb;
 
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+      await authenticate(mockRequest, mockReply);
 
-      expect((mockRequest as any).user).toBeUndefined();
+      expect(mockReply.status).toHaveBeenCalledWith(401);
     });
   });
 });

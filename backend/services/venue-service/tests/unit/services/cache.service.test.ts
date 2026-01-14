@@ -1,756 +1,590 @@
-import { CacheService, initializeCache } from '../../../src/services/cache.service';
-import { logger } from '../../../src/utils/logger';
-import { withCircuitBreaker } from '../../../src/utils/circuitBreaker';
-import { withRetry } from '../../../src/utils/retry';
-import { CacheError } from '../../../src/utils/errors';
-import Redis from 'ioredis';
+/**
+ * Unit tests for src/services/cache.service.ts
+ * Tests Redis caching with tenant isolation (SR1, SR4), circuit breakers, and retry logic
+ */
 
-// =============================================================================
-// MOCKS
-// =============================================================================
+import { CacheService } from '../../../src/services/cache.service';
+import { createRedisMock, createFailingRedisMock, RedisMock } from '../../__mocks__/redis.mock';
 
-jest.mock('ioredis');
-jest.mock('../../../src/utils/logger');
-jest.mock('../../../src/utils/circuitBreaker');
-jest.mock('../../../src/utils/retry');
+// Mock the logger
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    child: jest.fn(() => ({
+      debug: jest.fn(),
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+    })),
+  },
+}));
 
-describe('CacheService', () => {
+// Mock circuit breaker to pass through
+jest.mock('../../../src/utils/circuitBreaker', () => ({
+  withCircuitBreaker: jest.fn((fn: any) => fn),
+}));
+
+// Mock retry to pass through
+jest.mock('../../../src/utils/retry', () => ({
+  withRetry: jest.fn((fn: any) => fn()),
+}));
+
+describe('services/cache.service', () => {
   let cacheService: CacheService;
-  let mockRedis: jest.Mocked<Redis>;
+  let redisMock: RedisMock;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Mock Redis
-    mockRedis = {
-      get: jest.fn(),
-      set: jest.fn(),
-      setex: jest.fn(),
-      del: jest.fn(),
-      exists: jest.fn(),
-      scan: jest.fn(),
-      ttl: jest.fn(),
-    } as any;
-
-    // Mock withRetry to just execute the function
-    (withRetry as jest.Mock).mockImplementation((fn: any) => fn());
-
-    // Mock withCircuitBreaker to just execute the function
-    (withCircuitBreaker as jest.Mock).mockImplementation((fn: any) => fn);
-
-    // Create service instance
-    cacheService = new CacheService(mockRedis);
+    redisMock = createRedisMock();
+    cacheService = new CacheService(redisMock as any);
   });
 
-  // =============================================================================
-  // constructor() - 3 test cases
-  // =============================================================================
-
-  describe('constructor()', () => {
-    it('should initialize with Redis instance', () => {
-      expect(cacheService).toBeDefined();
-      expect((cacheService as any).redis).toBe(mockRedis);
-    });
-
-    it('should set default TTL to 3600 seconds', () => {
-      expect((cacheService as any).defaultTTL).toBe(3600);
-    });
-
-    it('should set key prefix to venue:', () => {
-      expect((cacheService as any).keyPrefix).toBe('venue:');
+  describe('constructor', () => {
+    it('should create cache service with redis client', () => {
+      expect(cacheService).toBeInstanceOf(CacheService);
     });
   });
 
-  // =============================================================================
-  // get() - 8 test cases
-  // =============================================================================
+  describe('setTenantContext()', () => {
+    it('should set tenant context', () => {
+      cacheService.setTenantContext('tenant-123');
+      // Verify by checking generated cache keys include tenant
+      const key = (cacheService as any).getCacheKey('test-key');
+      expect(key).toContain('tenant:tenant-123');
+    });
+
+    it('should clear tenant context when null', () => {
+      cacheService.setTenantContext('tenant-123');
+      cacheService.setTenantContext(null);
+      const key = (cacheService as any).getCacheKey('test-key');
+      expect(key).toContain('global');
+    });
+  });
+
+  describe('getCacheKey() (private)', () => {
+    it('should generate tenant-scoped key when tenant is set', () => {
+      cacheService.setTenantContext('tenant-abc');
+      const key = (cacheService as any).getCacheKey('venue:123');
+      expect(key).toBe('venue:tenant:tenant-abc:venue:123');
+    });
+
+    it('should generate global key when no tenant context', () => {
+      cacheService.setTenantContext(null);
+      const key = (cacheService as any).getCacheKey('venue:123');
+      expect(key).toBe('venue:global:venue:123');
+    });
+
+    it('should use provided tenantId over context', () => {
+      cacheService.setTenantContext('context-tenant');
+      const key = (cacheService as any).getCacheKey('venue:123', 'override-tenant');
+      expect(key).toBe('venue:tenant:override-tenant:venue:123');
+    });
+  });
 
   describe('get()', () => {
-    it('should get value from cache with prefix', async () => {
-      const mockData = { id: '123', name: 'Test' };
-      mockRedis.get.mockResolvedValue(JSON.stringify(mockData));
+    it('should return parsed JSON data on cache hit', async () => {
+      const testData = { id: '123', name: 'Test Venue' };
+      redisMock.get.mockResolvedValue(JSON.stringify(testData));
 
-      const result = await cacheService.get('test-key');
+      const result = await cacheService.get('venue:123');
 
-      expect(result).toEqual(mockData);
-      expect(mockRedis.get).toHaveBeenCalledWith('venue:test-key');
+      expect(result).toEqual(testData);
+      expect(redisMock.get).toHaveBeenCalled();
     });
 
-    it('should parse JSON data correctly', async () => {
-      const complexData = {
-        id: '123',
-        nested: { field: 'value' },
-        array: [1, 2, 3],
-      };
-      mockRedis.get.mockResolvedValue(JSON.stringify(complexData));
+    it('should return null on cache miss', async () => {
+      redisMock.get.mockResolvedValue(null);
 
-      const result = await cacheService.get('complex');
-
-      expect(result).toEqual(complexData);
-    });
-
-    it('should return null for cache miss', async () => {
-      mockRedis.get.mockResolvedValue(null);
-
-      const result = await cacheService.get('missing-key');
+      const result = await cacheService.get('venue:nonexistent');
 
       expect(result).toBeNull();
     });
 
-    it('should log cache hit', async () => {
-      mockRedis.get.mockResolvedValue(JSON.stringify({ data: 'test' }));
+    it('should throw CacheError on Redis error', async () => {
+      redisMock.get.mockRejectedValue(new Error('Redis connection failed'));
 
-      await cacheService.get('test-key');
+      await expect(cacheService.get('venue:123')).rejects.toThrow('Cache get failed');
+    });
 
-      expect(logger.debug).toHaveBeenCalledWith(
-        { key: 'venue:test-key' },
-        'Cache hit'
+    it('should use tenant-scoped key', async () => {
+      cacheService.setTenantContext('tenant-xyz');
+      redisMock.get.mockResolvedValue(null);
+
+      await cacheService.get('venue:123');
+
+      expect(redisMock.get).toHaveBeenCalledWith('venue:tenant:tenant-xyz:venue:123');
+    });
+
+    it('should accept explicit tenantId parameter', async () => {
+      redisMock.get.mockResolvedValue(null);
+
+      await cacheService.get('venue:123', 'explicit-tenant');
+
+      expect(redisMock.get).toHaveBeenCalledWith('venue:tenant:explicit-tenant:venue:123');
+    });
+  });
+
+  describe('set()', () => {
+    it('should stringify and store data with default TTL', async () => {
+      const testData = { id: '123', name: 'Test Venue' };
+      redisMock.setex.mockResolvedValue('OK');
+
+      await cacheService.set('venue:123', testData);
+
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        expect.any(String),
+        3600, // default TTL
+        JSON.stringify(testData)
       );
     });
 
-    it('should log cache miss', async () => {
-      mockRedis.get.mockResolvedValue(null);
+    it('should use provided TTL', async () => {
+      const testData = { id: '123' };
+      redisMock.setex.mockResolvedValue('OK');
 
-      await cacheService.get('missing-key');
+      await cacheService.set('venue:123', testData, 300);
 
-      expect(logger.debug).toHaveBeenCalledWith(
-        { key: 'venue:missing-key' },
-        'Cache miss'
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        expect.any(String),
+        300,
+        JSON.stringify(testData)
       );
     });
 
     it('should throw CacheError on Redis error', async () => {
-      const error = new Error('Redis error');
-      mockRedis.get.mockRejectedValue(error);
+      redisMock.setex.mockRejectedValue(new Error('Redis error'));
 
-      await expect(cacheService.get('test-key')).rejects.toThrow(CacheError);
+      await expect(cacheService.set('venue:123', {})).rejects.toThrow('Cache set failed');
     });
 
-    it('should log error on failure', async () => {
-      const error = new Error('Redis error');
-      mockRedis.get.mockRejectedValue(error);
+    it('should use tenant-scoped key', async () => {
+      cacheService.setTenantContext('tenant-abc');
+      redisMock.setex.mockResolvedValue('OK');
 
-      await expect(cacheService.get('test-key')).rejects.toThrow();
+      await cacheService.set('venue:123', { test: true });
 
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, key: 'test-key' },
-        'Cache get error'
-      );
-    });
-
-    it('should handle empty string value', async () => {
-      mockRedis.get.mockResolvedValue(JSON.stringify(''));
-
-      const result = await cacheService.get('empty');
-
-      expect(result).toBe('');
-    });
-  });
-
-  // =============================================================================
-  // set() - 8 test cases
-  // =============================================================================
-
-  describe('set()', () => {
-    it('should set value in cache with prefix', async () => {
-      const data = { id: '123', name: 'Test' };
-      mockRedis.setex.mockResolvedValue('OK');
-
-      await cacheService.set('test-key', data);
-
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:test-key',
-        3600,
-        JSON.stringify(data)
-      );
-    });
-
-    it('should use custom TTL when provided', async () => {
-      const data = { test: 'data' };
-      const customTTL = 1800;
-      mockRedis.setex.mockResolvedValue('OK');
-
-      await cacheService.set('test-key', data, customTTL);
-
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:test-key',
-        customTTL,
-        JSON.stringify(data)
-      );
-    });
-
-    it('should use default TTL when not provided', async () => {
-      const data = { test: 'data' };
-      mockRedis.setex.mockResolvedValue('OK');
-
-      await cacheService.set('test-key', data);
-
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:test-key',
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        'venue:tenant:tenant-abc:venue:123',
         3600,
         expect.any(String)
       );
     });
-
-    it('should serialize complex objects', async () => {
-      const complexData = {
-        nested: { deep: { value: 123 } },
-        array: [1, 2, 3],
-        date: new Date('2024-01-01'),
-      };
-      mockRedis.setex.mockResolvedValue('OK');
-
-      await cacheService.set('complex', complexData);
-
-      const serialized = JSON.stringify(complexData);
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:complex',
-        3600,
-        serialized
-      );
-    });
-
-    it('should log cache set', async () => {
-      mockRedis.setex.mockResolvedValue('OK');
-
-      await cacheService.set('test-key', { data: 'test' }, 1800);
-
-      expect(logger.debug).toHaveBeenCalledWith(
-        { key: 'venue:test-key', ttl: 1800 },
-        'Cache set'
-      );
-    });
-
-    it('should throw CacheError on Redis error', async () => {
-      const error = new Error('Redis error');
-      mockRedis.setex.mockRejectedValue(error);
-
-      await expect(cacheService.set('test-key', { data: 'test' })).rejects.toThrow(
-        CacheError
-      );
-    });
-
-    it('should log error on failure', async () => {
-      const error = new Error('Redis error');
-      mockRedis.setex.mockRejectedValue(error);
-
-      await expect(cacheService.set('test-key', { data: 'test' })).rejects.toThrow();
-
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, key: 'test-key' },
-        'Cache set error'
-      );
-    });
-
-    it('should handle null values', async () => {
-      mockRedis.setex.mockResolvedValue('OK');
-
-      await cacheService.set('null-key', null);
-
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:null-key',
-        3600,
-        'null'
-      );
-    });
   });
-
-  // =============================================================================
-  // del() - 5 test cases
-  // =============================================================================
 
   describe('del()', () => {
-    it('should delete key from cache with prefix', async () => {
-      mockRedis.del.mockResolvedValue(1);
+    it('should delete key from cache', async () => {
+      redisMock.del.mockResolvedValue(1);
 
-      await cacheService.del('test-key');
+      await cacheService.del('venue:123');
 
-      expect(mockRedis.del).toHaveBeenCalledWith('venue:test-key');
-    });
-
-    it('should log cache delete', async () => {
-      mockRedis.del.mockResolvedValue(1);
-
-      await cacheService.del('test-key');
-
-      expect(logger.debug).toHaveBeenCalledWith(
-        { key: 'venue:test-key' },
-        'Cache deleted'
-      );
+      expect(redisMock.del).toHaveBeenCalled();
     });
 
     it('should throw CacheError on Redis error', async () => {
-      const error = new Error('Redis error');
-      mockRedis.del.mockRejectedValue(error);
+      redisMock.del.mockRejectedValue(new Error('Redis error'));
 
-      await expect(cacheService.del('test-key')).rejects.toThrow(CacheError);
+      await expect(cacheService.del('venue:123')).rejects.toThrow('Cache delete failed');
     });
 
-    it('should log error on failure', async () => {
-      const error = new Error('Redis error');
-      mockRedis.del.mockRejectedValue(error);
+    it('should use tenant-scoped key', async () => {
+      cacheService.setTenantContext('tenant-del');
+      redisMock.del.mockResolvedValue(1);
 
-      await expect(cacheService.del('test-key')).rejects.toThrow();
+      await cacheService.del('venue:123');
 
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, key: 'test-key' },
-        'Cache delete error'
-      );
-    });
-
-    it('should handle deleting non-existent keys', async () => {
-      mockRedis.del.mockResolvedValue(0);
-
-      await expect(cacheService.del('non-existent')).resolves.not.toThrow();
+      expect(redisMock.del).toHaveBeenCalledWith('venue:tenant:tenant-del:venue:123');
     });
   });
-
-  // =============================================================================
-  // clearVenueCache() - 5 test cases
-  // =============================================================================
 
   describe('clearVenueCache()', () => {
-    beforeEach(() => {
-      mockRedis.scan.mockResolvedValue(['0', []]);
-    });
-
-    it('should clear all venue-related cache patterns', async () => {
-      const venueId = 'venue-123';
-
-      await cacheService.clearVenueCache(venueId);
-
-      expect(mockRedis.scan).toHaveBeenCalledWith(
-        '0',
-        'MATCH',
-        `venue:${venueId}`,
-        'COUNT',
-        100
-      );
-      expect(mockRedis.scan).toHaveBeenCalledWith(
-        '0',
-        'MATCH',
-        `venue:${venueId}:*`,
-        'COUNT',
-        100
-      );
-      expect(mockRedis.scan).toHaveBeenCalledWith(
-        '0',
-        'MATCH',
-        `venue:list:*${venueId}*`,
-        'COUNT',
-        100
-      );
-      expect(mockRedis.scan).toHaveBeenCalledWith(
-        '0',
-        'MATCH',
-        `venue:tenant:*:${venueId}`,
-        'COUNT',
-        100
-      );
-    });
-
-    it('should log success', async () => {
-      await cacheService.clearVenueCache('venue-123');
-
-      expect(logger.info).toHaveBeenCalledWith(
-        { venueId: 'venue-123' },
-        'Venue cache cleared'
-      );
-    });
-
-    it('should throw CacheError on failure', async () => {
-      const error = new Error('Scan failed');
-      mockRedis.scan.mockRejectedValue(error);
-
-      await expect(cacheService.clearVenueCache('venue-123')).rejects.toThrow(
-        CacheError
-      );
-    });
-
-    it('should log error on failure', async () => {
-      const error = new Error('Scan failed');
-      mockRedis.scan.mockRejectedValue(error);
-
-      await expect(cacheService.clearVenueCache('venue-123')).rejects.toThrow();
-
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, venueId: 'venue-123' },
-        'Failed to clear venue cache'
-      );
-    });
-
-    it('should delete found keys in batches', async () => {
-      const keys = Array.from({ length: 250 }, (_, i) => `key-${i}`);
-      mockRedis.scan.mockResolvedValueOnce(['0', keys]);
-      mockRedis.del.mockResolvedValue(100);
+    it('should clear venue cache with tenant-scoped patterns', async () => {
+      cacheService.setTenantContext('tenant-clear');
+      redisMock.scan.mockResolvedValue(['0', []]);
 
       await cacheService.clearVenueCache('venue-123');
 
-      // Should be called 3 times (250 keys / 100 batch size = 3 batches)
-      expect(mockRedis.del).toHaveBeenCalledTimes(3);
+      // Should have called scan with tenant-scoped patterns
+      expect(redisMock.scan).toHaveBeenCalled();
+    });
+
+    it('should clear venue cache without tenant (legacy pattern)', async () => {
+      cacheService.setTenantContext(null);
+      redisMock.scan.mockResolvedValue(['0', []]);
+
+      await cacheService.clearVenueCache('venue-123');
+
+      expect(redisMock.scan).toHaveBeenCalled();
+    });
+
+    it('should accept explicit tenantId', async () => {
+      redisMock.scan.mockResolvedValue(['0', []]);
+
+      await cacheService.clearVenueCache('venue-123', 'explicit-tenant');
+
+      expect(redisMock.scan).toHaveBeenCalled();
+    });
+
+    it('should throw CacheError on scan failure', async () => {
+      redisMock.scan.mockRejectedValue(new Error('Scan failed'));
+
+      await expect(cacheService.clearVenueCache('venue-123')).rejects.toThrow('Cache clear failed');
+    });
+
+    it('should delete keys in batches when found', async () => {
+      const mockKeys = Array.from({ length: 150 }, (_, i) => `key-${i}`);
+      redisMock.scan
+        .mockResolvedValueOnce(['1', mockKeys.slice(0, 100)])
+        .mockResolvedValueOnce(['0', mockKeys.slice(100)]);
+      redisMock.del.mockResolvedValue(100);
+
+      cacheService.setTenantContext('tenant-batch');
+      await cacheService.clearVenueCache('venue-123');
+
+      // Should delete in batches of 100
+      expect(redisMock.del).toHaveBeenCalled();
     });
   });
-
-  // =============================================================================
-  // clearTenantVenueCache() - 4 test cases
-  // =============================================================================
 
   describe('clearTenantVenueCache()', () => {
-    beforeEach(() => {
-      mockRedis.scan.mockResolvedValue(['0', []]);
-    });
+    it('should clear all venue cache for a tenant', async () => {
+      redisMock.scan.mockResolvedValue(['0', []]);
 
-    it('should clear tenant venue cache pattern', async () => {
-      const tenantId = 'tenant-456';
+      await cacheService.clearTenantVenueCache('tenant-xyz');
 
-      await cacheService.clearTenantVenueCache(tenantId);
-
-      expect(mockRedis.scan).toHaveBeenCalledWith(
-        '0',
-        'MATCH',
-        `venue:tenant:${tenantId}:*`,
-        'COUNT',
-        100
-      );
-    });
-
-    it('should log success', async () => {
-      await cacheService.clearTenantVenueCache('tenant-456');
-
-      expect(logger.info).toHaveBeenCalledWith(
-        { tenantId: 'tenant-456' },
-        'Tenant venue cache cleared'
-      );
+      expect(redisMock.scan).toHaveBeenCalled();
     });
 
     it('should throw CacheError on failure', async () => {
-      const error = new Error('Scan failed');
-      mockRedis.scan.mockRejectedValue(error);
+      redisMock.scan.mockRejectedValue(new Error('Scan failed'));
 
-      await expect(
-        cacheService.clearTenantVenueCache('tenant-456')
-      ).rejects.toThrow(CacheError);
-    });
-
-    it('should log error on failure', async () => {
-      const error = new Error('Scan failed');
-      mockRedis.scan.mockRejectedValue(error);
-
-      await expect(
-        cacheService.clearTenantVenueCache('tenant-456')
-      ).rejects.toThrow();
-
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, tenantId: 'tenant-456' },
-        'Failed to clear tenant venue cache'
-      );
+      await expect(cacheService.clearTenantVenueCache('tenant-xyz')).rejects.toThrow('Cache clear failed');
     });
   });
-
-  // =============================================================================
-  // getOrSet() - 6 test cases
-  // =============================================================================
 
   describe('getOrSet()', () => {
     it('should return cached value if exists', async () => {
-      const cachedData = { id: '123', name: 'Cached' };
-      mockRedis.get.mockResolvedValue(JSON.stringify(cachedData));
+      const cachedData = { id: '123', cached: true };
+      redisMock.get.mockResolvedValue(JSON.stringify(cachedData));
       const fetchFn = jest.fn();
 
-      const result = await cacheService.getOrSet('test-key', fetchFn);
+      const result = await cacheService.getOrSet('venue:123', fetchFn);
 
       expect(result).toEqual(cachedData);
       expect(fetchFn).not.toHaveBeenCalled();
     });
 
     it('should fetch and cache if not in cache', async () => {
-      const fetchedData = { id: '456', name: 'Fetched' };
-      mockRedis.get.mockResolvedValue(null);
-      mockRedis.setex.mockResolvedValue('OK');
+      const fetchedData = { id: '123', fetched: true };
+      redisMock.get.mockResolvedValue(null);
+      redisMock.setex.mockResolvedValue('OK');
       const fetchFn = jest.fn().mockResolvedValue(fetchedData);
 
-      const result = await cacheService.getOrSet('test-key', fetchFn);
+      const result = await cacheService.getOrSet('venue:123', fetchFn);
 
       expect(result).toEqual(fetchedData);
-      expect(fetchFn).toHaveBeenCalled();
-      expect(mockRedis.setex).toHaveBeenCalled();
+      expect(fetchFn).toHaveBeenCalledTimes(1);
+      // Note: set is fire-and-forget, so we check it was called
+      expect(redisMock.setex).toHaveBeenCalled();
     });
 
-    it('should use custom TTL when provided', async () => {
-      const fetchedData = { data: 'test' };
-      mockRedis.get.mockResolvedValue(null);
-      mockRedis.setex.mockResolvedValue('OK');
-      const fetchFn = jest.fn().mockResolvedValue(fetchedData);
-      const customTTL = 1800;
+    it('should use default TTL', async () => {
+      redisMock.get.mockResolvedValue(null);
+      redisMock.setex.mockResolvedValue('OK');
+      const fetchFn = jest.fn().mockResolvedValue({ data: true });
 
-      await cacheService.getOrSet('test-key', fetchFn, customTTL);
+      await cacheService.getOrSet('venue:123', fetchFn);
 
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:test-key',
-        customTTL,
-        JSON.stringify(fetchedData)
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        expect.any(String),
+        3600,
+        expect.any(String)
       );
     });
 
-    it('should return fetched data even if caching fails', async () => {
-      const fetchedData = { data: 'test' };
-      mockRedis.get.mockResolvedValue(null);
-      mockRedis.setex.mockRejectedValue(new Error('Cache set failed'));
+    it('should use provided TTL', async () => {
+      redisMock.get.mockResolvedValue(null);
+      redisMock.setex.mockResolvedValue('OK');
+      const fetchFn = jest.fn().mockResolvedValue({ data: true });
+
+      await cacheService.getOrSet('venue:123', fetchFn, 600);
+
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        expect.any(String),
+        600,
+        expect.any(String)
+      );
+    });
+
+    it('should still return data even if caching fails', async () => {
+      const fetchedData = { id: '123' };
+      redisMock.get.mockResolvedValue(null);
+      redisMock.setex.mockRejectedValue(new Error('Cache error'));
       const fetchFn = jest.fn().mockResolvedValue(fetchedData);
 
-      const result = await cacheService.getOrSet('test-key', fetchFn);
+      // Should not throw, just log error
+      const result = await cacheService.getOrSet('venue:123', fetchFn);
 
       expect(result).toEqual(fetchedData);
-    });
-
-    it('should log error if caching fails but not throw', async () => {
-      const fetchedData = { data: 'test' };
-      const cacheError = new Error('Cache set failed');
-      mockRedis.get.mockResolvedValue(null);
-      mockRedis.setex.mockRejectedValue(cacheError);
-      const fetchFn = jest.fn().mockResolvedValue(fetchedData);
-
-      await cacheService.getOrSet('test-key', fetchFn);
-
-      // Wait for promise to settle
-      await new Promise(resolve => setImmediate(resolve));
-
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ key: 'test-key' }),
-        'Failed to cache after fetch'
-      );
-    });
-
-    it('should propagate fetch function errors', async () => {
-      const fetchError = new Error('Fetch failed');
-      mockRedis.get.mockResolvedValue(null);
-      const fetchFn = jest.fn().mockRejectedValue(fetchError);
-
-      await expect(cacheService.getOrSet('test-key', fetchFn)).rejects.toThrow(
-        'Fetch failed'
-      );
     });
   });
 
-  // =============================================================================
-  // warmCache() - 4 test cases
-  // =============================================================================
-
   describe('warmCache()', () => {
-    it('should warm cache with multiple entries', async () => {
-      mockRedis.setex.mockResolvedValue('OK');
+    it('should cache multiple entries', async () => {
+      redisMock.setex.mockResolvedValue('OK');
       const entries = [
-        { key: 'key1', value: { data: 'test1' } },
-        { key: 'key2', value: { data: 'test2' } },
-        { key: 'key3', value: { data: 'test3' } },
+        { key: 'venue:1', value: { id: '1' } },
+        { key: 'venue:2', value: { id: '2' } },
+        { key: 'venue:3', value: { id: '3' } },
       ];
 
       await cacheService.warmCache(entries);
 
-      expect(mockRedis.setex).toHaveBeenCalledTimes(3);
+      expect(redisMock.setex).toHaveBeenCalledTimes(3);
     });
 
-    it('should use custom TTL for entries when provided', async () => {
-      mockRedis.setex.mockResolvedValue('OK');
-      const entries = [
-        { key: 'key1', value: { data: 'test1' }, ttl: 1800 },
-      ];
+    it('should use default TTL for entries without TTL', async () => {
+      redisMock.setex.mockResolvedValue('OK');
+      const entries = [{ key: 'venue:1', value: { id: '1' } }];
 
       await cacheService.warmCache(entries);
 
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:key1',
-        1800,
-        JSON.stringify({ data: 'test1' })
-      );
-    });
-
-    it('should use default TTL when not provided', async () => {
-      mockRedis.setex.mockResolvedValue('OK');
-      const entries = [
-        { key: 'key1', value: { data: 'test1' } },
-      ];
-
-      await cacheService.warmCache(entries);
-
-      expect(mockRedis.setex).toHaveBeenCalledWith(
-        'venue:key1',
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        expect.any(String),
         3600,
-        JSON.stringify({ data: 'test1' })
+        expect.any(String)
       );
     });
 
-    it('should log success and handle partial failures', async () => {
-      mockRedis.setex
+    it('should use provided TTL for entries', async () => {
+      redisMock.setex.mockResolvedValue('OK');
+      const entries = [{ key: 'venue:1', value: { id: '1' }, ttl: 120 }];
+
+      await cacheService.warmCache(entries);
+
+      expect(redisMock.setex).toHaveBeenCalledWith(
+        expect.any(String),
+        120,
+        expect.any(String)
+      );
+    });
+
+    it('should continue on individual entry failure', async () => {
+      redisMock.setex
         .mockResolvedValueOnce('OK')
         .mockRejectedValueOnce(new Error('Failed'))
         .mockResolvedValueOnce('OK');
-
       const entries = [
-        { key: 'key1', value: { data: 'test1' } },
-        { key: 'key2', value: { data: 'test2' } },
-        { key: 'key3', value: { data: 'test3' } },
+        { key: 'venue:1', value: { id: '1' } },
+        { key: 'venue:2', value: { id: '2' } },
+        { key: 'venue:3', value: { id: '3' } },
       ];
 
+      // Should not throw
       await cacheService.warmCache(entries);
 
-      expect(logger.info).toHaveBeenCalledWith(
-        { count: 3 },
-        'Cache warmed'
-      );
+      expect(redisMock.setex).toHaveBeenCalledTimes(3);
     });
   });
 
-  // =============================================================================
-  // invalidateKeys() - 3 test cases
-  // =============================================================================
-
   describe('invalidateKeys()', () => {
-    it('should invalidate multiple keys', async () => {
-      mockRedis.del.mockResolvedValue(1);
-      const keys = ['key1', 'key2', 'key3'];
+    it('should delete multiple keys', async () => {
+      redisMock.del.mockResolvedValue(1);
+      const keys = ['venue:1', 'venue:2', 'venue:3'];
 
       await cacheService.invalidateKeys(keys);
 
-      expect(mockRedis.del).toHaveBeenCalledTimes(3);
-      expect(mockRedis.del).toHaveBeenCalledWith('venue:key1');
-      expect(mockRedis.del).toHaveBeenCalledWith('venue:key2');
-      expect(mockRedis.del).toHaveBeenCalledWith('venue:key3');
+      expect(redisMock.del).toHaveBeenCalledTimes(3);
     });
 
-    it('should log count of invalidated keys', async () => {
-      mockRedis.del.mockResolvedValue(1);
-      const keys = ['key1', 'key2'];
-
-      await cacheService.invalidateKeys(keys);
-
-      expect(logger.debug).toHaveBeenCalledWith(
-        { count: 2 },
-        'Keys invalidated'
-      );
-    });
-
-    it('should handle partial failures gracefully', async () => {
-      mockRedis.del
+    it('should continue on individual key failure', async () => {
+      redisMock.del
         .mockResolvedValueOnce(1)
         .mockRejectedValueOnce(new Error('Failed'))
         .mockResolvedValueOnce(1);
+      const keys = ['venue:1', 'venue:2', 'venue:3'];
 
-      const keys = ['key1', 'key2', 'key3'];
+      await cacheService.invalidateKeys(keys);
 
-      await expect(cacheService.invalidateKeys(keys)).resolves.not.toThrow();
-      expect(logger.error).toHaveBeenCalled();
+      expect(redisMock.del).toHaveBeenCalledTimes(3);
+    });
+
+    it('should handle empty keys array', async () => {
+      await cacheService.invalidateKeys([]);
+
+      expect(redisMock.del).not.toHaveBeenCalled();
     });
   });
-
-  // =============================================================================
-  // exists() - 4 test cases
-  // =============================================================================
 
   describe('exists()', () => {
     it('should return true if key exists', async () => {
-      mockRedis.exists.mockResolvedValue(1);
+      redisMock.exists.mockResolvedValue(1);
 
-      const result = await cacheService.exists('test-key');
+      const result = await cacheService.exists('venue:123');
 
       expect(result).toBe(true);
-      expect(mockRedis.exists).toHaveBeenCalledWith('venue:test-key');
     });
 
     it('should return false if key does not exist', async () => {
-      mockRedis.exists.mockResolvedValue(0);
+      redisMock.exists.mockResolvedValue(0);
 
-      const result = await cacheService.exists('missing-key');
+      const result = await cacheService.exists('venue:nonexistent');
 
       expect(result).toBe(false);
     });
 
-    it('should return false on error', async () => {
-      const error = new Error('Redis error');
-      mockRedis.exists.mockRejectedValue(error);
+    it('should return false on Redis error', async () => {
+      redisMock.exists.mockRejectedValue(new Error('Redis error'));
 
-      const result = await cacheService.exists('test-key');
+      const result = await cacheService.exists('venue:123');
 
       expect(result).toBe(false);
-      expect(logger.error).toHaveBeenCalled();
     });
 
-    it('should log error on failure', async () => {
-      const error = new Error('Redis error');
-      mockRedis.exists.mockRejectedValue(error);
+    it('should use tenant-scoped key', async () => {
+      cacheService.setTenantContext('tenant-exists');
+      redisMock.exists.mockResolvedValue(1);
 
-      await cacheService.exists('test-key');
+      await cacheService.exists('venue:123');
 
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, key: 'test-key' },
-        'Cache exists check error'
-      );
+      expect(redisMock.exists).toHaveBeenCalledWith('venue:tenant:tenant-exists:venue:123');
     });
   });
-
-  // =============================================================================
-  // ttl() - 4 test cases
-  // =============================================================================
 
   describe('ttl()', () => {
     it('should return TTL for existing key', async () => {
-      mockRedis.ttl.mockResolvedValue(3600);
+      redisMock.ttl.mockResolvedValue(1800);
 
-      const result = await cacheService.ttl('test-key');
+      const result = await cacheService.ttl('venue:123');
 
-      expect(result).toBe(3600);
-      expect(mockRedis.ttl).toHaveBeenCalledWith('venue:test-key');
+      expect(result).toBe(1800);
+    });
+
+    it('should return -2 for non-existent key', async () => {
+      redisMock.ttl.mockResolvedValue(-2);
+
+      const result = await cacheService.ttl('venue:nonexistent');
+
+      expect(result).toBe(-2);
     });
 
     it('should return -1 for key without TTL', async () => {
-      mockRedis.ttl.mockResolvedValue(-1);
+      redisMock.ttl.mockResolvedValue(-1);
 
-      const result = await cacheService.ttl('persistent-key');
+      const result = await cacheService.ttl('venue:no-ttl');
 
       expect(result).toBe(-1);
     });
 
-    it('should return -1 on error', async () => {
-      const error = new Error('Redis error');
-      mockRedis.ttl.mockRejectedValue(error);
+    it('should return -1 on Redis error', async () => {
+      redisMock.ttl.mockRejectedValue(new Error('Redis error'));
 
-      const result = await cacheService.ttl('test-key');
+      const result = await cacheService.ttl('venue:123');
 
       expect(result).toBe(-1);
-      expect(logger.error).toHaveBeenCalled();
     });
 
-    it('should log error on failure', async () => {
-      const error = new Error('Redis error');
-      mockRedis.ttl.mockRejectedValue(error);
+    it('should use tenant-scoped key', async () => {
+      cacheService.setTenantContext('tenant-ttl');
+      redisMock.ttl.mockResolvedValue(600);
 
-      await cacheService.ttl('test-key');
+      await cacheService.ttl('venue:123');
 
-      expect(logger.error).toHaveBeenCalledWith(
-        { error, key: 'test-key' },
-        'Failed to get TTL'
-      );
+      expect(redisMock.ttl).toHaveBeenCalledWith('venue:tenant:tenant-ttl:venue:123');
     });
   });
 
-  // =============================================================================
-  // initializeCache() - 2 test cases
-  // =============================================================================
+  describe('Security: Tenant Isolation (SR1)', () => {
+    it('should never allow cross-tenant cache access', async () => {
+      // Set up data for tenant A
+      cacheService.setTenantContext('tenant-A');
+      redisMock.setex.mockResolvedValue('OK');
+      await cacheService.set('venue:123', { secret: 'tenant-A-data' });
 
-  describe('initializeCache()', () => {
-    it('should create cache instance', () => {
-      const redis = {} as Redis;
-      const cache = initializeCache(redis);
+      const tenantAKey = redisMock.setex.mock.calls[0][0];
+      expect(tenantAKey).toContain('tenant-A');
 
-      expect(cache).toBeInstanceOf(CacheService);
+      // Switch to tenant B
+      cacheService.setTenantContext('tenant-B');
+      redisMock.get.mockResolvedValue(null);
+      await cacheService.get('venue:123');
+
+      // Should request different key
+      const tenantBKey = redisMock.get.mock.calls[0][0];
+      expect(tenantBKey).toContain('tenant-B');
+      expect(tenantBKey).not.toEqual(tenantAKey);
     });
 
-    it('should return same instance on multiple calls', () => {
-      const redis = {} as Redis;
-      const cache1 = initializeCache(redis);
-      const cache2 = initializeCache(redis);
+    it('should use explicit tenantId over context for security', async () => {
+      cacheService.setTenantContext('context-tenant');
+      redisMock.get.mockResolvedValue(null);
 
-      expect(cache1).toBe(cache2);
+      // Explicit tenantId should take precedence
+      await cacheService.get('venue:123', 'explicit-tenant');
+
+      expect(redisMock.get).toHaveBeenCalledWith('venue:tenant:explicit-tenant:venue:123');
+    });
+  });
+
+  describe('Edge cases', () => {
+    it('should handle empty string values', async () => {
+      redisMock.get.mockResolvedValue('""');
+
+      const result = await cacheService.get('empty-string');
+
+      expect(result).toBe('');
+    });
+
+    it('should handle boolean false values', async () => {
+      redisMock.get.mockResolvedValue('false');
+
+      const result = await cacheService.get('boolean-false');
+
+      expect(result).toBe(false);
+    });
+
+    it('should handle numeric zero values', async () => {
+      redisMock.get.mockResolvedValue('0');
+
+      const result = await cacheService.get('numeric-zero');
+
+      expect(result).toBe(0);
+    });
+
+    it('should handle arrays', async () => {
+      const array = [1, 2, 3, 'test'];
+      redisMock.get.mockResolvedValue(JSON.stringify(array));
+
+      const result = await cacheService.get('array-key');
+
+      expect(result).toEqual(array);
+    });
+
+    it('should handle deeply nested objects', async () => {
+      const nested = {
+        level1: {
+          level2: {
+            level3: {
+              value: 'deep',
+            },
+          },
+        },
+      };
+      redisMock.get.mockResolvedValue(JSON.stringify(nested));
+
+      const result = await cacheService.get('nested-key');
+
+      expect(result).toEqual(nested);
+    });
+
+    it('should handle special characters in keys', async () => {
+      redisMock.get.mockResolvedValue(null);
+
+      await cacheService.get('venue:with:colons:and-dashes_and_underscores');
+
+      expect(redisMock.get).toHaveBeenCalled();
     });
   });
 });

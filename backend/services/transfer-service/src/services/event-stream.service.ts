@@ -182,7 +182,7 @@ export class EventStreamService {
    * Verify authentication token
    * (This should integrate with your actual auth system)
    */
-  private async verifyToken(token: string, userId: string): Promise<boolean> {
+  private async verifyToken(_token: string, _userId: string): Promise<boolean> {
     // TODO: Implement actual token verification
     // This is a placeholder - implement with your JWT/auth system
     return true;

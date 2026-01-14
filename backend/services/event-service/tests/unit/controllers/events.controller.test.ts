@@ -1,67 +1,48 @@
-// Mock dependencies BEFORE imports
-jest.mock('../../../src/config/database', () => ({
-  db: jest.fn(),
-}));
-
-jest.mock('../../../src/config/redis', () => ({
-  createRedisConnection: jest.fn(() => ({
-    get: jest.fn(),
-    set: jest.fn(),
-    del: jest.fn(),
-  })),
-}));
-
-jest.mock('../../../src/services/venue-service.client', () => ({
-  VenueServiceClient: jest.fn().mockImplementation(() => ({
-    getVenue: jest.fn(),
-    validateVenueAccess: jest.fn(),
-  })),
-}));
-
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
-}));
+/**
+ * Events Controller Unit Tests
+ * 
+ * Tests the events controller handlers for:
+ * - createEvent: Event creation with authentication
+ * - getEvent: Event retrieval with tenant isolation
+ * - listEvents: Event listing with pagination
+ * - updateEvent: Event updates with ownership
+ * - deleteEvent: Event deletion
+ * - publishEvent: Event publishing
+ * - getVenueEvents: Events filtered by venue
+ */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
-import * as eventsController from '../../../src/controllers/events.controller';
-import { EventService } from '../../../src/services/event.service';
+import {
+  createEvent,
+  getEvent,
+  listEvents,
+  updateEvent,
+  deleteEvent,
+  publishEvent,
+  getVenueEvents
+} from '../../../src/controllers/events.controller';
 
-// Mock EventService
-jest.mock('../../../src/services/event.service');
+// Mock the error handler
+jest.mock('../../../src/middleware/error-handler', () => ({
+  createProblemError: jest.fn((status: number, code: string, detail: string) => {
+    const error = new Error(detail) as any;
+    error.statusCode = status;
+    error.code = code;
+    return error;
+  })
+}));
 
 describe('Events Controller', () => {
+  // Mock services and dependencies
+  let mockEventService: any;
+  let mockContainer: any;
   let mockRequest: Partial<FastifyRequest>;
   let mockReply: Partial<FastifyReply>;
-  let mockEventService: jest.Mocked<EventService>;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockRequest = {
-      params: {},
-      body: {},
-      query: {},
-      headers: {},
-      ip: '127.0.0.1',
-      log: {
-        info: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-      } as any,
-    };
-
-    mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
-    };
-
-    // Mock EventService instance
+    // Setup mock event service
     mockEventService = {
       createEvent: jest.fn(),
       getEvent: jest.fn(),
@@ -69,316 +50,378 @@ describe('Events Controller', () => {
       updateEvent: jest.fn(),
       deleteEvent: jest.fn(),
       publishEvent: jest.fn(),
-      getVenueEvents: jest.fn(),
-    } as any;
+      getVenueEvents: jest.fn()
+    };
 
-    (EventService as jest.MockedClass<typeof EventService>).mockImplementation(() => mockEventService);
+    // Setup mock container
+    mockContainer = {
+      resolve: jest.fn((name: string) => {
+        if (name === 'eventService') return mockEventService;
+        return null;
+      })
+    };
+
+    // Setup mock request
+    mockRequest = {
+      params: {},
+      body: {},
+      query: {},
+      headers: {
+        authorization: 'Bearer test-token',
+        'user-agent': 'test-agent'
+      },
+      ip: '127.0.0.1'
+    };
+    (mockRequest as any).user = { id: 'user-123' };
+    (mockRequest as any).tenantId = 'tenant-123';
+    (mockRequest as any).container = mockContainer;
+
+    // Setup mock reply
+    mockReply = {
+      status: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
+    };
   });
 
   describe('createEvent', () => {
-    it('should create event successfully', async () => {
-      const mockEvent = { id: 'event-1', name: 'Test Event' };
-      const requestBody = { name: 'Test Event', venue_id: 'venue-1' };
+    const validEventData = {
+      name: 'Test Concert',
+      description: 'A great event',
+      venue_id: 'venue-123',
+      starts_at: '2026-06-15T20:00:00Z',
+      ends_at: '2026-06-15T23:00:00Z',
+      timezone: 'America/New_York'
+    };
 
-      mockRequest.body = requestBody;
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.createEvent.mockResolvedValue(mockEvent as any);
+    it('should create an event successfully', async () => {
+      const createdEvent = { id: 'event-123', ...validEventData };
+      mockEventService.createEvent.mockResolvedValue(createdEvent);
+      mockRequest.body = validEventData;
 
-      await eventsController.createEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockEventService.createEvent).toHaveBeenCalledWith(
-        requestBody,
-        'Bearer token',
-        'user-1',
-        'tenant-1',
-        expect.objectContaining({ ip: '127.0.0.1' })
+        validEventData,
+        'Bearer test-token',
+        'user-123',
+        'tenant-123',
+        { ip: '127.0.0.1', userAgent: 'test-agent' }
       );
       expect(mockReply.status).toHaveBeenCalledWith(201);
-      expect(mockReply.send).toHaveBeenCalledWith({ event: mockEvent });
+      expect(mockReply.send).toHaveBeenCalledWith({ event: createdEvent });
     });
 
-    it('should return 401 if user not authenticated', async () => {
-      mockRequest.body = { name: 'Test', venue_id: 'venue-1' };
+    it('should throw UNAUTHORIZED when user is not authenticated', async () => {
       (mockRequest as any).user = null;
-      (mockRequest as any).tenantId = 'tenant-1';
+      mockRequest.body = validEventData;
 
-      await eventsController.createEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Authentication required' });
+      await expect(
+        createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Authentication required');
     });
 
-    it('should return 400 if tenant ID missing', async () => {
-      mockRequest.body = { name: 'Test', venue_id: 'venue-1' };
-      (mockRequest as any).user = { id: 'user-1' };
+    it('should throw TENANT_REQUIRED when tenant ID is missing', async () => {
       (mockRequest as any).tenantId = null;
+      mockRequest.body = validEventData;
 
-      await eventsController.createEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(400);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Tenant ID required' });
+      await expect(
+        createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Tenant ID required');
     });
 
-    it('should handle validation errors', async () => {
-      const validationError: any = new Error('Validation failed');
-      validationError.name = 'ValidationError';
-      validationError.details = [{ field: 'name', message: 'Required' }];
+    it('should create event with tiers', async () => {
+      const eventWithTiers = {
+        ...validEventData,
+        tiers: [
+          { name: 'VIP', price_cents: 10000, currency: 'USD', total_qty: 100 },
+          { name: 'GA', price_cents: 5000, currency: 'USD', total_qty: 500 }
+        ]
+      };
+      const createdEvent = { id: 'event-123', ...eventWithTiers };
+      mockEventService.createEvent.mockResolvedValue(createdEvent);
+      mockRequest.body = eventWithTiers;
 
-      mockRequest.body = { venue_id: 'venue-1' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.createEvent.mockRejectedValue(validationError);
+      await createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await eventsController.createEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
+      expect(mockEventService.createEvent).toHaveBeenCalledWith(
+        eventWithTiers,
+        expect.any(String),
+        expect.any(String),
+        expect.any(String),
+        expect.any(Object)
       );
-
-      expect(mockReply.status).toHaveBeenCalledWith(422);
+      expect(mockReply.status).toHaveBeenCalledWith(201);
     });
 
-    it('should handle forbidden errors', async () => {
-      const forbiddenError: any = new Error('No access to venue');
-      forbiddenError.name = 'ForbiddenError';
+    it('should propagate service errors', async () => {
+      mockEventService.createEvent.mockRejectedValue(new Error('Venue not found'));
+      mockRequest.body = validEventData;
 
-      mockRequest.body = { name: 'Test', venue_id: 'venue-1' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.createEvent.mockRejectedValue(forbiddenError);
-
-      await eventsController.createEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(403);
+      await expect(
+        createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Venue not found');
     });
   });
 
   describe('getEvent', () => {
-    it('should return event by id', async () => {
-      const mockEvent = { id: 'event-1', name: 'Test Event' };
+    it('should return event when found', async () => {
+      const event = { id: 'event-123', name: 'Test Event' };
+      mockEventService.getEvent.mockResolvedValue(event);
+      (mockRequest.params as any) = { id: 'event-123' };
 
-      mockRequest.params = { id: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue(mockEvent as any);
+      await getEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await eventsController.getEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockEventService.getEvent).toHaveBeenCalledWith('event-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ event: mockEvent });
+      expect(mockEventService.getEvent).toHaveBeenCalledWith('event-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ event });
     });
 
-    it('should return 404 if event not found', async () => {
-      mockRequest.params = { id: 'event-999' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockRejectedValue(new Error('Event not found'));
+    it('should throw NOT_FOUND when event does not exist', async () => {
+      mockEventService.getEvent.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
 
-      await eventsController.getEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await expect(
+        getEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Event not found');
+    });
 
-      expect(mockReply.status).toHaveBeenCalledWith(404);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Event not found' });
+    it('should handle service errors', async () => {
+      mockEventService.getEvent.mockRejectedValue(new Error('Database error'));
+      (mockRequest.params as any) = { id: 'event-123' };
+
+      await expect(
+        getEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Database error');
     });
   });
 
   describe('listEvents', () => {
     it('should list events with default pagination', async () => {
-      const mockResult = {
-        events: [{ id: '1', name: 'Event 1' }],
-        pagination: { limit: 20, offset: 0, total: 1 },
-      };
-
-      mockRequest.query = {};
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.listEvents.mockResolvedValue(mockResult as any);
-
-      await eventsController.listEvents(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockEventService.listEvents).toHaveBeenCalledWith('tenant-1', {
-        status: undefined,
+      const result = {
+        events: [{ id: 'event-1' }, { id: 'event-2' }],
+        total: 2,
         limit: 20,
-        offset: 0,
-      });
-      expect(mockReply.send).toHaveBeenCalledWith(mockResult);
+        offset: 0
+      };
+      mockEventService.listEvents.mockResolvedValue(result);
+      (mockRequest.query as any) = {};
+
+      await listEvents(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockEventService.listEvents).toHaveBeenCalledWith(
+        'tenant-123',
+        { status: undefined, limit: 20, offset: 0 }
+      );
+      expect(mockReply.send).toHaveBeenCalledWith(result);
     });
 
     it('should list events with custom pagination', async () => {
-      const mockResult = {
-        events: [],
-        pagination: { limit: 10, offset: 20, total: 0 },
-      };
-
-      mockRequest.query = { status: 'PUBLISHED', limit: 10, offset: 20 };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.listEvents.mockResolvedValue(mockResult as any);
-
-      await eventsController.listEvents(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockEventService.listEvents).toHaveBeenCalledWith('tenant-1', {
-        status: 'PUBLISHED',
+      const result = {
+        events: [{ id: 'event-1' }],
+        total: 50,
         limit: 10,
-        offset: 20,
-      });
+        offset: 20
+      };
+      mockEventService.listEvents.mockResolvedValue(result);
+      (mockRequest.query as any) = { limit: 10, offset: 20 };
+
+      await listEvents(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockEventService.listEvents).toHaveBeenCalledWith(
+        'tenant-123',
+        { status: undefined, limit: 10, offset: 20 }
+      );
+    });
+
+    it('should filter by status', async () => {
+      const result = { events: [], total: 0, limit: 20, offset: 0 };
+      mockEventService.listEvents.mockResolvedValue(result);
+      (mockRequest.query as any) = { status: 'PUBLISHED' };
+
+      await listEvents(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockEventService.listEvents).toHaveBeenCalledWith(
+        'tenant-123',
+        { status: 'PUBLISHED', limit: 20, offset: 0 }
+      );
     });
   });
 
   describe('updateEvent', () => {
-    it('should update event', async () => {
-      const mockEvent = { id: 'event-1', name: 'Updated Event' };
+    const updateData = { name: 'Updated Event Name' };
 
-      mockRequest.params = { id: 'event-1' };
-      mockRequest.body = { name: 'Updated Event' };
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.updateEvent.mockResolvedValue(mockEvent as any);
+    it('should update event successfully', async () => {
+      const updatedEvent = { id: 'event-123', name: 'Updated Event Name' };
+      mockEventService.updateEvent.mockResolvedValue(updatedEvent);
+      (mockRequest.params as any) = { id: 'event-123' };
+      mockRequest.body = updateData;
 
-      await eventsController.updateEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await updateEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockEventService.updateEvent).toHaveBeenCalledWith(
-        'event-1',
-        { name: 'Updated Event' },
-        'Bearer token',
-        'user-1',
-        'tenant-1',
-        expect.any(Object)
+        'event-123',
+        updateData,
+        'Bearer test-token',
+        'user-123',
+        'tenant-123',
+        { ip: '127.0.0.1', userAgent: 'test-agent' }
       );
-      expect(mockReply.send).toHaveBeenCalledWith({ event: mockEvent });
+      expect(mockReply.send).toHaveBeenCalledWith({ event: updatedEvent });
     });
 
-    it('should return 404 if event not found', async () => {
-      mockRequest.params = { id: 'event-999' };
-      mockRequest.body = { name: 'Updated' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.updateEvent.mockRejectedValue(new Error('Event not found'));
+    it('should throw NOT_FOUND when event does not exist', async () => {
+      mockEventService.updateEvent.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
+      mockRequest.body = updateData;
 
-      await eventsController.updateEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(404);
+      await expect(
+        updateEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Event not found');
     });
 
-    it('should return 403 for forbidden access', async () => {
-      const forbiddenError: any = new Error('No access');
-      forbiddenError.name = 'ForbiddenError';
+    it('should propagate conflict errors', async () => {
+      const conflictError = new Error('Version conflict');
+      (conflictError as any).code = 'CONFLICT';
+      mockEventService.updateEvent.mockRejectedValue(conflictError);
+      (mockRequest.params as any) = { id: 'event-123' };
+      mockRequest.body = updateData;
 
-      mockRequest.params = { id: 'event-1' };
-      mockRequest.body = { name: 'Updated' };
-      (mockRequest as any).user = { id: 'user-2' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.updateEvent.mockRejectedValue(forbiddenError);
-
-      await eventsController.updateEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(403);
+      await expect(
+        updateEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Version conflict');
     });
   });
 
   describe('deleteEvent', () => {
-    it('should delete event', async () => {
-      mockRequest.params = { id: 'event-1' };
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
+    it('should delete event successfully', async () => {
       mockEventService.deleteEvent.mockResolvedValue(undefined);
+      (mockRequest.params as any) = { id: 'event-123' };
 
-      await eventsController.deleteEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
+      await deleteEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
       expect(mockEventService.deleteEvent).toHaveBeenCalledWith(
-        'event-1',
-        'Bearer token',
-        'user-1',
-        'tenant-1',
-        expect.any(Object)
+        'event-123',
+        'Bearer test-token',
+        'user-123',
+        'tenant-123',
+        { ip: '127.0.0.1', userAgent: 'test-agent' }
       );
       expect(mockReply.status).toHaveBeenCalledWith(204);
       expect(mockReply.send).toHaveBeenCalled();
     });
 
-    it('should return 404 if event not found', async () => {
-      mockRequest.params = { id: 'event-999' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.deleteEvent.mockRejectedValue(new Error('Event not found'));
+    it('should propagate errors when deletion fails', async () => {
+      mockEventService.deleteEvent.mockRejectedValue(new Error('Cannot delete event with sold tickets'));
+      (mockRequest.params as any) = { id: 'event-123' };
 
-      await eventsController.deleteEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
-      );
-
-      expect(mockReply.status).toHaveBeenCalledWith(404);
+      await expect(
+        deleteEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Cannot delete event with sold tickets');
     });
   });
 
   describe('publishEvent', () => {
-    it('should publish event', async () => {
-      const mockEvent = { id: 'event-1', status: 'PUBLISHED' };
+    it('should publish event successfully', async () => {
+      const publishedEvent = { id: 'event-123', status: 'PUBLISHED' };
+      mockEventService.publishEvent.mockResolvedValue(publishedEvent);
+      (mockRequest.params as any) = { id: 'event-123' };
 
-      mockRequest.params = { id: 'event-1' };
-      (mockRequest as any).user = { id: 'user-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.publishEvent.mockResolvedValue(mockEvent as any);
+      await publishEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await eventsController.publishEvent(
-        mockRequest as any,
-        mockReply as FastifyReply
+      expect(mockEventService.publishEvent).toHaveBeenCalledWith(
+        'event-123',
+        'user-123',
+        'tenant-123'
       );
+      expect(mockReply.send).toHaveBeenCalledWith({ event: publishedEvent });
+    });
 
-      expect(mockEventService.publishEvent).toHaveBeenCalledWith('event-1', 'user-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ event: mockEvent });
+    it('should throw NOT_FOUND when event does not exist', async () => {
+      mockEventService.publishEvent.mockResolvedValue(null);
+      (mockRequest.params as any) = { id: 'nonexistent-123' };
+
+      await expect(
+        publishEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Event not found');
+    });
+
+    it('should propagate state transition errors', async () => {
+      mockEventService.publishEvent.mockRejectedValue(new Error('Cannot publish from CANCELLED state'));
+      (mockRequest.params as any) = { id: 'event-123' };
+
+      await expect(
+        publishEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply)
+      ).rejects.toThrow('Cannot publish from CANCELLED state');
     });
   });
 
   describe('getVenueEvents', () => {
     it('should return events for venue', async () => {
-      const mockEvents = [{ id: '1', venue_id: 'venue-1' }];
+      const events = [
+        { id: 'event-1', venue_id: 'venue-123' },
+        { id: 'event-2', venue_id: 'venue-123' }
+      ];
+      mockEventService.getVenueEvents.mockResolvedValue(events);
+      (mockRequest.params as any) = { venueId: 'venue-123' };
 
-      mockRequest.params = { venueId: 'venue-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getVenueEvents.mockResolvedValue(mockEvents as any);
+      await getVenueEvents(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
 
-      await eventsController.getVenueEvents(
-        mockRequest as any,
-        mockReply as FastifyReply
+      expect(mockEventService.getVenueEvents).toHaveBeenCalledWith('venue-123', 'tenant-123');
+      expect(mockReply.send).toHaveBeenCalledWith({ events });
+    });
+
+    it('should return empty array when venue has no events', async () => {
+      mockEventService.getVenueEvents.mockResolvedValue([]);
+      (mockRequest.params as any) = { venueId: 'venue-123' };
+
+      await getVenueEvents(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({ events: [] });
+    });
+  });
+
+  describe('Edge Cases', () => {
+    it('should handle missing authorization header gracefully', async () => {
+      mockRequest.headers = {};
+      (mockRequest as any).user = { id: 'user-123' };
+      mockRequest.body = { name: 'Test Event' };
+      const createdEvent = { id: 'event-123' };
+      mockEventService.createEvent.mockResolvedValue(createdEvent);
+
+      await createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockEventService.createEvent).toHaveBeenCalledWith(
+        expect.any(Object),
+        undefined,
+        'user-123',
+        'tenant-123',
+        expect.any(Object)
       );
+    });
 
-      expect(mockEventService.getVenueEvents).toHaveBeenCalledWith('venue-1', 'tenant-1');
-      expect(mockReply.send).toHaveBeenCalledWith({ events: mockEvents });
+    it('should handle missing user-agent header', async () => {
+      mockRequest.headers = { authorization: 'Bearer test-token' };
+      mockRequest.body = { name: 'Test Event' };
+      const createdEvent = { id: 'event-123' };
+      mockEventService.createEvent.mockResolvedValue(createdEvent);
+
+      await createEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockEventService.createEvent).toHaveBeenCalledWith(
+        expect.any(Object),
+        'Bearer test-token',
+        'user-123',
+        'tenant-123',
+        { ip: '127.0.0.1', userAgent: undefined }
+      );
+    });
+
+    it('should resolve eventService from container on each request', async () => {
+      mockEventService.getEvent.mockResolvedValue({ id: 'event-123' });
+      (mockRequest.params as any) = { id: 'event-123' };
+
+      await getEvent(mockRequest as FastifyRequest<any>, mockReply as FastifyReply);
+
+      expect(mockContainer.resolve).toHaveBeenCalledWith('eventService');
     });
   });
 });

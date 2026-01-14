@@ -4,7 +4,7 @@
  * Uses shared library pub/sub manager for realtime metrics
  */
 
-import { getRedisClient, getRedisPubClient, getRedisSubClient, getPubSubManager } from '@tickettoken/shared';
+import { getRedisClient, getPubSubManager } from '@tickettoken/shared';
 import { RealTimeMetric } from '../../types';
 import { logger } from '../../utils/logger';
 

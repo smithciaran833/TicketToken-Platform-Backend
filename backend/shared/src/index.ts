@@ -5,8 +5,112 @@
 // Money utilities
 export * from './utils/money';
 
-// HTTP utilities
+// HTTP utilities (legacy)
 export { createAxiosInstance } from './http';
+
+// ============================================================================
+// DATABASE UTILITIES (NEW - Phase 1 Remediation)
+// ============================================================================
+
+// RLS context management for tenant isolation
+export {
+  TENANT_CONTEXT_SETTING,
+  USER_CONTEXT_SETTING,
+  IP_CONTEXT_SETTING,
+  USER_AGENT_CONTEXT_SETTING,
+  DatabaseContext,
+  setTenantContext,
+  setTenantContextLocal,
+  clearTenantContext,
+  getTenantContext,
+  setFullContext,
+  setFullContextLocal,
+  clearFullContext,
+  withTenantContext,
+  withContextTransaction,
+  createTenantContextMiddleware,
+  createContextCleanupMiddleware,
+  requireTenantContext,
+} from './database';
+
+// Migration helpers for consistent table creation
+export {
+  StandardTableOptions,
+  createStandardTable,
+  addUpdatedAtTrigger,
+  removeUpdatedAtTrigger,
+  addAuditTrigger,
+  removeAuditTrigger,
+  enableTableRLS,
+  disableTableRLS,
+  addForeignKey,
+  addNullableForeignKey,
+  createCompositeUniqueIndex,
+  createSoftDeleteUniqueIndex,
+  createJsonbIndex,
+  createFullTextSearchIndex,
+  dropTableSafely,
+  tableExists,
+  columnExists,
+  addColumnIfNotExists,
+  runSharedMigrations,
+  revertSharedMigrations,
+} from './database';
+
+// ============================================================================
+// HTTP CLIENT (NEW - Phase 1 Remediation)
+// ============================================================================
+
+// Circuit breaker for fault tolerance
+export {
+  CircuitBreaker,
+  CircuitState,
+  CircuitBreakerOptions,
+  CircuitBreakerStats,
+  CircuitOpenError,
+  TimeoutError,
+  createDefaultCircuitBreaker,
+} from './http-client';
+
+// Retry utilities with exponential backoff
+export {
+  RetryOptions,
+  RetryContext,
+  withRetry,
+  makeRetryable,
+  Retryable,
+  calculateDelay,
+  RetryPresets,
+} from './http-client';
+
+// Base service client for service-to-service communication
+export {
+  BaseServiceClient,
+  ServiceClientConfig,
+  RequestContext,
+  ServiceResponse,
+  ServiceClientError,
+  createRequestContext,
+  extractRequestContext,
+} from './http-client';
+
+// ============================================================================
+// INTERNAL AUTH MIDDLEWARE (NEW - Phase 1 Remediation)
+// ============================================================================
+
+// Service-to-service authentication
+export {
+  InternalAuthConfig,
+  InternalRequest,
+  createInternalAuthMiddleware,
+  requireTenant,
+  requireUser,
+  requireTrustedService,
+  getInternalContext,
+  buildInternalHeaders,
+  internalAuthErrorHandler,
+  InternalAuthError,
+} from './middleware/internal-auth.middleware';
 
 // Cache utilities
 export { createCache } from './cache/src/index';

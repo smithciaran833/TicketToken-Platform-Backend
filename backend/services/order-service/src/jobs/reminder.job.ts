@@ -1,10 +1,15 @@
 import { OrderService } from '../services/order.service';
+import { OrderModel } from '../models/order.model';
 import { getDatabase } from '../config/database';
 import { orderConfig } from '../config';
 import { logger } from '../utils/logger';
 
+/**
+ * LOW: Fixed - Now iterates over all tenants instead of hardcoded tenant
+ */
 export class ReminderJob {
   private _orderService?: OrderService;
+  private _orderModel?: OrderModel;
   private intervalId: NodeJS.Timeout | null = null;
   private sentReminders: Set<string> = new Set();
 
@@ -21,6 +26,13 @@ export class ReminderJob {
       this._orderService = new OrderService(this.db);
     }
     return this._orderService;
+  }
+
+  private get orderModel() {
+    if (!this._orderModel) {
+      this._orderModel = new OrderModel(this.db);
+    }
+    return this._orderModel;
   }
 
   start(): void {
@@ -53,48 +65,13 @@ export class ReminderJob {
     try {
       const minutesBeforeExpiration = orderConfig.reservation.durationMinutes;
 
-      // Get orders expiring in the next N minutes
-      // TODO: This job needs to iterate over all tenants or accept tenantId as constructor param
-      const expiringOrders = await this.orderService.getExpiringReservations(
-        'system', // Placeholder tenantId - needs proper multi-tenant support
-        minutesBeforeExpiration,
-        100
-      );
+      // LOW: Get all tenants with reserved orders instead of hardcoded tenant
+      const tenants = await this.orderModel.getTenantsWithReservedOrders();
+      
+      logger.debug(`Processing reminders for ${tenants.length} tenants`);
 
-      logger.debug(`Found ${expiringOrders.length} orders expiring soon`);
-
-      for (const order of expiringOrders) {
-        // Check if we already sent a reminder for this order
-        if (this.sentReminders.has(order.id)) {
-          continue;
-        }
-
-        try {
-          // Publish event to notification service via RabbitMQ
-          await this.publishReminderEvent({
-            orderId: order.id,
-            userId: order.userId,
-            orderNumber: order.orderNumber,
-            expiresAt: order.expiresAt,
-            totalCents: order.totalCents,
-            currency: order.currency,
-            minutesRemaining: Math.round(
-              (new Date(order.expiresAt).getTime() - Date.now()) / 60000
-            )
-          });
-
-          this.sentReminders.add(order.id);
-
-          logger.debug('Expiration reminder sent', {
-            orderId: order.id,
-            expiresAt: order.expiresAt,
-          });
-        } catch (error) {
-          logger.error('Failed to send expiration reminder', {
-            orderId: order.id,
-            error: error instanceof Error ? error.message : error,
-          });
-        }
+      for (const tenantId of tenants) {
+        await this.processRemindersForTenant(tenantId, minutesBeforeExpiration);
       }
 
       // Clean up old reminders (prevent memory leak)
@@ -110,9 +87,68 @@ export class ReminderJob {
   }
 
   /**
+   * LOW: Process reminders for a specific tenant
+   */
+  private async processRemindersForTenant(tenantId: string, minutesBeforeExpiration: number): Promise<void> {
+    try {
+      // Get orders expiring in the next N minutes for this tenant
+      const expiringOrders = await this.orderService.getExpiringReservations(
+        tenantId,
+        minutesBeforeExpiration,
+        100
+      );
+
+      logger.debug(`Found ${expiringOrders.length} orders expiring soon for tenant ${tenantId}`);
+
+      for (const order of expiringOrders) {
+        // Check if we already sent a reminder for this order
+        if (this.sentReminders.has(order.id)) {
+          continue;
+        }
+
+        try {
+          // Publish event to notification service via RabbitMQ
+          await this.publishReminderEvent({
+            tenantId,
+            orderId: order.id,
+            userId: order.userId,
+            orderNumber: order.orderNumber,
+            expiresAt: order.expiresAt,
+            totalCents: order.totalCents,
+            currency: order.currency,
+            minutesRemaining: Math.round(
+              (new Date(order.expiresAt).getTime() - Date.now()) / 60000
+            )
+          });
+
+          this.sentReminders.add(order.id);
+
+          logger.debug('Expiration reminder sent', {
+            orderId: order.id,
+            tenantId,
+            expiresAt: order.expiresAt,
+          });
+        } catch (error) {
+          logger.error('Failed to send expiration reminder', {
+            orderId: order.id,
+            tenantId,
+            error: error instanceof Error ? error.message : error,
+          });
+        }
+      }
+    } catch (error) {
+      logger.error('Failed to process reminders for tenant', {
+        tenantId,
+        error: error instanceof Error ? error.message : error,
+      });
+    }
+  }
+
+  /**
    * Publish reminder event to notification service
    */
   private async publishReminderEvent(data: {
+    tenantId: string;
     orderId: string;
     userId: string;
     orderNumber: string;
@@ -134,6 +170,7 @@ export class ReminderJob {
       // Make HTTP request to notification service
       const payload = {
         type: 'order.expiring_soon',
+        tenantId: data.tenantId,
         userId: data.userId,
         data: {
           orderId: data.orderId,
@@ -156,7 +193,8 @@ export class ReminderJob {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Internal-Secret': process.env.INTERNAL_SERVICE_SECRET || ''
+          'X-Internal-Secret': process.env.INTERNAL_SERVICE_SECRET || '',
+          'X-Tenant-ID': data.tenantId,
         },
         body: JSON.stringify(payload)
       });
@@ -167,11 +205,13 @@ export class ReminderJob {
 
       logger.info('Reminder notification sent successfully', {
         orderId: data.orderId,
+        tenantId: data.tenantId,
         userId: data.userId
       });
     } catch (error) {
       logger.error('Failed to publish reminder event', {
         orderId: data.orderId,
+        tenantId: data.tenantId,
         error: error instanceof Error ? error.message : error
       });
       throw error;

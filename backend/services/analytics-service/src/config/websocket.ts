@@ -1,14 +1,29 @@
 import { Server as HTTPServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { logger } from '../utils/logger';
+import { config } from './index';
 
 let io: SocketIOServer;
+
+// Get allowed origins from environment, with secure defaults
+function getAllowedOrigins(): string | string[] {
+  if (config.env === 'development') {
+    return '*';
+  }
+  const allowedOrigins = process.env.ALLOWED_ORIGINS;
+  if (allowedOrigins) {
+    return allowedOrigins.split(',').map(origin => origin.trim());
+  }
+  // Default to empty array in production (no CORS allowed)
+  return [];
+}
 
 export function initializeWebSocket(server: HTTPServer): SocketIOServer {
   io = new SocketIOServer(server, {
     cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
+      origin: getAllowedOrigins(),
+      methods: ['GET', 'POST'],
+      credentials: true
     },
     transports: ['websocket', 'polling']
   });

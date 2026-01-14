@@ -47,13 +47,13 @@ export class CacheService {
       });
 
       this.redis.on('error', (error) => {
-        logger.error('Redis error:', error);
+        logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Redis error');
         this.connected = false;
       });
 
       this.redis.on('close', () => {
         this.connected = false;
-        logger.warn('Redis connection closed');
+        logger.warn({}, 'Redis connection closed');
       });
 
       // Update cache hit rate metrics every 30 seconds
@@ -62,7 +62,7 @@ export class CacheService {
       }, 30000);
 
     } catch (error) {
-      logger.error('Failed to initialize cache service:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to initialize cache service');
       this.connected = false;
     }
   }
@@ -90,7 +90,7 @@ export class CacheService {
       logger.debug(`Cache hit: ${fullKey}`);
       return JSON.parse(value) as T;
     } catch (error) {
-      logger.error(`Cache get error for key ${key}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), key }, 'Cache get error');
       this.cacheMisses++;
       return null;
     }
@@ -113,7 +113,7 @@ export class CacheService {
       logger.debug(`Cache set: ${fullKey} (TTL: ${ttl}s)`);
       return true;
     } catch (error) {
-      logger.error(`Cache set error for key ${key}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), key }, 'Cache set error');
       return false;
     }
   }
@@ -132,7 +132,7 @@ export class CacheService {
       logger.debug(`Cache delete: ${fullKey}`);
       return true;
     } catch (error) {
-      logger.error(`Cache delete error for key ${key}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), key }, 'Cache delete error');
       return false;
     }
   }
@@ -157,7 +157,7 @@ export class CacheService {
       logger.info(`Cache pattern delete: ${fullPattern} (${keys.length} keys)`);
       return keys.length;
     } catch (error) {
-      logger.error(`Cache pattern delete error for pattern ${pattern}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), pattern }, 'Cache pattern delete error');
       return 0;
     }
   }
@@ -175,7 +175,7 @@ export class CacheService {
       const exists = await this.redis.exists(fullKey);
       return exists === 1;
     } catch (error) {
-      logger.error(`Cache exists error for key ${key}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), key }, 'Cache exists error');
       return false;
     }
   }
@@ -222,7 +222,7 @@ export class CacheService {
 
       return value;
     } catch (error) {
-      logger.error(`Cache increment error for key ${key}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), key }, 'Cache increment error');
       return 0;
     }
   }
@@ -249,7 +249,7 @@ export class CacheService {
       logger.debug(`Cache mset: ${entries.length} keys`);
       return true;
     } catch (error) {
-      logger.error('Cache mset error:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Cache mset error');
       return false;
     }
   }
@@ -275,7 +275,7 @@ export class CacheService {
         return JSON.parse(value) as T;
       });
     } catch (error) {
-      logger.error('Cache mget error:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Cache mget error');
       return keys.map(() => null);
     }
   }
@@ -295,14 +295,14 @@ export class CacheService {
         if (keys.length > 0) {
           await this.redis.del(...keys);
         }
-        logger.warn(`Cache cleared for prefix: ${prefix} (${keys.length} keys)`);
+        logger.warn({ prefix, keyCount: keys.length }, 'Cache cleared for prefix');
       } else {
         await this.redis.flushdb();
-        logger.warn('Cache completely cleared (flushdb)');
+        logger.warn({}, 'Cache completely cleared (flushdb)');
       }
       return true;
     } catch (error) {
-      logger.error('Cache clear error:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Cache clear error');
       return false;
     }
   }

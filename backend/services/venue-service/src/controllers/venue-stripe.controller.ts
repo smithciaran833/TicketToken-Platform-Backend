@@ -240,8 +240,8 @@ export async function handleWebhook(
     }
 
     // SECURITY FIX (AE7): Validate tenant context from webhook metadata
-    const venueId = event.data.object?.metadata?.venue_id;
-    const tenantId = event.data.object?.metadata?.tenant_id;
+    const venueId = (event.data.object as any)?.metadata?.venue_id;
+    const tenantId = (event.data.object as any)?.metadata?.tenant_id;
     
     if (event.type === 'account.updated') {
       // Validate venue_id exists in metadata for account events

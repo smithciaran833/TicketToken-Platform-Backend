@@ -106,7 +106,7 @@ export class ReminderEngineService {
     );
     
     // In production, integrate with email service
-    log.info('Sending group payment reminder', {
+    log.info({
       reminderNumber,
       email: member.email,
       eventName: member.event_name,

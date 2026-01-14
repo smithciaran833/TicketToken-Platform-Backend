@@ -1,4 +1,3 @@
-import { Request, Response, NextFunction } from 'express';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import Joi from 'joi';
 
@@ -14,11 +13,17 @@ interface ValidationSource {
   params?: Joi.Schema;
 }
 
+// Local types for Express compatibility (if needed)
+type ExpressRequest = any;
+type ExpressResponse = any;
+type ExpressNextFunction = () => void;
+
 /**
- * Generic validation middleware factory for Express
+ * Generic validation middleware factory for Express (legacy)
+ * @deprecated Use validateFastify instead
  */
 export function validateExpress(schemas: ValidationSource) {
-  return (req: Request, res: Response, next: NextFunction) => {
+  return (req: ExpressRequest, res: ExpressResponse, next: ExpressNextFunction) => {
     const errors: string[] = [];
 
     // Validate body
@@ -28,7 +33,7 @@ export function validateExpress(schemas: ValidationSource) {
         stripUnknown: true,
       });
       if (error) {
-        errors.push(...error.details.map(d => `Body: ${d.message}`));
+        errors.push(...error.details.map((d: any) => `Body: ${d.message}`));
       }
     }
 
@@ -39,7 +44,7 @@ export function validateExpress(schemas: ValidationSource) {
         stripUnknown: true,
       });
       if (error) {
-        errors.push(...error.details.map(d => `Query: ${d.message}`));
+        errors.push(...error.details.map((d: any) => `Query: ${d.message}`));
       } else {
         req.query = value; // Apply defaults and transformations
       }
@@ -52,7 +57,7 @@ export function validateExpress(schemas: ValidationSource) {
         stripUnknown: true,
       });
       if (error) {
-        errors.push(...error.details.map(d => `Params: ${d.message}`));
+        errors.push(...error.details.map((d: any) => `Params: ${d.message}`));
       }
     }
 

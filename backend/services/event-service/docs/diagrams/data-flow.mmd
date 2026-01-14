@@ -1,0 +1,57 @@
+%% Data Flow Diagram - Event Creation and Ticket Sale
+
+sequenceDiagram
+    participant O as Organizer
+    participant ES as Event Service
+    participant VS as Venue Service
+    participant PG as PostgreSQL
+    participant RD as Redis
+    participant SS as Search Service
+    participant BC as Blockchain
+
+    Note over O,BC: Event Creation Flow
+    
+    O->>ES: POST /api/v1/events
+    ES->>ES: Validate input (schema)
+    ES->>ES: Authenticate & authorize
+    ES->>VS: Validate venue exists
+    VS-->>ES: Venue details
+    ES->>PG: BEGIN TRANSACTION
+    ES->>PG: SET LOCAL tenant_id
+    ES->>PG: INSERT event (RLS enforced)
+    ES->>PG: INSERT schedule
+    ES->>PG: INSERT capacity
+    ES->>PG: INSERT pricing
+    ES->>PG: COMMIT
+    ES->>RD: Invalidate cache
+    ES->>SS: Index event (async)
+    ES->>BC: Mint NFT contract (async)
+    ES-->>O: 201 Created
+
+    Note over O,BC: Ticket Sale Flow
+    
+    participant B as Buyer
+    participant TS as Ticket Service
+    participant OS as Order Service
+
+    B->>ES: GET /api/v1/events/:id
+    ES->>RD: Check cache
+    RD-->>ES: Cache miss
+    ES->>PG: SELECT event (RLS enforced)
+    ES->>RD: Set cache
+    ES-->>B: Event details
+
+    B->>ES: POST /api/v1/capacity/reserve
+    ES->>ES: Check event state (ON_SALE)
+    ES->>PG: SELECT FOR UPDATE (lock)
+    ES->>PG: Check availability
+    ES->>PG: Decrement available
+    ES->>PG: INSERT reservation
+    ES-->>B: Reservation confirmed
+
+    B->>OS: POST /api/v1/orders
+    OS->>ES: Validate reservation
+    ES-->>OS: Reservation valid
+    OS->>TS: Issue tickets
+    TS->>ES: Confirm capacity used
+    ES->>PG: Mark reservation complete

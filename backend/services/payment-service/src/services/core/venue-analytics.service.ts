@@ -1,7 +1,7 @@
 /**
  * Venue Analytics Service
  * Calculates real-time venue metrics for tier assignment
- * 
+ *
  * FIXES CRITICAL ISSUE: Replaces hardcoded $5,000 monthly volume
  */
 
@@ -31,7 +31,7 @@ export class VenueAnalyticsService {
     try {
       const startDate = new Date();
       startDate.setDate(startDate.getDate() - 30); // Last 30 days
-      
+
       const result = await query(
         `
         SELECT COALESCE(SUM(venue_payout), 0) as total_volume
@@ -43,25 +43,25 @@ export class VenueAnalyticsService {
         `,
         [venueId, startDate]
       );
-      
+
       const totalVolume = parseInt(result.rows[0]?.total_volume || '0', 10);
-      
-      logger.info('Monthly volume calculated', {
+
+      logger.info({
         venueId,
         totalVolume,
         period: '30_days',
-      });
-      
+      }, 'Monthly volume calculated');
+
       return totalVolume;
     } catch (error) {
-      logger.error('Failed to calculate monthly volume', {
+      logger.error({
         venueId,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      
+      }, 'Failed to calculate monthly volume');
+
       // Fallback to conservative estimate rather than failing
       // This prevents service disruption
-      logger.warn('Using fallback volume estimate', { venueId });
+      logger.warn({ venueId }, 'Using fallback volume estimate');
       return 0; // Conservative: treat as new venue
     }
   }
@@ -76,11 +76,11 @@ export class VenueAnalyticsService {
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     const endDate = new Date();
-    
+
     try {
       const result = await query(
         `
-        SELECT 
+        SELECT
           COALESCE(SUM(venue_payout), 0) as total_volume,
           COUNT(*) as transaction_count,
           COALESCE(AVG(venue_payout), 0) as avg_transaction
@@ -92,9 +92,9 @@ export class VenueAnalyticsService {
         `,
         [venueId, startDate]
       );
-      
+
       const row = result.rows[0];
-      
+
       return {
         venueId,
         monthlyVolumeCents: parseInt(row.total_volume || '0', 10),
@@ -106,11 +106,11 @@ export class VenueAnalyticsService {
         },
       };
     } catch (error) {
-      logger.error('Failed to get venue metrics', {
+      logger.error({
         venueId,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      
+      }, 'Failed to get venue metrics');
+
       // Return zero metrics on error
       return {
         venueId,
@@ -150,16 +150,16 @@ export class VenueAnalyticsService {
         `,
         [venueId, startDate, endDate]
       );
-      
+
       return parseInt(result.rows[0]?.total_volume || '0', 10);
     } catch (error) {
-      logger.error('Failed to calculate period volume', {
+      logger.error({
         venueId,
         startDate,
         endDate,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      
+      }, 'Failed to calculate period volume');
+
       return 0;
     }
   }
@@ -173,7 +173,7 @@ export class VenueAnalyticsService {
     const year = new Date().getFullYear();
     const startDate = new Date(year, 0, 1); // January 1st
     const endDate = new Date();
-    
+
     return this.getVolumeForPeriod(venueId, startDate, endDate);
   }
 
@@ -191,7 +191,7 @@ export class VenueAnalyticsService {
     try {
       const result = await query(
         `
-        SELECT 
+        SELECT
           TO_CHAR(created_at, 'YYYY-MM') as month,
           COALESCE(SUM(venue_payout), 0) as volume,
           COUNT(*) as count
@@ -205,18 +205,18 @@ export class VenueAnalyticsService {
         `,
         [venueId]
       );
-      
+
       return result.rows.map(row => ({
         month: row.month,
         volumeCents: parseInt(row.volume || '0', 10),
         transactionCount: parseInt(row.count || '0', 10),
       }));
     } catch (error) {
-      logger.error('Failed to get monthly trend', {
+      logger.error({
         venueId,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      
+      }, 'Failed to get monthly trend');
+
       return [];
     }
   }
@@ -237,7 +237,7 @@ export class VenueAnalyticsService {
       // Check if last N months all exceeded threshold
       const result = await query(
         `
-        SELECT 
+        SELECT
           TO_CHAR(created_at, 'YYYY-MM') as month,
           COALESCE(SUM(venue_payout), 0) as volume
         FROM payment_transactions
@@ -251,23 +251,23 @@ export class VenueAnalyticsService {
         `,
         [venueId, months]
       );
-      
+
       // Must have data for all months
       if (result.rows.length < months) {
         return false;
       }
-      
+
       // All months must exceed threshold
       return result.rows.every(row => {
         const volume = parseInt(row.volume || '0', 10);
         return volume >= targetTierVolumeThreshold;
       });
     } catch (error) {
-      logger.error('Failed to check tier upgrade eligibility', {
+      logger.error({
         venueId,
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
-      
+      }, 'Failed to check tier upgrade eligibility');
+
       return false;
     }
   }

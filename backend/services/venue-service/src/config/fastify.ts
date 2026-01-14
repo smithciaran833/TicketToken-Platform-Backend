@@ -8,6 +8,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import { AwilixContainer } from 'awilix';
 import { logger } from '../utils/logger';
 import { httpRequestDuration, httpRequestTotal, register } from '../utils/metrics';
+import { getConfig } from './index';
 import fs from 'fs';
 import path from 'path';
 
@@ -35,7 +36,7 @@ export async function configureFastify(
   fastify: FastifyInstance,
   container: AwilixContainer
 ) {
-  // Container is already decorated in app.ts, so we don't need to do it here
+  const config = getConfig();
 
   // Metrics endpoint
   fastify.get('/metrics', async (_request, reply) => {
@@ -60,8 +61,13 @@ export async function configureFastify(
     httpRequestTotal.inc(labels);
   });
 
-  // Security headers
+  // SECURITY FIX (SEC-R14): Security headers with HSTS
   await fastify.register(helmet, {
+    hsts: {
+      maxAge: 31536000,
+      includeSubDomains: true,
+      preload: true,
+    },
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -72,15 +78,11 @@ export async function configureFastify(
     },
   });
 
-  // CORS
+  // CORS - use centralized config
+  const allowedOrigins = config.security.corsOrigins;
   await fastify.register(cors, {
     origin: (origin, cb) => {
-      const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
-        'http://api-gateway:3000',
-        process.env.AUTH_SERVICE_URL || 'http://auth-service:3001',
-      ];
-
-      if (!origin || allowedOrigins.includes(origin)) {
+      if (!origin || allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
         cb(null, true);
       } else {
         cb(new Error('Not allowed by CORS'), false);
@@ -89,20 +91,16 @@ export async function configureFastify(
     credentials: true,
   });
 
-  // Rate limiting - DISABLED FOR TESTS
-  if (true) { // Rate limiting enabled for tests
-    await fastify.register(rateLimit, {
-      max: 100,
-      timeWindow: '1 minute',
-      keyGenerator: (request): string => {
-        const apiKey = request.headers['x-api-key'] as string;
-        const venueId = request.headers['x-venue-id'] as string;
-        return apiKey || venueId || request.ip;
-      },
-    });
-  } else {
-    logger.info('Rate limiting disabled in test environment');
-  }
+  // Rate limiting
+  await fastify.register(rateLimit, {
+    max: config.rateLimit.max,
+    timeWindow: config.rateLimit.windowMs,
+    keyGenerator: (request): string => {
+      const apiKey = request.headers['x-api-key'] as string;
+      const venueId = request.headers['x-venue-id'] as string;
+      return apiKey || venueId || request.ip;
+    },
+  });
 
   // JWT - RS256 with public key verification
   await fastify.register(jwt, {
@@ -121,14 +119,14 @@ export async function configureFastify(
     reply.header('X-Request-ID', request.id);
   });
 
-  // API Documentation
-  if (process.env.NODE_ENV !== 'production') {
+  // API Documentation - only in non-production
+  if (!config.server.isProduction) {
     await fastify.register(swagger, {
       swagger: {
         info: {
           title: 'Venue Service API',
           description: 'TicketToken Venue Management Service',
-          version: '1.0.0',
+          version: config.server.serviceVersion,
         },
         host: '0.0.0.0',
         schemes: ['http'],
@@ -191,7 +189,7 @@ export async function configureFastify(
 
     return reply.status(500).send({
       error: 'Internal server error',
-      message: process.env.NODE_ENV === 'development' ? error.message : undefined,
+      message: config.server.isDevelopment ? error.message : undefined,
     });
   });
 

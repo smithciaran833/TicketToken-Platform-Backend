@@ -28,6 +28,31 @@ if (missingEnvVars.length > 0) {
   }
 }
 
+/**
+ * FIX #32: Validate JWT_SECRET properly - no insecure fallback
+ */
+function getJwtSecret(): string {
+  const secret = process.env.JWT_SECRET;
+  
+  if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      logger.error('CRITICAL: JWT_SECRET is required in production');
+      throw new Error('JWT_SECRET environment variable is required in production');
+    }
+    // In development, generate a random secret and log a warning
+    const randomSecret = require('crypto').randomBytes(32).toString('hex');
+    logger.warn('JWT_SECRET not set - using randomly generated secret for this session (dev mode only). Set JWT_SECRET in .env for persistent sessions.');
+    return randomSecret;
+  }
+  
+  // Warn if secret looks too weak (less than 32 chars)
+  if (secret.length < 32) {
+    logger.warn('JWT_SECRET appears weak (< 32 characters). Consider using a stronger secret.');
+  }
+  
+  return secret;
+}
+
 // Service configuration
 export const config = {
   env: process.env.NODE_ENV || 'development',
@@ -39,8 +64,8 @@ export const config = {
   ticketServiceUrl: process.env.TICKET_SERVICE_URL || process.env.EVENT_SERVICE_URL || 'http://event-service:3003',
   paymentServiceUrl: process.env.PAYMENT_SERVICE_URL || process.env.ANALYTICS_SERVICE_URL || 'http://analytics-service:3007',
 
-  // JWT
-  jwtSecret: process.env.JWT_SECRET || 'default-secret-key',
+  // JWT - FIX #32: No insecure default, throws in production if missing
+  jwtSecret: getJwtSecret(),
 
   // Feature flags
   features: {

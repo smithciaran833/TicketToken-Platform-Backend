@@ -6,7 +6,7 @@
 
 import type Redis from 'ioredis';
 import {
-  getRedisClient,
+  getRedisClient as getSharedRedisClient,
   getRedisPubClient,
   getRedisSubClient,
   getConnectionManager,
@@ -19,7 +19,7 @@ let initialized = false;
 
 export async function initRedis(): Promise<void> {
   if (initialized) return;
-  redis = await getRedisClient();
+  redis = await getSharedRedisClient();
   redisPub = await getRedisPubClient();
   redisSub = await getRedisSubClient();
   initialized = true;
@@ -43,6 +43,9 @@ export function getRedis(): Redis {
   return redis;
 }
 
+// Alias for getRedis - used by some controllers
+export const getRedisClient = getRedis;
+
 export function getPub(): Redis {
   if (!redisPub) throw new Error('Redis pub not initialized. Call initRedis() first.');
   return redisPub;
@@ -51,6 +54,31 @@ export function getPub(): Redis {
 export function getSub(): Redis {
   if (!redisSub) throw new Error('Redis sub not initialized. Call initRedis() first.');
   return redisSub;
+}
+
+/**
+ * Check Redis health status
+ * Used by health check endpoints
+ */
+export async function checkRedisHealth(): Promise<{ healthy: boolean; latencyMs: number; error?: string }> {
+  const start = Date.now();
+  try {
+    if (!redis) {
+      return { healthy: false, latencyMs: 0, error: 'Redis not initialized' };
+    }
+    
+    await redis.ping();
+    const latencyMs = Date.now() - start;
+    
+    return { healthy: true, latencyMs };
+  } catch (error) {
+    const latencyMs = Date.now() - start;
+    return { 
+      healthy: false, 
+      latencyMs, 
+      error: (error as Error).message 
+    };
+  }
 }
 
 // Graceful shutdown

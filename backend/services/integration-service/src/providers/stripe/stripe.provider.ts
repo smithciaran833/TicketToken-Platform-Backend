@@ -1,5 +1,6 @@
-import { IntegrationProvider, SyncResult } from '../provider.interface';
+import { IntegrationProvider, SyncResult, StripeCredentials } from '../provider.interface';
 import { logger } from '../../utils/logger';
+import { config } from '../../config';
 import Stripe from 'stripe';
 
 export class StripeProvider implements IntegrationProvider {
@@ -7,8 +8,12 @@ export class StripeProvider implements IntegrationProvider {
   private stripe: Stripe;
   
   constructor() {
-    this.stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-      apiVersion: '2022-11-15'
+    const clientSecret = config.providers.stripe.clientSecret;
+    if (!clientSecret) {
+      throw new Error('Stripe client secret is not configured');
+    }
+    this.stripe = new Stripe(clientSecret, {
+      apiVersion: config.providers.stripe.apiVersion as Stripe.LatestApiVersion
     });
   }
 
@@ -144,7 +149,11 @@ export class StripeProvider implements IntegrationProvider {
 
   validateWebhookSignature(payload: string, signature: string): boolean {
     try {
-      const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET || '';
+      const endpointSecret = config.providers.stripe.webhookSecret;
+      if (!endpointSecret) {
+        logger.warn('Stripe webhook secret not configured, skipping verification');
+        return false;
+      }
       this.stripe.webhooks.constructEvent(payload, signature, endpointSecret);
       return true;
     } catch {

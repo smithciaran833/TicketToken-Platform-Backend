@@ -1,5 +1,6 @@
-import axios, { AxiosInstance } from 'axios';
+import axios from 'axios';
 import { credentialEncryptionService } from '../credential-encryption.service';
+import { config } from '../../config';
 
 export interface QuickBooksCustomer {
   id?: string;
@@ -53,13 +54,15 @@ export interface QuickBooksSyncResult {
 }
 
 export class QuickBooksSyncService {
-  private client: AxiosInstance | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private client: any = null;
   private realmId: string | null = null;
 
   /**
    * Initialize QuickBooks API client with OAuth credentials
    */
-  private async initializeClient(venueId: string): Promise<AxiosInstance> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async initializeClient(venueId: string): Promise<any> {
     if (this.client && this.realmId) {
       return this.client;
     }
@@ -76,9 +79,9 @@ export class QuickBooksSyncService {
 
     // Get realm ID from venue configuration (stored in metadata)
     // In production, this would come from venue_integrations table
-    this.realmId = process.env.QUICKBOOKS_REALM_ID || 'default-realm';
+    this.realmId = config.providers.quickbooks.realmId;
 
-    const baseURL = process.env.QUICKBOOKS_SANDBOX === 'true'
+    const baseURL = config.providers.quickbooks.sandbox
       ? 'https://sandbox-quickbooks.api.intuit.com'
       : 'https://quickbooks.api.intuit.com';
 
@@ -343,14 +346,19 @@ export class QuickBooksSyncService {
    */
   async refreshToken(venueId: string, refreshToken: string): Promise<void> {
     try {
-      const clientId = process.env.QUICKBOOKS_CLIENT_ID;
-      const clientSecret = process.env.QUICKBOOKS_CLIENT_SECRET;
+      const clientId = config.providers.quickbooks.clientId;
+      const clientSecret = config.providers.quickbooks.clientSecret;
 
       if (!clientId || !clientSecret) {
         throw new Error('QuickBooks OAuth credentials not configured');
       }
 
-      const response = await axios.post(
+      const response = await axios.post<{
+        access_token: string;
+        refresh_token: string;
+        expires_in: number;
+        x_refresh_token_expires_in: number;
+      }>(
         'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
         new URLSearchParams({
           grant_type: 'refresh_token',

@@ -174,7 +174,7 @@ export class EventStreamService extends EventEmitter {
     
     subscriber.subscribe('analytics:events');
     
-    subscriber.on('message', async (channel: string, message: string) => {
+    subscriber.on('message', async (_channel: string, message: string) => {
       try {
         const event = JSON.parse(message);
         await this.pushEvent(event.type, event);

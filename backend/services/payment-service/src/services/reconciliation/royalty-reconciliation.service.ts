@@ -33,7 +33,7 @@ export class RoyaltyReconciliationService {
    * Main reconciliation run - checks blockchain sales vs database royalties
    */
   async runReconciliation(startDate: Date, endDate: Date): Promise<void> {
-    this.log.info('Starting royalty reconciliation', { startDate, endDate });
+    this.log.info({ startDate, endDate }, 'Starting royalty reconciliation');
 
     const runId = await this.createReconciliationRun(startDate, endDate);
 
@@ -55,10 +55,10 @@ export class RoyaltyReconciliationService {
       // 5. Complete the run
       await this.completeReconciliationRun(runId, results);
 
-      this.log.info('Reconciliation completed successfully', { runId, ...results });
+      this.log.info({ runId, ...results }, 'Reconciliation completed successfully');
 
     } catch (error: any) {
-      this.log.error('Reconciliation failed', { error, runId });
+      this.log.error({ error, runId }, 'Reconciliation failed');
       await this.failReconciliationRun(runId, error.message);
       throw error;
     }
@@ -77,7 +77,7 @@ export class RoyaltyReconciliationService {
 
       return response.data.sales || [];
     } catch (error: any) {
-      this.log.error('Failed to fetch secondary sales from blockchain-indexer', { error });
+      this.log.error({ error }, 'Failed to fetch secondary sales from blockchain-indexer');
       return [];
     }
   }
@@ -132,8 +132,8 @@ export class RoyaltyReconciliationService {
 
       if (existingDistributions.length === 0) {
         // Missing distribution - create discrepancy
-        this.log.warn('Missing royalty distribution for sale', { signature: sale.signature });
-        
+        this.log.warn({ signature: sale.signature }, 'Missing royalty distribution for sale');
+
         await this.recordDiscrepancy(runId, {
           transaction_id: sale.signature,
           discrepancy_type: 'missing_distribution',
@@ -154,14 +154,14 @@ export class RoyaltyReconciliationService {
         totalRoyaltiesPaid += actualTotal;
 
         const variance = Math.abs(expectedRoyalties.total - actualTotal);
-        
+
         if (variance > 0.01) { // More than 1 cent difference
-          this.log.warn('Royalty amount mismatch', {
+          this.log.warn({
             signature: sale.signature,
             expected: expectedRoyalties.total,
             actual: actualTotal,
             variance
-          });
+          }, 'Royalty amount mismatch');
 
           await this.recordDiscrepancy(runId, {
             transaction_id: sale.signature,
@@ -204,8 +204,8 @@ export class RoyaltyReconciliationService {
       .where('event_id', sale.eventId)
       .first();
 
-    const venuePercentage = eventSettings?.venue_royalty_percentage ?? 
-                           venueSettings?.default_royalty_percentage ?? 
+    const venuePercentage = eventSettings?.venue_royalty_percentage ??
+                           venueSettings?.default_royalty_percentage ??
                            10;
 
     const artistPercentage = eventSettings?.artist_royalty_percentage ?? 0;
@@ -269,7 +269,7 @@ export class RoyaltyReconciliationService {
 
     await db('royalty_distributions').insert(distributions);
 
-    this.log.info('Created missing royalty distributions', { signature: sale.signature });
+    this.log.info({ signature: sale.signature }, 'Created missing royalty distributions');
   }
 
   /**
@@ -309,11 +309,11 @@ export class RoyaltyReconciliationService {
           .first();
 
         if (settings && parseFloat(group.total_amount) < settings.minimum_payout_amount_cents) {
-          this.log.debug('Skipping payout - below minimum threshold', {
+          this.log.debug({
             venueId: group.recipient_id,
             amount: group.total_amount,
             minimum: settings.minimum_payout_amount_cents
-          });
+          }, 'Skipping payout - below minimum threshold');
           continue;
         }
       }
@@ -349,11 +349,11 @@ export class RoyaltyReconciliationService {
       .where('status', 'pending')
       .update({ status: 'scheduled' });
 
-    this.log.info('Created royalty payout', {
+    this.log.info({
       payoutId,
       recipientId: group.recipient_id,
       amount: group.total_amount
-    });
+    }, 'Created royalty payout');
   }
 
   /**
@@ -408,7 +408,7 @@ export class RoyaltyReconciliationService {
    * Manual reconciliation for specific transaction
    */
   async reconcileTransaction(transactionSignature: string): Promise<void> {
-    this.log.info('Manual reconciliation for transaction', { signature: transactionSignature });
+    this.log.info({ signature: transactionSignature }, 'Manual reconciliation for transaction');
 
     // Get the transaction from blockchain
     const response = await axios.get(
@@ -426,9 +426,9 @@ export class RoyaltyReconciliationService {
       // Create missing distributions
       const royalties = await this.calculateExpectedRoyalties(sale);
       await this.createMissingDistribution(sale, royalties);
-      this.log.info('Created missing distributions', { signature: transactionSignature });
+      this.log.info({ signature: transactionSignature }, 'Created missing distributions');
     } else {
-      this.log.info('Distributions already exist', { signature: transactionSignature });
+      this.log.info({ signature: transactionSignature }, 'Distributions already exist');
     }
   }
 }

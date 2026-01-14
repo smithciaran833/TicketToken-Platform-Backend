@@ -1,15 +1,30 @@
+/**
+ * Blockchain Indexer - Main indexer class
+ * 
+ * AUDIT FIX: ERR-7/GD-2/EXT-1 - Integrated RPC failover
+ * AUDIT FIX: BG-2 - Added overlapping execution protection
+ * AUDIT FIX: EXT-2 - Added request timeouts
+ */
+
 import { Connection, PublicKey } from '@solana/web3.js';
 import { EventEmitter } from 'events';
 import logger from './utils/logger';
 import db from './utils/database';
 import TransactionProcessor from './processors/transactionProcessor';
+import { RPCFailoverManager } from './utils/rpcFailover';
+import { transactionsProcessedTotal, indexerLag, rpcCallDuration } from './utils/metrics';
 
 interface Config {
     solana: {
         rpcUrl: string;
+        rpcUrls?: string[]; // Multiple endpoints for failover
         wsUrl?: string;
         commitment?: string;
         programId?: string;
+    };
+    polling?: {
+        intervalMs?: number;
+        batchSize?: number;
     };
 }
 
@@ -20,8 +35,13 @@ interface SyncStats {
     startTime: number | null;
 }
 
+const DEFAULT_POLLING_INTERVAL = 5000;
+const DEFAULT_BATCH_SIZE = 10;
+const RPC_TIMEOUT_MS = 30000;
+
 export default class BlockchainIndexer extends EventEmitter {
-    private connection: Connection;
+    private rpcManager: RPCFailoverManager;
+    private connection: Connection; // Kept for WebSocket subscription
     private programId: PublicKey | null;
     private lastProcessedSlot: number;
     private lastSignature: string | null;
@@ -31,12 +51,36 @@ export default class BlockchainIndexer extends EventEmitter {
     private processor: TransactionProcessor;
     private subscription?: number;
     public currentSlot: number;
+    
+    // AUDIT FIX: BG-2 - Overlap protection
+    private pollingInProgress: boolean = false;
+    private pollingTimer?: NodeJS.Timeout;
+    private readonly pollingIntervalMs: number;
+    private readonly batchSize: number;
 
     constructor(config: Config) {
         super();
+        
+        // AUDIT FIX: ERR-7/GD-2 - Use RPC failover manager
+        const rpcEndpoints = config.solana.rpcUrls && config.solana.rpcUrls.length > 0
+            ? config.solana.rpcUrls
+            : [config.solana.rpcUrl];
+        
+        this.rpcManager = new RPCFailoverManager({
+            endpoints: rpcEndpoints,
+            healthCheckIntervalMs: 30000,
+            maxConsecutiveFailures: 3,
+            connectionConfig: {
+                commitment: (config.solana.commitment as any) || 'confirmed',
+                confirmTransactionInitialTimeout: RPC_TIMEOUT_MS
+            }
+        });
+        
+        // Keep a direct connection for WebSocket subscriptions
         this.connection = new Connection(config.solana.rpcUrl, {
             commitment: (config.solana.commitment as any) || 'confirmed',
-            wsEndpoint: config.solana.wsUrl
+            wsEndpoint: config.solana.wsUrl,
+            confirmTransactionInitialTimeout: RPC_TIMEOUT_MS
         });
 
         this.programId = config.solana.programId ? new PublicKey(config.solana.programId) : null;
@@ -45,6 +89,10 @@ export default class BlockchainIndexer extends EventEmitter {
         this.isRunning = false;
         this.config = config;
         this.currentSlot = 0;
+        
+        // Polling configuration
+        this.pollingIntervalMs = config.polling?.intervalMs || DEFAULT_POLLING_INTERVAL;
+        this.batchSize = config.polling?.batchSize || DEFAULT_BATCH_SIZE;
 
         this.syncStats = {
             processed: 0,
@@ -53,7 +101,14 @@ export default class BlockchainIndexer extends EventEmitter {
             startTime: null
         };
 
-        this.processor = new TransactionProcessor(this.connection);
+        // Pass connection getter to processor for failover support
+        this.processor = new TransactionProcessor(this.rpcManager.getConnection());
+        
+        logger.info({
+            rpcEndpoints: rpcEndpoints.length,
+            pollingIntervalMs: this.pollingIntervalMs,
+            batchSize: this.batchSize
+        }, 'BlockchainIndexer constructed with failover support');
     }
 
     async initialize(): Promise<boolean> {
@@ -69,7 +124,7 @@ export default class BlockchainIndexer extends EventEmitter {
             if (result.rows[0]) {
                 this.lastProcessedSlot = result.rows[0].last_processed_slot || 0;
                 this.lastSignature = result.rows[0].last_processed_signature;
-                logger.info(`Resuming from slot ${this.lastProcessedSlot}`);
+                logger.info({ slot: this.lastProcessedSlot }, 'Resuming from saved state');
             } else {
                 await db.query(`
                     INSERT INTO indexer_state (id, last_processed_slot, indexer_version)
@@ -79,13 +134,20 @@ export default class BlockchainIndexer extends EventEmitter {
                 logger.info('Initialized new indexer state');
             }
 
-            this.currentSlot = await this.connection.getSlot();
+            // AUDIT FIX: Use RPC failover for getting current slot
+            this.currentSlot = await this.rpcManager.executeWithFailover(
+                async (conn) => conn.getSlot(),
+                'initialize:getSlot'
+            );
+            
             this.syncStats.lag = this.currentSlot - this.lastProcessedSlot;
+            indexerLag.set(this.syncStats.lag);
 
             logger.info({
                 lastSlot: this.lastProcessedSlot,
                 currentSlot: this.currentSlot,
-                lag: this.syncStats.lag
+                lag: this.syncStats.lag,
+                rpcStatus: this.rpcManager.getStatus()
             }, 'Indexer initialized');
 
             return true;
@@ -114,7 +176,7 @@ export default class BlockchainIndexer extends EventEmitter {
         logger.info('Indexer started');
 
         if (this.syncStats.lag > 1000) {
-            logger.warn(`Large lag detected (${this.syncStats.lag} slots). Consider running historical sync.`);
+            logger.warn({ lag: this.syncStats.lag }, 'Large lag detected. Consider running historical sync.');
         }
 
         await this.startRealtimeIndexing();
@@ -124,9 +186,24 @@ export default class BlockchainIndexer extends EventEmitter {
         logger.info('Stopping indexer...');
         this.isRunning = false;
 
+        // Stop polling timer
+        if (this.pollingTimer) {
+            clearInterval(this.pollingTimer);
+            this.pollingTimer = undefined;
+        }
+
+        // Wait for any in-flight polling to complete
+        while (this.pollingInProgress) {
+            logger.info('Waiting for in-flight polling to complete...');
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+
         if (this.subscription) {
             await this.connection.removeAccountChangeListener(this.subscription);
         }
+
+        // Stop RPC manager health checks
+        this.rpcManager.stop();
 
         await db.query(`
             UPDATE indexer_state
@@ -156,7 +233,6 @@ export default class BlockchainIndexer extends EventEmitter {
             );
 
             logger.info('Real-time indexing started');
-
             this.startPolling();
 
         } catch (error) {
@@ -165,47 +241,87 @@ export default class BlockchainIndexer extends EventEmitter {
         }
     }
 
+    /**
+     * AUDIT FIX: BG-2 - Start polling with overlap protection
+     */
     startPolling(): void {
-        setInterval(async () => {
+        logger.info({ intervalMs: this.pollingIntervalMs }, 'Starting polling with overlap protection');
+        
+        this.pollingTimer = setInterval(async () => {
             if (!this.isRunning) {
                 return;
             }
 
+            // AUDIT FIX: BG-2 - Skip if previous poll still in progress
+            if (this.pollingInProgress) {
+                logger.debug('Skipping poll - previous poll still in progress');
+                return;
+            }
+
             try {
+                this.pollingInProgress = true;
                 await this.pollRecentTransactions();
             } catch (error) {
                 logger.error({ error }, 'Polling error');
+                this.syncStats.failed++;
+            } finally {
+                this.pollingInProgress = false;
             }
-        }, 5000);
+        }, this.pollingIntervalMs);
     }
 
+    /**
+     * AUDIT FIX: ERR-7/GD-2 - Poll using RPC failover
+     */
     async pollRecentTransactions(): Promise<void> {
-        try {
-            if (!this.programId) return;
+        if (!this.programId) return;
 
-            const signatures = await this.connection.getSignaturesForAddress(
-                this.programId,
-                { limit: 10 },
-                'confirmed'
+        const startTime = Date.now();
+        
+        try {
+            // AUDIT FIX: Use RPC failover for getting signatures
+            const signatures = await this.rpcManager.executeWithFailover(
+                async (conn) => conn.getSignaturesForAddress(
+                    this.programId!,
+                    { limit: this.batchSize },
+                    'confirmed'
+                ),
+                'poll:getSignaturesForAddress'
             );
 
-            for (const sigInfo of signatures) {
-                await this.processor.processTransaction(sigInfo);
-                this.syncStats.processed++;
+            rpcCallDuration.observe({ method: 'getSignaturesForAddress' }, (Date.now() - startTime) / 1000);
 
-                if (sigInfo.slot > this.lastProcessedSlot) {
-                    this.lastProcessedSlot = sigInfo.slot;
-                    this.lastSignature = sigInfo.signature;
-                    await this.saveProgress();
+            for (const sigInfo of signatures) {
+                try {
+                    await this.processor.processTransaction(sigInfo);
+                    this.syncStats.processed++;
+                    transactionsProcessedTotal.inc({ instruction_type: 'unknown', status: 'success' });
+
+                    if (sigInfo.slot > this.lastProcessedSlot) {
+                        this.lastProcessedSlot = sigInfo.slot;
+                        this.lastSignature = sigInfo.signature;
+                        await this.saveProgress();
+                    }
+                } catch (txError) {
+                    logger.error({ error: txError, signature: sigInfo.signature }, 'Failed to process transaction');
+                    this.syncStats.failed++;
+                    transactionsProcessedTotal.inc({ instruction_type: 'unknown', status: 'failed' });
                 }
             }
 
-            this.currentSlot = await this.connection.getSlot();
+            // Update current slot with failover
+            this.currentSlot = await this.rpcManager.executeWithFailover(
+                async (conn) => conn.getSlot(),
+                'poll:getSlot'
+            );
+            
             this.syncStats.lag = this.currentSlot - this.lastProcessedSlot;
+            indexerLag.set(this.syncStats.lag);
 
-            if (this.syncStats.processed % 100 === 0) {
+            if (this.syncStats.processed % 100 === 0 && this.syncStats.processed > 0) {
                 logger.info({
                     processed: this.syncStats.processed,
+                    failed: this.syncStats.failed,
                     lag: this.syncStats.lag
                 }, 'Indexing progress');
             }
@@ -213,14 +329,21 @@ export default class BlockchainIndexer extends EventEmitter {
         } catch (error) {
             logger.error({ error }, 'Failed to poll recent transactions');
             this.syncStats.failed++;
+            throw error;
         }
     }
 
+    /**
+     * AUDIT FIX: Use RPC failover for block processing
+     */
     async processSlot(slot: number): Promise<void> {
         try {
-            const block = await this.connection.getBlock(slot, {
-                maxSupportedTransactionVersion: 0
-            });
+            const block = await this.rpcManager.executeWithFailover(
+                async (conn) => conn.getBlock(slot, {
+                    maxSupportedTransactionVersion: 0
+                }),
+                'processSlot:getBlock'
+            );
 
             if (!block) {
                 logger.debug({ slot }, 'No block found');
@@ -244,8 +367,15 @@ export default class BlockchainIndexer extends EventEmitter {
                     confirmationStatus: 'confirmed' as const
                 };
 
-                await this.processor.processTransaction(sigInfo);
-                this.syncStats.processed++;
+                try {
+                    await this.processor.processTransaction(sigInfo);
+                    this.syncStats.processed++;
+                    transactionsProcessedTotal.inc({ instruction_type: 'unknown', status: 'success' });
+                } catch (txError) {
+                    logger.error({ error: txError, signature: sigInfo.signature }, 'Failed to process transaction');
+                    this.syncStats.failed++;
+                    transactionsProcessedTotal.inc({ instruction_type: 'unknown', status: 'failed' });
+                }
             }
 
             this.lastProcessedSlot = slot;
@@ -265,5 +395,12 @@ export default class BlockchainIndexer extends EventEmitter {
                 updated_at = NOW()
             WHERE id = 1
         `, [this.lastProcessedSlot, this.lastSignature]);
+    }
+
+    /**
+     * Get RPC failover status for health checks
+     */
+    getRpcStatus(): ReturnType<RPCFailoverManager['getStatus']> {
+        return this.rpcManager.getStatus();
     }
 }

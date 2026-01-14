@@ -1,200 +1,345 @@
-import { createAuthMiddleware } from '../../../src/middleware/auth.middleware';
 import { AuthenticationError, AuthorizationError } from '../../../src/errors';
-import { JWTService } from '../../../src/services/jwt.service';
-import { RBACService } from '../../../src/services/rbac.service';
 
-describe('Auth Middleware', () => {
-  let jwtService: jest.Mocked<JWTService>;
-  let rbacService: jest.Mocked<RBACService>;
-  let middleware: any;
+// Mock auditLogger
+const mockAuditLogger = {
+  warn: jest.fn(),
+  info: jest.fn(),
+  error: jest.fn(),
+};
+
+jest.mock('../../../src/config/logger', () => ({
+  auditLogger: mockAuditLogger,
+}));
+
+// Import after mocks
+import { createAuthMiddleware } from '../../../src/middleware/auth.middleware';
+
+describe('auth.middleware', () => {
+  // Mock services
+  const mockJwtService = {
+    verifyAccessToken: jest.fn(),
+  };
+
+  const mockRbacService = {
+    getUserPermissions: jest.fn(),
+    checkPermission: jest.fn(),
+    getUserVenueRoles: jest.fn(),
+  };
+
+  let middleware: ReturnType<typeof createAuthMiddleware>;
 
   beforeEach(() => {
-    jwtService = {
-      verifyAccessToken: jest.fn(),
-    } as any;
-
-    rbacService = {
-      getUserPermissions: jest.fn(),
-      checkPermission: jest.fn(),
-      getUserVenueRoles: jest.fn(),
-    } as any;
-
-    middleware = createAuthMiddleware(jwtService, rbacService);
     jest.clearAllMocks();
+    middleware = createAuthMiddleware(mockJwtService as any, mockRbacService as any);
   });
 
   describe('authenticate', () => {
-    it('should authenticate valid token', async () => {
-      const request: any = {
-        headers: { authorization: 'Bearer valid-token' },
-      };
-      const reply = {};
+    const createRequest = (authHeader?: string) => ({
+      headers: {
+        authorization: authHeader,
+      },
+      user: undefined as any,
+    });
 
-      jwtService.verifyAccessToken.mockResolvedValue({ sub: 'user-123' } as any);
-      rbacService.getUserPermissions.mockResolvedValue(['read', 'write']);
+    const mockReply = {};
 
-      await middleware.authenticate(request, reply);
+    it('extracts Bearer token and verifies', async () => {
+      const request = createRequest('Bearer valid-token');
+      mockJwtService.verifyAccessToken.mockResolvedValue({
+        sub: 'user-123',
+        tenant_id: 'tenant-456',
+        email: 'test@example.com',
+        role: 'customer',
+      });
+      mockRbacService.getUserPermissions.mockResolvedValue(['read', 'write']);
+
+      await middleware.authenticate(request, mockReply);
+
+      expect(mockJwtService.verifyAccessToken).toHaveBeenCalledWith('valid-token');
+    });
+
+    it('attaches user to request with permissions', async () => {
+      const request = createRequest('Bearer valid-token');
+      mockJwtService.verifyAccessToken.mockResolvedValue({
+        sub: 'user-123',
+        tenant_id: 'tenant-456',
+        email: 'test@example.com',
+        role: 'admin',
+      });
+      mockRbacService.getUserPermissions.mockResolvedValue(['read', 'write', 'delete']);
+
+      await middleware.authenticate(request, mockReply);
 
       expect(request.user).toEqual({
         id: 'user-123',
-        permissions: ['read', 'write'],
+        tenant_id: 'tenant-456',
+        email: 'test@example.com',
+        role: 'admin',
+        permissions: ['read', 'write', 'delete'],
       });
-      expect(jwtService.verifyAccessToken).toHaveBeenCalledWith('valid-token');
     });
 
-    it('should throw error when authorization header missing', async () => {
-      const request: any = { headers: {} };
-      const reply = {};
+    it('throws AuthenticationError on missing header', async () => {
+      const request = createRequest(undefined);
 
-      await expect(middleware.authenticate(request, reply))
+      await expect(middleware.authenticate(request, mockReply))
+        .rejects.toThrow(AuthenticationError);
+      await expect(middleware.authenticate(request, mockReply))
         .rejects.toThrow('Missing or invalid authorization header');
     });
 
-    it('should throw error when authorization header invalid format', async () => {
-      const request: any = { headers: { authorization: 'InvalidFormat' } };
-      const reply = {};
+    it('throws AuthenticationError on non-Bearer header', async () => {
+      const request = createRequest('Basic abc123');
 
-      await expect(middleware.authenticate(request, reply))
-        .rejects.toThrow('Missing or invalid authorization header');
+      await expect(middleware.authenticate(request, mockReply))
+        .rejects.toThrow(AuthenticationError);
     });
 
-    it('should throw error when token verification fails', async () => {
-      const request: any = { headers: { authorization: 'Bearer invalid-token' } };
-      const reply = {};
+    it('throws AuthenticationError on empty Bearer token', async () => {
+      const request = createRequest('Bearer ');
+      mockJwtService.verifyAccessToken.mockRejectedValue(new Error('invalid'));
 
-      jwtService.verifyAccessToken.mockRejectedValue(new Error('Invalid token'));
+      await expect(middleware.authenticate(request, mockReply))
+        .rejects.toThrow(AuthenticationError);
+    });
 
-      await expect(middleware.authenticate(request, reply))
+    it('throws AuthenticationError on invalid token', async () => {
+      const request = createRequest('Bearer invalid-token');
+      mockJwtService.verifyAccessToken.mockRejectedValue(new Error('Invalid token'));
+
+      await expect(middleware.authenticate(request, mockReply))
+        .rejects.toThrow(AuthenticationError);
+      await expect(middleware.authenticate(request, mockReply))
         .rejects.toThrow('Invalid token');
     });
 
-    it('should propagate AuthenticationError', async () => {
-      const request: any = { headers: { authorization: 'Bearer expired-token' } };
-      const reply = {};
-
-      jwtService.verifyAccessToken.mockRejectedValue(
-        new AuthenticationError('Token expired')
+    it('re-throws AuthenticationError from jwtService', async () => {
+      const request = createRequest('Bearer expired-token');
+      mockJwtService.verifyAccessToken.mockRejectedValue(
+        new AuthenticationError('Token expired', 'TOKEN_EXPIRED')
       );
 
-      await expect(middleware.authenticate(request, reply))
-        .rejects.toThrow(AuthenticationError);
+      await expect(middleware.authenticate(request, mockReply))
+        .rejects.toThrow('Token expired');
+    });
+
+    it('fetches permissions from rbacService', async () => {
+      const request = createRequest('Bearer valid-token');
+      mockJwtService.verifyAccessToken.mockResolvedValue({
+        sub: 'user-123',
+        tenant_id: 'tenant-456',
+      });
+      mockRbacService.getUserPermissions.mockResolvedValue(['perm1']);
+
+      await middleware.authenticate(request, mockReply);
+
+      expect(mockRbacService.getUserPermissions).toHaveBeenCalledWith('user-123');
     });
   });
 
   describe('requirePermission', () => {
-    it('should allow access when user has permission', async () => {
-      const request: any = {
-        user: { id: 'user-123' },
-        params: { venueId: 'venue-456' },
-      };
-      const reply = {};
-
-      rbacService.checkPermission.mockResolvedValue(true);
-
-      const handler = middleware.requirePermission('events:create');
-      await expect(handler(request, reply)).resolves.not.toThrow();
-
-      expect(rbacService.checkPermission).toHaveBeenCalledWith(
-        'user-123',
-        'events:create',
-        'venue-456'
-      );
+    const createAuthenticatedRequest = (overrides: any = {}) => ({
+      user: {
+        id: 'user-123',
+        tenant_id: 'tenant-456',
+        email: 'test@example.com',
+        role: 'customer',
+        permissions: ['read'],
+      },
+      params: {},
+      body: {},
+      url: '/test',
+      method: 'GET',
+      ip: '127.0.0.1',
+      headers: { 'user-agent': 'test-agent' },
+      ...overrides,
     });
 
-    it('should throw error when user not authenticated', async () => {
-      const request: any = { params: {} };
-      const reply = {};
+    const mockReply = {};
 
-      const handler = middleware.requirePermission('events:create');
+    it('allows request with permission', async () => {
+      const request = createAuthenticatedRequest();
+      mockRbacService.checkPermission.mockResolvedValue(true);
 
-      await expect(handler(request, reply))
-        .rejects.toThrow('Authentication required');
+      const permissionMiddleware = middleware.requirePermission('read');
+      await expect(permissionMiddleware(request, mockReply)).resolves.toBeUndefined();
     });
 
-    it('should throw error when user lacks permission', async () => {
-      const request: any = {
-        user: { id: 'user-123' },
-        params: {},
-      };
-      const reply = {};
+    it('throws AuthorizationError without permission', async () => {
+      const request = createAuthenticatedRequest();
+      mockRbacService.checkPermission.mockResolvedValue(false);
 
-      rbacService.checkPermission.mockResolvedValue(false);
-
-      const handler = middleware.requirePermission('events:delete');
-
-      await expect(handler(request, reply))
+      const permissionMiddleware = middleware.requirePermission('admin:delete');
+      await expect(permissionMiddleware(request, mockReply))
         .rejects.toThrow(AuthorizationError);
     });
 
-    it('should check permission with venue from body', async () => {
-      const request: any = {
-        user: { id: 'user-123' },
-        params: {},
-        body: { venueId: 'venue-789' },
-      };
-      const reply = {};
+    it('throws AuthenticationError if user not authenticated', async () => {
+      const request = { user: undefined, params: {}, body: {} };
 
-      rbacService.checkPermission.mockResolvedValue(true);
+      const permissionMiddleware = middleware.requirePermission('read');
+      await expect(permissionMiddleware(request, mockReply))
+        .rejects.toThrow(AuthenticationError);
+      await expect(permissionMiddleware(request, mockReply))
+        .rejects.toThrow('Authentication required');
+    });
 
-      const handler = middleware.requirePermission('tickets:sell');
-      await handler(request, reply);
+    it('checks permission with venueId from params', async () => {
+      const request = createAuthenticatedRequest({
+        params: { venueId: 'venue-789' },
+      });
+      mockRbacService.checkPermission.mockResolvedValue(true);
 
-      expect(rbacService.checkPermission).toHaveBeenCalledWith(
+      const permissionMiddleware = middleware.requirePermission('manage:events');
+      await permissionMiddleware(request, mockReply);
+
+      expect(mockRbacService.checkPermission).toHaveBeenCalledWith(
         'user-123',
-        'tickets:sell',
+        'manage:events',
         'venue-789'
+      );
+    });
+
+    it('checks permission with venueId from body', async () => {
+      const request = createAuthenticatedRequest({
+        body: { venueId: 'venue-from-body' },
+      });
+      mockRbacService.checkPermission.mockResolvedValue(true);
+
+      const permissionMiddleware = middleware.requirePermission('create:event');
+      await permissionMiddleware(request, mockReply);
+
+      expect(mockRbacService.checkPermission).toHaveBeenCalledWith(
+        'user-123',
+        'create:event',
+        'venue-from-body'
+      );
+    });
+
+    it('prefers venueId from params over body', async () => {
+      const request = createAuthenticatedRequest({
+        params: { venueId: 'params-venue' },
+        body: { venueId: 'body-venue' },
+      });
+      mockRbacService.checkPermission.mockResolvedValue(true);
+
+      const permissionMiddleware = middleware.requirePermission('read');
+      await permissionMiddleware(request, mockReply);
+
+      expect(mockRbacService.checkPermission).toHaveBeenCalledWith(
+        'user-123',
+        'read',
+        'params-venue'
+      );
+    });
+
+    it('logs denial to auditLogger', async () => {
+      const request = createAuthenticatedRequest({
+        params: { venueId: 'venue-123' },
+      });
+      mockRbacService.checkPermission.mockResolvedValue(false);
+
+      const permissionMiddleware = middleware.requirePermission('admin:delete');
+      
+      try {
+        await permissionMiddleware(request, mockReply);
+      } catch (e) {
+        // Expected
+      }
+
+      expect(mockAuditLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          tenantId: 'tenant-456',
+          permission: 'admin:delete',
+          resource: 'venue-123',
+        }),
+        expect.stringContaining('Authorization denied')
       );
     });
   });
 
   describe('requireVenueAccess', () => {
-    it('should allow access when user has venue role', async () => {
-      const request: any = {
-        user: { id: 'user-123' },
-        params: { venueId: 'venue-456' },
-      };
-      const reply = {};
-
-      rbacService.getUserVenueRoles.mockResolvedValue([
-        { venue_id: 'venue-456', role: 'manager' },
-      ]);
-
-      await expect(middleware.requireVenueAccess(request, reply))
-        .resolves.not.toThrow();
+    const createAuthenticatedRequest = (venueId?: string) => ({
+      user: {
+        id: 'user-123',
+        tenant_id: 'tenant-456',
+        email: 'test@example.com',
+      },
+      params: { venueId },
+      url: '/venue/test',
+      method: 'GET',
+      ip: '127.0.0.1',
+      headers: { 'user-agent': 'test-agent' },
     });
 
-    it('should throw error when user not authenticated', async () => {
-      const request: any = { params: { venueId: 'venue-456' } };
-      const reply = {};
+    const mockReply = {};
 
-      await expect(middleware.requireVenueAccess(request, reply))
-        .rejects.toThrow('Authentication required');
-    });
-
-    it('should throw error when venue ID missing', async () => {
-      const request: any = {
-        user: { id: 'user-123' },
-        params: {},
-      };
-      const reply = {};
-
-      await expect(middleware.requireVenueAccess(request, reply))
-        .rejects.toThrow('Venue ID required');
-    });
-
-    it('should throw error when user has no access to venue', async () => {
-      const request: any = {
-        user: { id: 'user-123' },
-        params: { venueId: 'venue-456' },
-      };
-      const reply = {};
-
-      rbacService.getUserVenueRoles.mockResolvedValue([
+    it('allows access when user has venue role', async () => {
+      const request = createAuthenticatedRequest('venue-789');
+      mockRbacService.getUserVenueRoles.mockResolvedValue([
         { venue_id: 'venue-789', role: 'manager' },
       ]);
 
-      await expect(middleware.requireVenueAccess(request, reply))
+      await expect(middleware.requireVenueAccess(request, mockReply))
+        .resolves.toBeUndefined();
+    });
+
+    it('throws AuthorizationError without venue role', async () => {
+      const request = createAuthenticatedRequest('venue-789');
+      mockRbacService.getUserVenueRoles.mockResolvedValue([
+        { venue_id: 'other-venue', role: 'manager' },
+      ]);
+
+      await expect(middleware.requireVenueAccess(request, mockReply))
+        .rejects.toThrow(AuthorizationError);
+      await expect(middleware.requireVenueAccess(request, mockReply))
         .rejects.toThrow('No access to this venue');
+    });
+
+    it('throws AuthenticationError if user not authenticated', async () => {
+      const request = { user: undefined, params: { venueId: 'venue-123' } };
+
+      await expect(middleware.requireVenueAccess(request, mockReply))
+        .rejects.toThrow(AuthenticationError);
+    });
+
+    it('throws Error if venueId not provided', async () => {
+      const request = createAuthenticatedRequest(undefined);
+
+      await expect(middleware.requireVenueAccess(request, mockReply))
+        .rejects.toThrow('Venue ID required');
+    });
+
+    it('logs denial to auditLogger', async () => {
+      const request = createAuthenticatedRequest('venue-789');
+      mockRbacService.getUserVenueRoles.mockResolvedValue([]);
+
+      try {
+        await middleware.requireVenueAccess(request, mockReply);
+      } catch (e) {
+        // Expected
+      }
+
+      expect(mockAuditLogger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          venueId: 'venue-789',
+        }),
+        expect.stringContaining('No access to venue')
+      );
+    });
+
+    it('checks all venue roles for access', async () => {
+      const request = createAuthenticatedRequest('venue-c');
+      mockRbacService.getUserVenueRoles.mockResolvedValue([
+        { venue_id: 'venue-a', role: 'staff' },
+        { venue_id: 'venue-b', role: 'manager' },
+        { venue_id: 'venue-c', role: 'owner' },
+      ]);
+
+      await expect(middleware.requireVenueAccess(request, mockReply))
+        .resolves.toBeUndefined();
     });
   });
 });

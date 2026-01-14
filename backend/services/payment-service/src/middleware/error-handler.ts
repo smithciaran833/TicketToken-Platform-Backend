@@ -23,21 +23,17 @@ export const errorHandler = (
   request: FastifyRequest,
   reply: FastifyReply
 ) => {
-  // Default error values
   let statusCode = 500;
   let message = 'Internal server error';
   let code = 'INTERNAL_ERROR';
   let details = undefined;
 
-  // Handle Fastify validation errors
   if ((error as FastifyError).validation) {
     statusCode = 400;
     message = 'Validation error';
     code = 'VALIDATION_ERROR';
     details = (error as FastifyError).validation;
-  }
-  // Handle known error types
-  else if (error instanceof AppError) {
+  } else if (error instanceof AppError) {
     statusCode = error.statusCode;
     message = error.message;
     code = error.code;
@@ -57,14 +53,11 @@ export const errorHandler = (
     statusCode = 401;
     message = 'Token expired';
     code = 'TOKEN_EXPIRED';
-  }
-  // Handle Fastify-specific status codes
-  else if ((error as FastifyError).statusCode) {
+  } else if ((error as FastifyError).statusCode) {
     statusCode = (error as FastifyError).statusCode!;
   }
 
-  // Log error
-  log.error('Request error', {
+  log.error({
     message: error.message,
     stack: error.stack,
     statusCode,
@@ -73,9 +66,8 @@ export const errorHandler = (
     method: request.method,
     ip: request.ip,
     user: (request as any).user?.id
-  });
+  }, 'Request error');
 
-  // Prepare error response
   const errorResponse: any = {
     error: message,
     code,
@@ -83,7 +75,6 @@ export const errorHandler = (
     path: request.url
   };
 
-  // Include stack trace in development
   if (config.server.env === 'development') {
     errorResponse.stack = error.stack;
     errorResponse.details = details;
@@ -92,9 +83,6 @@ export const errorHandler = (
   reply.status(statusCode).send(errorResponse);
 };
 
-// Note: Fastify handles async errors automatically, no asyncHandler needed!
-
-// Not found handler (register as 404 handler in Fastify)
 export const notFoundHandler = (
   request: FastifyRequest,
   reply: FastifyReply

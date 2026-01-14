@@ -1,4 +1,5 @@
 import { HttpClient } from '../utils/httpClient';
+import { getConfig } from '../config/index';
 
 export class AnalyticsService {
   private httpClient: HttpClient;
@@ -6,8 +7,9 @@ export class AnalyticsService {
 
   constructor(dependencies: { logger: any }) {
     this.logger = dependencies.logger;
+    const config = getConfig();
     this.httpClient = new HttpClient(
-      process.env.ANALYTICS_API_URL || 'http://analytics-service:3000',
+      config.services.analyticsService,
       this.logger
     );
   }

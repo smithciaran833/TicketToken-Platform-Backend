@@ -57,7 +57,7 @@ export class ChargebackReserveService {
   ): Promise<ReserveCalculation> {
     // Get transaction details
     const txQuery = `
-      SELECT 
+      SELECT
         pt.amount_cents,
         pt.payment_method,
         pt.created_at,
@@ -67,11 +67,11 @@ export class ChargebackReserveService {
       FROM payment_transactions pt
       LEFT JOIN users u ON pt.user_id = u.user_id
       LEFT JOIN venues v ON pt.venue_id = v.venue_id
-      LEFT JOIN payment_chargebacks pch ON pt.user_id = pch.user_id 
+      LEFT JOIN payment_chargebacks pch ON pt.user_id = pch.user_id
         AND pch.created_at > NOW() - INTERVAL '1 year'
-      WHERE pt.transaction_id = $1 
+      WHERE pt.transaction_id = $1
         AND pt.tenant_id = $2
-      GROUP BY pt.transaction_id, pt.amount_cents, pt.payment_method, 
+      GROUP BY pt.transaction_id, pt.amount_cents, pt.payment_method,
                pt.created_at, u.chargeback_count, v.chargeback_rate
     `;
 
@@ -92,8 +92,8 @@ export class ChargebackReserveService {
     );
 
     // Calculate reserve rate based on risk
-    const reserveRate = riskLevel === 'high' 
-      ? this.policy.highRiskRate 
+    const reserveRate = riskLevel === 'high'
+      ? this.policy.highRiskRate
       : this.policy.baseReserveRate;
 
     const reserveAmountCents = Math.round(amountCents * reserveRate);
@@ -103,12 +103,12 @@ export class ChargebackReserveService {
     const holdUntil = new Date(now.getTime() + (this.policy.holdPeriodDays * 24 * 60 * 60 * 1000));
     const releaseAfter = new Date(now.getTime() + (this.policy.releaseAfterDays * 24 * 60 * 60 * 1000));
 
-    logger.info('Reserve calculated', {
+    logger.info({
       transactionId,
       amountCents,
       reserveAmountCents,
       riskLevel,
-    });
+    }, 'Reserve calculated');
 
     return {
       transactionAmountCents: amountCents,
@@ -181,10 +181,10 @@ export class ChargebackReserveService {
       calculation.releaseAfter,
     ]);
 
-    logger.info('Reserve created', {
+    logger.info({
       transactionId,
       reserveAmountCents: calculation.reserveAmountCents,
-    });
+    }, 'Reserve created');
   }
 
   /**
@@ -198,7 +198,7 @@ export class ChargebackReserveService {
 
       // Find reserves eligible for release
       const findQuery = `
-        SELECT 
+        SELECT
           reserve_id,
           transaction_id,
           tenant_id,
@@ -239,10 +239,10 @@ export class ChargebackReserveService {
 
       await client.query('COMMIT');
 
-      logger.info('Reserves released', {
+      logger.info({
         count: reserves.rows.length,
         totalAmountCents: totalReleasedCents,
-      });
+      }, 'Reserves released');
 
       return {
         releasedCount: reserves.rows.length,
@@ -251,9 +251,9 @@ export class ChargebackReserveService {
 
     } catch (error) {
       await client.query('ROLLBACK');
-      logger.error('Reserve release failed', {
+      logger.error({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Reserve release failed');
       throw error;
     } finally {
       client.release();
@@ -282,7 +282,7 @@ export class ChargebackReserveService {
       const result = await client.query(reserveQuery, [transactionId]);
 
       if (result.rows.length === 0) {
-        logger.warn('No reserve found for chargeback', { transactionId });
+        logger.warn({ transactionId }, 'No reserve found for chargeback');
         await client.query('COMMIT');
         return;
       }
@@ -304,12 +304,12 @@ export class ChargebackReserveService {
         [coveredAmountCents, reserve.reserve_id]
       );
 
-      logger.info('Reserve used for chargeback', {
+      logger.info({
         transactionId,
         chargebackAmountCents,
         coveredAmountCents,
         remainingChargebackCents,
-      });
+      }, 'Reserve used for chargeback');
 
       await client.query('COMMIT');
 
@@ -330,7 +330,7 @@ export class ChargebackReserveService {
     endDate: Date
   ): Promise<ReserveStats> {
     const query = `
-      SELECT 
+      SELECT
         SUM(CASE WHEN status = 'held' THEN reserve_amount_cents ELSE 0 END) as total_reserved,
         SUM(CASE WHEN status = 'released' THEN reserve_amount_cents ELSE 0 END) as total_released,
         SUM(CASE WHEN status = 'held' AND hold_until <= NOW() THEN reserve_amount_cents ELSE 0 END) as pending_release,
@@ -363,7 +363,7 @@ export class ChargebackReserveService {
     tenantId: string
   ): Promise<any[]> {
     const query = `
-      SELECT 
+      SELECT
         pr.reserve_id,
         pr.transaction_id,
         pr.reserve_amount_cents,
@@ -374,7 +374,7 @@ export class ChargebackReserveService {
         pt.created_at as transaction_date
       FROM payment_reserves pr
       JOIN payment_transactions pt ON pr.transaction_id = pt.transaction_id
-      WHERE pt.venue_id = $1 
+      WHERE pt.venue_id = $1
         AND pr.tenant_id = $2
         AND pr.status = 'held'
       ORDER BY pr.created_at DESC
@@ -399,6 +399,6 @@ export class ChargebackReserveService {
    */
   updatePolicy(policy: Partial<ReservePolicy>): void {
     this.policy = { ...this.policy, ...policy };
-    logger.info('Reserve policy updated', { policy: this.policy });
+    logger.info({ policy: this.policy }, 'Reserve policy updated');
   }
 }

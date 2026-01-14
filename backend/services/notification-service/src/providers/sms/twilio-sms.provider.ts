@@ -5,14 +5,55 @@ import { NotificationResult } from '../base.provider';
 import { logger } from '../../config/logger';
 import { metricsService } from '../../services/metrics.service';
 
+/**
+ * Twilio message response type
+ */
+interface TwilioMessageResponse {
+  sid: string;
+  status: string;
+  from: string;
+  to: string;
+  numSegments?: string;
+}
+
+/**
+ * AUDIT FIX EXT-H1: Provider timeout configuration
+ */
+const TWILIO_TIMEOUT_MS = parseInt(process.env.TWILIO_TIMEOUT_MS || '30000', 10);
+
+/**
+ * AUDIT FIX EXT-H1: Wrap function with timeout
+ */
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation: string): Promise<T> {
+  let timeoutHandle: NodeJS.Timeout;
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      reject(new Error(`${operation} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  try {
+    const result = await Promise.race([promise, timeoutPromise]);
+    clearTimeout(timeoutHandle!);
+    return result;
+  } catch (error) {
+    clearTimeout(timeoutHandle!);
+    throw error;
+  }
+}
+
 export class TwilioSMSProvider extends BaseSMSProvider {
   private client: any;
   private initialized = false;
   private fromNumber: string;
+  private timeoutMs: number;
 
   constructor(config: any = {}) {
     super(config);
     this.fromNumber = process.env.TWILIO_PHONE_NUMBER || '';
+    // AUDIT FIX EXT-H1: Configurable timeout
+    this.timeoutMs = config.timeout || TWILIO_TIMEOUT_MS;
   }
 
   async verify(): Promise<boolean> {
@@ -70,11 +111,16 @@ export class TwilioSMSProvider extends BaseSMSProvider {
     }
 
     try {
-      const message = await this.client.messages.create({
-        body: input.message,
-        from: input.from || this.fromNumber,
-        to: input.to
-      });
+      // AUDIT FIX EXT-H1: Send with timeout
+      const message = await withTimeout<TwilioMessageResponse>(
+        this.client.messages.create({
+          body: input.message,
+          from: input.from || this.fromNumber,
+          to: input.to
+        }),
+        this.timeoutMs,
+        'Twilio SMS send'
+      );
 
       // Track provider metrics
       const duration = (Date.now() - startTime) / 1000;

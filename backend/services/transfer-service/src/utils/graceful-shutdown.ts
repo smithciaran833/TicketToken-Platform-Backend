@@ -114,7 +114,7 @@ export function createShutdownManager(
  * Middleware to reject requests during shutdown
  */
 export function createShutdownMiddleware(shutdownManager: ShutdownManager) {
-  return async (request: any, reply: any) => {
+  return async (_request: any, reply: any) => {
     if (shutdownManager.isShuttingDown) {
       return reply.code(503).send({
         error: 'Service Unavailable',

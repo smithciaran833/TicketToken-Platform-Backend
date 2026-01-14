@@ -8,28 +8,19 @@ const log = logger.child({ component: 'InternalTaxRoutes' });
 export default async function internalTaxRoutes(fastify: FastifyInstance) {
   const taxCalculator = new TaxCalculatorService();
 
-  // ISSUE #25 FIX: Internal endpoint with proper authentication
   fastify.post(
     '/internal/calculate-tax',
-    {
-      preHandler: [internalAuth]
-    },
+    { preHandler: [internalAuth] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { amount, venueAddress, customerAddress } = request.body as any;
 
-        // Log which service is requesting tax calculation
-        log.info('Tax calculation requested', { service: (request as any).internalService });
+        log.info({ service: (request as any).internalService }, 'Tax calculation requested');
 
-        const taxResult = await taxCalculator.calculateTax(
-          amount,
-          venueAddress,
-          customerAddress
-        );
-
+        const taxResult = await taxCalculator.calculateTax(amount, venueAddress, customerAddress);
         return reply.send(taxResult);
       } catch (error) {
-        log.error('Tax calculation error', { error });
+        log.error({ error }, 'Tax calculation error');
         return reply.status(500).send({ error: 'Tax calculation failed' });
       }
     }

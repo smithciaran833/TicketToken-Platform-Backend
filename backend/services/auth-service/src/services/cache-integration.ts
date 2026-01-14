@@ -1,11 +1,12 @@
 import { createCache } from '@tickettoken/shared';
+import { env } from '../config/env';
 
 // Initialize cache with auth-service specific config
 const cacheSystem = createCache({
   redis: {
-    host: process.env.REDIS_HOST || 'redis',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD,
+    host: env.REDIS_HOST,
+    port: env.REDIS_PORT,
+    password: env.REDIS_PASSWORD,
     keyPrefix: 'auth:',
   },
   ttls: {
@@ -102,16 +103,16 @@ export const rateLimitCache = {
     const count = await cache.get<number>(`ratelimit:${key}`, undefined, {
       level: 'L2'
     }) || 0;
-    
+
     if (count >= limit) {
       return false;
     }
-    
+
     await cache.set(`ratelimit:${key}`, count + 1, {
       ttl: window,
       level: 'L2'
     });
-    
+
     return true;
   },
 

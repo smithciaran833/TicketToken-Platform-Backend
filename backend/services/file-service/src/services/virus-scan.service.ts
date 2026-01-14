@@ -55,7 +55,7 @@ export class VirusScanService {
       this.initialized = true;
       logger.info(`ClamAV initialized successfully (${clamHost}:${clamPort})`);
     } catch (error) {
-      logger.error('Failed to initialize ClamAV:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to initialize ClamAV');
       // Don't throw - allow service to start without virus scanning
       this.initialized = false;
     }
@@ -100,11 +100,12 @@ export class VirusScanService {
       await this.logScanResult(options, scanResult);
 
       if (scanResult.isInfected) {
-        logger.warn(`INFECTED FILE DETECTED: ${options.fileId}`, {
+        logger.warn({
+          fileId: options.fileId,
           fileName: options.fileName,
           viruses: scanResult.viruses,
           uploadedBy: options.uploadedBy
-        });
+        }, 'INFECTED FILE DETECTED');
 
         // Quarantine the infected file
         await this.quarantineFile(options);
@@ -114,7 +115,7 @@ export class VirusScanService {
 
       return scanResult;
     } catch (error) {
-      logger.error(`Virus scan failed for file ${options.fileId}:`, error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)), fileId: options.fileId }, 'Virus scan failed');
       
       // Log failed scan attempt
       await this.logScanResult(options, {
@@ -153,7 +154,7 @@ export class VirusScanService {
 
       logger.debug(`Scan result logged for file ${options.fileId}`);
     } catch (error) {
-      logger.error('Failed to log scan result:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to log scan result');
       // Don't throw - this is not critical
     }
   }
@@ -193,7 +194,7 @@ export class VirusScanService {
         });
 
     } catch (error) {
-      logger.error('Failed to quarantine file:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to quarantine file');
       throw new Error(`Failed to quarantine infected file: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
@@ -210,7 +211,7 @@ export class VirusScanService {
 
       return scans;
     } catch (error) {
-      logger.error('Failed to get scan history:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get scan history');
       return [];
     }
   }
@@ -227,7 +228,7 @@ export class VirusScanService {
 
       return scan || null;
     } catch (error) {
-      logger.error('Failed to get latest scan:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get latest scan');
       return null;
     }
   }
@@ -264,7 +265,7 @@ export class VirusScanService {
       
       return scanAge > sevenDays;
     } catch (error) {
-      logger.error('Failed to check if file needs scan:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to check if file needs scan');
       return true; // Default to scanning if check fails
     }
   }
@@ -282,7 +283,7 @@ export class VirusScanService {
 
       return files;
     } catch (error) {
-      logger.error('Failed to get quarantined files:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to get quarantined files');
       return [];
     }
   }
@@ -305,7 +306,7 @@ export class VirusScanService {
         await fs.unlink(quarantined.quarantine_path);
         logger.info(`Deleted quarantined file: ${quarantined.quarantine_path}`);
       } catch (error) {
-        logger.warn(`Failed to delete quarantined file physically: ${error}`);
+        logger.warn({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to delete quarantined file physically');
       }
 
       // Mark as deleted in database
@@ -318,7 +319,7 @@ export class VirusScanService {
 
       return true;
     } catch (error) {
-      logger.error('Failed to delete quarantined file:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to delete quarantined file');
       return false;
     }
   }

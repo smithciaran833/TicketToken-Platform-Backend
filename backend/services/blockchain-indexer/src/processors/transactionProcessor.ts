@@ -4,21 +4,37 @@ import logger from '../utils/logger';
 import db from '../utils/database';
 import { BlockchainTransaction } from '../models/blockchain-transaction.model';
 import { WalletActivity } from '../models/wallet-activity.model';
+import {
+    transactionsProcessedTotal,
+    transactionProcessingDuration,
+    mongodbWrites,
+    postgresqlQueries,
+    databaseWriteDuration,
+    processingErrorsTotal
+} from '../utils/metrics';
+import {
+    validateMintData,
+    validateTransferData,
+    validateBurnData,
+    validateTransactionAccounts,
+    validateOwnerAddress,
+    isValidAddress,
+    ValidatedMintData,
+    ValidatedTransferData,
+    ValidatedBurnData
+} from '../schemas/validation';
+import { ticketServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
 
-interface MintData {
-    tokenId: string | undefined;
-    owner: string | undefined;
-    ticketId: string | null;
-}
-
-interface TransferData {
-    tokenId: string | undefined;
-    previousOwner: string | undefined;
-    newOwner: string | undefined;
-}
-
-interface BurnData {
-    tokenId: string | undefined;
+/**
+ * Helper to create request context for service calls
+ * Blockchain indexer operates as a system service
+ */
+function createSystemContext(): RequestContext {
+    return {
+        tenantId: 'system',
+        traceId: `txproc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    };
 }
 
 export default class TransactionProcessor {
@@ -32,6 +48,8 @@ export default class TransactionProcessor {
 
     async processTransaction(sigInfo: ConfirmedSignatureInfo): Promise<void> {
         const { signature, slot, blockTime } = sigInfo;
+        const startTime = Date.now();
+        let instructionType = 'UNKNOWN';
 
         try {
             // Check if already processed
@@ -53,7 +71,7 @@ export default class TransactionProcessor {
             }
 
             // Parse instruction type
-            const instructionType = this.parseInstructionType(tx);
+            instructionType = this.parseInstructionType(tx);
             logger.info({ signature, type: instructionType }, 'Processing transaction');
 
             // Normalize blockTime to null if undefined
@@ -80,66 +98,192 @@ export default class TransactionProcessor {
             // Record processed transaction (PostgreSQL)
             await this.recordTransaction(signature, slot, normalizedBlockTime, instructionType);
 
+            // Record success metrics
+            const duration = (Date.now() - startTime) / 1000;
+            transactionsProcessedTotal.inc({ instruction_type: instructionType, status: 'success' });
+            transactionProcessingDuration.observe({ instruction_type: instructionType }, duration);
+
         } catch (error) {
+            // Record error metrics
+            const duration = (Date.now() - startTime) / 1000;
+            transactionsProcessedTotal.inc({ instruction_type: instructionType, status: 'error' });
+            transactionProcessingDuration.observe({ instruction_type: instructionType }, duration);
+            processingErrorsTotal.inc({ error_type: 'transaction_processing' });
+
             logger.error({ error, signature }, 'Failed to process transaction');
             throw error;
         }
     }
 
+    /**
+     * Save transaction to MongoDB with proper error handling
+     * AUDIT FIX: ERR-1, DB-1 - Don't swallow MongoDB write errors
+     * AUDIT FIX: GD-1 - Track failed writes for retry
+     * AUDIT FIX: INP-4 - Validate blockchain data before storing
+     */
     async saveToMongoDB(tx: any, signature: string, slot: number, blockTime: number | null): Promise<void> {
-        try {
-            // Extract accounts
-            const accounts = tx.transaction.message.accountKeys.map((key: any) => ({
-                pubkey: key.pubkey.toString(),
-                isSigner: key.signer || false,
-                isWritable: key.writable || false,
-            }));
+        const maxRetries = 3;
+        let lastError: any = null;
+        const startTime = Date.now();
 
-            // Extract instructions
-            const instructions = tx.transaction.message.instructions.map((ix: any) => ({
-                programId: ix.programId.toString(),
-                accounts: ix.accounts || [],
-                data: ix.data || '',
-                parsed: ix.parsed || undefined,
-            }));
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                // AUDIT FIX: INP-4 - Validate accounts before extraction
+                const rawAccounts = tx.transaction?.message?.accountKeys || [];
+                if (!validateTransactionAccounts(rawAccounts)) {
+                    logger.warn({ signature }, 'Invalid transaction accounts structure, storing with empty accounts');
+                }
 
-            // Save to MongoDB
-            await BlockchainTransaction.create({
-                signature,
-                slot,
-                blockTime: blockTime || Date.now() / 1000,
-                accounts,
-                instructions,
-                logs: tx.meta?.logMessages || [],
-                fee: tx.meta?.fee || 0,
-                status: tx.meta?.err ? 'failed' : 'success',
-                errorMessage: tx.meta?.err ? JSON.stringify(tx.meta.err) : undefined,
-                indexedAt: new Date(),
-            });
+                // Extract accounts with validation
+                const accounts = rawAccounts.map((key: any) => {
+                    const pubkey = key?.pubkey?.toString?.() || '';
+                    return {
+                        pubkey: isValidAddress(pubkey) ? pubkey : 'invalid',
+                        isSigner: Boolean(key?.signer),
+                        isWritable: Boolean(key?.writable),
+                    };
+                });
 
-            logger.debug({ signature }, 'Saved transaction to MongoDB');
-        } catch (error: any) {
-            // Don't fail the whole process if MongoDB write fails
-            if (error.code === 11000) {
-                logger.debug({ signature }, 'Transaction already in MongoDB');
-            } else {
-                logger.error({ error, signature }, 'Failed to save to MongoDB');
+                // Extract instructions
+                const rawInstructions = tx.transaction?.message?.instructions || [];
+                const instructions = rawInstructions.map((ix: any) => {
+                    const programId = ix?.programId?.toString?.() || '';
+                    return {
+                        programId: isValidAddress(programId) ? programId : 'invalid',
+                        accounts: Array.isArray(ix?.accounts) ? ix.accounts : [],
+                        data: typeof ix?.data === 'string' ? ix.data : '',
+                        parsed: ix?.parsed || undefined,
+                    };
+                });
+
+                // Save to MongoDB
+                await BlockchainTransaction.create({
+                    signature,
+                    slot,
+                    blockTime: blockTime || Date.now() / 1000,
+                    accounts,
+                    instructions,
+                    logs: Array.isArray(tx.meta?.logMessages) ? tx.meta.logMessages : [],
+                    fee: typeof tx.meta?.fee === 'number' ? tx.meta.fee : 0,
+                    status: tx.meta?.err ? 'failed' : 'success',
+                    errorMessage: tx.meta?.err ? JSON.stringify(tx.meta.err) : undefined,
+                    indexedAt: new Date(),
+                });
+
+                // Record success metrics
+                const duration = (Date.now() - startTime) / 1000;
+                mongodbWrites.inc({ collection: 'blockchain_transactions', status: 'success' });
+                databaseWriteDuration.observe({ database: 'mongodb', operation: 'insert' }, duration);
+
+                logger.debug({ signature }, 'Saved transaction to MongoDB');
+                return; // Success - exit
+
+            } catch (error: any) {
+                lastError = error;
+
+                // Duplicate key - transaction already exists, this is OK
+                if (error.code === 11000) {
+                    logger.debug({ signature }, 'Transaction already in MongoDB (duplicate)');
+                    mongodbWrites.inc({ collection: 'blockchain_transactions', status: 'duplicate' });
+                    return; // Not an error, just already exists
+                }
+
+                // Log the error with context
+                logger.warn({
+                    error: error.message,
+                    signature,
+                    attempt,
+                    maxRetries,
+                    errorCode: error.code
+                }, `MongoDB write attempt ${attempt}/${maxRetries} failed`);
+
+                // If not last attempt, wait before retry with exponential backoff
+                if (attempt < maxRetries) {
+                    const delay = Math.min(100 * Math.pow(2, attempt), 2000);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
             }
+        }
+
+        // All retries failed - record error metrics
+        const duration = (Date.now() - startTime) / 1000;
+        mongodbWrites.inc({ collection: 'blockchain_transactions', status: 'error' });
+        databaseWriteDuration.observe({ database: 'mongodb', operation: 'insert' }, duration);
+
+        // AUDIT FIX: ERR-1, DB-1 - Don't swallow the error, propagate it
+        logger.error({
+            error: lastError?.message,
+            errorCode: lastError?.code,
+            signature,
+            slot,
+            attempts: maxRetries
+        }, 'MongoDB write failed after all retries');
+
+        // Track failed write for potential dead letter queue / manual recovery
+        await this.trackFailedWrite(signature, slot, lastError);
+
+        // Throw to let caller know the write failed
+        throw new Error(`MongoDB write failed for signature ${signature}: ${lastError?.message}`);
+    }
+
+    /**
+     * Track failed MongoDB writes for recovery
+     * AUDIT FIX: ERR-10 - Dead letter queue for failed processing
+     */
+    private async trackFailedWrite(signature: string, slot: number, error: any): Promise<void> {
+        const startTime = Date.now();
+        try {
+            // Store failed write in PostgreSQL for recovery
+            await db.query(`
+                INSERT INTO failed_mongodb_writes
+                (signature, slot, error_message, error_code, created_at)
+                VALUES ($1, $2, $3, $4, NOW())
+                ON CONFLICT (signature) DO UPDATE SET
+                    retry_count = failed_mongodb_writes.retry_count + 1,
+                    last_error = $3,
+                    updated_at = NOW()
+            `, [signature, slot, error?.message || 'Unknown error', error?.code || 'UNKNOWN']);
+
+            const duration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'insert', status: 'success' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'insert' }, duration);
+        } catch (trackError) {
+            const duration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'insert', status: 'error' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'insert' }, duration);
+
+            // Log but don't throw - this is best-effort tracking
+            logger.error({
+                error: (trackError as Error).message,
+                signature
+            }, 'Failed to track MongoDB write failure');
         }
     }
 
     async checkExists(signature: string): Promise<boolean> {
-        const result = await db.query(
-            'SELECT 1 FROM indexed_transactions WHERE signature = $1',
-            [signature]
-        );
-        return result.rows.length > 0;
+        const startTime = Date.now();
+        try {
+            const result = await db.query(
+                'SELECT 1 FROM indexed_transactions WHERE signature = $1',
+                [signature]
+            );
+            const duration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'select', status: 'success' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'select' }, duration);
+            return result.rows.length > 0;
+        } catch (error) {
+            const duration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'select', status: 'error' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'select' }, duration);
+            throw error;
+        }
     }
 
     parseInstructionType(tx: any): string {
         const logs = tx.meta?.logMessages || [];
 
         for (const log of logs) {
+            if (typeof log !== 'string') continue;
             if (log.includes('MintNft') || log.includes('mint')) return 'MINT_NFT';
             if (log.includes('Transfer') || log.includes('transfer')) return 'TRANSFER';
             if (log.includes('Burn') || log.includes('burn')) return 'BURN';
@@ -148,27 +292,38 @@ export default class TransactionProcessor {
         return 'UNKNOWN';
     }
 
+    /**
+     * REFACTORED: Process mint transaction using ticketServiceClient
+     * AUDIT FIX: INP-4 - Validate extracted blockchain data
+     */
     async processMint(tx: any, signature: string, slot: number, blockTime: number | null): Promise<void> {
+        const ctx = createSystemContext();
+        const startTime = Date.now();
+
         try {
-            const mintData = this.extractMintData(tx);
+            // AUDIT FIX: INP-4 - Use validated extraction
+            const mintData = validateMintData(tx);
             if (!mintData) {
-                logger.warn({ signature }, 'Could not extract mint data');
+                logger.warn({ signature }, 'Could not extract or validate mint data');
+                processingErrorsTotal.inc({ error_type: 'mint_validation_failed' });
                 return;
             }
 
-            // Update PostgreSQL (keep relational links)
-            await db.query(`
-                UPDATE tickets
-                SET
-                    is_minted = true,
-                    mint_transaction_id = $1,
-                    wallet_address = $2,
-                    last_indexed_at = NOW(),
-                    sync_status = 'SYNCED'
-                WHERE token_id = $3
-            `, [signature, mintData.owner, mintData.tokenId]);
+            // REFACTORED: Use ticketServiceClient instead of direct DB update
+            await ticketServiceClient.updateBlockchainSyncByToken(mintData.tokenId, {
+                isMinted: true,
+                mintTransactionId: signature,
+                walletAddress: mintData.owner,
+                lastIndexedAt: new Date().toISOString(),
+                syncStatus: 'SYNCED',
+            }, ctx);
+
+            const pgDuration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'update', status: 'success' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'update' }, pgDuration);
 
             // DUAL WRITE: Save wallet activity to MongoDB
+            const mongoStart = Date.now();
             await WalletActivity.create({
                 walletAddress: mintData.owner,
                 activityType: 'mint',
@@ -177,49 +332,56 @@ export default class TransactionProcessor {
                 timestamp: blockTime ? new Date(blockTime * 1000) : new Date(),
             });
 
+            const mongoDuration = (Date.now() - mongoStart) / 1000;
+            mongodbWrites.inc({ collection: 'wallet_activity', status: 'success' });
+            databaseWriteDuration.observe({ database: 'mongodb', operation: 'insert' }, mongoDuration);
+
             logger.info({
                 ticketId: mintData.ticketId,
                 tokenId: mintData.tokenId
-            }, 'NFT mint processed');
+            }, 'NFT mint processed via ticket-service');
         } catch (error) {
+            processingErrorsTotal.inc({ error_type: 'mint_processing' });
             logger.error({ error, signature }, 'Failed to process mint');
         }
     }
 
+    /**
+     * REFACTORED: Process transfer transaction using ticketServiceClient
+     * AUDIT FIX: INP-4 - Validate extracted blockchain data
+     */
     async processTransfer(tx: any, signature: string, slot: number, blockTime: number | null): Promise<void> {
+        const ctx = createSystemContext();
+        const startTime = Date.now();
+
         try {
-            const transferData = this.extractTransferData(tx);
-            if (!transferData) return;
+            // AUDIT FIX: INP-4 - Use validated extraction
+            const transferData = validateTransferData(tx);
+            if (!transferData) {
+                logger.warn({ signature }, 'Could not extract or validate transfer data');
+                processingErrorsTotal.inc({ error_type: 'transfer_validation_failed' });
+                return;
+            }
 
-            // Update PostgreSQL (keep relational links)
-            await db.query(`
-                UPDATE tickets
-                SET
-                    wallet_address = $1,
-                    transfer_count = COALESCE(transfer_count, 0) + 1,
-                    last_indexed_at = NOW(),
-                    sync_status = 'SYNCED'
-                WHERE token_id = $2
-            `, [transferData.newOwner, transferData.tokenId]);
+            // REFACTORED: Use ticketServiceClient to record blockchain transfer
+            // This updates ticket ownership and creates transfer record
+            await ticketServiceClient.recordBlockchainTransfer({
+                tokenId: transferData.tokenId,
+                fromWallet: transferData.previousOwner || '',
+                toWallet: transferData.newOwner,
+                transactionSignature: signature,
+                blockTime: blockTime ?? undefined,
+                slot,
+                metadata: { slot },
+            }, ctx);
 
-            await db.query(`
-                INSERT INTO ticket_transfers
-                (ticket_id, from_wallet, to_wallet, transaction_signature,
-                 block_time, metadata)
-                SELECT
-                    id, $2, $3, $4, to_timestamp($5), $6
-                FROM tickets
-                WHERE token_id = $1
-            `, [
-                transferData.tokenId,
-                transferData.previousOwner,
-                transferData.newOwner,
-                signature,
-                blockTime,
-                JSON.stringify({ slot })
-            ]);
+            const pgDuration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'update', status: 'success' });
+            postgresqlQueries.inc({ operation: 'insert', status: 'success' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'update' }, pgDuration);
 
             // DUAL WRITE: Save wallet activity to MongoDB
+            const mongoStart = Date.now();
             if (transferData.previousOwner) {
                 await WalletActivity.create({
                     walletAddress: transferData.previousOwner,
@@ -230,6 +392,7 @@ export default class TransactionProcessor {
                     toAddress: transferData.newOwner,
                     timestamp: blockTime ? new Date(blockTime * 1000) : new Date(),
                 });
+                mongodbWrites.inc({ collection: 'wallet_activity', status: 'success' });
             }
 
             if (transferData.newOwner) {
@@ -242,36 +405,56 @@ export default class TransactionProcessor {
                     toAddress: transferData.newOwner,
                     timestamp: blockTime ? new Date(blockTime * 1000) : new Date(),
                 });
+                mongodbWrites.inc({ collection: 'wallet_activity', status: 'success' });
             }
+
+            const mongoDuration = (Date.now() - mongoStart) / 1000;
+            databaseWriteDuration.observe({ database: 'mongodb', operation: 'insert' }, mongoDuration);
 
             logger.info({
                 tokenId: transferData.tokenId,
                 from: transferData.previousOwner,
                 to: transferData.newOwner
-            }, 'NFT transfer processed');
+            }, 'NFT transfer processed via ticket-service');
         } catch (error) {
+            processingErrorsTotal.inc({ error_type: 'transfer_processing' });
             logger.error({ error, signature }, 'Failed to process transfer');
         }
     }
 
+    /**
+     * REFACTORED: Process burn transaction using ticketServiceClient
+     * AUDIT FIX: INP-4 - Validate extracted blockchain data
+     */
     async processBurn(tx: any, signature: string, slot: number, blockTime: number | null): Promise<void> {
-        try {
-            const burnData = this.extractBurnData(tx);
-            if (!burnData) return;
+        const ctx = createSystemContext();
+        const startTime = Date.now();
 
-            // Update PostgreSQL (keep relational links)
-            await db.query(`
-                UPDATE tickets
-                SET
-                    status = 'BURNED',
-                    last_indexed_at = NOW(),
-                    sync_status = 'SYNCED'
-                WHERE token_id = $1
-            `, [burnData.tokenId]);
+        try {
+            // AUDIT FIX: INP-4 - Use validated extraction
+            const burnData = validateBurnData(tx);
+            if (!burnData) {
+                logger.warn({ signature }, 'Could not extract or validate burn data');
+                processingErrorsTotal.inc({ error_type: 'burn_validation_failed' });
+                return;
+            }
+
+            // REFACTORED: Use ticketServiceClient instead of direct DB update
+            await ticketServiceClient.updateBlockchainSyncByToken(burnData.tokenId, {
+                status: 'BURNED',
+                lastIndexedAt: new Date().toISOString(),
+                syncStatus: 'SYNCED',
+            }, ctx);
+
+            const pgDuration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'update', status: 'success' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'update' }, pgDuration);
 
             // DUAL WRITE: Save wallet activity to MongoDB
-            const owner = tx.meta?.preTokenBalances?.[0]?.owner;
+            // AUDIT FIX: INP-4 - Validate owner address
+            const owner = validateOwnerAddress(tx.meta?.preTokenBalances?.[0]?.owner);
             if (owner) {
+                const mongoStart = Date.now();
                 await WalletActivity.create({
                     walletAddress: owner,
                     activityType: 'burn',
@@ -279,42 +462,37 @@ export default class TransactionProcessor {
                     transactionSignature: signature,
                     timestamp: blockTime ? new Date(blockTime * 1000) : new Date(),
                 });
+
+                const mongoDuration = (Date.now() - mongoStart) / 1000;
+                mongodbWrites.inc({ collection: 'wallet_activity', status: 'success' });
+                databaseWriteDuration.observe({ database: 'mongodb', operation: 'insert' }, mongoDuration);
             }
 
-            logger.info({ tokenId: burnData.tokenId }, 'NFT burn processed');
+            logger.info({ tokenId: burnData.tokenId }, 'NFT burn processed via ticket-service');
         } catch (error) {
+            processingErrorsTotal.inc({ error_type: 'burn_processing' });
             logger.error({ error, signature }, 'Failed to process burn');
         }
     }
 
-    extractMintData(tx: any): MintData | null {
-        return {
-            tokenId: tx.meta?.postTokenBalances?.[0]?.mint,
-            owner: tx.meta?.postTokenBalances?.[0]?.owner,
-            ticketId: null
-        };
-    }
-
-    extractTransferData(tx: any): TransferData | null {
-        return {
-            tokenId: tx.meta?.postTokenBalances?.[0]?.mint,
-            previousOwner: tx.meta?.preTokenBalances?.[0]?.owner,
-            newOwner: tx.meta?.postTokenBalances?.[0]?.owner
-        };
-    }
-
-    extractBurnData(tx: any): BurnData | null {
-        return {
-            tokenId: tx.meta?.preTokenBalances?.[0]?.mint
-        };
-    }
-
     async recordTransaction(signature: string, slot: number, blockTime: number | null, instructionType: string): Promise<void> {
-        await db.query(`
-            INSERT INTO indexed_transactions
-            (signature, slot, block_time, instruction_type, processed_at)
-            VALUES ($1, $2, to_timestamp($3), $4, NOW())
-            ON CONFLICT (signature) DO NOTHING
-        `, [signature, slot, blockTime, instructionType]);
+        const startTime = Date.now();
+        try {
+            await db.query(`
+                INSERT INTO indexed_transactions
+                (signature, slot, block_time, instruction_type, processed_at)
+                VALUES ($1, $2, to_timestamp($3), $4, NOW())
+                ON CONFLICT (signature) DO NOTHING
+            `, [signature, slot, blockTime, instructionType]);
+
+            const duration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'insert', status: 'success' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'insert' }, duration);
+        } catch (error) {
+            const duration = (Date.now() - startTime) / 1000;
+            postgresqlQueries.inc({ operation: 'insert', status: 'error' });
+            databaseWriteDuration.observe({ database: 'postgresql', operation: 'insert' }, duration);
+            throw error;
+        }
     }
 }

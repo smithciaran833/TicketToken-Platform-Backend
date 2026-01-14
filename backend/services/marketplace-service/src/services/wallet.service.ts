@@ -1,3 +1,12 @@
+/**
+ * Wallet Service for Marketplace Service
+ * 
+ * Issues Fixed:
+ * - S2S-3: No auth headers for S2S calls → Added HMAC authentication
+ * - S2S-5: No circuit breaker → Added circuit breaker with retry
+ * - GD-2: No timeout on external calls → Added timeout config
+ */
+
 import { additionalServiceUrls } from '../config/service-urls';
 import { logger } from '../utils/logger';
 import { 
@@ -7,16 +16,54 @@ import {
 } from '../utils/wallet-helper';
 import { WalletInfo, WalletBalance, WalletVerification } from '../types/wallet.types';
 import { config } from '../config';
+import { buildInternalHeaders } from '../middleware/internal-auth';
+import { withCircuitBreakerAndRetry } from '../utils/circuit-breaker';
+import { ExternalServiceError } from '../errors';
+
+// AUDIT FIX GD-2: Configurable timeout for external calls
+const FETCH_TIMEOUT_MS = parseInt(process.env.EXTERNAL_SERVICE_TIMEOUT || '10000', 10);
+
+/**
+ * AUDIT FIX S2S-3: Authenticated fetch with internal auth headers
+ */
+async function authenticatedFetch(
+  url: string,
+  options: RequestInit = {},
+  requestId?: string
+): Promise<Response> {
+  const body = options.body ? JSON.parse(options.body as string) : {};
+  const headers = buildInternalHeaders(body, requestId);
+  
+  // AUDIT FIX GD-2: Add timeout using AbortController
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        ...headers,
+        ...(options.headers || {})
+      },
+      signal: controller.signal
+    });
+    
+    return response;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 class WalletServiceClass {
-  async getWalletInfo(walletAddress: string): Promise<WalletInfo | null> {
+  private log = logger.child({ component: 'WalletService' });
+  
+  async getWalletInfo(walletAddress: string, requestId?: string): Promise<WalletInfo | null> {
     try {
       if (!isValidSolanaAddress(walletAddress)) {
-        logger.warn(`Invalid wallet address: ${walletAddress}`);
+        this.log.warn('Invalid wallet address', { walletAddress: formatWalletAddress(walletAddress) });
         return null;
       }
       
-      // In production, would fetch from blockchain
       const walletInfo: WalletInfo = {
         address: walletAddress,
         network: (process.env.SOLANA_NETWORK || 'devnet') as any,
@@ -24,23 +71,43 @@ class WalletServiceClass {
         is_program_wallet: false
       };
       
-      // Fetch balance from blockchain service
+      // AUDIT FIX S2S-3/S2S-5: Fetch balance with auth and circuit breaker
       try {
-        const balanceResponse = await fetch(
-          `${additionalServiceUrls.blockchainServiceUrl}/wallet/${walletAddress}/balance`
+        const data = await withCircuitBreakerAndRetry(
+          'blockchain-service',
+          async () => {
+            const response = await authenticatedFetch(
+              `${additionalServiceUrls.blockchainServiceUrl}/wallet/${walletAddress}/balance`,
+              { method: 'GET' },
+              requestId
+            );
+            
+            if (!response.ok) {
+              throw new ExternalServiceError('Blockchain Service', `HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            return response.json();
+          },
+          { failureThreshold: 5, timeout: 30000 },
+          { maxRetries: 2, initialDelayMs: 500 }
         );
         
-        if (balanceResponse.ok) {
-          const data = await balanceResponse.json();
-          walletInfo.balance = data.balance;
-        }
-      } catch (error) {
-        logger.error('Error fetching wallet balance:', error);
+        walletInfo.balance = data.balance;
+      } catch (error: any) {
+        this.log.error('Error fetching wallet balance', {
+          error: error.message,
+          walletAddress: formatWalletAddress(walletAddress),
+          requestId
+        });
+        // Don't fail - return partial info
       }
       
       return walletInfo;
-    } catch (error) {
-      logger.error('Error getting wallet info:', error);
+    } catch (error: any) {
+      this.log.error('Error getting wallet info', {
+        error: error.message,
+        walletAddress: formatWalletAddress(walletAddress)
+      });
       return null;
     }
   }
@@ -56,7 +123,10 @@ class WalletServiceClass {
       const isValid = await verifyWalletOwnership(walletAddress, message, signature);
       
       if (!isValid) {
-        logger.warn(`Invalid signature for wallet ${formatWalletAddress(walletAddress)}`);
+        this.log.warn('Invalid wallet signature', {
+          walletAddress: formatWalletAddress(walletAddress),
+          userId
+        });
         return false;
       }
       
@@ -70,31 +140,52 @@ class WalletServiceClass {
       };
       
       // In production, would store in database
-      logger.info(`Wallet ownership verified for user ${userId}`);
+      this.log.info('Wallet ownership verified', {
+        userId,
+        walletAddress: formatWalletAddress(walletAddress)
+      });
       
       return true;
-    } catch (error) {
-      logger.error('Error verifying wallet ownership:', error);
+    } catch (error: any) {
+      this.log.error('Error verifying wallet ownership', {
+        error: error.message,
+        walletAddress: formatWalletAddress(walletAddress),
+        userId
+      });
       return false;
     }
   }
   
-  async getWalletBalance(walletAddress: string): Promise<WalletBalance | null> {
+  async getWalletBalance(walletAddress: string, requestId?: string): Promise<WalletBalance | null> {
     try {
       if (!isValidSolanaAddress(walletAddress)) {
         return null;
       }
       
-      // Fetch from blockchain service
-      const response = await fetch(
-        `${additionalServiceUrls.blockchainServiceUrl}/wallet/${walletAddress}/balance/detailed`
+      // AUDIT FIX S2S-3/S2S-5: Authenticated call with circuit breaker
+      const data = await withCircuitBreakerAndRetry(
+        'blockchain-service',
+        async () => {
+          const response = await authenticatedFetch(
+            `${additionalServiceUrls.blockchainServiceUrl}/wallet/${walletAddress}/balance/detailed`,
+            { method: 'GET' },
+            requestId
+          );
+          
+          if (!response.ok) {
+            throw new ExternalServiceError(
+              'Blockchain Service',
+              `Failed to fetch balance: ${response.statusText}`,
+              undefined,
+              { statusCode: response.status }
+            );
+          }
+          
+          return response.json();
+        },
+        { failureThreshold: 5, timeout: 30000 },
+        { maxRetries: 3, initialDelayMs: 1000 }
       );
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch balance: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
       
       return {
         wallet_address: walletAddress,
@@ -103,8 +194,13 @@ class WalletServiceClass {
         token_count: data.token_count || 0,
         last_updated: new Date()
       };
-    } catch (error) {
-      logger.error('Error getting wallet balance:', error);
+    } catch (error: any) {
+      this.log.error('Error getting wallet balance', {
+        error: error.message,
+        walletAddress: formatWalletAddress(walletAddress),
+        requestId,
+        errorCode: error.code
+      });
       return null;
     }
   }
@@ -112,7 +208,8 @@ class WalletServiceClass {
   async validateWalletForTransaction(
     walletAddress: string,
     requiredAmount: number,
-    currency: 'SOL' | 'USDC'
+    currency: 'SOL' | 'USDC',
+    requestId?: string
   ): Promise<{ valid: boolean; error?: string }> {
     try {
       // Check wallet validity
@@ -121,7 +218,7 @@ class WalletServiceClass {
       }
       
       // Check balance
-      const balance = await this.getWalletBalance(walletAddress);
+      const balance = await this.getWalletBalance(walletAddress, requestId);
       
       if (!balance) {
         return { valid: false, error: 'Could not fetch wallet balance' };
@@ -137,8 +234,13 @@ class WalletServiceClass {
       }
       
       return { valid: true };
-    } catch (error) {
-      logger.error('Error validating wallet for transaction:', error);
+    } catch (error: any) {
+      this.log.error('Error validating wallet for transaction', {
+        error: error.message,
+        walletAddress: formatWalletAddress(walletAddress),
+        requiredAmount,
+        currency
+      });
       return { valid: false, error: 'Validation failed' };
     }
   }

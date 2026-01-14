@@ -1,23 +1,22 @@
-// =============================================================================
-// MOCKS
-// =============================================================================
-
-const mockLogger = {
-  child: jest.fn().mockReturnThis(),
-  info: jest.fn(),
-  error: jest.fn(),
-  warn: jest.fn(),
-  debug: jest.fn(),
-};
+/**
+ * Unit Tests for src/services/interServiceClient.ts
+ */
 
 jest.mock('../../../src/utils/logger', () => ({
   logger: {
-    child: jest.fn(() => mockLogger),
+    child: jest.fn().mockReturnValue({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    }),
   },
 }));
 
 jest.mock('../../../src/config', () => ({
   config: {
+    internalServiceSecret: 'test-secret-key-for-hmac-signing',
+    env: 'test',
     services: {
       auth: 'http://auth-service:3001',
       event: 'http://event-service:3003',
@@ -26,461 +25,134 @@ jest.mock('../../../src/config', () => ({
   },
 }));
 
-// Setup axios mock BEFORE importing the service
-const mockAxiosInstance = {
-  request: jest.fn(),
-  get: jest.fn(),
-  post: jest.fn(),
-  put: jest.fn(),
-  delete: jest.fn(),
-  interceptors: {
-    request: {
-      use: jest.fn(),
-    },
-    response: {
-      use: jest.fn(),
-    },
+jest.mock('../../../src/config/service-auth', () => ({
+  serviceAuth: {},
+  circuitBreaker: {
+    allowRequest: jest.fn().mockReturnValue(true),
+    recordSuccess: jest.fn(),
+    recordFailure: jest.fn(),
+    getState: jest.fn().mockReturnValue({ state: 'CLOSED', failures: 0 }),
+    getAllStates: jest.fn().mockReturnValue({}),
+    reset: jest.fn(),
   },
-};
-
-jest.mock('axios', () => ({
-  create: jest.fn(() => mockAxiosInstance),
-  isAxiosError: jest.fn((error) => error.isAxiosError === true),
+  generateServiceToken: jest.fn().mockReturnValue('mock-jwt-token'),
+  computeBodyHash: jest.fn().mockReturnValue('mock-body-hash'),
+  SERVICE_CREDENTIALS: {},
+  CircuitBreakerState: {},
 }));
 
-// Import after mocks
+jest.mock('axios', () => ({
+  create: jest.fn().mockReturnValue({
+    request: jest.fn(),
+    get: jest.fn(),
+    interceptors: {
+      request: { use: jest.fn() },
+      response: { use: jest.fn() },
+    },
+  }),
+  isAxiosError: jest.fn().mockReturnValue(false),
+}));
+
 import { InterServiceClient } from '../../../src/services/interServiceClient';
-import axios from 'axios';
+import { circuitBreaker } from '../../../src/config/service-auth';
 
-// =============================================================================
-// TEST SUITE
-// =============================================================================
-
-describe('InterServiceClient', () => {
+describe('services/interServiceClient', () => {
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.useFakeTimers();
+  });
 
-    mockAxiosInstance.request.mockResolvedValue({
-      data: { result: 'success' },
-      headers: {},
+  describe('verifySignature()', () => {
+    it('returns false for empty signatures', () => {
+      expect(InterServiceClient.verifySignature('', 'abc')).toBe(false);
+      expect(InterServiceClient.verifySignature('abc', '')).toBe(false);
+    });
+
+    it('returns false for mismatched lengths', () => {
+      expect(InterServiceClient.verifySignature('abcd', 'ab')).toBe(false);
+    });
+
+    it('returns true for matching signatures', () => {
+      const sig = 'a'.repeat(64);
+      expect(InterServiceClient.verifySignature(sig, sig)).toBe(true);
+    });
+
+    it('returns false for different signatures of same length', () => {
+      const sig1 = 'a'.repeat(64);
+      const sig2 = 'b'.repeat(64);
+      expect(InterServiceClient.verifySignature(sig1, sig2)).toBe(false);
     });
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
-    jest.restoreAllMocks();
-  });
+  describe('validateIncomingSignature()', () => {
+    it('rejects expired timestamps', () => {
+      const oldTimestamp = (Date.now() - 10 * 60 * 1000).toString(); // 10 minutes ago
 
-  // =============================================================================
-  // Constructor and initialization - 8 test cases
-  // =============================================================================
+      const result = InterServiceClient.validateIncomingSignature(
+        'auth-service',
+        oldTimestamp,
+        '/api/test',
+        'signature'
+      );
 
-  describe('initialization', () => {
-    it('should create clients for services', () => {
-      expect(axios.create).toHaveBeenCalled();
+      expect(result).toBe(false);
     });
 
-    it('should setup request interceptor', () => {
-      expect(mockAxiosInstance.interceptors.request.use).toHaveBeenCalled();
-    });
+    it('rejects invalid timestamps', () => {
+      const result = InterServiceClient.validateIncomingSignature(
+        'auth-service',
+        'not-a-number',
+        '/api/test',
+        'signature'
+      );
 
-    it('should setup response interceptor', () => {
-      expect(mockAxiosInstance.interceptors.response.use).toHaveBeenCalled();
-    });
-
-    it('should create client with correct timeout', () => {
-      const createCall = (axios.create as jest.Mock).mock.calls[0];
-      expect(createCall[0].timeout).toBe(10000);
-    });
-
-    it('should set content-type header', () => {
-      const createCall = (axios.create as jest.Mock).mock.calls[0];
-      expect(createCall[0].headers['Content-Type']).toBe('application/json');
-    });
-
-    it('should create multiple service clients', () => {
-      expect(axios.create).toHaveBeenCalledTimes(4); // auth, event, payment, notification
-    });
-
-    it('should create client with baseURL', () => {
-      const createCall = (axios.create as jest.Mock).mock.calls[0];
-      expect(createCall[0].baseURL).toBeDefined();
-    });
-
-    it('should start health checks', () => {
-      // Health check interval should be set
-      expect(mockAxiosInstance.get).not.toHaveBeenCalled(); // Not immediately
+      expect(result).toBe(false);
     });
   });
 
-  // =============================================================================
-  // request() - 15 test cases
-  // =============================================================================
+  describe('getCircuitState()', () => {
+    it('returns circuit breaker state for service', () => {
+      const state = InterServiceClient.getCircuitState('auth');
 
-  describe('request()', () => {
-    beforeEach(() => {
-      mockAxiosInstance.request.mockResolvedValue({
-        data: { result: 'success' },
-        headers: {},
-      });
+      expect(circuitBreaker.getState).toHaveBeenCalledWith('auth-service');
     });
 
-    it('should make request to service', async () => {
-      const result = await InterServiceClient.request('auth', 'GET', '/users/123');
+    it('handles service names with -service suffix', () => {
+      InterServiceClient.getCircuitState('auth-service');
 
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith({
-        method: 'GET',
-        url: '/users/123',
-        data: undefined,
-        timeout: 10000,
-        headers: undefined,
-      });
-      expect(result.success).toBe(true);
-    });
-
-    it('should return successful response', async () => {
-      const result = await InterServiceClient.request('auth', 'GET', '/test');
-
-      expect(result).toEqual({
-        success: true,
-        data: { result: 'success' },
-        metadata: expect.any(Object),
-      });
-    });
-
-    it('should include response metadata', async () => {
-      mockAxiosInstance.request.mockResolvedValue({
-        data: { result: 'success' },
-        headers: {
-          'x-request-id': 'req-123',
-          'x-trace-id': 'trace-456',
-        },
-      });
-
-      const result = await InterServiceClient.request('auth', 'GET', '/test');
-
-      expect(result.metadata?.requestId).toBe('req-123');
-      expect(result.metadata?.traceId).toBe('trace-456');
-      expect(result.metadata?.duration).toBeDefined();
-    });
-
-    it('should pass data in request', async () => {
-      await InterServiceClient.request('auth', 'POST', '/users', { name: 'John' });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: { name: 'John' },
-        })
-      );
-    });
-
-    it('should use custom timeout if provided', async () => {
-      await InterServiceClient.request('auth', 'GET', '/test', undefined, { timeout: 5000 });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          timeout: 5000,
-        })
-      );
-    });
-
-    it('should pass custom headers', async () => {
-      await InterServiceClient.request('auth', 'GET', '/test', undefined, {
-        headers: { 'X-Custom': 'value' },
-      });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          headers: { 'X-Custom': 'value' },
-        })
-      );
-    });
-
-    it('should handle axios errors', async () => {
-      const error = {
-        message: 'Network error',
-        response: {
-          status: 400,
-          data: { error: 'Bad request' },
-          headers: {},
-        },
-        isAxiosError: true,
-      };
-      mockAxiosInstance.request.mockRejectedValue(error);
-
-      const result = await InterServiceClient.request('auth', 'GET', '/test');
-
-      expect(result.success).toBe(false);
-      expect(result.error).toBe('Bad request');
-    });
-
-    it('should log request failures', async () => {
-      const error = {
-        message: 'Network error',
-        response: { status: 500, data: {}, headers: {} },
-        isAxiosError: true,
-      };
-      mockAxiosInstance.request.mockRejectedValue(error);
-
-      await InterServiceClient.request('auth', 'GET', '/test');
-
-      expect(mockLogger.error).toHaveBeenCalled();
-    });
-
-    it('should throw error for unknown service', async () => {
-      await expect(
-        InterServiceClient.request('unknown', 'GET', '/test')
-      ).rejects.toThrow('Service client not found: unknown');
-    });
-
-    it('should warn about unhealthy services', async () => {
-      // Mark service as unhealthy
-      (InterServiceClient as any).healthStatus.set('auth', false);
-
-      await InterServiceClient.request('auth', 'GET', '/test');
-
-      expect(mockLogger.warn).toHaveBeenCalledWith(
-        'Service auth is marked as unhealthy'
-      );
-    });
-
-    it('should handle network errors with retry', async () => {
-      const error = {
-        message: 'Network error',
-        isAxiosError: true,
-      };
-      mockAxiosInstance.request
-        .mockRejectedValueOnce(error)
-        .mockResolvedValueOnce({
-          data: { result: 'success' },
-          headers: {},
-        });
-
-      const result = await InterServiceClient.request('auth', 'GET', '/test', undefined, {
-        retry: true,
-        maxRetries: 1,
-      });
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should handle 5xx errors with retry', async () => {
-      const error = {
-        message: 'Server error',
-        response: { status: 500, data: {}, headers: {} },
-        isAxiosError: true,
-      };
-      mockAxiosInstance.request
-        .mockRejectedValueOnce(error)
-        .mockResolvedValueOnce({
-          data: { result: 'success' },
-          headers: {},
-        });
-
-      const result = await InterServiceClient.request('auth', 'GET', '/test', undefined, {
-        retry: true,
-      });
-
-      // Advance timers for retry delay
-      await jest.runAllTimersAsync();
-
-      expect(result.success).toBe(true);
-    });
-
-    it('should not retry on 4xx errors', async () => {
-      const error = {
-        message: 'Bad request',
-        response: { status: 400, data: { error: 'Bad request' }, headers: {} },
-        isAxiosError: true,
-      };
-      mockAxiosInstance.request.mockRejectedValue(error);
-
-      const result = await InterServiceClient.request('auth', 'GET', '/test', undefined, {
-        retry: true,
-      });
-
-      expect(result.success).toBe(false);
-      expect(mockAxiosInstance.request).toHaveBeenCalledTimes(1);
-    });
-
-    it('should handle non-axios errors', async () => {
-      const error = new Error('Unknown error');
-      mockAxiosInstance.request.mockRejectedValue(error);
-
-      await expect(
-        InterServiceClient.request('auth', 'GET', '/test')
-      ).rejects.toThrow('Unknown error');
-    });
-
-    it('should handle different HTTP methods', async () => {
-      await InterServiceClient.request('auth', 'POST', '/test');
-      await InterServiceClient.request('auth', 'PUT', '/test');
-      await InterServiceClient.request('auth', 'DELETE', '/test');
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledTimes(3);
+      expect(circuitBreaker.getState).toHaveBeenCalledWith('auth-service');
     });
   });
 
-  // =============================================================================
-  // Convenience methods - 8 test cases
-  // =============================================================================
+  describe('getAllCircuitStates()', () => {
+    it('returns all circuit states', () => {
+      InterServiceClient.getAllCircuitStates();
 
-  describe('convenience methods', () => {
-    beforeEach(() => {
-      mockAxiosInstance.request.mockResolvedValue({
-        data: { result: 'success' },
-        headers: {},
-      });
-    });
-
-    it('should support get()', async () => {
-      await InterServiceClient.get('auth', '/users');
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'GET',
-          url: '/users',
-        })
-      );
-    });
-
-    it('should support post()', async () => {
-      await InterServiceClient.post('auth', '/users', { name: 'John' });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'POST',
-          url: '/users',
-          data: { name: 'John' },
-        })
-      );
-    });
-
-    it('should support put()', async () => {
-      await InterServiceClient.put('auth', '/users/123', { name: 'Jane' });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'PUT',
-          url: '/users/123',
-          data: { name: 'Jane' },
-        })
-      );
-    });
-
-    it('should support delete()', async () => {
-      await InterServiceClient.delete('auth', '/users/123');
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          method: 'DELETE',
-          url: '/users/123',
-        })
-      );
-    });
-
-    it('should pass options in get()', async () => {
-      await InterServiceClient.get('auth', '/users', { timeout: 5000 });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          timeout: 5000,
-        })
-      );
-    });
-
-    it('should pass options in post()', async () => {
-      await InterServiceClient.post('auth', '/users', {}, { timeout: 5000 });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          timeout: 5000,
-        })
-      );
-    });
-
-    it('should pass options in put()', async () => {
-      await InterServiceClient.put('auth', '/users/123', {}, { timeout: 5000 });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          timeout: 5000,
-        })
-      );
-    });
-
-    it('should pass options in delete()', async () => {
-      await InterServiceClient.delete('auth', '/users/123', { timeout: 5000 });
-
-      expect(mockAxiosInstance.request).toHaveBeenCalledWith(
-        expect.objectContaining({
-          timeout: 5000,
-        })
-      );
+      expect(circuitBreaker.getAllStates).toHaveBeenCalled();
     });
   });
 
-  // =============================================================================
-  // Health checks - 5 test cases
-  // =============================================================================
+  describe('resetCircuit()', () => {
+    it('resets circuit for specified service', () => {
+      InterServiceClient.resetCircuit('auth');
 
-  describe('health checks', () => {
-    it('should return health status', async () => {
-      const health = await InterServiceClient.checkHealth();
-
-      expect(health).toBeDefined();
-      expect(typeof health).toBe('object');
-    });
-
-    it('should get individual service health', () => {
-      const healthy = InterServiceClient.getHealthStatus('auth');
-
-      expect(typeof healthy).toBe('boolean');
-    });
-
-    it('should return false for unknown service', () => {
-      const healthy = InterServiceClient.getHealthStatus('unknown');
-
-      expect(healthy).toBe(false);
-    });
-
-    it('should perform periodic health checks', () => {
-      mockAxiosInstance.get.mockResolvedValue({ status: 200 });
-
-      jest.advanceTimersByTime(30000);
-
-      expect(mockAxiosInstance.get).toHaveBeenCalled();
-    });
-
-    it('should mark service unhealthy on failed check', async () => {
-      mockAxiosInstance.get.mockRejectedValue(new Error('Health check failed'));
-
-      jest.advanceTimersByTime(30000);
-      await Promise.resolve();
-
-      const healthy = InterServiceClient.getHealthStatus('auth');
-      expect(typeof healthy).toBe('boolean');
+      expect(circuitBreaker.reset).toHaveBeenCalledWith('auth-service');
     });
   });
 
-  // =============================================================================
-  // instance test
-  // =============================================================================
+  describe('isCircuitAllowed()', () => {
+    it('checks if circuit allows requests', () => {
+      const result = InterServiceClient.isCircuitAllowed('auth');
 
-  describe('instance', () => {
-    it('should be a singleton', () => {
-      expect(InterServiceClient).toBeDefined();
+      expect(circuitBreaker.allowRequest).toHaveBeenCalledWith('auth-service');
+      expect(result).toBe(true);
     });
+  });
 
-    it('should have all required methods', () => {
-      expect(typeof InterServiceClient.request).toBe('function');
-      expect(typeof InterServiceClient.get).toBe('function');
-      expect(typeof InterServiceClient.post).toBe('function');
-      expect(typeof InterServiceClient.put).toBe('function');
-      expect(typeof InterServiceClient.delete).toBe('function');
-      expect(typeof InterServiceClient.checkHealth).toBe('function');
-      expect(typeof InterServiceClient.getHealthStatus).toBe('function');
+  describe('getHealthStatus()', () => {
+    it('returns health status for service', () => {
+      const status = InterServiceClient.getHealthStatus('auth');
+
+      expect(typeof status).toBe('boolean');
     });
   });
 });

@@ -1,18 +1,20 @@
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 import { tokenVault } from './token-vault.service';
 import crypto from 'crypto';
 import Redis from 'ioredis';
+import axios from 'axios';
 
 export class OAuthService {
-  private redis: Redis;
+  private redis: InstanceType<typeof Redis>;
 
   constructor() {
     this.redis = new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      password: process.env.REDIS_PASSWORD,
-      db: parseInt(process.env.REDIS_DB || '0'),
+      host: config.redis.host,
+      port: config.redis.port,
+      password: config.redis.password,
+      db: config.redis.db,
     });
   }
 
@@ -95,24 +97,32 @@ export class OAuthService {
         }
       );
 
-      // Update integration status
-      await db('integration_configs')
-        .insert({
-          venue_id: stateData.venueId,
-          integration_type: provider,
-          status: 'connected',
-          connected_at: new Date(),
-          config: {
-            syncEnabled: true,
-            syncInterval: 300
-          }
-        })
-        .onConflict(['venue_id', 'integration_type'])
-        .merge({
-          status: 'connected',
-          connected_at: new Date(),
-          updated_at: new Date()
-        });
+      // Update integration status - use upsert pattern
+      const existingConfig = await db('integration_configs')
+        .where({ venue_id: stateData.venueId, integration_type: provider })
+        .first();
+
+      if (existingConfig) {
+        await db('integration_configs')
+          .where({ venue_id: stateData.venueId, integration_type: provider })
+          .update({
+            status: 'connected',
+            connected_at: new Date(),
+            updated_at: new Date()
+          });
+      } else {
+        await db('integration_configs')
+          .insert({
+            venue_id: stateData.venueId,
+            integration_type: provider,
+            status: 'connected',
+            connected_at: new Date(),
+            config: {
+              syncEnabled: true,
+              syncInterval: 300
+            }
+          });
+      }
 
       // Clean up state from Redis
       await this.redis.del(`oauth:state:${state}`);
@@ -209,7 +219,7 @@ export class OAuthService {
 
   private getOAuthUrl(integrationType: string, state: string): string {
     const baseUrls: Record<string, string> = {
-      square: process.env.SQUARE_SANDBOX === 'true'
+      square: config.providers.square.sandbox
         ? 'https://connect.squareupsandbox.com'
         : 'https://connect.squareup.com',
       mailchimp: 'https://login.mailchimp.com',
@@ -218,19 +228,19 @@ export class OAuthService {
 
     const params: Record<string, any> = {
       square: {
-        client_id: process.env.SQUARE_APP_ID,
+        client_id: config.providers.square.clientId,
         scope: 'ITEMS_READ ITEMS_WRITE INVENTORY_READ INVENTORY_WRITE PAYMENTS_READ CUSTOMERS_READ',
         state
       },
       mailchimp: {
         response_type: 'code',
-        client_id: process.env.MAILCHIMP_CLIENT_ID,
+        client_id: config.providers.mailchimp.clientId,
         state
       },
       quickbooks: {
-        client_id: process.env.QUICKBOOKS_CLIENT_ID,
+        client_id: config.providers.quickbooks.clientId,
         scope: 'com.intuit.quickbooks.accounting',
-        redirect_uri: `${process.env.API_URL}/api/v1/integrations/oauth/callback/quickbooks`,
+        redirect_uri: `${config.server.apiUrl}/api/v1/integrations/oauth/callback/quickbooks`,
         response_type: 'code',
         state
       }
@@ -258,14 +268,13 @@ export class OAuthService {
   }
 
   private async exchangeSquareCode(code: string): Promise<any> {
-    const axios = require('axios');
-    const baseUrl = process.env.SQUARE_SANDBOX === 'true'
+    const baseUrl = config.providers.square.sandbox
       ? 'https://connect.squareupsandbox.com'
       : 'https://connect.squareup.com';
 
     const response = await axios.post(`${baseUrl}/oauth2/token`, {
-      client_id: process.env.SQUARE_APP_ID,
-      client_secret: process.env.SQUARE_APP_SECRET,
+      client_id: config.providers.square.clientId,
+      client_secret: config.providers.square.clientSecret,
       code,
       grant_type: 'authorization_code'
     });
@@ -274,16 +283,21 @@ export class OAuthService {
   }
 
   private async exchangeMailchimpCode(code: string): Promise<any> {
-    const axios = require('axios');
+    const clientId = config.providers.mailchimp.clientId;
+    const clientSecret = config.providers.mailchimp.clientSecret;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('Mailchimp OAuth credentials not configured');
+    }
     
     const response = await axios.post(
       'https://login.mailchimp.com/oauth2/token',
       new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: process.env.MAILCHIMP_CLIENT_ID || '',
-        client_secret: process.env.MAILCHIMP_CLIENT_SECRET || '',
+        client_id: clientId,
+        client_secret: clientSecret,
         code,
-        redirect_uri: `${process.env.API_URL}/api/v1/integrations/oauth/callback/mailchimp`
+        redirect_uri: `${config.server.apiUrl}/api/v1/integrations/oauth/callback/mailchimp`
       })
     );
 
@@ -291,19 +305,24 @@ export class OAuthService {
   }
 
   private async exchangeQuickBooksCode(code: string): Promise<any> {
-    const axios = require('axios');
+    const clientId = config.providers.quickbooks.clientId;
+    const clientSecret = config.providers.quickbooks.clientSecret;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('QuickBooks OAuth credentials not configured');
+    }
     
     const response = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
       new URLSearchParams({
         grant_type: 'authorization_code',
         code,
-        redirect_uri: `${process.env.API_URL}/api/v1/integrations/oauth/callback/quickbooks`
+        redirect_uri: `${config.server.apiUrl}/api/v1/integrations/oauth/callback/quickbooks`
       }),
       {
         auth: {
-          username: process.env.QUICKBOOKS_CLIENT_ID || '',
-          password: process.env.QUICKBOOKS_CLIENT_SECRET || ''
+          username: clientId,
+          password: clientSecret
         }
       }
     );
@@ -312,14 +331,13 @@ export class OAuthService {
   }
 
   private async refreshSquareToken(refreshToken: string): Promise<any> {
-    const axios = require('axios');
-    const baseUrl = process.env.SQUARE_SANDBOX === 'true'
+    const baseUrl = config.providers.square.sandbox
       ? 'https://connect.squareupsandbox.com'
       : 'https://connect.squareup.com';
 
     const response = await axios.post(`${baseUrl}/oauth2/token`, {
-      client_id: process.env.SQUARE_APP_ID,
-      client_secret: process.env.SQUARE_APP_SECRET,
+      client_id: config.providers.square.clientId,
+      client_secret: config.providers.square.clientSecret,
       refresh_token: refreshToken,
       grant_type: 'refresh_token'
     });
@@ -328,7 +346,12 @@ export class OAuthService {
   }
 
   private async refreshQuickBooksToken(refreshToken: string): Promise<any> {
-    const axios = require('axios');
+    const clientId = config.providers.quickbooks.clientId;
+    const clientSecret = config.providers.quickbooks.clientSecret;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('QuickBooks OAuth credentials not configured');
+    }
     
     const response = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
@@ -338,8 +361,8 @@ export class OAuthService {
       }),
       {
         auth: {
-          username: process.env.QUICKBOOKS_CLIENT_ID || '',
-          password: process.env.QUICKBOOKS_CLIENT_SECRET || ''
+          username: clientId,
+          password: clientSecret
         }
       }
     );
@@ -355,8 +378,6 @@ export class OAuthService {
     if (!expiresIn) return null;
     return new Date(Date.now() + expiresIn * 1000);
   }
-
-  // No longer needed - Redis handles TTL automatically
 }
 
 export const oauthService = new OAuthService();

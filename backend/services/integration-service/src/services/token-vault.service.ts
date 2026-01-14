@@ -1,16 +1,16 @@
 import CryptoJS from 'crypto-js';
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 
 export class TokenVaultService {
   private encryptionKey: string;
 
   constructor() {
-    // In production, this would use AWS KMS
-    // For development, we use a local key
-    this.encryptionKey = process.env.ENCRYPTION_KEY || 'dev-encryption-key-32-characters';
+    // Use centralized config for encryption key
+    this.encryptionKey = config.security.encryptionKey || 'default-dev-key-do-not-use-in-prod';
     
-    if (process.env.NODE_ENV === 'production' && process.env.MOCK_KMS === 'true') {
+    if (config.server.nodeEnv === 'production' && config.security.mockKms) {
       logger.warn('Using mock KMS in production - this is not secure!');
     }
   }
@@ -112,12 +112,13 @@ export class TokenVaultService {
     try {
       const encryptedKey = this.encrypt(apiKey);
       const encryptedSecret = apiSecret ? this.encrypt(apiSecret) : null;
+      const environment = config.server.nodeEnv === 'production' ? 'production' : 'sandbox';
 
       const existing = await db('venue_api_keys')
         .where({ 
           venue_id: venueId, 
           integration_type: integration,
-          environment: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox'
+          environment
         })
         .first();
 
@@ -136,7 +137,7 @@ export class TokenVaultService {
           integration_type: integration,
           encrypted_api_key: encryptedKey,
           encrypted_api_secret: encryptedSecret,
-          environment: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox',
+          environment,
           is_valid: true
         });
       }
@@ -151,11 +152,13 @@ export class TokenVaultService {
   // Get API key
   async getApiKey(venueId: string, integration: string): Promise<any> {
     try {
+      const environment = config.server.nodeEnv === 'production' ? 'production' : 'sandbox';
+      
       const record = await db('venue_api_keys')
         .where({ 
           venue_id: venueId, 
           integration_type: integration,
-          environment: process.env.NODE_ENV === 'production' ? 'production' : 'sandbox'
+          environment
         })
         .first();
 
@@ -197,9 +200,9 @@ export class TokenVaultService {
     return token;
   }
 
-  // Mock encryption for development
+  // Encryption using centralized config
   private encrypt(text: string): string {
-    if (process.env.MOCK_KMS === 'true') {
+    if (config.security.mockKms) {
       // Simple encryption for development
       return CryptoJS.AES.encrypt(text, this.encryptionKey).toString();
     }
@@ -208,9 +211,9 @@ export class TokenVaultService {
     throw new Error('Real KMS not implemented yet');
   }
 
-  // Mock decryption for development
+  // Decryption using centralized config
   private decrypt(encryptedText: string): string {
-    if (process.env.MOCK_KMS === 'true') {
+    if (config.security.mockKms) {
       // Simple decryption for development
       const bytes = CryptoJS.AES.decrypt(encryptedText, this.encryptionKey);
       return bytes.toString(CryptoJS.enc.Utf8);

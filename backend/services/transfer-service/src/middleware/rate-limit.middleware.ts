@@ -3,7 +3,7 @@ import { Redis } from 'ioredis';
 
 /**
  * RATE LIMIT MIDDLEWARE
- * 
+ *
  * Protects endpoints from abuse using Redis-based rate limiting
  * Phase 7: Production Readiness & Reliability
  */
@@ -36,8 +36,8 @@ export class RateLimiter {
     if (requestCount >= this.config.max) {
       // Get the oldest request to calculate reset time
       const oldestRequest = await this.redis.zrange(redisKey, 0, 0, 'WITHSCORES');
-      const resetTime = oldestRequest.length > 0 
-        ? parseInt(oldestRequest[1]) + this.config.windowMs
+      const resetTime = oldestRequest.length > 1 && oldestRequest[1]
+        ? parseInt(oldestRequest[1], 10) + this.config.windowMs
         : now + this.config.windowMs;
 
       return {
@@ -106,28 +106,28 @@ export const RateLimitPresets = {
     max: 10,
     message: 'Too many requests. Please slow down.'
   },
-  
+
   // Standard: 100 requests per minute
   standard: {
     windowMs: 60 * 1000,
     max: 100,
     message: 'Rate limit exceeded.'
   },
-  
+
   // Lenient: 1000 requests per minute
   lenient: {
     windowMs: 60 * 1000,
     max: 1000,
     message: 'Rate limit exceeded.'
   },
-  
+
   // Transfer creation: 5 per minute
   transferCreation: {
     windowMs: 60 * 1000,
     max: 5,
     message: 'Too many transfer requests. Please wait before creating more transfers.'
   },
-  
+
   // Transfer acceptance: 10 per minute
   transferAcceptance: {
     windowMs: 60 * 1000,

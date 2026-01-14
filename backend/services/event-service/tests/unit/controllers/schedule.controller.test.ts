@@ -1,58 +1,46 @@
-// Mock dependencies BEFORE imports
-const mockJoiChain = {
-  required: jest.fn().mockReturnThis(),
-  optional: jest.fn().mockReturnThis(),
-  default: jest.fn().mockReturnThis(),
-  valid: jest.fn().mockReturnThis(),
-  integer: jest.fn().mockReturnThis(),
-  min: jest.fn().mockReturnThis(),
-};
+/**
+ * Schedule Controller Unit Tests
+ * 
+ * Tests the schedule controller handlers for:
+ * - getSchedules: Get all schedules for an event
+ * - createSchedule: Create new schedule
+ * - getSchedule: Get specific schedule
+ * - updateSchedule: Update schedule
+ * - getUpcomingSchedules: Get future schedules
+ * - getNextSchedule: Get next upcoming schedule
+ */
 
-const mockValidate = jest.fn();
+import {
+  getSchedules,
+  createSchedule,
+  getSchedule,
+  updateSchedule,
+  getUpcomingSchedules,
+  getNextSchedule
+} from '../../../src/controllers/schedule.controller';
 
-jest.mock('joi', () => ({
-  __esModule: true,
-  default: {
-    object: jest.fn(() => ({
-      validate: mockValidate,
-      optional: jest.fn().mockReturnThis(),
-    })),
-    date: jest.fn(() => mockJoiChain),
-    string: jest.fn(() => mockJoiChain),
-    boolean: jest.fn(() => mockJoiChain),
-    number: jest.fn(() => mockJoiChain),
-  },
-}));
-
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
-}));
-
-// Mock EventScheduleModel
+// Mock dependencies
 jest.mock('../../../src/models', () => ({
-  EventScheduleModel: jest.fn(),
+  EventScheduleModel: jest.fn().mockImplementation(() => ({
+    findByEventId: jest.fn(),
+    create: jest.fn(),
+    findById: jest.fn(),
+    updateWithTenant: jest.fn(),
+    findUpcomingSchedules: jest.fn(),
+    getNextSchedule: jest.fn()
+  }))
 }));
 
-import { FastifyRequest, FastifyReply } from 'fastify';
-import * as scheduleController from '../../../src/controllers/schedule.controller';
 import { EventScheduleModel } from '../../../src/models';
 
 describe('Schedule Controller', () => {
-  let mockRequest: Partial<FastifyRequest>;
-  let mockReply: Partial<FastifyReply>;
-  let mockEventService: any;
-  let mockDb: any;
   let mockScheduleModel: any;
+  let mockEventService: any;
+  let mockRequest: any;
+  let mockReply: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    mockValidate.mockReturnValue({ error: null, value: {} });
 
     mockScheduleModel = {
       findByEventId: jest.fn(),
@@ -60,290 +48,269 @@ describe('Schedule Controller', () => {
       findById: jest.fn(),
       updateWithTenant: jest.fn(),
       findUpcomingSchedules: jest.fn(),
-      getNextSchedule: jest.fn(),
+      getNextSchedule: jest.fn()
     };
-
-    (EventScheduleModel as jest.MockedClass<typeof EventScheduleModel>).mockImplementation(() => mockScheduleModel);
 
     mockEventService = {
-      getEvent: jest.fn(),
+      getEvent: jest.fn().mockResolvedValue({ id: 'event-123' })
     };
 
-    mockDb = jest.fn();
+    (EventScheduleModel as jest.Mock).mockImplementation(() => mockScheduleModel);
 
     mockRequest = {
-      params: {},
+      params: { eventId: 'event-123' },
       body: {},
-      headers: {},
-      log: {
-        info: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-      } as any,
       container: {
         cradle: {
-          db: mockDb,
-          eventService: mockEventService,
-        },
-      } as any,
+          db: {},
+          eventService: mockEventService
+        }
+      },
+      log: { error: jest.fn() }
     };
+    (mockRequest as any).tenantId = 'tenant-123';
 
     mockReply = {
       status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
     };
   });
 
   describe('getSchedules', () => {
-    it('should return schedules for event', async () => {
-      const mockSchedules = [
-        { id: '1', event_id: 'event-1', starts_at: new Date() },
-        { id: '2', event_id: 'event-1', starts_at: new Date() },
+    it('should return schedules for an event', async () => {
+      const schedules = [
+        { id: 'sched-1', starts_at: new Date('2026-06-15T20:00:00Z') },
+        { id: 'sched-2', starts_at: new Date('2026-06-16T20:00:00Z') }
       ];
+      mockScheduleModel.findByEventId.mockResolvedValue(schedules);
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
-      mockScheduleModel.findByEventId.mockResolvedValue(mockSchedules);
+      await getSchedules(mockRequest, mockReply);
 
-      await scheduleController.getSchedules(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockEventService.getEvent).toHaveBeenCalledWith('event-1', 'tenant-1');
-      expect(mockScheduleModel.findByEventId).toHaveBeenCalledWith('event-1', 'tenant-1');
+      expect(mockEventService.getEvent).toHaveBeenCalledWith('event-123', 'tenant-123');
+      expect(mockScheduleModel.findByEventId).toHaveBeenCalledWith('event-123', 'tenant-123');
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        data: {
-          event_id: 'event-1',
-          schedules: mockSchedules,
-        },
+        data: { event_id: 'event-123', schedules }
       });
     });
 
-    it('should return 404 if event not found', async () => {
-      mockRequest.params = { eventId: 'event-999' };
-      (mockRequest as any).tenantId = 'tenant-1';
+    it('should return 404 when event not found', async () => {
       mockEventService.getEvent.mockRejectedValue(new Error('Event not found'));
 
-      await scheduleController.getSchedules(
-        mockRequest as any,
-        mockReply as any
-      );
+      await getSchedules(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(404);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: false,
-        error: 'Event not found',
+        error: 'Event not found'
       });
     });
   });
 
   describe('createSchedule', () => {
-    it('should create schedule', async () => {
-      const mockSchedule = {
-        id: 'schedule-1',
-        event_id: 'event-1',
-        starts_at: new Date(),
-      };
-      const requestBody = {
-        starts_at: new Date(),
-        ends_at: new Date(),
-        timezone: 'UTC',
-      };
+    const validScheduleData = {
+      starts_at: new Date('2026-06-15T20:00:00Z'),
+      ends_at: new Date('2026-06-15T23:00:00Z'),
+      timezone: 'America/New_York'
+    };
 
-      mockRequest.params = { eventId: 'event-1' };
-      mockRequest.body = requestBody;
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockValidate.mockReturnValue({ error: null, value: requestBody });
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
-      mockScheduleModel.create.mockResolvedValue(mockSchedule);
+    it('should create schedule successfully', async () => {
+      const createdSchedule = { id: 'sched-123', ...validScheduleData };
+      mockScheduleModel.create.mockResolvedValue(createdSchedule);
+      mockRequest.body = validScheduleData;
 
-      await scheduleController.createSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
+      await createSchedule(mockRequest, mockReply);
 
+      expect(mockEventService.getEvent).toHaveBeenCalledWith('event-123', 'tenant-123');
       expect(mockScheduleModel.create).toHaveBeenCalledWith({
-        tenant_id: 'tenant-1',
-        event_id: 'event-1',
-        ...requestBody,
+        tenant_id: 'tenant-123',
+        event_id: 'event-123',
+        ...validScheduleData
       });
       expect(mockReply.status).toHaveBeenCalledWith(201);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        data: mockSchedule,
+        data: createdSchedule
       });
     });
 
-    it('should return 422 for validation errors', async () => {
-      mockRequest.params = { eventId: 'event-1' };
-      mockRequest.body = { starts_at: 'invalid' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockValidate.mockReturnValue({
-        error: { details: [{ message: 'Invalid date' }] },
-        value: null,
-      });
+    it('should return 422 on validation error', async () => {
+      mockRequest.body = { starts_at: 'invalid-date' };
 
-      await scheduleController.createSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
+      await createSchedule(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(422);
-      expect(mockReply.send).toHaveBeenCalledWith({
+      expect(mockReply.send).toHaveBeenCalledWith(expect.objectContaining({
         success: false,
-        error: 'Validation failed',
-        code: 'VALIDATION_ERROR',
-        details: [{ message: 'Invalid date' }],
-      });
+        error: 'Validation failed'
+      }));
+    });
+
+    it('should return 404 when event not found', async () => {
+      mockEventService.getEvent.mockRejectedValue(new Error('Event not found'));
+      mockRequest.body = validScheduleData;
+
+      await createSchedule(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
     });
   });
 
   describe('getSchedule', () => {
-    it('should return schedule by id', async () => {
-      const mockSchedule = {
-        id: 'schedule-1',
-        event_id: 'event-1',
-        tenant_id: 'tenant-1',
-        starts_at: new Date(),
+    it('should return schedule when found', async () => {
+      const schedule = {
+        id: 'sched-123',
+        event_id: 'event-123',
+        tenant_id: 'tenant-123',
+        starts_at: new Date()
       };
+      mockScheduleModel.findById.mockResolvedValue(schedule);
+      mockRequest.params = { eventId: 'event-123', scheduleId: 'sched-123' };
 
-      mockRequest.params = { eventId: 'event-1', scheduleId: 'schedule-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
-      mockScheduleModel.findById.mockResolvedValue(mockSchedule);
+      await getSchedule(mockRequest, mockReply);
 
-      await scheduleController.getSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockScheduleModel.findById).toHaveBeenCalledWith('schedule-1');
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        data: mockSchedule,
+        data: schedule
       });
     });
 
-    it('should return 404 if schedule not found', async () => {
-      mockRequest.params = { eventId: 'event-1', scheduleId: 'schedule-999' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
+    it('should return 404 when schedule not found', async () => {
       mockScheduleModel.findById.mockResolvedValue(null);
+      mockRequest.params = { eventId: 'event-123', scheduleId: 'nonexistent' };
 
-      await scheduleController.getSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
+      await getSchedule(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(404);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: false,
-        error: 'Schedule not found',
+        error: 'Schedule not found'
       });
+    });
+
+    it('should return 404 when schedule belongs to different event', async () => {
+      const schedule = {
+        id: 'sched-123',
+        event_id: 'other-event',
+        tenant_id: 'tenant-123'
+      };
+      mockScheduleModel.findById.mockResolvedValue(schedule);
+      mockRequest.params = { eventId: 'event-123', scheduleId: 'sched-123' };
+
+      await getSchedule(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
+    });
+
+    it('should return 404 when schedule belongs to different tenant', async () => {
+      const schedule = {
+        id: 'sched-123',
+        event_id: 'event-123',
+        tenant_id: 'other-tenant'
+      };
+      mockScheduleModel.findById.mockResolvedValue(schedule);
+      mockRequest.params = { eventId: 'event-123', scheduleId: 'sched-123' };
+
+      await getSchedule(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
     });
   });
 
   describe('updateSchedule', () => {
-    it('should update schedule', async () => {
-      const mockSchedule = {
-        id: 'schedule-1',
-        event_id: 'event-1',
-        tenant_id: 'tenant-1',
+    it('should update schedule successfully', async () => {
+      const schedule = {
+        id: 'sched-123',
+        event_id: 'event-123',
+        tenant_id: 'tenant-123'
       };
-      const mockUpdated = { ...mockSchedule, status: 'CONFIRMED' };
-
-      mockRequest.params = { eventId: 'event-1', scheduleId: 'schedule-1' };
+      const updatedSchedule = { ...schedule, status: 'CONFIRMED' };
+      mockScheduleModel.findById.mockResolvedValue(schedule);
+      mockScheduleModel.updateWithTenant.mockResolvedValue(updatedSchedule);
+      mockRequest.params = { eventId: 'event-123', scheduleId: 'sched-123' };
       mockRequest.body = { status: 'CONFIRMED' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
-      mockScheduleModel.findById.mockResolvedValue(mockSchedule);
-      mockScheduleModel.updateWithTenant.mockResolvedValue(mockUpdated);
 
-      await scheduleController.updateSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
+      await updateSchedule(mockRequest, mockReply);
 
       expect(mockScheduleModel.updateWithTenant).toHaveBeenCalledWith(
-        'schedule-1',
-        'tenant-1',
+        'sched-123',
+        'tenant-123',
         { status: 'CONFIRMED' }
       );
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        data: mockUpdated,
+        data: updatedSchedule
       });
+    });
+
+    it('should return 404 when schedule not found', async () => {
+      mockScheduleModel.findById.mockResolvedValue(null);
+      mockRequest.params = { eventId: 'event-123', scheduleId: 'nonexistent' };
+      mockRequest.body = { status: 'CONFIRMED' };
+
+      await updateSchedule(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
     });
   });
 
   describe('getUpcomingSchedules', () => {
     it('should return upcoming schedules', async () => {
-      const mockSchedules = [
-        { id: '1', starts_at: new Date(Date.now() + 86400000) },
+      const schedules = [
+        { id: 'sched-1', starts_at: new Date('2026-06-15T20:00:00Z') }
       ];
+      mockScheduleModel.findUpcomingSchedules.mockResolvedValue(schedules);
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
-      mockScheduleModel.findUpcomingSchedules.mockResolvedValue(mockSchedules);
+      await getUpcomingSchedules(mockRequest, mockReply);
 
-      await scheduleController.getUpcomingSchedules(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockScheduleModel.findUpcomingSchedules).toHaveBeenCalledWith('event-1', 'tenant-1');
+      expect(mockScheduleModel.findUpcomingSchedules).toHaveBeenCalledWith('event-123', 'tenant-123');
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        data: {
-          event_id: 'event-1',
-          schedules: mockSchedules,
-        },
+        data: { event_id: 'event-123', schedules }
       });
+    });
+
+    it('should return 404 when event not found', async () => {
+      mockEventService.getEvent.mockRejectedValue(new Error('Event not found'));
+
+      await getUpcomingSchedules(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
     });
   });
 
   describe('getNextSchedule', () => {
     it('should return next schedule', async () => {
-      const mockSchedule = { id: '1', starts_at: new Date(Date.now() + 86400000) };
+      const schedule = { id: 'sched-1', starts_at: new Date('2026-06-15T20:00:00Z') };
+      mockScheduleModel.getNextSchedule.mockResolvedValue(schedule);
 
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
-      mockScheduleModel.getNextSchedule.mockResolvedValue(mockSchedule);
+      await getNextSchedule(mockRequest, mockReply);
 
-      await scheduleController.getNextSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockScheduleModel.getNextSchedule).toHaveBeenCalledWith('event-1', 'tenant-1');
+      expect(mockScheduleModel.getNextSchedule).toHaveBeenCalledWith('event-123', 'tenant-123');
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        data: mockSchedule,
+        data: schedule
       });
     });
 
-    it('should return 404 if no upcoming schedules', async () => {
-      mockRequest.params = { eventId: 'event-1' };
-      (mockRequest as any).tenantId = 'tenant-1';
-      mockEventService.getEvent.mockResolvedValue({ id: 'event-1' });
+    it('should return 404 when no upcoming schedules', async () => {
       mockScheduleModel.getNextSchedule.mockResolvedValue(null);
 
-      await scheduleController.getNextSchedule(
-        mockRequest as any,
-        mockReply as any
-      );
+      await getNextSchedule(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(404);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: false,
-        error: 'No upcoming schedules found',
+        error: 'No upcoming schedules found'
       });
+    });
+
+    it('should return 404 when event not found', async () => {
+      mockEventService.getEvent.mockRejectedValue(new Error('Event not found'));
+
+      await getNextSchedule(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(404);
     });
   });
 });

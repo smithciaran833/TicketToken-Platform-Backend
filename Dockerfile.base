@@ -1,0 +1,32 @@
+# ============================================
+# TicketToken Base Image
+# Contains backend/shared pre-built
+# All services extend from this
+# ============================================
+
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install build tools needed for native modules
+RUN apk add --no-cache python3 make g++
+
+# Copy shared package files
+COPY backend/shared/package*.json ./backend/shared/
+
+# Install shared dependencies
+WORKDIR /app/backend/shared
+RUN npm ci && npm cache clean --force
+
+# Copy shared source and build
+COPY backend/shared/tsconfig.json ./
+COPY backend/shared/src ./src
+
+RUN npm run build
+
+# Back to app root
+WORKDIR /app
+
+# Label
+LABEL org.opencontainers.image.title="TicketToken Base" \
+      org.opencontainers.image.description="Base image with shared module pre-built"

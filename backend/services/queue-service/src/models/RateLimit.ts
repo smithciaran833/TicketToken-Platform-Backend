@@ -1,4 +1,4 @@
-import { Knex } from 'knex';
+import Knex = require('knex');
 import { db as knex } from '../config/database';
 
 export interface IRateLimit {

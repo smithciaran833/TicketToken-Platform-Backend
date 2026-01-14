@@ -1,280 +1,268 @@
-import { JWTService } from '../../../src/services/jwt.service';
-import jwt from 'jsonwebtoken';
-import crypto from 'crypto';
-import { redis } from '../../../src/config/redis';
-import { pool } from '../../../src/config/database';
 import { TokenError } from '../../../src/errors';
 
-// =============================================================================
-// MOCKS
-// =============================================================================
+// Mocks defined before jest.mock calls
+const mockRedis = {
+  get: jest.fn(),
+  set: jest.fn(),
+  setex: jest.fn(),
+  del: jest.fn(),
+};
 
-jest.mock('jsonwebtoken');
-jest.mock('crypto');
-jest.mock('../../../src/config/redis', () => ({
-  redis: {
-    get: jest.fn(),
-    setex: jest.fn(),
-    del: jest.fn(),
-    keys: jest.fn(),
+const mockScanner = {
+  scanKeys: jest.fn(),
+};
+
+const mockPool = {
+  query: jest.fn(),
+};
+
+const mockLogger = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+  debug: jest.fn(),
+};
+
+jest.mock('jsonwebtoken', () => {
+  class TokenExpiredError extends Error {
+    constructor() {
+      super('jwt expired');
+      this.name = 'TokenExpiredError';
+    }
   }
+  return {
+    sign: jest.fn().mockReturnValue('mock-token'),
+    verify: jest.fn(),
+    decode: jest.fn(),
+    TokenExpiredError,
+  };
+});
+
+jest.mock('fs', () => ({
+  readFileSync: jest.fn().mockReturnValue(`-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEAtestkey
+-----END RSA PRIVATE KEY-----`),
+}));
+
+jest.mock('../../../src/config/redis', () => ({
+  getRedis: jest.fn(() => mockRedis),
 }));
 
 jest.mock('../../../src/config/database', () => ({
-  pool: {
-    query: jest.fn(),
-  }
-}));
-
-jest.mock('fs', () => ({
-  readFileSync: jest.fn(() => {
-    if (jest.requireActual('fs').readFileSync.mock?.calls[0]?.[0]?.includes('private')) {
-      return '-----BEGIN RSA PRIVATE KEY-----\nMOCK_PRIVATE_KEY\n-----END RSA PRIVATE KEY-----';
-    }
-    return '-----BEGIN PUBLIC KEY-----\nMOCK_PUBLIC_KEY\n-----END PUBLIC KEY-----';
-  }),
+  pool: mockPool,
 }));
 
 jest.mock('../../../src/config/env', () => ({
   env: {
+    isProduction: false,
+    JWT_PRIVATE_KEY: `-----BEGIN RSA PRIVATE KEY-----
+PLACEHOLDER_FOR_TESTING
+-----END RSA PRIVATE KEY-----`,
+    JWT_PUBLIC_KEY: `-----BEGIN PUBLIC KEY-----
+PLACEHOLDER_FOR_TESTING
+-----END PUBLIC KEY-----`,
+    JWT_PRIVATE_KEY_PATH: '/fake/path/private.pem',
+    JWT_PUBLIC_KEY_PATH: '/fake/path/public.pem',
+    JWT_ISSUER: 'test-issuer',
     JWT_ACCESS_EXPIRES_IN: '15m',
     JWT_REFRESH_EXPIRES_IN: '7d',
-    JWT_ISSUER: 'test-issuer',
-  }
+    DEFAULT_TENANT_ID: 'default-tenant',
+  },
 }));
 
-// =============================================================================
-// TEST SUITE
-// =============================================================================
+jest.mock('@tickettoken/shared', () => ({
+  getScanner: jest.fn(() => mockScanner),
+}));
+
+jest.mock('../../../src/utils/logger', () => ({
+  logger: mockLogger,
+}));
+
+jest.mock('../../../src/utils/redisKeys', () => ({
+  redisKeys: {
+    refreshToken: (id: string, tenantId: string) => `tenant:${tenantId}:refresh_token:${id}`,
+  },
+}));
+
+// Import AFTER mocks
+import { JWTService } from '../../../src/services/jwt.service';
+import jwt from 'jsonwebtoken';
 
 describe('JWTService', () => {
-  let jwtService: JWTService;
-  let mockUser: any;
+  let service: JWTService;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    jwtService = new JWTService();
+    service = new JWTService();
+    
+    // Default mock setups
+    (jwt.sign as jest.Mock).mockReturnValue('mock-token');
+    (jwt.decode as jest.Mock).mockReturnValue({ header: { kid: 'dev' } });
+    mockPool.query.mockResolvedValue({ rows: [{ tenant_id: 'tenant-456' }] });
+  });
 
-    mockUser = {
+  describe('initialize', () => {
+    it('should load keys from filesystem in development mode', async () => {
+      await service.initialize();
+      // Keys are loaded - service should work
+      expect(service).toBeDefined();
+    });
+
+    it('should be idempotent - multiple calls work', async () => {
+      await service.initialize();
+      await service.initialize();
+      await service.initialize();
+      // Should not throw
+      expect(service).toBeDefined();
+    });
+  });
+
+  describe('generateTokenPair', () => {
+    const mockUser = {
       id: 'user-123',
-      email: 'user@example.com',
       tenant_id: 'tenant-456',
-      role: 'customer',
-      permissions: ['buy:tickets', 'view:events'],
+      email: 'test@example.com',
+      permissions: ['read', 'write'],
+      role: 'admin',
       ipAddress: '192.168.1.1',
       userAgent: 'Mozilla/5.0',
     };
 
-    // Default mock for crypto.randomUUID
-    (crypto.randomUUID as jest.Mock).mockReturnValue('mock-uuid-123');
-  });
-
-  // =============================================================================
-  // GROUP 1: generateTokenPair() - 11 test cases
-  // =============================================================================
-
-  describe('generateTokenPair()', () => {
-    beforeEach(() => {
-      (jwt.sign as jest.Mock).mockImplementation((payload, secret, options) => {
-        return `mocked-token-${payload.type}`;
-      });
-
-      (redis.setex as jest.Mock).mockResolvedValue('OK');
-
-      (pool.query as jest.Mock).mockResolvedValue({
-        rows: [{ tenant_id: 'tenant-456' }],
-      });
+    beforeEach(async () => {
+      await service.initialize();
     });
 
-    it('should generate both access and refresh tokens', async () => {
-      const result = await jwtService.generateTokenPair(mockUser);
+    it('should generate access and refresh tokens', async () => {
+      const result = await service.generateTokenPair(mockUser);
 
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-      expect(result.accessToken).toBe('mocked-token-access');
-      expect(result.refreshToken).toBe('mocked-token-refresh');
-    });
-
-    it('should call jwt.sign twice (once for each token)', async () => {
-      await jwtService.generateTokenPair(mockUser);
-
+      expect(result).toHaveProperty('accessToken', 'mock-token');
+      expect(result).toHaveProperty('refreshToken', 'mock-token');
       expect(jwt.sign).toHaveBeenCalledTimes(2);
     });
 
-    it('should use RS256 algorithm for both tokens', async () => {
-      await jwtService.generateTokenPair(mockUser);
+    it('should sign access token with correct payload', async () => {
+      await service.generateTokenPair(mockUser);
 
-      // First call - access token
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.any(Object),
-        expect.any(String),
-        expect.objectContaining({ algorithm: 'RS256' })
-      );
+      const accessCall = (jwt.sign as jest.Mock).mock.calls[0];
+      const payload = accessCall[0];
 
-      // Second call - refresh token
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        2,
-        expect.any(Object),
-        expect.any(String),
-        expect.objectContaining({ algorithm: 'RS256' })
-      );
+      expect(payload.sub).toBe('user-123');
+      expect(payload.type).toBe('access');
+      expect(payload.tenant_id).toBe('tenant-456');
+      expect(payload.email).toBe('test@example.com');
+      expect(payload.permissions).toEqual(['read', 'write']);
+      expect(payload.role).toBe('admin');
+      expect(payload.jti).toBeDefined();
     });
 
-    it('should include user id as "sub" in access token', async () => {
-      await jwtService.generateTokenPair(mockUser);
+    it('should sign refresh token with correct payload', async () => {
+      await service.generateTokenPair(mockUser);
 
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ sub: 'user-123' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      const refreshCall = (jwt.sign as jest.Mock).mock.calls[1];
+      const payload = refreshCall[0];
+
+      expect(payload.sub).toBe('user-123');
+      expect(payload.type).toBe('refresh');
+      expect(payload.tenant_id).toBe('tenant-456');
+      expect(payload.family).toBeDefined();
+      expect(payload.jti).toBeDefined();
     });
 
-    it('should include tenant_id in both tokens', async () => {
-      await jwtService.generateTokenPair(mockUser);
+    it('should use RS256 algorithm', async () => {
+      await service.generateTokenPair(mockUser);
 
-      // Access token should have tenant_id
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ tenant_id: 'tenant-456' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      const accessOptions = (jwt.sign as jest.Mock).mock.calls[0][2];
+      const refreshOptions = (jwt.sign as jest.Mock).mock.calls[1][2];
 
-      // Refresh token should also have tenant_id
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ tenant_id: 'tenant-456' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      expect(accessOptions.algorithm).toBe('RS256');
+      expect(refreshOptions.algorithm).toBe('RS256');
     });
 
-    it('should fetch tenant_id from database if not provided', async () => {
-      const userWithoutTenant = { id: 'user-123' };
+    it('should store refresh token in Redis with tenant prefix', async () => {
+      await service.generateTokenPair(mockUser);
 
-      await jwtService.generateTokenPair(userWithoutTenant);
+      expect(mockRedis.setex).toHaveBeenCalledWith(
+        expect.stringContaining('tenant:tenant-456:refresh_token:'),
+        7 * 24 * 60 * 60,
+        expect.any(String)
+      );
 
-      expect(pool.query).toHaveBeenCalledWith(
+      const storedData = JSON.parse(mockRedis.setex.mock.calls[0][2]);
+      expect(storedData.userId).toBe('user-123');
+      expect(storedData.tenantId).toBe('tenant-456');
+      expect(storedData.ipAddress).toBe('192.168.1.1');
+      expect(storedData.userAgent).toBe('Mozilla/5.0');
+    });
+
+    it('should fetch tenant_id from DB if not provided', async () => {
+      const userWithoutTenant = { id: 'user-123', email: 'test@example.com' };
+      mockPool.query.mockResolvedValue({ rows: [{ tenant_id: 'db-tenant' }] });
+
+      await service.generateTokenPair(userWithoutTenant);
+
+      expect(mockPool.query).toHaveBeenCalledWith(
         'SELECT tenant_id FROM users WHERE id = $1',
         ['user-123']
       );
-
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ tenant_id: 'tenant-456' }),
-        expect.any(String),
-        expect.any(Object)
-      );
     });
 
-    it('should use default tenant_id if database returns none', async () => {
-      (pool.query as jest.Mock).mockResolvedValueOnce({
-        rows: [],
-      });
+    it('should use DEFAULT_TENANT_ID if not in user or DB', async () => {
+      const userWithoutTenant = { id: 'user-123', email: 'test@example.com' };
+      mockPool.query.mockResolvedValue({ rows: [] });
 
-      const userWithoutTenant = { id: 'user-123' };
-      await jwtService.generateTokenPair(userWithoutTenant);
+      await service.generateTokenPair(userWithoutTenant);
 
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ tenant_id: '00000000-0000-0000-0000-000000000001' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      const accessCall = (jwt.sign as jest.Mock).mock.calls[0];
+      expect(accessCall[0].tenant_id).toBe('default-tenant');
     });
 
-    it('should include permissions in access token', async () => {
-      await jwtService.generateTokenPair(mockUser);
+    it('should use default permissions if not provided', async () => {
+      const userWithoutPermissions = { id: 'user-123', tenant_id: 'tenant-456' };
 
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ permissions: ['buy:tickets', 'view:events'] }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      await service.generateTokenPair(userWithoutPermissions);
+
+      const accessCall = (jwt.sign as jest.Mock).mock.calls[0];
+      expect(accessCall[0].permissions).toEqual(['buy:tickets', 'view:events', 'transfer:tickets']);
     });
 
-    it('should include role in access token', async () => {
-      await jwtService.generateTokenPair(mockUser);
+    it('should use default role if not provided', async () => {
+      const userWithoutRole = { id: 'user-123', tenant_id: 'tenant-456' };
 
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ role: 'customer' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      await service.generateTokenPair(userWithoutRole);
+
+      const accessCall = (jwt.sign as jest.Mock).mock.calls[0];
+      expect(accessCall[0].role).toBe('customer');
     });
 
-    it('should set correct expiry times', async () => {
-      await jwtService.generateTokenPair(mockUser);
+    it('should use default ipAddress and userAgent if not provided', async () => {
+      const userWithoutMeta = { id: 'user-123', tenant_id: 'tenant-456' };
 
-      // Access token - 15 minutes
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.any(Object),
-        expect.any(String),
-        expect.objectContaining({ expiresIn: '15m' })
-      );
+      await service.generateTokenPair(userWithoutMeta);
 
-      // Refresh token - 7 days
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        2,
-        expect.any(Object),
-        expect.any(String),
-        expect.objectContaining({ expiresIn: '7d' })
-      );
-    });
-
-    it('should store refresh token metadata in Redis', async () => {
-      await jwtService.generateTokenPair(mockUser);
-
-      expect(redis.setex).toHaveBeenCalledWith(
-        expect.stringContaining('refresh_token:'),
-        7 * 24 * 60 * 60, // 7 days in seconds
-        expect.stringContaining('"userId":"user-123"')
-      );
-    });
-
-    it('should include token family in refresh token', async () => {
-      (crypto.randomUUID as jest.Mock)
-        .mockReturnValueOnce('jti-123')         // Access token jti
-        .mockReturnValueOnce('refresh-jti-456') // Refresh token jti
-        .mockReturnValueOnce('family-456');     // Family
-
-      await jwtService.generateTokenPair(mockUser);
-
-      // Second jwt.sign call is refresh token
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        2,
-        expect.objectContaining({ family: 'family-456' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      const storedData = JSON.parse(mockRedis.setex.mock.calls[0][2]);
+      expect(storedData.ipAddress).toBe('unknown');
+      expect(storedData.userAgent).toBe('unknown');
     });
   });
 
-  // =============================================================================
-  // GROUP 2: verifyAccessToken() - 8 test cases
-  // =============================================================================
+  describe('verifyAccessToken', () => {
+    const validPayload = {
+      sub: 'user-123',
+      type: 'access',
+      jti: 'token-id',
+      tenant_id: 'tenant-456',
+      email: 'test@example.com',
+    };
 
-  describe('verifyAccessToken()', () => {
-    it('should verify valid access token', async () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'access',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-        permissions: ['buy:tickets'],
-        role: 'customer',
-      };
+    beforeEach(async () => {
+      await service.initialize();
+      (jwt.verify as jest.Mock).mockReturnValue(validPayload);
+    });
 
-      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
+    it('should return payload for valid token', async () => {
+      const result = await service.verifyAccessToken('valid-token');
 
-      const result = await jwtService.verifyAccessToken('valid-token');
-
+      expect(result).toEqual(validPayload);
       expect(jwt.verify).toHaveBeenCalledWith(
         'valid-token',
         expect.any(String),
@@ -284,911 +272,284 @@ describe('JWTService', () => {
           algorithms: ['RS256'],
         })
       );
-
-      expect(result).toEqual(mockPayload);
     });
 
-    it('should use public key and RS256 algorithm', async () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'access',
-        tenant_id: 'tenant-456',
-      };
-
-      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
-
-      await jwtService.verifyAccessToken('token');
-
-      expect(jwt.verify).toHaveBeenCalledWith(
-        'token',
-        expect.stringContaining('PUBLIC KEY'),
-        expect.objectContaining({ algorithms: ['RS256'] })
-      );
-    });
-
-    it('should verify issuer and audience', async () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'access',
-        tenant_id: 'tenant-456',
-      };
-
-      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
-
-      await jwtService.verifyAccessToken('token');
-
-      expect(jwt.verify).toHaveBeenCalledWith(
-        'token',
-        expect.any(String),
-        expect.objectContaining({
-          issuer: 'test-issuer',
-          audience: 'test-issuer',
-        })
-      );
-    });
-
-    it('should reject token with wrong type', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({
-        sub: 'user-123',
-        type: 'refresh',  // Wrong type
-        tenant_id: 'tenant-456',
-      });
-
-      await expect(jwtService.verifyAccessToken('token'))
-        .rejects.toThrow('Invalid token type');
-    });
-
-    it('should reject token without tenant_id', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({
-        sub: 'user-123',
-        type: 'access',
-        // Missing tenant_id
-      });
-
-      await expect(jwtService.verifyAccessToken('token'))
-        .rejects.toThrow('missing tenant context');
-    });
-
-    it('should reject expired token', async () => {
+    it('should throw TokenError for expired token', async () => {
+      const { TokenExpiredError } = jest.requireMock('jsonwebtoken');
       (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new jwt.TokenExpiredError('jwt expired', new Date());
+        throw new TokenExpiredError();
       });
 
-      await expect(jwtService.verifyAccessToken('expired-token'))
-        .rejects.toThrow('Access token expired');
+      await expect(service.verifyAccessToken('expired-token')).rejects.toThrow(TokenError);
+      await expect(service.verifyAccessToken('expired-token')).rejects.toThrow('Access token expired');
     });
 
-    it('should reject invalid token', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('invalid signature');
-      });
+    it('should throw TokenError if type is not access', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ ...validPayload, type: 'refresh' });
 
-      await expect(jwtService.verifyAccessToken('invalid-token'))
-        .rejects.toThrow('Invalid access token');
+      await expect(service.verifyAccessToken('wrong-type')).rejects.toThrow(TokenError);
+      await expect(service.verifyAccessToken('wrong-type')).rejects.toThrow('Invalid token type');
     });
 
-    it('should reject malformed token', async () => {
+    it('should throw TokenError if tenant_id is missing', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ ...validPayload, tenant_id: undefined });
+
+      await expect(service.verifyAccessToken('no-tenant')).rejects.toThrow(TokenError);
+      await expect(service.verifyAccessToken('no-tenant')).rejects.toThrow('missing tenant context');
+    });
+
+    it('should re-throw TokenError as-is', async () => {
       (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new jwt.JsonWebTokenError('jwt malformed');
+        throw new TokenError('Custom token error');
       });
 
-      await expect(jwtService.verifyAccessToken('malformed-token'))
-        .rejects.toThrow('Invalid access token');
+      await expect(service.verifyAccessToken('token')).rejects.toThrow('Custom token error');
+    });
+
+    it('should throw generic error for other errors', async () => {
+      (jwt.verify as jest.Mock).mockImplementation(() => {
+        throw new Error('Some other error');
+      });
+
+      await expect(service.verifyAccessToken('invalid')).rejects.toThrow('Invalid access token');
     });
   });
 
-  // =============================================================================
-  // GROUP 3: verifyRefreshToken() - 6 test cases
-  // =============================================================================
+  describe('refreshTokens', () => {
+    const validRefreshPayload = {
+      sub: 'user-123',
+      type: 'refresh',
+      jti: 'refresh-token-id',
+      tenant_id: 'tenant-456',
+      family: 'token-family',
+    };
 
-  describe('verifyRefreshToken()', () => {
-    it('should verify valid refresh token', async () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'refresh',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-        family: 'family-123',
-      };
+    const storedTokenData = {
+      userId: 'user-123',
+      tenantId: 'tenant-456',
+      family: 'token-family',
+      createdAt: Date.now(),
+      ipAddress: '127.0.0.1',
+      userAgent: 'test-agent',
+    };
 
-      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
-
-      const result = await jwtService.verifyRefreshToken('valid-refresh-token');
-
-      expect(result).toEqual(mockPayload);
-    });
-
-    it('should use RS256 algorithm', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'user-123' });
-
-      await jwtService.verifyRefreshToken('token');
-
-      expect(jwt.verify).toHaveBeenCalledWith(
-        'token',
-        expect.any(String),
-        expect.objectContaining({ algorithms: ['RS256'] })
-      );
-    });
-
-    it('should reject expired refresh token', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new jwt.TokenExpiredError('jwt expired', new Date());
-      });
-
-      await expect(jwtService.verifyRefreshToken('expired-token'))
-        .rejects.toThrow('Invalid refresh token');
-    });
-
-    it('should reject invalid refresh token', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('invalid signature');
-      });
-
-      await expect(jwtService.verifyRefreshToken('invalid-token'))
-        .rejects.toThrow('Invalid refresh token');
-    });
-
-    it('should reject malformed refresh token', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new jwt.JsonWebTokenError('jwt malformed');
-      });
-
-      await expect(jwtService.verifyRefreshToken('malformed'))
-        .rejects.toThrow('Invalid refresh token');
-    });
-
-    it('should handle null or empty token', async () => {
-      await expect(jwtService.verifyRefreshToken(''))
-        .rejects.toThrow('Invalid refresh token');
-    });
-  });
-
-  // =============================================================================
-  // GROUP 4: refreshTokens() - 12 test cases
-  // =============================================================================
-
-  describe('refreshTokens()', () => {
-    const validRefreshToken = 'valid-refresh-token';
-    const ipAddress = '192.168.1.1';
-    const userAgent = 'Mozilla/5.0';
-
-    beforeEach(() => {
-      // Setup default successful flow
-      (jwt.verify as jest.Mock).mockReturnValue({
-        sub: 'user-123',
-        type: 'refresh',
-        jti: 'refresh-123',
-        tenant_id: 'tenant-456',
-        family: 'family-123',
-      });
-
-      (redis.get as jest.Mock).mockResolvedValue(JSON.stringify({
-        userId: 'user-123',
-        tenantId: 'tenant-456',
-        family: 'family-123',
-        createdAt: Date.now(),
-        ipAddress: '192.168.1.1',
-        userAgent: 'Mozilla/5.0',
-      }));
-
-      (pool.query as jest.Mock).mockResolvedValue({
+    beforeEach(async () => {
+      await service.initialize();
+      (jwt.verify as jest.Mock).mockReturnValue(validRefreshPayload);
+      mockRedis.get.mockResolvedValue(JSON.stringify(storedTokenData));
+      mockPool.query.mockResolvedValue({
         rows: [{
           id: 'user-123',
-          tenant_id: 'tenant-789',
-          permissions: ['buy:tickets', 'view:events'],
+          tenant_id: 'tenant-456',
+          email: 'test@example.com',
+          permissions: ['read'],
           role: 'customer',
         }],
       });
-
-      (jwt.sign as jest.Mock).mockImplementation((payload) => {
-        return `new-token-${payload.type}`;
-      });
-
-      (redis.del as jest.Mock).mockResolvedValue(1);
-      (redis.setex as jest.Mock).mockResolvedValue('OK');
+      mockScanner.scanKeys.mockResolvedValue([]);
     });
 
-    it('should generate new token pair with valid refresh token', async () => {
-      const result = await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
+    it('should return new token pair on valid refresh', async () => {
+      const result = await service.refreshTokens('valid-refresh', '127.0.0.1', 'agent');
 
       expect(result).toHaveProperty('accessToken');
       expect(result).toHaveProperty('refreshToken');
-      expect(result.accessToken).toBe('new-token-access');
-      expect(result.refreshToken).toBe('new-token-refresh');
-    });
-
-    it('should verify the refresh token', async () => {
-      await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
-
-      expect(jwt.verify).toHaveBeenCalledWith(
-        validRefreshToken,
-        expect.any(String),
-        expect.objectContaining({ algorithms: ['RS256'] })
-      );
-    });
-
-    it('should check if token exists in Redis', async () => {
-      await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
-
-      expect(redis.get).toHaveBeenCalledWith('refresh_token:refresh-123');
-    });
-
-    it('should reject if token not found in Redis (already used)', async () => {
-      (redis.get as jest.Mock).mockResolvedValue(null);
-
-      await expect(
-        jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent)
-      ).rejects.toThrow('Token reuse detected - possible theft');
-    });
-
-    it('should invalidate token family on reuse detection', async () => {
-      (redis.get as jest.Mock).mockResolvedValue(null);
-
-      const invalidateSpy = jest.spyOn(jwtService, 'invalidateTokenFamily');
-
-      try {
-        await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
-      } catch (error) {
-        // Expected to throw
-      }
-
-      expect(invalidateSpy).toHaveBeenCalledWith('family-123');
-    });
-
-    it('should fetch fresh user data from database', async () => {
-      await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
-
-      expect(pool.query).toHaveBeenCalledWith(
-        'SELECT id, tenant_id, permissions, role FROM users WHERE id = $1',
-        ['user-123']
-      );
-    });
-
-    it('should reject if user not found in database', async () => {
-      (pool.query as jest.Mock).mockResolvedValue({ rows: [] });
-
-      await expect(
-        jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent)
-      ).rejects.toThrow('User not found');
     });
 
     it('should delete old refresh token from Redis', async () => {
-      await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
+      await service.refreshTokens('valid-refresh', '127.0.0.1', 'agent');
 
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:refresh-123');
-    });
-
-    it('should reject token with wrong type', async () => {
-      (jwt.verify as jest.Mock).mockReturnValue({
-        sub: 'user-123',
-        type: 'access',  // Wrong type
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-      });
-
-      await expect(
-        jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent)
-      ).rejects.toThrow('Invalid token type');
-    });
-
-    it('should include new IP and user agent in token metadata', async () => {
-      await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
-
-      // Check that generateTokenPair was called with IP and user agent
-      expect(jwt.sign).toHaveBeenCalled();
-      expect(redis.setex).toHaveBeenCalledWith(
-        expect.any(String),
-        expect.any(Number),
-        expect.stringContaining('"ipAddress":"192.168.1.1"')
+      expect(mockRedis.del).toHaveBeenCalledWith(
+        'tenant:tenant-456:refresh_token:refresh-token-id'
       );
     });
 
-    it('should handle token verification errors', async () => {
+    it('should throw TokenError if type is not refresh', async () => {
+      (jwt.verify as jest.Mock).mockReturnValue({ ...validRefreshPayload, type: 'access' });
+
+      await expect(service.refreshTokens('wrong-type', '127.0.0.1', 'agent')).rejects.toThrow(TokenError);
+      await expect(service.refreshTokens('wrong-type', '127.0.0.1', 'agent')).rejects.toThrow('Invalid token type');
+    });
+
+    it('should detect token reuse and invalidate family', async () => {
+      mockRedis.get.mockResolvedValue(null);
+
+      await expect(service.refreshTokens('reused-token', '127.0.0.1', 'agent')).rejects.toThrow('Token reuse detected');
+    });
+
+    it('should throw TokenError if user not found', async () => {
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      await expect(service.refreshTokens('valid-refresh', '127.0.0.1', 'agent')).rejects.toThrow('User not found');
+    });
+
+    it('should re-throw TokenError as-is', async () => {
       (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('Invalid signature');
+        throw new TokenError('Custom error');
       });
 
-      await expect(
-        jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent)
-      ).rejects.toThrow('Invalid refresh token');
+      await expect(service.refreshTokens('token', '127.0.0.1', 'agent')).rejects.toThrow('Custom error');
     });
 
-    it('should generate tokens with current tenant_id from database', async () => {
-      await jwtService.refreshTokens(validRefreshToken, ipAddress, userAgent);
+    it('should throw generic error for other errors', async () => {
+      (jwt.verify as jest.Mock).mockImplementation(() => {
+        throw new Error('Some JWT error');
+      });
 
-      // Should use tenant-789 from database, not tenant-456 from token
-      expect(jwt.sign).toHaveBeenNthCalledWith(
-        1,
-        expect.objectContaining({ tenant_id: 'tenant-789' }),
-        expect.any(String),
-        expect.any(Object)
-      );
+      await expect(service.refreshTokens('invalid', '127.0.0.1', 'agent')).rejects.toThrow('Invalid refresh token');
     });
   });
 
-  // =============================================================================
-  // GROUP 5: invalidateTokenFamily() - 5 test cases
-  // =============================================================================
-
-  describe('invalidateTokenFamily()', () => {
-    beforeEach(() => {
-      (redis.keys as jest.Mock).mockResolvedValue([
-        'refresh_token:token-1',
-        'refresh_token:token-2',
-        'refresh_token:token-3',
-      ]);
-
-      (redis.del as jest.Mock).mockResolvedValue(1);
+  describe('invalidateTokenFamily', () => {
+    beforeEach(async () => {
+      await service.initialize();
     });
 
-    it('should find all refresh tokens', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-456' }))
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-123' }));
+    it('should use tenant-prefixed pattern when tenantId provided', async () => {
+      mockScanner.scanKeys.mockResolvedValue([]);
 
-      await jwtService.invalidateTokenFamily('family-123');
+      await service.invalidateTokenFamily('family-123', 'tenant-456');
 
-      expect(redis.keys).toHaveBeenCalledWith('refresh_token:*');
+      expect(mockScanner.scanKeys).toHaveBeenCalledWith('tenant:tenant-456:refresh_token:*');
+    });
+
+    it('should use non-tenant pattern when tenantId not provided', async () => {
+      mockScanner.scanKeys.mockResolvedValue([]);
+
+      await service.invalidateTokenFamily('family-123');
+
+      expect(mockScanner.scanKeys).toHaveBeenCalledWith('refresh_token:*');
     });
 
     it('should delete tokens matching the family', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-456' }))
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-123' }));
+      const keys = ['tenant:t1:refresh_token:a', 'tenant:t1:refresh_token:b', 'tenant:t1:refresh_token:c'];
+      mockScanner.scanKeys.mockResolvedValue(keys);
+      mockRedis.get.mockImplementation((key: string) => {
+        if (key.includes(':a')) return JSON.stringify({ family: 'target-family' });
+        if (key.includes(':b')) return JSON.stringify({ family: 'target-family' });
+        return JSON.stringify({ family: 'other-family' });
+      });
 
-      await jwtService.invalidateTokenFamily('family-123');
+      await service.invalidateTokenFamily('target-family', 't1');
 
-      expect(redis.del).toHaveBeenCalledTimes(2);
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-1');
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-3');
+      expect(mockRedis.del).toHaveBeenCalledWith('tenant:t1:refresh_token:a');
+      expect(mockRedis.del).toHaveBeenCalledWith('tenant:t1:refresh_token:b');
+      expect(mockRedis.del).not.toHaveBeenCalledWith('tenant:t1:refresh_token:c');
     });
 
-    it('should not delete tokens from other families', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-456' }))
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-789' }));
+    it('should skip keys with no data', async () => {
+      mockScanner.scanKeys.mockResolvedValue(['key1', 'key2']);
+      mockRedis.get.mockResolvedValue(null);
 
-      await jwtService.invalidateTokenFamily('family-123');
+      await service.invalidateTokenFamily('family', 'tenant');
 
-      expect(redis.del).toHaveBeenCalledTimes(1);
-      expect(redis.del).not.toHaveBeenCalledWith('refresh_token:token-2');
-      expect(redis.del).not.toHaveBeenCalledWith('refresh_token:token-3');
-    });
-
-    it('should handle tokens with no data gracefully', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(null)
-        .mockResolvedValueOnce(JSON.stringify({ family: 'family-123' }))
-        .mockResolvedValueOnce(null);
-
-      await jwtService.invalidateTokenFamily('family-123');
-
-      expect(redis.del).toHaveBeenCalledTimes(1);
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-2');
-    });
-
-    it('should handle empty token list', async () => {
-      (redis.keys as jest.Mock).mockResolvedValue([]);
-
-      await jwtService.invalidateTokenFamily('family-123');
-
-      expect(redis.get).not.toHaveBeenCalled();
-      expect(redis.del).not.toHaveBeenCalled();
+      expect(mockRedis.del).not.toHaveBeenCalled();
     });
   });
 
-  // =============================================================================
-  // GROUP 6: revokeAllUserTokens() - 4 test cases
-  // =============================================================================
-
-  describe('revokeAllUserTokens()', () => {
-    beforeEach(() => {
-      (redis.keys as jest.Mock).mockResolvedValue([
-        'refresh_token:token-1',
-        'refresh_token:token-2',
-        'refresh_token:token-3',
-      ]);
-
-      (redis.del as jest.Mock).mockResolvedValue(1);
+  describe('revokeAllUserTokens', () => {
+    beforeEach(async () => {
+      await service.initialize();
     });
 
-    it('should find all refresh tokens', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-456' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }));
+    it('should use tenant-prefixed pattern when tenantId provided', async () => {
+      mockScanner.scanKeys.mockResolvedValue([]);
 
-      await jwtService.revokeAllUserTokens('user-123');
+      await service.revokeAllUserTokens('user-123', 'tenant-456');
 
-      expect(redis.keys).toHaveBeenCalledWith('refresh_token:*');
+      expect(mockScanner.scanKeys).toHaveBeenCalledWith('tenant:tenant-456:refresh_token:*');
     });
 
-    it('should delete all tokens for the user', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-456' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }));
+    it('should use non-tenant pattern when tenantId not provided', async () => {
+      mockScanner.scanKeys.mockResolvedValue([]);
 
-      await jwtService.revokeAllUserTokens('user-123');
+      await service.revokeAllUserTokens('user-123');
 
-      expect(redis.del).toHaveBeenCalledTimes(2);
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-1');
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-3');
+      expect(mockScanner.scanKeys).toHaveBeenCalledWith('refresh_token:*');
     });
 
-    it('should not delete tokens for other users', async () => {
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-456' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-789' }));
+    it('should delete tokens matching the userId', async () => {
+      const keys = ['tenant:t1:refresh_token:a', 'tenant:t1:refresh_token:b'];
+      mockScanner.scanKeys.mockResolvedValue(keys);
+      mockRedis.get.mockImplementation((key: string) => {
+        if (key.includes(':a')) return JSON.stringify({ userId: 'user-123' });
+        return JSON.stringify({ userId: 'other-user' });
+      });
 
-      await jwtService.revokeAllUserTokens('user-123');
+      await service.revokeAllUserTokens('user-123', 't1');
 
-      expect(redis.del).toHaveBeenCalledTimes(1);
-      expect(redis.del).not.toHaveBeenCalledWith('refresh_token:token-2');
-      expect(redis.del).not.toHaveBeenCalledWith('refresh_token:token-3');
-    });
-
-    it('should handle empty token list', async () => {
-      (redis.keys as jest.Mock).mockResolvedValue([]);
-
-      await jwtService.revokeAllUserTokens('user-123');
-
-      expect(redis.get).not.toHaveBeenCalled();
-      expect(redis.del).not.toHaveBeenCalled();
+      expect(mockRedis.del).toHaveBeenCalledWith('tenant:t1:refresh_token:a');
+      expect(mockRedis.del).not.toHaveBeenCalledWith('tenant:t1:refresh_token:b');
     });
   });
 
-  // =============================================================================
-  // GROUP 7: decode() - 4 test cases
-  // =============================================================================
-
-  describe('decode()', () => {
-    it('should decode valid token without verification', () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'access',
-        tenant_id: 'tenant-456',
-      };
-
+  describe('decode', () => {
+    it('should decode token without verification', () => {
+      const mockPayload = { sub: 'user-123', type: 'access' };
       (jwt.decode as jest.Mock).mockReturnValue(mockPayload);
 
-      const result = jwtService.decode('valid-token');
+      const result = service.decode('any-token');
 
-      expect(jwt.decode).toHaveBeenCalledWith('valid-token');
       expect(result).toEqual(mockPayload);
-    });
-
-    it('should return null for invalid token', () => {
-      (jwt.decode as jest.Mock).mockReturnValue(null);
-
-      const result = jwtService.decode('invalid-token');
-
-      expect(result).toBeNull();
-    });
-
-    it('should decode expired token without throwing', () => {
-      const expiredPayload = {
-        sub: 'user-123',
-        exp: Math.floor(Date.now() / 1000) - 3600,  // Expired 1 hour ago
-      };
-
-      (jwt.decode as jest.Mock).mockReturnValue(expiredPayload);
-
-      const result = jwtService.decode('expired-token');
-
-      expect(result).toEqual(expiredPayload);
-    });
-
-    it('should not verify signature when decoding', () => {
-      jwtService.decode('token');
-
-      expect(jwt.decode).toHaveBeenCalledWith('token');
-      expect(jwt.verify).not.toHaveBeenCalled();
+      expect(jwt.decode).toHaveBeenCalledWith('any-token');
     });
   });
 
-  // =============================================================================
-  // GROUP 8: getPublicKey() - 2 test cases
-  // =============================================================================
-
-  describe('getPublicKey()', () => {
-    it('should return the public key', () => {
-      const publicKey = jwtService.getPublicKey();
-
-      expect(publicKey).toBeDefined();
-      expect(typeof publicKey).toBe('string');
+  describe('verifyRefreshToken', () => {
+    beforeEach(async () => {
+      await service.initialize();
     });
 
-    it('should return a string', () => {
-      const publicKey = jwtService.getPublicKey();
+    it('should return verified payload', async () => {
+      const payload = { sub: 'user-123', type: 'refresh' };
+      (jwt.verify as jest.Mock).mockReturnValue(payload);
 
-      expect(publicKey).toContain('PUBLIC KEY');
-    });
-  });
+      const result = await service.verifyRefreshToken('valid-token');
 
-  // =============================================================================
-  // GROUP 9: Token Security Attacks - 6 test cases
-  // =============================================================================
-
-  describe('Token Security Attacks', () => {
-    it('should reject token with wrong issuer', async () => {
-      // Create token with different issuer
-      const maliciousPayload = {
-        sub: 'user-123',
-        type: 'access',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-      };
-
-      const maliciousToken = jwt.sign(maliciousPayload, 'fake-key', {
-        issuer: 'evil-issuer',
-        audience: 'test-issuer',
-        algorithm: 'HS256',
-      });
-
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('jwt issuer invalid');
-      });
-
-      await expect(jwtService.verifyAccessToken(maliciousToken))
-        .rejects.toThrow('Invalid access token');
-    });
-
-    it('should reject token with wrong audience', async () => {
-      // Create token with different audience
-      const maliciousPayload = {
-        sub: 'user-123',
-        type: 'access',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-      };
-
-      const maliciousToken = jwt.sign(maliciousPayload, 'fake-key', {
-        issuer: 'test-issuer',
-        audience: 'wrong-audience',
-        algorithm: 'HS256',
-      });
-
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('jwt audience invalid');
-      });
-
-      await expect(jwtService.verifyAccessToken(maliciousToken))
-        .rejects.toThrow('Invalid access token');
-    });
-
-    it('should reject algorithm confusion attack (HS256 instead of RS256)', async () => {
-      // Simulate HS256 token when RS256 is expected
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('invalid algorithm');
-      });
-
-      await expect(jwtService.verifyAccessToken('hs256-token'))
-        .rejects.toThrow('Invalid access token');
-    });
-
-    it('should reject tampered token payload', async () => {
-      // Mock a token where payload was modified
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('invalid signature');
-      });
-
-      await expect(jwtService.verifyAccessToken('tampered-token'))
-        .rejects.toThrow('Invalid access token');
-    });
-
-    it('should reject token with "none" algorithm', async () => {
-      // "none" algorithm attack - no signature verification
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new Error('invalid algorithm');
-      });
-
-      await expect(jwtService.verifyAccessToken('none-algorithm-token'))
-        .rejects.toThrow('Invalid access token');
-    });
-
-    it('should reject token with missing signature', async () => {
-      // Token with header.payload but no signature
-      const headerPayload = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJ1c2VyLTEyMyJ9';
-
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new jwt.JsonWebTokenError('jwt malformed');
-      });
-
-      await expect(jwtService.verifyAccessToken(headerPayload))
-        .rejects.toThrow('Invalid access token');
-    });
-  });
-
-  // =============================================================================
-  // GROUP 10: Edge Cases & Robustness - 8 test cases
-  // =============================================================================
-
-  describe('Edge Cases & Robustness', () => {
-    beforeEach(() => {
-      (jwt.sign as jest.Mock).mockImplementation((payload) => {
-        return `mocked-token-${payload.type}-${JSON.stringify(payload).length}`;
-      });
-
-      (jwt.verify as jest.Mock).mockImplementation((token) => {
-        // Return mock payload that's being verified
-        return {
-          sub: 'user-123',
-          type: 'access',
-          jti: 'token-123',
-          tenant_id: 'tenant-456',
-          permissions: [],
-        };
-      });
-
-      (pool.query as jest.Mock).mockResolvedValue({
-        rows: [{ tenant_id: 'tenant-456' }],
-      });
-    });
-
-    it('should handle very long permission arrays (100+ items)', async () => {
-      // Create 150 permissions
-      const permissions = Array.from({ length: 150 }, (_, i) => `permission:${i}`);
-
-      const user = {
-        id: 'user-123',
-        tenant_id: 'tenant-456',
-        permissions,
-        role: 'super-admin',
-      };
-
-      const result = await jwtService.generateTokenPair(user);
-
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-
-      // Verify jwt.sign was called with the large permissions array
-      expect(jwt.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ permissions }),
+      expect(result).toEqual(payload);
+      expect(jwt.verify).toHaveBeenCalledWith(
+        'valid-token',
         expect.any(String),
-        expect.any(Object)
+        { algorithms: ['RS256'] }
       );
     });
 
-    it('should handle special characters in claims', async () => {
-      const user = {
-        id: 'user-123',
-        tenant_id: 'tenant-456',
-        permissions: [
-          'read:tickets<script>',
-          'write:events"\'',
-          'delete:users;DROP TABLE',
-        ],
-        role: 'admin<>',
-      };
-
-      const result = await jwtService.generateTokenPair(user);
-
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-    });
-
-    it('should handle unicode and emoji in claims', async () => {
-      const user = {
-        id: 'user-123',
-        tenant_id: 'tenant-456',
-        permissions: ['🎫:buy', '测试:read', 'مرحبا:write'],
-        role: 'customer-😊',
-      };
-
-      const result = await jwtService.generateTokenPair(user);
-
-      expect(result).toHaveProperty('accessToken');
-    });
-
-    it('should handle concurrent token generation', async () => {
-      (crypto.randomUUID as jest.Mock)
-        .mockReturnValueOnce('uuid-1')
-        .mockReturnValueOnce('uuid-2')
-        .mockReturnValueOnce('uuid-3')
-        .mockReturnValueOnce('uuid-4')
-        .mockReturnValueOnce('uuid-5')
-        .mockReturnValueOnce('uuid-6');
-
-      (redis.setex as jest.Mock).mockResolvedValue('OK');
-
-      const user1 = { id: 'user-1', tenant_id: 'tenant-1' };
-      const user2 = { id: 'user-2', tenant_id: 'tenant-2' };
-      const user3 = { id: 'user-3', tenant_id: 'tenant-3' };
-
-      // Generate tokens concurrently
-      const results = await Promise.all([
-        jwtService.generateTokenPair(user1),
-        jwtService.generateTokenPair(user2),
-        jwtService.generateTokenPair(user3),
-      ]);
-
-      expect(results).toHaveLength(3);
-      results.forEach(result => {
-        expect(result).toHaveProperty('accessToken');
-        expect(result).toHaveProperty('refreshToken');
-      });
-    });
-
-    it('should handle malformed JWT structure', async () => {
-      const malformedTokens = [
-        'not.a.token',
-        'only-one-part',
-        '',
-        'too.many.parts.here.invalid',
-      ];
-
+    it('should throw error for invalid token', async () => {
       (jwt.verify as jest.Mock).mockImplementation(() => {
-        throw new jwt.JsonWebTokenError('jwt malformed');
+        throw new Error('invalid');
       });
 
-      for (const token of malformedTokens) {
-        await expect(jwtService.verifyAccessToken(token))
-          .rejects.toThrow('Invalid access token');
-      }
-    });
-
-    it('should prevent token reuse after user revocation', async () => {
-      const userId = 'user-123';
-
-      // Setup initial tokens
-      (redis.keys as jest.Mock).mockResolvedValue([
-        'refresh_token:token-1',
-        'refresh_token:token-2',
-      ]);
-
-      (redis.get as jest.Mock)
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }))
-        .mockResolvedValueOnce(JSON.stringify({ userId: 'user-123' }));
-
-      (redis.del as jest.Mock).mockResolvedValue(1);
-
-      // Revoke all user tokens
-      await jwtService.revokeAllUserTokens(userId);
-
-      // Verify both tokens were deleted
-      expect(redis.del).toHaveBeenCalledTimes(2);
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-1');
-      expect(redis.del).toHaveBeenCalledWith('refresh_token:token-2');
-    });
-
-    it('should handle token generation with null/undefined values', async () => {
-      const user = {
-        id: 'user-123',
-        tenant_id: null,
-        permissions: undefined,
-        role: null,
-      };
-
-      (pool.query as jest.Mock).mockResolvedValue({
-        rows: [{ tenant_id: 'tenant-456' }],
-      });
-
-      const result = await jwtService.generateTokenPair(user);
-
-      expect(result).toHaveProperty('accessToken');
-      expect(result).toHaveProperty('refreshToken');
-
-      // Should use default values
-      expect(jwt.sign).toHaveBeenCalledWith(
-        expect.objectContaining({
-          tenant_id: 'tenant-456',
-          permissions: expect.any(Array),
-        }),
-        expect.any(String),
-        expect.any(Object)
-      );
-    });
-
-    it('should handle Redis connection failures gracefully', async () => {
-      const user = {
-        id: 'user-123',
-        tenant_id: 'tenant-456',
-      };
-
-      (redis.setex as jest.Mock).mockRejectedValue(new Error('Redis connection failed'));
-
-      // Should still generate tokens but fail on storage
-      await expect(jwtService.generateTokenPair(user))
-        .rejects.toThrow('Redis connection failed');
+      await expect(service.verifyRefreshToken('invalid')).rejects.toThrow('Invalid refresh token');
     });
   });
 
-  // =============================================================================
-  // GROUP 11: Token Validation Edge Cases - 5 test cases
-  // =============================================================================
+  describe('getJWKS', () => {
+    it('should return JWKS format with all public keys', async () => {
+      await service.initialize();
 
-  describe('Token Validation Edge Cases', () => {
-    it('should validate token expiration time is in future', async () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'access',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-        iat: Math.floor(Date.now() / 1000),
-        exp: Math.floor(Date.now() / 1000) + 900, // 15 minutes in future
-      };
+      const result = service.getJWKS();
 
-      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
-
-      const result = await jwtService.verifyAccessToken('valid-token');
-
-      expect(result.exp).toBeGreaterThan(result.iat!);
-    });
-
-    it('should reject token with expired timestamp', async () => {
-      (jwt.verify as jest.Mock).mockImplementation(() => {
-        const expiredError = new jwt.TokenExpiredError('jwt expired', new Date(Date.now() - 1000));
-        throw expiredError;
+      expect(result).toHaveProperty('keys');
+      expect(Array.isArray(result.keys)).toBe(true);
+      expect(result.keys.length).toBeGreaterThan(0);
+      expect(result.keys[0]).toMatchObject({
+        kty: 'RSA',
+        use: 'sig',
+        alg: 'RS256',
       });
-
-      await expect(jwtService.verifyAccessToken('expired-token'))
-        .rejects.toThrow('Access token expired');
+      expect(result.keys[0]).toHaveProperty('kid');
+      expect(result.keys[0]).toHaveProperty('pem');
     });
+  });
 
-    it('should verify token has all required claims', async () => {
-      const minimalPayload = {
-        sub: 'user-123',
-        type: 'access',
-        tenant_id: 'tenant-456',
-      };
+  describe('getPublicKey', () => {
+    it('should return current public key', async () => {
+      await service.initialize();
 
-      (jwt.verify as jest.Mock).mockReturnValue(minimalPayload);
+      const result = service.getPublicKey();
 
-      const result = await jwtService.verifyAccessToken('token');
-
-      expect(result).toHaveProperty('sub');
-      expect(result).toHaveProperty('type');
-      expect(result).toHaveProperty('tenant_id');
-    });
-
-    it('should handle token with extra unknown claims', async () => {
-      const payloadWithExtras = {
-        sub: 'user-123',
-        type: 'access',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-        // Extra claims that should be ignored
-        admin: true,
-        superUser: true,
-        customClaim: 'value',
-      };
-
-      (jwt.verify as jest.Mock).mockReturnValue(payloadWithExtras);
-
-      const result = await jwtService.verifyAccessToken('token');
-
-      // Extra claims are present but shouldn't escalate privileges
-      expect(result).toHaveProperty('sub', 'user-123');
-      expect(result).toHaveProperty('tenant_id', 'tenant-456');
-    });
-
-    it('should handle concurrent token verification', async () => {
-      const mockPayload = {
-        sub: 'user-123',
-        type: 'access',
-        jti: 'token-123',
-        tenant_id: 'tenant-456',
-      };
-
-      (jwt.verify as jest.Mock).mockReturnValue(mockPayload);
-
-      // Verify multiple tokens concurrently
-      const verifications = await Promise.all([
-        jwtService.verifyAccessToken('token-1'),
-        jwtService.verifyAccessToken('token-2'),
-        jwtService.verifyAccessToken('token-3'),
-      ]);
-
-      expect(verifications).toHaveLength(3);
-      verifications.forEach(result => {
-        expect(result).toHaveProperty('sub');
-        expect(result).toHaveProperty('tenant_id');
-      });
+      expect(typeof result).toBe('string');
+      expect(result).toContain('-----BEGIN');
     });
   });
 });

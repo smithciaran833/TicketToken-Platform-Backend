@@ -1,0 +1,880 @@
+openapi: 3.0.3
+info:
+  title: Ticket Service API
+  description: |
+    TicketToken Ticket Service API for managing ticket purchases, transfers, 
+    NFT minting, and event check-ins.
+    
+    ## Authentication
+    
+    - **Bearer Token**: JWT tokens from the auth service
+    - **Service Token**: For internal service-to-service calls
+    - **API Key**: For external integrations (venue systems)
+    
+    ## Rate Limits
+    
+    - 100 requests/minute per user
+    - 1000 requests/minute per tenant
+    
+    ## Multi-Tenancy
+    
+    All requests must include tenant context via JWT claims or X-Tenant-ID header.
+  version: 1.0.0
+  contact:
+    email: api@tickettoken.io
+  license:
+    name: Proprietary
+
+servers:
+  - url: https://api.tickettoken.io/v1
+    description: Production
+  - url: https://staging-api.tickettoken.io/v1
+    description: Staging
+  - url: http://localhost:3004/api/v1
+    description: Development
+
+tags:
+  - name: Health
+    description: Service health endpoints
+  - name: Tickets
+    description: Ticket management operations
+  - name: Purchases
+    description: Ticket purchase workflow
+  - name: Transfers
+    description: Ticket transfer operations
+  - name: Validation
+    description: QR code and check-in operations
+  - name: Internal
+    description: Service-to-service endpoints
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Basic health check
+      description: Returns service status for load balancer health checks
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Service is unhealthy
+
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness probe
+      description: Checks if service can accept traffic (database, redis connected)
+      operationId: getReadiness
+      security: []
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is not ready
+
+  /health/live:
+    get:
+      tags: [Health]
+      summary: Liveness probe
+      description: Checks if service process is alive
+      operationId: getLiveness
+      security: []
+      responses:
+        '200':
+          description: Service is alive
+
+  /health/startup:
+    get:
+      tags: [Health]
+      summary: Startup probe
+      description: Checks if service has completed initialization
+      operationId: getStartup
+      security: []
+      responses:
+        '200':
+          description: Service has started
+        '503':
+          description: Service is still starting
+
+  /tickets:
+    get:
+      tags: [Tickets]
+      summary: List user tickets
+      description: Returns paginated list of tickets owned by the authenticated user
+      operationId: listTickets
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/pageParam'
+        - $ref: '#/components/parameters/limitParam'
+        - name: eventId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/TicketStatus'
+      responses:
+        '200':
+          description: List of tickets
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /tickets/{ticketId}:
+    get:
+      tags: [Tickets]
+      summary: Get ticket details
+      description: Returns detailed information about a specific ticket
+      operationId: getTicket
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketIdParam'
+      responses:
+        '200':
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetailResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tickets/reserve:
+    post:
+      tags: [Purchases]
+      summary: Reserve tickets
+      description: |
+        Temporarily reserve tickets for purchase. Reservations expire after 10 minutes.
+        
+        Idempotency: Include `Idempotency-Key` header to prevent duplicate reservations.
+      operationId: reserveTickets
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReservationRequest'
+      responses:
+        '201':
+          description: Tickets reserved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReservationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Tickets already reserved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Not enough tickets available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /tickets/purchase:
+    post:
+      tags: [Purchases]
+      summary: Complete purchase
+      description: Convert a reservation into a completed purchase
+      operationId: purchaseTickets
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/idempotencyKeyHeader'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PurchaseRequest'
+      responses:
+        '200':
+          description: Purchase completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PurchaseResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: Payment required/failed
+        '404':
+          description: Reservation not found or expired
+
+  /tickets/{ticketId}/transfer:
+    post:
+      tags: [Transfers]
+      summary: Initiate ticket transfer
+      description: Start transfer of ticket to another user
+      operationId: initiateTransfer
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransferRequest'
+      responses:
+        '201':
+          description: Transfer initiated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not ticket owner
+        '409':
+          description: Ticket not in transferable state
+
+  /transfers/{transferId}/accept:
+    post:
+      tags: [Transfers]
+      summary: Accept ticket transfer
+      description: Accept a pending ticket transfer
+      operationId: acceptTransfer
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: transferId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Transfer accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TransferResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not transfer recipient
+        '404':
+          description: Transfer not found
+        '410':
+          description: Transfer expired
+
+  /tickets/{ticketId}/qr:
+    get:
+      tags: [Validation]
+      summary: Get rotating QR code
+      description: |
+        Returns an encrypted, rotating QR code for event entry.
+        QR codes rotate every 30 seconds for security.
+      operationId: getQRCode
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketIdParam'
+      responses:
+        '200':
+          description: QR code data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QRCodeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Not ticket owner
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tickets/validate:
+    post:
+      tags: [Validation]
+      summary: Validate QR code
+      description: Validate a scanned QR code without checking in
+      operationId: validateQRCode
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidationRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /tickets/{ticketId}/checkin:
+    post:
+      tags: [Validation]
+      summary: Check in ticket
+      description: Mark ticket as used for event entry
+      operationId: checkInTicket
+      security:
+        - apiKeyAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketIdParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CheckInRequest'
+      responses:
+        '200':
+          description: Check-in result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Ticket already used
+
+  /internal/tickets/{ticketId}:
+    get:
+      tags: [Internal]
+      summary: Get ticket (S2S)
+      description: Internal endpoint for service-to-service communication
+      operationId: internalGetTicket
+      security:
+        - serviceAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ticketIdParam'
+      responses:
+        '200':
+          description: Ticket details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalTicketResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    serviceAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Service-to-service authentication
+
+  parameters:
+    ticketIdParam:
+      name: ticketId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    pageParam:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    limitParam:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    idempotencyKeyHeader:
+      name: Idempotency-Key
+      in: header
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 64
+
+  schemas:
+    TicketStatus:
+      type: string
+      enum:
+        - available
+        - reserved
+        - sold
+        - active
+        - transferred
+        - checked_in
+        - used
+        - refunded
+        - expired
+        - cancelled
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        timestamp:
+          type: string
+          format: date-time
+        version:
+          type: string
+
+    ReadinessResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ready, not_ready]
+        checks:
+          type: object
+          properties:
+            database:
+              type: string
+              enum: [up, down]
+            redis:
+              type: string
+              enum: [up, down]
+            rabbitmq:
+              type: string
+              enum: [up, down]
+
+    TicketListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/TicketListItem'
+        pagination:
+          $ref: '#/components/schemas/Pagination'
+
+    TicketListItem:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        ticketTypeName:
+          type: string
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        eventDate:
+          type: string
+          format: date-time
+
+    TicketDetailResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        ticketTypeId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        seatInfo:
+          type: object
+          properties:
+            section:
+              type: string
+            row:
+              type: string
+            seat:
+              type: string
+        nft:
+          type: object
+          properties:
+            mintAddress:
+              type: string
+            metadataUri:
+              type: string
+            onChain:
+              type: boolean
+        purchasedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    ReservationRequest:
+      type: object
+      required:
+        - eventId
+        - tickets
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        tickets:
+          type: array
+          minItems: 1
+          maxItems: 10
+          items:
+            type: object
+            required:
+              - ticketTypeId
+              - quantity
+            properties:
+              ticketTypeId:
+                type: string
+                format: uuid
+              quantity:
+                type: integer
+                minimum: 1
+                maximum: 10
+
+    ReservationResponse:
+      type: object
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        tickets:
+          type: array
+          items:
+            type: object
+            properties:
+              ticketTypeId:
+                type: string
+                format: uuid
+              quantity:
+                type: integer
+              pricePerTicket:
+                type: integer
+        totalCents:
+          type: integer
+        expiresAt:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, confirmed, expired, cancelled]
+
+    PurchaseRequest:
+      type: object
+      required:
+        - reservationId
+        - paymentId
+      properties:
+        reservationId:
+          type: string
+          format: uuid
+        paymentId:
+          type: string
+
+    PurchaseResponse:
+      type: object
+      properties:
+        orderId:
+          type: string
+          format: uuid
+        reservationId:
+          type: string
+          format: uuid
+        tickets:
+          type: array
+          items:
+            type: object
+            properties:
+              ticketId:
+                type: string
+                format: uuid
+              ticketTypeId:
+                type: string
+                format: uuid
+              ticketTypeName:
+                type: string
+        totalCents:
+          type: integer
+        paymentStatus:
+          type: string
+          enum: [pending, completed, failed, refunded]
+        purchasedAt:
+          type: string
+          format: date-time
+
+    TransferRequest:
+      type: object
+      required:
+        - recipientEmail
+      properties:
+        recipientEmail:
+          type: string
+          format: email
+        message:
+          type: string
+          maxLength: 500
+
+    TransferResponse:
+      type: object
+      properties:
+        transferId:
+          type: string
+          format: uuid
+        ticketId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [pending, accepted, rejected, expired, cancelled]
+        recipientEmail:
+          type: string
+        message:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+
+    QRCodeResponse:
+      type: object
+      properties:
+        ticketId:
+          type: string
+          format: uuid
+        qrData:
+          type: string
+          description: Encrypted QR payload
+        expiresAt:
+          type: string
+          format: date-time
+        format:
+          type: string
+          enum: [base64, svg, url]
+
+    ValidationRequest:
+      type: object
+      required:
+        - qrData
+      properties:
+        qrData:
+          type: string
+        deviceId:
+          type: string
+        location:
+          type: string
+
+    ValidationResponse:
+      type: object
+      properties:
+        valid:
+          type: boolean
+        ticketId:
+          type: string
+          format: uuid
+        status:
+          type: string
+        eventId:
+          type: string
+          format: uuid
+        eventName:
+          type: string
+        ticketTypeName:
+          type: string
+        reason:
+          type: string
+          description: Only present if invalid
+
+    CheckInRequest:
+      type: object
+      properties:
+        deviceId:
+          type: string
+        location:
+          type: string
+        force:
+          type: boolean
+          default: false
+
+    CheckInResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        ticketId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [checked_in, already_used, invalid, expired]
+        checkedInAt:
+          type: string
+          format: date-time
+        message:
+          type: string
+        ticketInfo:
+          type: object
+          properties:
+            eventName:
+              type: string
+            ticketType:
+              type: string
+            seatInfo:
+              type: string
+
+    InternalTicketResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        ticketTypeId:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          format: uuid
+        tenantId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/TicketStatus'
+        mintAddress:
+          type: string
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        limit:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+        hasMore:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+        code:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        traceId:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              message:
+                type: string
+              code:
+                type: string
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Forbidden:
+      description: Insufficient permissions
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

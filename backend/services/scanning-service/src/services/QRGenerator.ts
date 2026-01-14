@@ -3,6 +3,24 @@ import QRCode from 'qrcode';
 import { getPool } from '../config/database';
 import logger from '../utils/logger';
 
+/**
+ * QR CODE GENERATOR SERVICE
+ * 
+ * Generates rotating QR codes for tickets and offline scanning manifests.
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service reads from tickets/events tables. This is intentional because:
+ * 
+ * 1. QR generation is latency-critical (<100ms for smooth UX)
+ * 2. The JOIN query retrieves ticket + event info in a single DB call
+ * 3. Breaking into service calls would double/triple latency
+ * 4. QR codes must be generated frequently (every 30s rotation)
+ * 5. These are READ-ONLY operations - no ticket modifications
+ * 
+ * Future: Consider ticketServiceClient.getTicketForQR() that returns
+ * all required fields optimized for QR generation.
+ */
+
 interface Ticket {
   id: string;
   ticket_number: string;

@@ -136,7 +136,7 @@ export class TaxCalculatorService {
         breakdown: taxData.tax.breakdown
       };
     } catch (error) {
-      log.error('TaxJar calculation failed', { error });
+      log.error({ error }, 'TaxJar calculation failed');
       return this.calculateBasicTax(amountCents, venueAddress.state);
     }
   }

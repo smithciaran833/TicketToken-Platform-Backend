@@ -1,6 +1,9 @@
 import { Knex } from 'knex';
 
 export async function up(knex: Knex): Promise<void> {
+  // ==========================================
+  // EXTENSIONS
+  // ==========================================
   await knex.raw('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
 
   // ==========================================
@@ -48,7 +51,7 @@ export async function up(knex: Knex): Promise<void> {
       old_data_json JSONB; new_data_json JSONB; changed_fields_array TEXT[];
       field_name TEXT; current_user_id UUID; current_ip TEXT; current_user_agent TEXT;
     BEGIN
-      BEGIN current_user_id := current_setting('app.user_id', true)::UUID;
+      BEGIN current_user_id := current_setting('app.current_user_id', true)::UUID;
       EXCEPTION WHEN OTHERS THEN current_user_id := NULL; END;
       BEGIN current_ip := current_setting('app.ip_address', true);
       EXCEPTION WHEN OTHERS THEN current_ip := NULL; END;
@@ -137,7 +140,6 @@ export async function up(knex: Knex): Promise<void> {
     $$ LANGUAGE plpgsql IMMUTABLE;
   `);
 
-  // Data Retention Cleanup Function
   await knex.raw(`
     CREATE OR REPLACE FUNCTION cleanup_expired_data() RETURNS void AS $$
     DECLARE deleted_count INTEGER;
@@ -163,9 +165,8 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // ==========================================
-  // TABLES
+  // TABLE 1: tenants (no tenant_id, no RLS - this IS the tenant table)
   // ==========================================
-
   await knex.schema.createTable('tenants', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
     table.string('name', 255).notNullable();
@@ -178,8 +179,12 @@ export async function up(knex: Knex): Promise<void> {
 
   await knex.raw(`INSERT INTO tenants (id, name, slug) VALUES ('00000000-0000-0000-0000-000000000001', 'Default Tenant', 'default')`);
 
+  // ==========================================
+  // TABLE 2: users
+  // ==========================================
   await knex.schema.createTable('users', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v1()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.string('email', 255).notNullable();
     table.string('password_hash', 255).notNullable();
     table.boolean('email_verified').notNullable().defaultTo(false);
@@ -261,11 +266,11 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('created_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
     table.timestamp('deleted_at', { useTz: true });
-    table.uuid('tenant_id').notNullable().defaultTo('00000000-0000-0000-0000-000000000001').references('id').inTable('tenants').onDelete('RESTRICT');
   });
 
   // Users indexes
   await knex.raw('CREATE UNIQUE INDEX idx_users_email_active ON users(email) WHERE deleted_at IS NULL');
+  await knex.raw('CREATE INDEX idx_users_tenant_id ON users(tenant_id)');
   await knex.raw('CREATE INDEX idx_users_username ON users(username)');
   await knex.raw('CREATE INDEX idx_users_phone ON users(phone)');
   await knex.raw('CREATE INDEX idx_users_role ON users(role)');
@@ -286,8 +291,12 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw("ALTER TABLE users ADD CONSTRAINT users_status_check CHECK (status IN ('PENDING', 'ACTIVE', 'SUSPENDED', 'DELETED'))");
   await knex.raw("ALTER TABLE users ADD CONSTRAINT chk_users_stripe_connect_status CHECK (stripe_connect_status IN ('not_started', 'pending', 'enabled', 'disabled', 'rejected', 'restricted'))");
 
+  // ==========================================
+  // TABLE 3: user_sessions
+  // ==========================================
   await knex.schema.createTable('user_sessions', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.timestamp('started_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('ended_at', { useTz: true });
@@ -296,11 +305,17 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('revoked_at', { useTz: true });
     table.jsonb('metadata').defaultTo('{}');
   });
+
+  await knex.raw('CREATE INDEX idx_user_sessions_tenant_id ON user_sessions(tenant_id)');
   await knex.raw('CREATE INDEX idx_user_sessions_user_id ON user_sessions(user_id)');
   await knex.raw('CREATE INDEX idx_user_sessions_ended_at ON user_sessions(ended_at)');
 
+  // ==========================================
+  // TABLE 4: user_venue_roles
+  // ==========================================
   await knex.schema.createTable('user_venue_roles', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.uuid('venue_id').notNullable();
     table.string('role', 50).notNullable();
@@ -312,11 +327,17 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('revoked_at', { useTz: true });
     table.uuid('revoked_by').references('id').inTable('users');
   });
+
+  await knex.raw('CREATE INDEX idx_user_venue_roles_tenant_id ON user_venue_roles(tenant_id)');
   await knex.raw('CREATE INDEX idx_user_venue_roles_user_id ON user_venue_roles(user_id)');
   await knex.raw('CREATE INDEX idx_user_venue_roles_venue_id ON user_venue_roles(venue_id)');
 
+  // ==========================================
+  // TABLE 5: audit_logs
+  // ==========================================
   await knex.schema.createTable('audit_logs', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').references('id').inTable('tenants').onDelete('SET NULL');
     table.string('service', 100).notNullable();
     table.string('action', 200).notNullable();
     table.string('action_type', 50).notNullable();
@@ -338,6 +359,8 @@ export async function up(knex: Knex): Promise<void> {
     table.boolean('success').notNullable().defaultTo(true);
     table.text('error_message');
   });
+
+  await knex.raw('CREATE INDEX idx_audit_logs_tenant_id ON audit_logs(tenant_id)');
   await knex.raw('CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id, created_at DESC)');
   await knex.raw('CREATE INDEX idx_audit_logs_action ON audit_logs(action, created_at DESC)');
   await knex.raw('CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC)');
@@ -346,28 +369,44 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_audit_logs_record_id ON audit_logs(record_id)');
   await knex.raw('CREATE INDEX idx_audit_logs_changed_fields ON audit_logs USING GIN(changed_fields)');
 
+  // ==========================================
+  // TABLE 6: invalidated_tokens
+  // ==========================================
   await knex.schema.createTable('invalidated_tokens', (table) => {
     table.text('token').primary();
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.timestamp('invalidated_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('expires_at', { useTz: true }).notNullable();
   });
+
+  await knex.raw('CREATE INDEX idx_invalidated_tokens_tenant_id ON invalidated_tokens(tenant_id)');
   await knex.raw('CREATE INDEX idx_invalidated_tokens_user_id ON invalidated_tokens(user_id)');
   await knex.raw('CREATE INDEX idx_invalidated_tokens_expires_at ON invalidated_tokens(expires_at)');
 
+  // ==========================================
+  // TABLE 7: token_refresh_log
+  // ==========================================
   await knex.schema.createTable('token_refresh_log', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.string('ip_address', 45);
     table.text('user_agent');
     table.timestamp('refreshed_at', { useTz: true }).defaultTo(knex.fn.now());
     table.jsonb('metadata').defaultTo('{}');
   });
+
+  await knex.raw('CREATE INDEX idx_token_refresh_log_tenant_id ON token_refresh_log(tenant_id)');
   await knex.raw('CREATE INDEX idx_token_refresh_log_user_id ON token_refresh_log(user_id)');
   await knex.raw('CREATE INDEX idx_token_refresh_log_refreshed_at ON token_refresh_log(refreshed_at)');
 
+  // ==========================================
+  // TABLE 8: oauth_connections
+  // ==========================================
   await knex.schema.createTable('oauth_connections', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.string('provider', 50).notNullable();
     table.string('provider_user_id', 255).notNullable();
@@ -375,11 +414,17 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
   });
+
+  await knex.raw('CREATE INDEX idx_oauth_connections_tenant_id ON oauth_connections(tenant_id)');
   await knex.raw('CREATE INDEX idx_oauth_connections_user_id ON oauth_connections(user_id)');
   await knex.raw('CREATE UNIQUE INDEX idx_oauth_connections_provider_user ON oauth_connections(provider, provider_user_id)');
 
+  // ==========================================
+  // TABLE 9: wallet_connections
+  // ==========================================
   await knex.schema.createTable('wallet_connections', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.string('wallet_address', 255).notNullable();
     table.string('network', 50).notNullable();
@@ -387,30 +432,48 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('last_login_at', { useTz: true });
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
   });
+
+  await knex.raw('CREATE INDEX idx_wallet_connections_tenant_id ON wallet_connections(tenant_id)');
   await knex.raw('CREATE INDEX idx_wallet_connections_user_id ON wallet_connections(user_id)');
 
+  // ==========================================
+  // TABLE 10: biometric_credentials
+  // ==========================================
   await knex.schema.createTable('biometric_credentials', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.string('device_id', 255).notNullable();
     table.text('public_key').notNullable();
     table.string('credential_type', 50).notNullable();
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
   });
+
+  await knex.raw('CREATE INDEX idx_biometric_credentials_tenant_id ON biometric_credentials(tenant_id)');
   await knex.raw('CREATE INDEX idx_biometric_credentials_user_id ON biometric_credentials(user_id)');
 
+  // ==========================================
+  // TABLE 11: trusted_devices
+  // ==========================================
   await knex.schema.createTable('trusted_devices', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.string('device_fingerprint', 255).notNullable();
     table.integer('trust_score').defaultTo(0);
     table.timestamp('last_seen', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
   });
+
+  await knex.raw('CREATE INDEX idx_trusted_devices_tenant_id ON trusted_devices(tenant_id)');
   await knex.raw('CREATE INDEX idx_trusted_devices_user_id ON trusted_devices(user_id)');
 
+  // ==========================================
+  // TABLE 12: user_addresses
+  // ==========================================
   await knex.schema.createTable('user_addresses', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('uuid_generate_v4()'));
+    table.uuid('tenant_id').notNullable().references('id').inTable('tenants').onDelete('RESTRICT');
     table.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     table.string('address_type', 20).notNullable().defaultTo('billing');
     table.string('address_line1', 255).notNullable();
@@ -424,41 +487,89 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
   });
+
+  await knex.raw('CREATE INDEX idx_user_addresses_tenant_id ON user_addresses(tenant_id)');
   await knex.raw('CREATE INDEX idx_user_addresses_user_id ON user_addresses(user_id)');
   await knex.raw("ALTER TABLE user_addresses ADD CONSTRAINT chk_user_addresses_type CHECK (address_type IN ('billing', 'shipping'))");
 
   // ==========================================
   // TRIGGERS
   // ==========================================
-
   await knex.raw(`CREATE TRIGGER trigger_generate_referral_code BEFORE INSERT ON users FOR EACH ROW EXECUTE FUNCTION generate_user_referral_code()`);
   await knex.raw(`CREATE TRIGGER trigger_increment_referral_count AFTER UPDATE OF email_verified ON users FOR EACH ROW WHEN (NEW.email_verified = true AND OLD.email_verified = false) EXECUTE FUNCTION increment_referral_count()`);
   await knex.raw(`CREATE TRIGGER trigger_update_users_timestamp BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()`);
-  await knex.raw(`DROP TRIGGER IF EXISTS audit_users_changes ON users; CREATE TRIGGER audit_users_changes AFTER INSERT OR UPDATE OR DELETE ON users FOR EACH ROW EXECUTE FUNCTION audit_trigger_function()`);
+  await knex.raw(`CREATE TRIGGER audit_users_changes AFTER INSERT OR UPDATE OR DELETE ON users FOR EACH ROW EXECUTE FUNCTION audit_trigger_function()`);
 
   // ==========================================
   // ROW LEVEL SECURITY
   // ==========================================
 
+  // Table: users
   await knex.raw('ALTER TABLE users ENABLE ROW LEVEL SECURITY');
   await knex.raw('ALTER TABLE users FORCE ROW LEVEL SECURITY');
-  await knex.raw(`CREATE POLICY users_view_own ON users FOR SELECT USING (id = current_setting('app.current_user_id', TRUE)::UUID)`);
-  await knex.raw(`CREATE POLICY users_update_own ON users FOR UPDATE USING (id = current_setting('app.current_user_id', TRUE)::UUID)`);
-  await knex.raw(`CREATE POLICY users_admin_all ON users FOR ALL USING (current_setting('app.current_user_role', TRUE) IN ('admin', 'superadmin'))`);
-  await knex.raw(`CREATE POLICY users_tenant_isolation ON users FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', TRUE)::UUID)`);
+  await knex.raw(`CREATE POLICY users_tenant_isolation ON users FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: user_sessions
+  await knex.raw('ALTER TABLE user_sessions ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE user_sessions FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY user_sessions_tenant_isolation ON user_sessions FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: user_venue_roles
+  await knex.raw('ALTER TABLE user_venue_roles ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE user_venue_roles FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY user_venue_roles_tenant_isolation ON user_venue_roles FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: audit_logs
+  await knex.raw('ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE audit_logs FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY audit_logs_tenant_isolation ON audit_logs FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: invalidated_tokens
+  await knex.raw('ALTER TABLE invalidated_tokens ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE invalidated_tokens FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY invalidated_tokens_tenant_isolation ON invalidated_tokens FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: token_refresh_log
+  await knex.raw('ALTER TABLE token_refresh_log ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE token_refresh_log FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY token_refresh_log_tenant_isolation ON token_refresh_log FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: oauth_connections
+  await knex.raw('ALTER TABLE oauth_connections ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE oauth_connections FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY oauth_connections_tenant_isolation ON oauth_connections FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: wallet_connections
+  await knex.raw('ALTER TABLE wallet_connections ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE wallet_connections FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY wallet_connections_tenant_isolation ON wallet_connections FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: biometric_credentials
+  await knex.raw('ALTER TABLE biometric_credentials ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE biometric_credentials FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY biometric_credentials_tenant_isolation ON biometric_credentials FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: trusted_devices
+  await knex.raw('ALTER TABLE trusted_devices ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE trusted_devices FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY trusted_devices_tenant_isolation ON trusted_devices FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
+
+  // Table: user_addresses
+  await knex.raw('ALTER TABLE user_addresses ENABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE user_addresses FORCE ROW LEVEL SECURITY');
+  await knex.raw(`CREATE POLICY user_addresses_tenant_isolation ON user_addresses FOR ALL USING (tenant_id = current_setting('app.current_tenant_id', true)::UUID) WITH CHECK (tenant_id = current_setting('app.current_tenant_id', true)::UUID)`);
 
   // ==========================================
   // MASKED VIEW FOR SUPPORT
   // ==========================================
-
   await knex.raw(`
     CREATE OR REPLACE VIEW users_masked AS
-    SELECT id, mask_email(email) as email, username, first_name, last_name, mask_phone(phone) as phone,
+    SELECT id, tenant_id, mask_email(email) as email, username, first_name, last_name, mask_phone(phone) as phone,
       status, role, created_at, last_login_at, email_verified, phone_verified
     FROM users
   `);
 
-  console.log('✅ Auth Service migration complete');
+  console.log('Auth Service migration complete');
 }
 
 export async function down(knex: Knex): Promise<void> {
@@ -466,10 +577,29 @@ export async function down(knex: Knex): Promise<void> {
   await knex.raw('DROP VIEW IF EXISTS users_masked CASCADE');
 
   // Drop RLS policies
+  await knex.raw('DROP POLICY IF EXISTS user_addresses_tenant_isolation ON user_addresses');
+  await knex.raw('DROP POLICY IF EXISTS trusted_devices_tenant_isolation ON trusted_devices');
+  await knex.raw('DROP POLICY IF EXISTS biometric_credentials_tenant_isolation ON biometric_credentials');
+  await knex.raw('DROP POLICY IF EXISTS wallet_connections_tenant_isolation ON wallet_connections');
+  await knex.raw('DROP POLICY IF EXISTS oauth_connections_tenant_isolation ON oauth_connections');
+  await knex.raw('DROP POLICY IF EXISTS token_refresh_log_tenant_isolation ON token_refresh_log');
+  await knex.raw('DROP POLICY IF EXISTS invalidated_tokens_tenant_isolation ON invalidated_tokens');
+  await knex.raw('DROP POLICY IF EXISTS audit_logs_tenant_isolation ON audit_logs');
+  await knex.raw('DROP POLICY IF EXISTS user_venue_roles_tenant_isolation ON user_venue_roles');
+  await knex.raw('DROP POLICY IF EXISTS user_sessions_tenant_isolation ON user_sessions');
   await knex.raw('DROP POLICY IF EXISTS users_tenant_isolation ON users');
-  await knex.raw('DROP POLICY IF EXISTS users_admin_all ON users');
-  await knex.raw('DROP POLICY IF EXISTS users_update_own ON users');
-  await knex.raw('DROP POLICY IF EXISTS users_view_own ON users');
+
+  // Disable RLS
+  await knex.raw('ALTER TABLE user_addresses DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE trusted_devices DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE biometric_credentials DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE wallet_connections DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE oauth_connections DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE token_refresh_log DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE invalidated_tokens DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE audit_logs DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE user_venue_roles DISABLE ROW LEVEL SECURITY');
+  await knex.raw('ALTER TABLE user_sessions DISABLE ROW LEVEL SECURITY');
   await knex.raw('ALTER TABLE users DISABLE ROW LEVEL SECURITY');
 
   // Drop triggers
@@ -478,7 +608,7 @@ export async function down(knex: Knex): Promise<void> {
   await knex.raw('DROP TRIGGER IF EXISTS trigger_increment_referral_count ON users');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_generate_referral_code ON users');
 
-  // Drop tables
+  // Drop tables (reverse order)
   await knex.schema.dropTableIfExists('user_addresses');
   await knex.schema.dropTableIfExists('trusted_devices');
   await knex.schema.dropTableIfExists('biometric_credentials');

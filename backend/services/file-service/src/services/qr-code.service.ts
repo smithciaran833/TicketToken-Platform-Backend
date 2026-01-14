@@ -14,7 +14,7 @@ export class QRCodeService {
       logger.info(`Generated QR code for data length: ${data.length}`);
       return buffer;
     } catch (error) {
-      logger.error('QR code generation failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'QR code generation failed');
       throw new Error('Failed to generate QR code');
     }
   }

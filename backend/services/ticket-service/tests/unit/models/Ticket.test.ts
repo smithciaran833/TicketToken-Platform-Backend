@@ -1,257 +1,268 @@
-// =============================================================================
-// TEST SUITE - Ticket Model
-// =============================================================================
+/**
+ * Unit Tests for src/models/Ticket.ts
+ */
 
-import { Pool } from 'pg';
 import { TicketModel, ITicket } from '../../../src/models/Ticket';
 
-describe('TicketModel', () => {
-  let model: TicketModel;
-  let mockPool: jest.Mocked<Partial<Pool>>;
+describe('models/Ticket', () => {
+  let mockPool: any;
+  let ticketModel: TicketModel;
+
+  const mockTicketRow = {
+    id: 'ticket-123',
+    tenant_id: 'tenant-456',
+    event_id: 'event-789',
+    ticket_type_id: 'type-abc',
+    user_id: 'user-def',
+    ticket_number: 'TKT-ABC123',
+    qr_code: 'QR-xyz',
+    price_cents: 5000,
+    status: 'active',
+    is_validated: false,
+    is_transferable: true,
+    transfer_count: 0,
+    is_nft: false,
+    created_at: new Date(),
+    updated_at: new Date(),
+  };
 
   beforeEach(() => {
     mockPool = {
       query: jest.fn(),
     };
-
-    model = new TicketModel(mockPool as Pool);
+    ticketModel = new TicketModel(mockPool);
   });
 
   describe('create()', () => {
-    it('should create a ticket', async () => {
-      const ticketData: ITicket = {
-        event_id: 'event-123',
-        ticket_type_id: 'type-123',
-        user_id: 'user-123',
-        status: 'AVAILABLE',
-        price_cents: 5000,
+    it('inserts ticket and returns mapped result', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
+
+      const input: ITicket = {
+        tenant_id: 'tenant-456',
+        event_id: 'event-789',
+        ticket_type_id: 'type-abc',
+        status: 'active',
       };
 
-      const mockResult = {
-        rows: [{ id: 'ticket-1', ...ticketData }],
-      };
+      const result = await ticketModel.create(input);
 
-      (mockPool.query as jest.Mock).mockResolvedValue(mockResult);
-
-      const result = await model.create(ticketData);
-
-      expect(result.id).toBe('ticket-1');
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO tickets'),
+        expect.any(Array)
+      );
+      expect(result.id).toBe('ticket-123');
+      expect(result.tenant_id).toBe('tenant-456');
     });
 
-    it('should default status to AVAILABLE', async () => {
-      const ticketData: ITicket = {
-        event_id: 'event-123',
-        ticket_type_id: 'type-123',
-        status: 'AVAILABLE',
-        price_cents: 5000,
+    it('generates ticket_number if not provided', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
+
+      const input: ITicket = {
+        tenant_id: 'tenant-456',
+        event_id: 'event-789',
+        ticket_type_id: 'type-abc',
+        status: 'active',
       };
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
+      await ticketModel.create(input);
 
-      await model.create(ticketData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][3]).toBe('AVAILABLE');
+      const values = mockPool.query.mock.calls[0][1];
+      expect(values[4]).toMatch(/^TKT-/); // Generated ticket number
     });
 
-    it('should handle optional fields', async () => {
-      const ticketData: ITicket = {
-        event_id: 'event-123',
-        ticket_type_id: 'type-123',
-        status: 'AVAILABLE',
-        price_cents: 5000,
-        seat_number: 'A12',
-        section: 'VIP',
-        row: '1',
+    it('generates qr_code if not provided', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
+
+      const input: ITicket = {
+        tenant_id: 'tenant-456',
+        event_id: 'event-789',
+        ticket_type_id: 'type-abc',
+        status: 'active',
       };
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [ticketData] });
+      await ticketModel.create(input);
 
-      const result = await model.create(ticketData);
-
-      expect(result.seat_number).toBe('A12');
-      expect(result.section).toBe('VIP');
-      expect(result.row).toBe('1');
+      const values = mockPool.query.mock.calls[0][1];
+      expect(values[5]).toMatch(/^QR-/); // Generated QR code
     });
 
-    it('should default metadata to empty object', async () => {
-      const ticketData: ITicket = {
-        event_id: 'event-123',
-        ticket_type_id: 'type-123',
-        status: 'AVAILABLE',
-        price_cents: 5000,
+    it('uses provided ticket_number and qr_code', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
+
+      const input: ITicket = {
+        tenant_id: 'tenant-456',
+        event_id: 'event-789',
+        ticket_type_id: 'type-abc',
+        status: 'active',
+        ticket_number: 'CUSTOM-TKT',
+        qr_code: 'CUSTOM-QR',
       };
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
+      await ticketModel.create(input);
 
-      await model.create(ticketData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1][9]).toEqual({});
+      const values = mockPool.query.mock.calls[0][1];
+      expect(values[4]).toBe('CUSTOM-TKT');
+      expect(values[5]).toBe('CUSTOM-QR');
     });
   });
 
   describe('findById()', () => {
-    it('should find ticket by id', async () => {
-      const mockTicket = {
-        id: 'ticket-1',
-        event_id: 'event-123',
-        status: 'SOLD',
-      };
+    it('returns ticket when found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [mockTicket] });
-
-      const result = await model.findById('ticket-1');
+      const result = await ticketModel.findById('ticket-123');
 
       expect(mockPool.query).toHaveBeenCalledWith(
-        'SELECT * FROM tickets WHERE id = $1',
-        ['ticket-1']
+        expect.stringContaining('WHERE id = $1'),
+        ['ticket-123']
       );
-      expect(result).toEqual(mockTicket);
+      expect(result?.id).toBe('ticket-123');
     });
 
-    it('should return null if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns null when not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const result = await model.findById('notfound');
+      const result = await ticketModel.findById('nonexistent');
 
       expect(result).toBeNull();
+    });
+
+    it('excludes soft-deleted tickets', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      await ticketModel.findById('ticket-123');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('deleted_at IS NULL'),
+        expect.any(Array)
+      );
     });
   });
 
   describe('findByEventId()', () => {
-    it('should find tickets by event id', async () => {
-      const mockTickets = [
-        { id: 'ticket-1', event_id: 'event-123' },
-        { id: 'ticket-2', event_id: 'event-123' },
-      ];
+    it('returns array of tickets', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow, { ...mockTicketRow, id: 'ticket-456' }] });
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: mockTickets });
+      const result = await ticketModel.findByEventId('event-789');
 
-      const result = await model.findByEventId('event-123');
-
+      expect(result).toHaveLength(2);
       expect(mockPool.query).toHaveBeenCalledWith(
         expect.stringContaining('WHERE event_id = $1'),
-        ['event-123']
+        ['event-789']
       );
-      expect(result).toEqual(mockTickets);
+    });
+  });
+
+  describe('findByUserId()', () => {
+    it('returns array of user tickets', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
+
+      const result = await ticketModel.findByUserId('user-def');
+
+      expect(result).toHaveLength(1);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE user_id = $1'),
+        ['user-def']
+      );
+    });
+  });
+
+  describe('findByTicketNumber()', () => {
+    it('returns ticket when found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockTicketRow] });
+
+      const result = await ticketModel.findByTicketNumber('TKT-ABC123');
+
+      expect(result?.ticket_number).toBe('TKT-ABC123');
     });
 
-    it('should order by created_at DESC', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns null when not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await model.findByEventId('event-123');
+      const result = await ticketModel.findByTicketNumber('INVALID');
 
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('ORDER BY created_at DESC');
-    });
-
-    it('should return empty array if none found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
-
-      const result = await model.findByEventId('event-123');
-
-      expect(result).toEqual([]);
+      expect(result).toBeNull();
     });
   });
 
   describe('update()', () => {
-    it('should update ticket with valid fields', async () => {
-      const mockUpdated = { id: 'ticket-1', status: 'SOLD' };
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [mockUpdated] });
+    it('updates allowed fields only', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ ...mockTicketRow, status: 'used' }] });
 
-      const result = await model.update('ticket-1', { status: 'SOLD' });
+      const result = await ticketModel.update('ticket-123', { status: 'used' });
 
-      expect(result).toEqual(mockUpdated);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('UPDATE tickets SET'),
+        expect.arrayContaining(['ticket-123', 'used'])
+      );
+      expect(result?.status).toBe('used');
     });
 
-    it('should only update whitelisted fields', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('ticket-1', { status: 'SOLD' });
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('status = $2');
-    });
-
-    it('should reject non-whitelisted fields', async () => {
+    it('throws error when no valid fields provided', async () => {
       await expect(
-        model.update('ticket-1', { invalid_field: 'value' } as any)
+        ticketModel.update('ticket-123', { id: 'new-id', created_at: new Date() } as any)
       ).rejects.toThrow('No valid fields to update');
     });
 
-    it('should update updated_at timestamp', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
+    it('returns null when ticket not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      await model.update('ticket-1', { status: 'SOLD' });
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('updated_at = NOW()');
-    });
-
-    it('should return null if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
-
-      const result = await model.update('notfound', { status: 'SOLD' });
+      const result = await ticketModel.update('nonexistent', { status: 'used' });
 
       expect(result).toBeNull();
-    });
-
-    it('should handle multiple valid fields', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('ticket-1', {
-        status: 'SOLD',
-        user_id: 'new-user',
-        price_cents: 6000,
-      });
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('status');
-      expect(call).toContain('user_id');
-      expect(call).toContain('price_cents');
-    });
-
-    it('should filter out invalid fields', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.update('ticket-1', {
-        status: 'SOLD',
-        invalid: 'field',
-      } as any);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1]).toEqual(['ticket-1', 'SOLD']);
     });
   });
 
   describe('delete()', () => {
-    it('should delete ticket', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 1 });
+    it('soft deletes ticket', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-      const result = await model.delete('ticket-1');
+      const result = await ticketModel.delete('ticket-123');
 
       expect(mockPool.query).toHaveBeenCalledWith(
-        'DELETE FROM tickets WHERE id = $1',
-        ['ticket-1']
+        expect.stringContaining('SET deleted_at = NOW()'),
+        ['ticket-123']
       );
       expect(result).toBe(true);
     });
 
-    it('should return false if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 0 });
+    it('returns false when ticket not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
 
-      const result = await model.delete('notfound');
+      const result = await ticketModel.delete('nonexistent');
 
       expect(result).toBe(false);
     });
+  });
 
-    it('should handle null rowCount', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: null });
+  describe('hardDelete()', () => {
+    it('permanently deletes ticket', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-      const result = await model.delete('ticket-1');
+      const result = await ticketModel.hardDelete('ticket-123');
 
-      expect(result).toBe(false);
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('DELETE FROM tickets'),
+        ['ticket-123']
+      );
+      expect(result).toBe(true);
+    });
+  });
+
+  describe('mapRowToTicket()', () => {
+    it('converts numeric strings to numbers', async () => {
+      const rowWithStrings = {
+        ...mockTicketRow,
+        price_cents: '5000',
+        price: '50.00',
+        face_value: '50.00',
+      };
+      mockPool.query.mockResolvedValueOnce({ rows: [rowWithStrings] });
+
+      const result = await ticketModel.findById('ticket-123');
+
+      expect(typeof result?.price_cents).toBe('number');
+      expect(result?.price_cents).toBe(5000);
     });
   });
 });

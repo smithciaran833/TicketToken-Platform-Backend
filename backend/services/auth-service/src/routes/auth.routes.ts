@@ -199,8 +199,8 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       await validate(schemas.biometricChallengeSchema)(request, reply);
     }
   }, async (request: any, reply: any) => {
-    const { userId } = request.body;
-    const challenge = await biometricService.generateChallenge(userId);
+    const { userId, tenantId } = request.body;
+    const challenge = await biometricService.generateChallenge(userId, tenantId);
     return { challenge };
   });
 
@@ -210,10 +210,11 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       await validate(schemas.biometricAuthenticateSchema)(request, reply);
     }
   }, async (request: any, reply: any) => {
-    const { userId, credentialId, signature, challenge } = request.body;
+    const { userId, tenantId, credentialId, signature, challenge } = request.body;
     try {
       const result = await biometricService.verifyBiometric(
         userId,
+        tenantId,
         credentialId,
         signature,
         challenge
@@ -369,6 +370,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
         const { publicKey, deviceId, biometricType } = request.body;
         const result = await biometricService.registerBiometric(
           request.user.id,
+          request.user.tenant_id,
           deviceId,
           publicKey,
           biometricType || 'faceId'
@@ -385,14 +387,14 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     fastify.get('/biometric/challenge', {
       schema: { response: responseSchemas.biometricChallenge },
     }, async (request: any, reply: any) => {
-      const challenge = await biometricService.generateChallenge(request.user.id);
+      const challenge = await biometricService.generateChallenge(request.user.id, request.user.tenant_id);
       return { challenge };
     });
 
     fastify.get('/biometric/devices', {
       schema: { response: responseSchemas.biometricDevices },
     }, async (request: any, reply: any) => {
-      const devices = await biometricService.listBiometricDevices(request.user.id);
+      const devices = await biometricService.listBiometricDevices(request.user.id, request.user.tenant_id);
       return { devices };
     });
 
@@ -405,7 +407,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
     }, async (request: any, reply: any) => {
       try {
         const { credentialId } = request.params as { credentialId: string };
-        await biometricService.removeBiometricDevice(request.user.id, credentialId);
+        await biometricService.removeBiometricDevice(request.user.id, request.user.tenant_id, credentialId);
         return reply.status(204).send();
       } catch (error: any) {
         if (error.message === 'Biometric credential not found') {
@@ -545,7 +547,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       const { venueId } = request.params as { venueId: string };
       const { userId, role } = request.body as { userId: string; role: string };
 
-      await rbacService.grantVenueRole(userId, venueId, role);
+      await rbacService.grantVenueRole(userId, request.user.tenant_id, venueId, role, request.user.id);
 
       return {
         success: true,

@@ -1,0 +1,68 @@
+# Git
+.git
+.gitignore
+
+# Environment files - CRITICAL: Never include secrets in Docker image
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Node modules - will be installed fresh in container
+node_modules
+
+# Build artifacts
+dist
+
+# Test files and directories
+tests
+__tests__
+*.test.ts
+*.spec.ts
+coverage
+.nyc_output
+
+# Documentation
+docs
+*.md
+!README.md
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Development tools
+Makefile
+nodemon.json
+jest.config.js
+tsconfig.json
+knexfile.ts
+openapi.yaml
+postman_collection.json
+
+# Scripts not needed in production
+scripts/
+
+# Secrets baseline
+.secrets.baseline
+
+# Temporary files
+tmp
+temp
+*.tmp

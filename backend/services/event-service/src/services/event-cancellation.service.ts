@@ -1,15 +1,17 @@
 /**
  * Event Cancellation Service
- * 
+ *
  * CRITICAL FIX for audit findings (28-event-state-management.md):
  * - Triggers refunds when event is cancelled
  * - Notifies ticket holders
  * - Invalidates tickets
  * - Cancels resale listings
+ * - Generates cancellation report
  */
 
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
+import * as crypto from 'crypto';
 
 export interface CancellationResult {
   eventId: string;
@@ -18,6 +20,8 @@ export interface CancellationResult {
   notificationsSent: number;
   ticketsInvalidated: number;
   resalesCancelled: number;
+  reportId?: string;
+  reportUrl?: string;
   errors: string[];
 }
 
@@ -26,14 +30,48 @@ export interface CancellationOptions {
   refundPolicy?: 'full' | 'partial' | 'none';
   notifyHolders?: boolean;
   cancelResales?: boolean;
+  generateReport?: boolean;
   cancelledBy: string; // User ID who initiated cancellation
+}
+
+export interface CancellationReport {
+  id: string;
+  eventId: string;
+  eventName: string;
+  tenantId: string;
+  cancelledAt: Date;
+  cancelledBy: string;
+  reason: string;
+  refundPolicy: string;
+  summary: {
+    totalTicketsSold: number;
+    totalRevenue: number;
+    refundsIssued: number;
+    refundAmount: number;
+    notificationsSent: number;
+    resalesCancelled: number;
+  };
+  ticketBreakdown: Array<{
+    tier: string;
+    quantity: number;
+    unitPrice: number;
+    totalValue: number;
+  }>;
+  timeline: Array<{
+    timestamp: Date;
+    action: string;
+    status: 'success' | 'failed';
+    details?: string;
+  }>;
+  errors: string[];
+  generatedAt: Date;
 }
 
 /**
  * Service to handle event cancellation workflow
  */
 export class EventCancellationService {
-  
+
   /**
    * Execute full cancellation workflow for an event
    * CRITICAL: This is the main entry point for event cancellation
@@ -53,6 +91,9 @@ export class EventCancellationService {
       errors: [],
     };
 
+    const timeline: CancellationReport['timeline'] = [];
+    const startTime = new Date();
+
     logger.info({
       eventId,
       tenantId,
@@ -62,11 +103,13 @@ export class EventCancellationService {
 
     try {
       // 1. Update event status to CANCELLED
+      timeline.push({ timestamp: new Date(), action: 'Update event status', status: 'success' });
       await this.updateEventStatus(eventId, tenantId, options);
-      
+
       // 2. Get all tickets for this event
       const tickets = await this.getEventTickets(eventId, tenantId);
-      
+      timeline.push({ timestamp: new Date(), action: 'Fetch tickets', status: 'success', details: `${tickets.length} tickets found` });
+
       // 3. Trigger refunds (calls payment-service)
       if (options.refundPolicy !== 'none') {
         try {
@@ -76,8 +119,10 @@ export class EventCancellationService {
             tickets,
             options.refundPolicy || 'full'
           );
+          timeline.push({ timestamp: new Date(), action: 'Trigger refunds', status: 'success', details: `${result.refundsTriggered} refunds triggered` });
         } catch (error: any) {
           result.errors.push(`Refund trigger failed: ${error.message}`);
+          timeline.push({ timestamp: new Date(), action: 'Trigger refunds', status: 'failed', details: error.message });
           logger.error({ error, eventId }, 'Failed to trigger refunds');
         }
       }
@@ -85,8 +130,10 @@ export class EventCancellationService {
       // 4. Invalidate all tickets
       try {
         result.ticketsInvalidated = await this.invalidateTickets(eventId, tenantId);
+        timeline.push({ timestamp: new Date(), action: 'Invalidate tickets', status: 'success', details: `${result.ticketsInvalidated} tickets invalidated` });
       } catch (error: any) {
         result.errors.push(`Ticket invalidation failed: ${error.message}`);
+        timeline.push({ timestamp: new Date(), action: 'Invalidate tickets', status: 'failed', details: error.message });
         logger.error({ error, eventId }, 'Failed to invalidate tickets');
       }
 
@@ -94,8 +141,10 @@ export class EventCancellationService {
       if (options.cancelResales !== false) {
         try {
           result.resalesCancelled = await this.cancelResaleListings(eventId, tenantId);
+          timeline.push({ timestamp: new Date(), action: 'Cancel resale listings', status: 'success', details: `${result.resalesCancelled} listings cancelled` });
         } catch (error: any) {
           result.errors.push(`Resale cancellation failed: ${error.message}`);
+          timeline.push({ timestamp: new Date(), action: 'Cancel resale listings', status: 'failed', details: error.message });
           logger.error({ error, eventId }, 'Failed to cancel resale listings');
         }
       }
@@ -109,14 +158,37 @@ export class EventCancellationService {
             tickets,
             options.reason
           );
+          timeline.push({ timestamp: new Date(), action: 'Notify ticket holders', status: 'success', details: `${result.notificationsSent} notifications sent` });
         } catch (error: any) {
           result.errors.push(`Notification failed: ${error.message}`);
+          timeline.push({ timestamp: new Date(), action: 'Notify ticket holders', status: 'failed', details: error.message });
           logger.error({ error, eventId }, 'Failed to notify ticket holders');
         }
       }
 
       // 7. Record cancellation audit log
       await this.recordCancellationAudit(eventId, tenantId, options, result);
+      timeline.push({ timestamp: new Date(), action: 'Record audit log', status: 'success' });
+
+      // 8. Generate cancellation report
+      if (options.generateReport !== false) {
+        try {
+          const report = await this.generateCancellationReport(
+            eventId,
+            tenantId,
+            options,
+            result,
+            timeline
+          );
+          result.reportId = report.id;
+          result.reportUrl = `/api/v1/events/${eventId}/cancellation-report/${report.id}`;
+          timeline.push({ timestamp: new Date(), action: 'Generate report', status: 'success', details: `Report ID: ${report.id}` });
+        } catch (error: any) {
+          result.errors.push(`Report generation failed: ${error.message}`);
+          timeline.push({ timestamp: new Date(), action: 'Generate report', status: 'failed', details: error.message });
+          logger.error({ error, eventId }, 'Failed to generate cancellation report');
+        }
+      }
 
       // Determine final status
       if (result.errors.length > 0) {
@@ -126,6 +198,7 @@ export class EventCancellationService {
       logger.info({
         eventId,
         result,
+        durationMs: Date.now() - startTime.getTime(),
       }, 'Event cancellation workflow completed');
 
       return result;
@@ -134,6 +207,121 @@ export class EventCancellationService {
       result.errors.push(`Critical error: ${error.message}`);
       logger.error({ error, eventId }, 'Event cancellation workflow failed');
       throw error;
+    }
+  }
+
+  /**
+   * Generate a comprehensive cancellation report
+   * AUDIT FIX: Generates report on cancellation
+   */
+  private async generateCancellationReport(
+    eventId: string,
+    tenantId: string,
+    options: CancellationOptions,
+    result: CancellationResult,
+    timeline: CancellationReport['timeline']
+  ): Promise<CancellationReport> {
+    const reportId = crypto.randomUUID();
+
+    // Get event details
+    const event = await db('events')
+      .where({ id: eventId, tenant_id: tenantId })
+      .first();
+
+    // Get ticket breakdown by tier
+    const ticketBreakdown = await db('event_pricing')
+      .select('name as tier')
+      .select(db.raw('COALESCE(SUM(1), 0) as quantity'))
+      .select('base_price as unitPrice')
+      .select(db.raw('COALESCE(SUM(base_price), 0) as totalValue'))
+      .where({ event_id: eventId })
+      .groupBy('name', 'base_price');
+
+    // Get revenue summary
+    const revenueSummary = await db('event_capacity')
+      .select(db.raw('COALESCE(SUM(sold_count), 0) as totalTicketsSold'))
+      .where({ event_id: eventId })
+      .first();
+
+    // Calculate totals
+    const totalRevenue = ticketBreakdown.reduce((sum: number, t: any) => sum + Number(t.totalValue || 0), 0);
+    const refundAmount = options.refundPolicy === 'full' ? totalRevenue :
+                        options.refundPolicy === 'partial' ? totalRevenue * 0.5 : 0;
+
+    const report: CancellationReport = {
+      id: reportId,
+      eventId,
+      eventName: event?.name || 'Unknown Event',
+      tenantId,
+      cancelledAt: new Date(),
+      cancelledBy: options.cancelledBy,
+      reason: options.reason,
+      refundPolicy: options.refundPolicy || 'full',
+      summary: {
+        totalTicketsSold: Number(revenueSummary?.totalTicketsSold) || 0,
+        totalRevenue,
+        refundsIssued: result.refundsTriggered,
+        refundAmount,
+        notificationsSent: result.notificationsSent,
+        resalesCancelled: result.resalesCancelled,
+      },
+      ticketBreakdown: ticketBreakdown.map((t: any) => ({
+        tier: t.tier || 'General',
+        quantity: Number(t.quantity) || 0,
+        unitPrice: Number(t.unitPrice) || 0,
+        totalValue: Number(t.totalValue) || 0,
+      })),
+      timeline,
+      errors: result.errors,
+      generatedAt: new Date(),
+    };
+
+    // Store report in database
+    try {
+      await db('event_cancellation_reports').insert({
+        id: reportId,
+        tenant_id: tenantId,
+        event_id: eventId,
+        report_data: JSON.stringify(report),
+        created_at: new Date(),
+      });
+    } catch (error) {
+      // Table might not exist - log and continue
+      logger.warn({ error, eventId, reportId }, 'Failed to store cancellation report in database, table may not exist');
+    }
+
+    logger.info({
+      eventId,
+      reportId,
+      summary: report.summary,
+    }, 'Cancellation report generated');
+
+    return report;
+  }
+
+  /**
+   * Get a previously generated cancellation report
+   */
+  async getCancellationReport(
+    eventId: string,
+    tenantId: string,
+    reportId: string
+  ): Promise<CancellationReport | null> {
+    try {
+      const row = await db('event_cancellation_reports')
+        .where({
+          id: reportId,
+          event_id: eventId,
+          tenant_id: tenantId,
+        })
+        .first();
+
+      if (!row) return null;
+
+      return JSON.parse(row.report_data) as CancellationReport;
+    } catch (error) {
+      logger.warn({ error, eventId, reportId }, 'Failed to retrieve cancellation report');
+      return null;
     }
   }
 
@@ -168,13 +356,13 @@ export class EventCancellationService {
   ): Promise<Array<{ id: string; user_id: string; email: string; status: string }>> {
     // This would typically query the ticket-service
     // For now, we'll query our local database or emit an event
-    
+
     // In a real implementation, this would call ticket-service
     // const response = await ticketServiceClient.getTicketsByEvent(eventId, tenantId);
-    
+
     // Placeholder - in production, this calls ticket-service
     logger.info({ eventId, tenantId }, 'Fetching tickets for event');
-    
+
     // Return empty array for now - actual implementation would call ticket-service
     return [];
   }
@@ -257,7 +445,7 @@ export class EventCancellationService {
    */
   private async cancelResaleListings(eventId: string, tenantId: string): Promise<number> {
     // In production, this would call marketplace-service
-    
+
     const cancellationEvent = {
       type: 'EVENT_CANCELLED_RESALES_CANCELLED',
       eventId,
@@ -344,7 +532,7 @@ export class EventCancellationService {
     // Create audit record
     try {
       await db('event_audit_log').insert({
-        id: require('crypto').randomUUID(),
+        id: crypto.randomUUID(),
         tenant_id: tenantId,
         event_id: eventId,
         action: 'EVENT_CANCELLED',

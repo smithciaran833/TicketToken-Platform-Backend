@@ -1,9 +1,8 @@
-import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { getPool } from '../config/database.config';
 
 export class HealthController {
-  async check(request: FastifyRequest, reply: FastifyReply) {
+  async check(_request: FastifyRequest, reply: FastifyReply) {
     try {
       // Check database
       const pool = getPool();

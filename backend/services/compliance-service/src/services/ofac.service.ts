@@ -16,8 +16,8 @@ export class OFACService {
     // Normalize name for checking
     const normalizedName = name.toLowerCase().trim();
     
-    // Check cache first
-    const cached = await redis.get(`ofac:${normalizedName}`);
+    // Check cache first (using null for tenantId since OFAC is global)
+    const cached = await redis.get(null, `ofac:${normalizedName}`);
     if (cached) {
       return JSON.parse(cached);
     }
@@ -46,8 +46,8 @@ export class OFACService {
     
     const result = { isMatch, confidence, matchedName };
     
-    // Cache result for 24 hours
-    await redis.set(`ofac:${normalizedName}`, JSON.stringify(result), 86400);
+    // Cache result for 24 hours (using null for tenantId since OFAC is global)
+    await redis.set(null, `ofac:${normalizedName}`, JSON.stringify(result), 86400);
     
     return result;
   }

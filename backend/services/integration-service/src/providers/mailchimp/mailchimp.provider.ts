@@ -1,5 +1,6 @@
 import { IntegrationProvider, SyncResult } from '../provider.interface';
 import { logger } from '../../utils/logger';
+import { config } from '../../config';
 import axios from 'axios';
 import crypto from 'crypto';
 
@@ -29,7 +30,8 @@ export class MailchimpProvider implements IntegrationProvider {
           password: this.apiKey
         }
       });
-      return response.data.health_status === "Everything's Chimpy!";
+      const responseData = response.data as { health_status?: string };
+      return responseData.health_status === "Everything's Chimpy!";
     } catch (error) {
       logger.error('Mailchimp connection test failed', error);
       return false;
@@ -73,8 +75,9 @@ export class MailchimpProvider implements IntegrationProvider {
         );
         
         syncedCount += batch.length;
+        const batchData = response.data as { id?: string };
         logger.info('Mailchimp batch synced', { 
-          batchId: response.data.id,
+          batchId: batchData.id,
           count: batch.length 
         });
       } catch (error: any) {
@@ -112,7 +115,8 @@ export class MailchimpProvider implements IntegrationProvider {
         }
       );
 
-      return response.data.members || [];
+      const responseData = response.data as { members?: any[] };
+      return responseData.members || [];
     } catch (error) {
       logger.error('Failed to fetch Mailchimp customers', error);
       return [];
@@ -174,19 +178,26 @@ export class MailchimpProvider implements IntegrationProvider {
   }
 
   getOAuthUrl(state: string): string {
-    const clientId = process.env.MAILCHIMP_CLIENT_ID;
+    const clientId = config.providers.mailchimp.clientId;
     return `https://login.mailchimp.com/oauth2/authorize?response_type=code&client_id=${clientId}&state=${state}`;
   }
 
   async exchangeCodeForToken(code: string): Promise<any> {
+    const clientId = config.providers.mailchimp.clientId;
+    const clientSecret = config.providers.mailchimp.clientSecret;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('Mailchimp OAuth credentials not configured');
+    }
+    
     const response = await axios.post(
       'https://login.mailchimp.com/oauth2/token',
       new URLSearchParams({
         grant_type: 'authorization_code',
-        client_id: process.env.MAILCHIMP_CLIENT_ID || '',
-        client_secret: process.env.MAILCHIMP_CLIENT_SECRET || '',
+        client_id: clientId,
+        client_secret: clientSecret,
         code,
-        redirect_uri: `${process.env.API_URL}/api/v1/integrations/oauth/callback/mailchimp`
+        redirect_uri: `${config.server.apiUrl}/api/v1/integrations/oauth/callback/mailchimp`
       })
     );
 

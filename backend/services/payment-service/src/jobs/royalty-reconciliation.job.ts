@@ -3,10 +3,6 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'RoyaltyReconciliationJob' });
 
-/**
- * Daily royalty reconciliation job
- * Runs every day at 2 AM to reconcile previous day's royalties
- */
 export async function runDailyReconciliation(): Promise<void> {
   log.info('Starting daily royalty reconciliation job');
 
@@ -22,15 +18,11 @@ export async function runDailyReconciliation(): Promise<void> {
 
     log.info('Daily royalty reconciliation completed successfully');
   } catch (error) {
-    log.error('Daily royalty reconciliation failed', { error });
+    log.error({ error }, 'Daily royalty reconciliation failed');
     throw error;
   }
 }
 
-/**
- * Weekly comprehensive reconciliation
- * Runs every Monday at 3 AM to reconcile previous week
- */
 export async function runWeeklyReconciliation(): Promise<void> {
   log.info('Starting weekly royalty reconciliation job');
 
@@ -47,26 +39,17 @@ export async function runWeeklyReconciliation(): Promise<void> {
 
     log.info('Weekly royalty reconciliation completed successfully');
   } catch (error) {
-    log.error('Weekly royalty reconciliation failed', { error });
+    log.error({ error }, 'Weekly royalty reconciliation failed');
     throw error;
   }
 }
 
-/**
- * Start the scheduled jobs
- */
 export function startRoyaltyReconciliationJobs(): void {
-  // Run daily at 2 AM
   const dailyCron = '0 2 * * *';
-  
-  // Run weekly on Monday at 3 AM
   const weeklyCron = '0 3 * * 1';
 
-  log.info('Royalty reconciliation jobs scheduled', {
+  log.info({
     daily: dailyCron,
     weekly: weeklyCron
-  });
-
-  // Note: Actual cron scheduling would be done by the service's job scheduler
-  // This is just the job definition
+  }, 'Royalty reconciliation jobs scheduled');
 }

@@ -1,7 +1,10 @@
+import sharp from 'sharp';
 import { logger } from '../utils/logger';
-import { db } from '../config/database';
 import { metricsService } from './metrics.service';
-import { cacheService, CachePrefix, CacheTTL } from './cache.service';
+import { cacheService, CacheTTL } from './cache.service';
+import { fileModel } from '../models/file.model';
+import { storageService } from '../storage/storage.service';
+import { watermarkProcessor } from '../processors/image/watermark.processor';
 
 interface BatchJob {
   id: string;
@@ -11,6 +14,7 @@ interface BatchJob {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   progress: number;
   createdBy: string;
+  tenantId: string;
   createdAt: Date;
   completedAt?: Date;
   error?: string;
@@ -22,7 +26,6 @@ interface BatchJob {
  */
 export class BatchProcessorService {
   private activeJobs: Map<string, BatchJob> = new Map();
-  private maxConcurrent: number = 5;
   private jobQueue: BatchJob[] = [];
   private processing: boolean = false;
 
@@ -37,10 +40,11 @@ export class BatchProcessorService {
     type: BatchJob['type'],
     fileIds: string[],
     options: any,
-    createdBy: string
+    createdBy: string,
+    tenantId: string
   ): Promise<string> {
     const jobId = this.generateJobId();
-    
+
     const job: BatchJob = {
       id: jobId,
       type,
@@ -49,6 +53,7 @@ export class BatchProcessorService {
       status: 'pending',
       progress: 0,
       createdBy,
+      tenantId,
       createdAt: new Date()
     };
 
@@ -96,7 +101,7 @@ export class BatchProcessorService {
    */
   private async startProcessing() {
     if (this.processing) return;
-    
+
     this.processing = true;
     logger.info('Starting batch job processing');
 
@@ -107,7 +112,7 @@ export class BatchProcessorService {
       try {
         await this.processJob(job);
       } catch (error) {
-        logger.error(`Batch job ${job.id} failed:`, error);
+        logger.error({ err: error instanceof Error ? error : new Error(String(error)), jobId: job.id }, 'Batch job failed');
         job.status = 'failed';
         job.error = error instanceof Error ? error.message : 'Unknown error';
         await this.updateJobStatus(job);
@@ -123,7 +128,7 @@ export class BatchProcessorService {
    */
   private async processJob(job: BatchJob) {
     logger.info(`Processing batch job ${job.id}: ${job.type}`);
-    
+
     job.status = 'processing';
     await this.updateJobStatus(job);
 
@@ -134,19 +139,19 @@ export class BatchProcessorService {
     const chunkSize = 10;
     for (let i = 0; i < totalFiles; i += chunkSize) {
       const chunk = job.fileIds.slice(i, i + chunkSize);
-      
+
       await Promise.all(
         chunk.map(async (fileId) => {
           try {
-            await this.processFile(fileId, job.type, job.options);
+            await this.processFile(fileId, job.type, job.options, job.tenantId);
             processed++;
-            
+
             // Update progress
             job.progress = Math.round((processed / totalFiles) * 100);
             await this.updateJobStatus(job);
-            
+
           } catch (error) {
-            logger.error(`Failed to process file ${fileId} in batch ${job.id}:`, error);
+            logger.error({ err: error instanceof Error ? error : new Error(String(error)), fileId, jobId: job.id }, 'Failed to process file in batch');
           }
         })
       );
@@ -168,22 +173,22 @@ export class BatchProcessorService {
   /**
    * Process individual file based on job type
    */
-  private async processFile(fileId: string, type: BatchJob['type'], options: any) {
+  private async processFile(fileId: string, type: BatchJob['type'], options: any, tenantId: string) {
     switch (type) {
       case 'resize':
-        await this.resizeFile(fileId, options);
+        await this.resizeFile(fileId, tenantId, options);
         break;
       case 'convert':
-        await this.convertFile(fileId, options);
+        await this.convertFile(fileId, tenantId, options);
         break;
       case 'compress':
-        await this.compressFile(fileId, options);
+        await this.compressFile(fileId, tenantId, options);
         break;
       case 'watermark':
-        await this.watermarkFile(fileId, options);
+        await this.watermarkFile(fileId, tenantId, options);
         break;
       case 'delete':
-        await this.deleteFile(fileId);
+        await this.deleteFile(fileId, tenantId);
         break;
       default:
         throw new Error(`Unknown batch job type: ${type}`);
@@ -193,48 +198,137 @@ export class BatchProcessorService {
   /**
    * Batch resize images
    */
-  private async resizeFile(fileId: string, options: { width?: number; height?: number; quality?: number }) {
-    // Implementation would call image processor
-    logger.debug(`Resizing file ${fileId}`);
-    // await imageProcessor.resize(fileId, options);
+  private async resizeFile(
+    fileId: string,
+    tenantId: string,
+    options: { width?: number; height?: number; quality?: number }
+  ) {
+    const file = await fileModel.findById(fileId, tenantId);
+    if (!file || !file.storagePath) {
+      throw new Error(`File not found: ${fileId}`);
+    }
+
+    const buffer = await storageService.download(file.storagePath);
+    
+    const resized = await sharp(buffer)
+      .resize(options.width, options.height, {
+        fit: 'inside',
+        withoutEnlargement: true
+      })
+      .jpeg({ quality: options.quality || 85 })
+      .toBuffer();
+
+    // Save resized version
+    const resizedPath = file.storagePath.replace(/\.[^.]+$/, '_resized.jpg');
+    await storageService.upload(resized, resizedPath);
+
+    logger.debug({ fileId, width: options.width, height: options.height }, 'File resized');
   }
 
   /**
    * Batch convert files
    */
-  private async convertFile(fileId: string, options: { format: string }) {
-    logger.debug(`Converting file ${fileId} to ${options.format}`);
-    // await documentProcessor.convert(fileId, options);
+  private async convertFile(
+    fileId: string,
+    tenantId: string,
+    options: { format: string }
+  ) {
+    const file = await fileModel.findById(fileId, tenantId);
+    if (!file || !file.storagePath) {
+      throw new Error(`File not found: ${fileId}`);
+    }
+
+    const buffer = await storageService.download(file.storagePath);
+    
+    let converted: Buffer;
+    const format = options.format.toLowerCase();
+    
+    switch (format) {
+      case 'jpeg':
+      case 'jpg':
+        converted = await sharp(buffer).jpeg({ quality: 85 }).toBuffer();
+        break;
+      case 'png':
+        converted = await sharp(buffer).png().toBuffer();
+        break;
+      case 'webp':
+        converted = await sharp(buffer).webp({ quality: 85 }).toBuffer();
+        break;
+      default:
+        throw new Error(`Unsupported format: ${format}`);
+    }
+
+    const convertedPath = file.storagePath.replace(/\.[^.]+$/, `.${format}`);
+    await storageService.upload(converted, convertedPath);
+
+    logger.debug({ fileId, format }, 'File converted');
   }
 
   /**
    * Batch compress files
    */
-  private async compressFile(fileId: string, options: { quality?: number }) {
-    logger.debug(`Compressing file ${fileId}`);
-    // await imageProcessor.compress(fileId, options);
+  private async compressFile(
+    fileId: string,
+    tenantId: string,
+    options: { quality?: number }
+  ) {
+    const file = await fileModel.findById(fileId, tenantId);
+    if (!file || !file.storagePath) {
+      throw new Error(`File not found: ${fileId}`);
+    }
+
+    const buffer = await storageService.download(file.storagePath);
+    const quality = options.quality || 70;
+
+    const compressed = await sharp(buffer)
+      .jpeg({ quality, mozjpeg: true })
+      .toBuffer();
+
+    // Only save if actually smaller
+    if (compressed.length < buffer.length) {
+      const compressedPath = file.storagePath.replace(/\.[^.]+$/, '_compressed.jpg');
+      await storageService.upload(compressed, compressedPath);
+      
+      const reduction = Math.round((1 - compressed.length / buffer.length) * 100);
+      logger.debug({ fileId, reduction: `${reduction}%` }, 'File compressed');
+    } else {
+      logger.debug({ fileId }, 'File not compressed - already optimal');
+    }
   }
 
   /**
    * Batch watermark images
    */
-  private async watermarkFile(fileId: string, options: { text?: string; opacity?: number }) {
-    logger.debug(`Adding watermark to file ${fileId}`);
-    // await imageProcessor.watermark(fileId, options);
+  private async watermarkFile(
+    fileId: string,
+    tenantId: string,
+    options: { text?: string; opacity?: number; position?: 'center' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }
+  ) {
+    const file = await fileModel.findById(fileId, tenantId);
+    if (!file || !file.storagePath) {
+      throw new Error(`File not found: ${fileId}`);
+    }
+
+    const buffer = await storageService.download(file.storagePath);
+    
+    const watermarked = await watermarkProcessor.addTextWatermark(buffer, {
+      text: options.text || 'WATERMARK',
+      opacity: options.opacity || 0.3,
+      position: options.position || 'center'
+    });
+
+    const watermarkedPath = file.storagePath.replace(/\.[^.]+$/, '_watermarked.jpg');
+    await storageService.upload(watermarked, watermarkedPath);
+
+    logger.debug({ fileId, text: options.text }, 'Watermark added');
   }
 
   /**
    * Batch delete files
    */
-  private async deleteFile(fileId: string) {
-    await db('files')
-      .where({ id: fileId })
-      .update({
-        deleted_at: db.fn.now(),
-        status: 'deleted'
-      });
-    
-    logger.debug(`Deleted file ${fileId}`);
+  private async deleteFile(fileId: string, tenantId: string) {
+    await fileModel.softDelete(fileId, tenantId);
+    logger.debug({ fileId }, 'File deleted');
   }
 
   /**
@@ -257,7 +351,7 @@ export class BatchProcessorService {
     if (!job) return false;
 
     if (job.status === 'completed') {
-      logger.warn(`Cannot cancel completed job ${jobId}`);
+      logger.warn({ jobId }, 'Cannot cancel completed job');
       return false;
     }
 
@@ -324,7 +418,7 @@ export class BatchProcessorService {
    */
   getStats() {
     const jobs = Array.from(this.activeJobs.values());
-    
+
     return {
       total: jobs.length,
       pending: jobs.filter(j => j.status === 'pending').length,

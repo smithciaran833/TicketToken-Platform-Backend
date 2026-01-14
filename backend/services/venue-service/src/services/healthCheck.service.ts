@@ -1,6 +1,7 @@
 import { Knex } from 'knex';
 import Redis from 'ioredis';
 import { logger } from '../utils/logger';
+import { getConfig } from '../config/index';
 
 export interface HealthCheckResult {
   status: 'healthy' | 'degraded' | 'unhealthy';
@@ -269,7 +270,7 @@ export class HealthCheckService {
         details: {
           connected: true,
           channels: channelCount,
-          host: process.env.RABBITMQ_HOST || 'localhost',
+          host: getConfig().rabbitmq.host,
           lastCheck: new Date().toISOString()
         }
       };

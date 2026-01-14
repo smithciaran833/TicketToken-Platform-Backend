@@ -84,7 +84,24 @@ export async function validateInternalRequest(
       .update(payload)
       .digest('hex');
 
-    if (signature !== expectedSignature) {
+    // Use timing-safe comparison to prevent timing attacks
+    const signatureBuffer = Buffer.from(signature, 'hex');
+    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
+    
+    // First check if lengths match (prevents timing leak from buffer comparison)
+    if (signatureBuffer.length !== expectedBuffer.length) {
+      logger.warn('Invalid internal service signature (length mismatch)', {
+        service: internalService,
+        ip: request.ip
+      });
+      return reply.code(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Invalid signature'
+      });
+    }
+
+    // Use constant-time comparison
+    if (!crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
       logger.warn('Invalid internal service signature', {
         service: internalService,
         ip: request.ip

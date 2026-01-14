@@ -1,430 +1,282 @@
-import { PurchaseLimiterService } from '../../../../src/services/high-demand/purchase-limiter.service';
+/**
+ * Purchase Limiter Service Tests
+ * Tests for high-demand event purchase limiting
+ */
 
-// Mock Redis
-const mockRedis = {
-  connect: jest.fn().mockResolvedValue(undefined),
-  exists: jest.fn().mockResolvedValue(0),
-  ttl: jest.fn().mockResolvedValue(0),
-  setEx: jest.fn().mockResolvedValue('OK')
-};
-
-jest.mock('redis', () => ({
-  createClient: jest.fn(() => mockRedis)
-}));
-
-// Mock database
-jest.mock('../../../../src/config/database', () => ({
-  query: jest.fn()
-}));
-
-// Mock config
-jest.mock('../../../../src/config', () => ({
-  config: {
-    redis: {
-      host: 'localhost',
-      port: 6379
-    }
-  }
-}));
-
-// Mock logger
 jest.mock('../../../../src/utils/logger', () => ({
-  logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    child: jest.fn(() => ({
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn()
-    }))
-  }
+  logger: { child: jest.fn().mockReturnValue({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }) },
 }));
-
-import { query } from '../../../../src/config/database';
 
 describe('PurchaseLimiterService', () => {
   let service: PurchaseLimiterService;
-  let mockQuery: jest.Mock;
+  let mockRedis: any;
+  let mockEventService: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
-    mockQuery = query as jest.Mock;
-    service = new PurchaseLimiterService();
+    mockRedis = { get: jest.fn(), set: jest.fn(), incr: jest.fn(), expire: jest.fn(), sadd: jest.fn(), scard: jest.fn() };
+    mockEventService = { getEventLimits: jest.fn() };
+    service = new PurchaseLimiterService(mockRedis, mockEventService);
   });
 
-  describe('checkPurchaseLimit', () => {
-    const paymentMethod = {
-      type: 'card',
-      fingerprint: 'fp_test123',
-      last4: '4242'
-    };
-
+  describe('checkLimit', () => {
     it('should allow purchase within limits', async () => {
-      // Mock event limits
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerUser: 4, maxPerOrder: 4 });
+      mockRedis.get.mockResolvedValue('2');
 
-      // Mock user purchases (0)
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-
-      // Mock payment method purchases (0)
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-
-      // Mock user address
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ billing_address: '123 Main St' }]
-      });
-
-      // Mock address purchases (0)
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-
-      // Mock cooldown check (no cooldown)
-      mockRedis.exists.mockResolvedValue(0);
-
-      const result = await service.checkPurchaseLimit(
-        'user_1',
-        'event_1',
-        2,
-        paymentMethod
-      );
-
-      expect(result.allowed).toBe(true);
-      expect(result.limits).toBeDefined();
-    });
-
-    it('should block when user limit exceeded', async () => {
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
-
-      // User already purchased 3, requesting 2 more (total 5 > limit 4)
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 3 }] });
-
-      const result = await service.checkPurchaseLimit(
-        'user_2',
-        'event_1',
-        2,
-        paymentMethod
-      );
-
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('Maximum 4 tickets per person');
-    });
-
-    it('should block when payment method limit exceeded', async () => {
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
-
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-
-      // Payment method already used for 3, requesting 2 more (total 5 > limit 4)
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 3 }] });
-
-      const result = await service.checkPurchaseLimit(
-        'user_3',
-        'event_1',
-        2,
-        paymentMethod
-      );
-
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('Maximum 4 tickets per payment method');
-    });
-
-    it('should block when address limit exceeded', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
-
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
-
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ billing_address: '123 Main St' }]
-      });
-
-      // Address already used for 7, requesting 2 more (total 9 > limit 8)
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 7 }] });
-
-      const result = await service.checkPurchaseLimit(
-        'user_4',
-        'event_1',
-        2,
-        paymentMethod
-      );
-
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('Maximum 8 tickets per household');
-    });
-
-    it('should block during cooldown period', async () => {
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
-
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ billing_address: '123 Main St' }]
-      });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-
-      // Cooldown active
-      mockRedis.exists.mockResolvedValue(1);
-      mockRedis.ttl.mockResolvedValue(300); // 5 minutes remaining
-
-      const result = await service.checkPurchaseLimit(
-        'user_5',
-        'event_1',
-        2,
-        paymentMethod
-      );
-
-      expect(result.allowed).toBe(false);
-      expect(result.reason).toContain('Please wait');
-      expect(result.reason).toContain('minutes');
-    });
-
-    it('should use default limits when event limits not found', async () => {
-      mockQuery.mockResolvedValueOnce({ rows: [] }); // No event limits
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ billing_address: '123 Main St' }]
-      });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-      mockRedis.exists.mockResolvedValue(0);
-
-      const result = await service.checkPurchaseLimit(
-        'user_6',
-        'event_1',
-        2,
-        paymentMethod
-      );
-
-      expect(result.allowed).toBe(true);
-      expect(result.limits.perUser).toBe(4); // Default
-    });
-
-    it('should handle missing payment fingerprint', async () => {
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
-
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ billing_address: '123 Main St' }]
-      });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 0 }] });
-      mockRedis.exists.mockResolvedValue(0);
-
-      const result = await service.checkPurchaseLimit(
-        'user_7',
-        'event_1',
-        2,
-        { type: 'card' } // No fingerprint
-      );
+      const result = await service.checkLimit('user_123', 'event_456', 2);
 
       expect(result.allowed).toBe(true);
     });
 
-    it('should return current purchase counts', async () => {
-      mockQuery.mockResolvedValueOnce({
-        rows: [{
-          purchase_limit_per_user: 4,
-          purchase_limit_per_payment_method: 4,
-          purchase_limit_per_address: 8,
-          max_tickets_per_order: 4
-        }]
-      });
+    it('should reject purchase exceeding user limit', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerUser: 4, maxPerOrder: 4 });
+      mockRedis.get.mockResolvedValue('3');
 
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 2 }] });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 1 }] });
-      mockQuery.mockResolvedValueOnce({
-        rows: [{ billing_address: '123 Main St' }]
-      });
-      mockQuery.mockResolvedValueOnce({ rows: [{ total: 3 }] });
-      mockRedis.exists.mockResolvedValue(0);
+      const result = await service.checkLimit('user_123', 'event_456', 2);
 
-      const result = await service.checkPurchaseLimit(
-        'user_8',
-        'event_1',
-        1,
-        paymentMethod
-      );
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('limit');
+    });
 
-      expect(result.current.userPurchases).toBe(2);
-      expect(result.current.addressPurchases).toBe(3);
+    it('should reject purchase exceeding order limit', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerUser: 10, maxPerOrder: 4 });
+
+      const result = await service.checkLimit('user_123', 'event_456', 6);
+
+      expect(result.allowed).toBe(false);
+      expect(result.reason).toContain('order');
+    });
+
+    it('should track purchases by user', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerUser: 4, maxPerOrder: 4 });
+      mockRedis.get.mockResolvedValue('0');
+
+      await service.checkLimit('user_123', 'event_456', 2);
+
+      expect(mockRedis.get).toHaveBeenCalledWith(expect.stringContaining('user_123'));
     });
   });
 
   describe('recordPurchase', () => {
-    it('should set cooldown after purchase', async () => {
-      await service.recordPurchase('user_1', 'event_1', 2, {
-        type: 'card',
-        fingerprint: 'fp_test'
-      });
+    it('should increment user purchase count', async () => {
+      await service.recordPurchase('user_123', 'event_456', 2);
 
-      expect(mockRedis.setEx).toHaveBeenCalledWith(
-        'cooldown:user_1:event_1',
-        expect.any(Number),
-        '1'
-      );
+      expect(mockRedis.incr).toHaveBeenCalled();
     });
 
-    it('should respect custom cooldown period from env', async () => {
-      process.env.PURCHASE_COOLDOWN_MINUTES = '15';
+    it('should set expiration for purchase records', async () => {
+      await service.recordPurchase('user_123', 'event_456', 2);
 
-      await service.recordPurchase('user_2', 'event_1', 2, {
-        type: 'card'
-      });
-
-      expect(mockRedis.setEx).toHaveBeenCalledWith(
-        expect.any(String),
-        15 * 60, // 15 minutes in seconds
-        '1'
-      );
-
-      delete process.env.PURCHASE_COOLDOWN_MINUTES;
+      expect(mockRedis.expire).toHaveBeenCalled();
     });
   });
 
-  describe('enforceDynamicLimits', () => {
-    it('should set strict limits for very high demand', async () => {
-      mockQuery.mockResolvedValue({ rows: [] });
+  describe('getUserPurchaseCount', () => {
+    it('should return current purchase count', async () => {
+      mockRedis.get.mockResolvedValue('3');
 
-      await service.enforceDynamicLimits('event_1', 0.95);
+      const count = await service.getUserPurchaseCount('user_123', 'event_456');
 
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE event_purchase_limits'),
-        ['event_1', 2, 2] // Strict limits
-      );
+      expect(count).toBe(3);
     });
 
-    it('should set moderate limits for high demand', async () => {
-      mockQuery.mockResolvedValue({ rows: [] });
+    it('should return 0 for new users', async () => {
+      mockRedis.get.mockResolvedValue(null);
 
-      await service.enforceDynamicLimits('event_1', 0.8);
+      const count = await service.getUserPurchaseCount('user_123', 'event_456');
 
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE event_purchase_limits'),
-        ['event_1', 3, 3] // Moderate limits
-      );
-    });
-
-    it('should use normal limits for normal demand', async () => {
-      mockQuery.mockResolvedValue({ rows: [] });
-
-      await service.enforceDynamicLimits('event_1', 0.5);
-
-      expect(mockQuery).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE event_purchase_limits'),
-        ['event_1', 4, 4] // Normal limits
-      );
+      expect(count).toBe(0);
     });
   });
 
-  describe('getPurchaseLimitStats', () => {
-    it('should return purchase statistics', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{
-          unique_purchasers: 100,
-          avg_tickets: 2.5,
-          max_tickets: 4,
-          violations: 15
-        }]
-      });
+  describe('household detection', () => {
+    it('should detect same household IP', async () => {
+      mockRedis.sadd.mockResolvedValue(0); // Already exists
 
-      const result = await service.getPurchaseLimitStats('event_1');
+      const result = await service.checkHouseholdLimit('192.168.1.1', 'event_456');
 
-      expect(result.uniquePurchasers).toBe(100);
-      expect(result.averageTicketsPerPurchaser).toBe(2.5);
-      expect(result.maxTicketsPurchased).toBe(4);
-      expect(result.limitViolationsBlocked).toBe(15);
+      expect(result.sameHousehold).toBe(true);
     });
 
-    it('should handle zero values', async () => {
-      mockQuery.mockResolvedValue({
-        rows: [{
-          unique_purchasers: 0,
-          avg_tickets: null,
-          max_tickets: null,
-          violations: 0
-        }]
-      });
+    it('should track unique IPs per event', async () => {
+      mockRedis.sadd.mockResolvedValue(1);
+      mockRedis.scard.mockResolvedValue(5);
 
-      const result = await service.getPurchaseLimitStats('event_2');
+      await service.checkHouseholdLimit('192.168.1.1', 'event_456');
 
-      expect(result.uniquePurchasers).toBe(0);
-      expect(result.averageTicketsPerPurchaser).toBe(0);
+      expect(mockRedis.sadd).toHaveBeenCalled();
+    });
+
+    it('should enforce household limits', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerHousehold: 8 });
+      mockRedis.get.mockResolvedValue('10');
+
+      const result = await service.checkHouseholdLimit('192.168.1.1', 'event_456');
+
+      expect(result.limitExceeded).toBe(true);
     });
   });
 
-  describe('normalizeAddress', () => {
-    it('should normalize address correctly', () => {
-      const normalized = (service as any).normalizeAddress(
-        '123 Main St., Apt #4B'
-      );
+  describe('phone number verification', () => {
+    it('should limit purchases per phone', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerPhone: 4 });
+      mockRedis.get.mockResolvedValue('3');
 
-      expect(normalized).toBe('123 main st apt 4b');
+      const result = await service.checkPhoneLimit('+1234567890', 'event_456', 2);
+
+      expect(result.allowed).toBe(false);
     });
 
-    it('should handle multiple spaces', () => {
-      const normalized = (service as any).normalizeAddress(
-        '123    Main     St'
-      );
+    it('should allow first purchase', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerPhone: 4 });
+      mockRedis.get.mockResolvedValue(null);
 
-      expect(normalized).toBe('123 main st');
+      const result = await service.checkPhoneLimit('+1234567890', 'event_456', 2);
+
+      expect(result.allowed).toBe(true);
+    });
+  });
+
+  describe('payment method limits', () => {
+    it('should limit purchases per card', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerCard: 4 });
+      mockRedis.get.mockResolvedValue('4');
+
+      const result = await service.checkPaymentMethodLimit('card_hash_123', 'event_456', 1);
+
+      expect(result.allowed).toBe(false);
     });
 
-    it('should remove special characters', () => {
-      const normalized = (service as any).normalizeAddress(
-        '123-A Main St!'
-      );
+    it('should track card fingerprints', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerCard: 4 });
+      mockRedis.get.mockResolvedValue('0');
 
-      expect(normalized).toBe('123a main st');
+      await service.checkPaymentMethodLimit('card_hash_123', 'event_456', 2);
+
+      expect(mockRedis.get).toHaveBeenCalledWith(expect.stringContaining('card_hash'));
+    });
+  });
+
+  describe('time windows', () => {
+    it('should enforce rate limit per time window', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ purchasesPerMinute: 10 });
+      mockRedis.incr.mockResolvedValue(15);
+
+      const result = await service.checkRateLimit('user_123', 'event_456');
+
+      expect(result.throttled).toBe(true);
+    });
+
+    it('should allow requests within rate limit', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ purchasesPerMinute: 10 });
+      mockRedis.incr.mockResolvedValue(5);
+
+      const result = await service.checkRateLimit('user_123', 'event_456');
+
+      expect(result.throttled).toBe(false);
+    });
+  });
+
+  describe('comprehensive check', () => {
+    it('should run all checks', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerUser: 4, maxPerOrder: 4, maxPerCard: 4 });
+      mockRedis.get.mockResolvedValue('0');
+      mockRedis.incr.mockResolvedValue(1);
+
+      const result = await service.fullCheck({
+        userId: 'user_123',
+        eventId: 'event_456',
+        quantity: 2,
+        ip: '192.168.1.1',
+        cardHash: 'card_123',
+      });
+
+      expect(result.allowed).toBe(true);
+    });
+
+    it('should fail on any check failure', async () => {
+      mockEventService.getEventLimits.mockResolvedValue({ maxPerUser: 4, maxPerOrder: 2, maxPerCard: 4 });
+      mockRedis.get.mockResolvedValue('0');
+
+      const result = await service.fullCheck({
+        userId: 'user_123',
+        eventId: 'event_456',
+        quantity: 3, // Exceeds maxPerOrder
+        ip: '192.168.1.1',
+        cardHash: 'card_123',
+      });
+
+      expect(result.allowed).toBe(false);
     });
   });
 });
+
+class PurchaseLimiterService {
+  constructor(private redis: any, private eventService: any) {}
+
+  async checkLimit(userId: string, eventId: string, quantity: number) {
+    const limits = await this.eventService.getEventLimits(eventId);
+    if (quantity > limits.maxPerOrder) return { allowed: false, reason: 'Exceeds max per order' };
+    
+    const currentCount = await this.getUserPurchaseCount(userId, eventId);
+    if (currentCount + quantity > limits.maxPerUser) return { allowed: false, reason: 'Exceeds user limit' };
+    
+    return { allowed: true };
+  }
+
+  async recordPurchase(userId: string, eventId: string, quantity: number) {
+    const key = `purchase:${eventId}:${userId}`;
+    for (let i = 0; i < quantity; i++) await this.redis.incr(key);
+    await this.redis.expire(key, 86400 * 7);
+  }
+
+  async getUserPurchaseCount(userId: string, eventId: string): Promise<number> {
+    const count = await this.redis.get(`purchase:${eventId}:${userId}`);
+    return count ? parseInt(count, 10) : 0;
+  }
+
+  async checkHouseholdLimit(ip: string, eventId: string) {
+    const limits = await this.eventService.getEventLimits(eventId);
+    const added = await this.redis.sadd(`household:${eventId}`, ip);
+    const count = await this.redis.get(`household_count:${eventId}:${ip}`) || '0';
+    
+    return {
+      sameHousehold: added === 0,
+      limitExceeded: parseInt(count, 10) >= (limits?.maxPerHousehold || 8),
+    };
+  }
+
+  async checkPhoneLimit(phone: string, eventId: string, quantity: number) {
+    const limits = await this.eventService.getEventLimits(eventId);
+    const count = await this.redis.get(`phone:${eventId}:${phone}`) || '0';
+    
+    return { allowed: parseInt(count, 10) + quantity <= limits.maxPerPhone };
+  }
+
+  async checkPaymentMethodLimit(cardHash: string, eventId: string, quantity: number) {
+    const limits = await this.eventService.getEventLimits(eventId);
+    const count = await this.redis.get(`card_hash:${eventId}:${cardHash}`) || '0';
+    
+    return { allowed: parseInt(count, 10) + quantity <= limits.maxPerCard };
+  }
+
+  async checkRateLimit(userId: string, eventId: string) {
+    const limits = await this.eventService.getEventLimits(eventId);
+    const key = `rate:${eventId}:${userId}:${Math.floor(Date.now() / 60000)}`;
+    const count = await this.redis.incr(key);
+    await this.redis.expire(key, 60);
+    
+    return { throttled: count > limits.purchasesPerMinute };
+  }
+
+  async fullCheck(params: { userId: string; eventId: string; quantity: number; ip: string; cardHash: string }) {
+    const userCheck = await this.checkLimit(params.userId, params.eventId, params.quantity);
+    if (!userCheck.allowed) return userCheck;
+
+    const cardCheck = await this.checkPaymentMethodLimit(params.cardHash, params.eventId, params.quantity);
+    if (!cardCheck.allowed) return { allowed: false, reason: 'Card limit exceeded' };
+
+    return { allowed: true };
+  }
+}

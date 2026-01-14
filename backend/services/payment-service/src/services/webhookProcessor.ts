@@ -21,21 +21,21 @@ class WebhookProcessorClass {
 
   async processStripeWebhook(webhookId: string) {
     const db = DatabaseService.getPool();
-    
+
     // Get webhook from inbox
     const result = await db.query(
       `SELECT * FROM webhook_inbox WHERE webhook_id = $1`,
       [webhookId]
     );
-    
+
     if (result.rows.length === 0) {
-      log.error('Webhook not found', { webhookId });
+      log.error({ webhookId }, 'Webhook not found');
       return;
     }
-    
+
     const webhook = result.rows[0];
     const payload = webhook.payload;
-    
+
     try {
       // Process based on event type
       switch (payload.type) {
@@ -46,59 +46,56 @@ class WebhookProcessorClass {
           await this.handlePaymentFailed(payload.data.object);
           break;
         default:
-          log.info('Unhandled webhook type', { type: payload.type });
+          log.info({ type: payload.type }, 'Unhandled webhook type');
       }
-      
+
       // Mark as processed
       await db.query(
-        `UPDATE webhook_inbox 
-         SET processed_at = NOW() 
+        `UPDATE webhook_inbox
+         SET processed_at = NOW()
          WHERE webhook_id = $1`,
         [webhookId]
       );
-      
+
     } catch (error) {
-      log.error('Failed to process webhook', { webhookId, error });
-      
+      log.error({ webhookId, error }, 'Failed to process webhook');
+
       // Update attempts
       await db.query(
-        `UPDATE webhook_inbox 
+        `UPDATE webhook_inbox
          SET attempts = attempts + 1, error = $2
          WHERE webhook_id = $1`,
         [webhookId, (error as Error).message || String(error)]
       );
     }
   }
-  
+
   private async handlePaymentSucceeded(paymentIntent: any) {
-    log.info('Processing payment success', { id: paymentIntent.id });
-    
+    log.info({ id: paymentIntent.id }, 'Processing payment success');
+
     // Extract user ID from payment intent metadata
     const userId = paymentIntent.metadata?.userId || paymentIntent.metadata?.user_id;
-    
+
     if (!userId) {
-      log.warn('Payment intent missing userId in metadata', { 
+      log.warn({
         paymentIntentId: paymentIntent.id,
-        metadata: paymentIntent.metadata 
-      });
+        metadata: paymentIntent.metadata
+      }, 'Payment intent missing userId in metadata');
     }
-    
+
     await this.paymentProcessor.confirmPayment(paymentIntent.id, userId);
   }
-  
+
   private async handlePaymentFailed(paymentIntent: any) {
-    log.info('Processing payment failure', { id: paymentIntent.id });
+    log.info({ id: paymentIntent.id }, 'Processing payment failure');
     // Handle failure - trigger refund flow
   }
-  
+
   verifyStripeSignature(payload: string, signature: string): boolean {
-    // When you have a real Stripe key, this will use Stripe's verification
-    // For now, return true for mock
     if (!process.env.STRIPE_WEBHOOK_SECRET) {
       return true; // Mock mode
     }
-    
-    // Real Stripe verification would go here
+
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
     try {
       stripe.webhooks.constructEvent(payload, signature, process.env.STRIPE_WEBHOOK_SECRET);

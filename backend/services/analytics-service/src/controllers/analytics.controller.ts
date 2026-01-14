@@ -35,13 +35,31 @@ interface CustomQueryBody {
 }
 
 class AnalyticsController {
+  /**
+   * Helper method to safely extract venue ID from request.
+   * Returns null if venue context is missing.
+   */
+  private getVenueId(request: FastifyRequest): string | null {
+    return request.venue?.id || null;
+  }
+
+  /**
+   * Helper method to send venue required error response.
+   */
+  private sendVenueRequiredError(reply: FastifyReply): FastifyReply {
+    return reply.code(400).send({ success: false, error: 'Venue context required' });
+  }
+
   async getRevenueSummary(
     request: FastifyRequest<{ Querystring: DateRangeQuery }>,
     reply: FastifyReply
   ) {
     try {
       const { startDate, endDate } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -68,7 +86,10 @@ class AnalyticsController {
   ) {
     try {
       const { startDate, endDate } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -95,10 +116,13 @@ class AnalyticsController {
   ) {
     try {
       const { days = 30 } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       // Import revenue calculator directly for projections
-      const { RevenueCalculator } = await import('../analytics-engine/calculators/revenue-calculator');
+      const { RevenueCalculator } = await import('../analytics-engine/calculators/revenue-calculator.js');
       const calculator = new RevenueCalculator();
 
       const projections = await calculator.projectRevenue(venueId, Number(days));
@@ -118,7 +142,10 @@ class AnalyticsController {
     reply: FastifyReply
   ) {
     try {
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -144,7 +171,10 @@ class AnalyticsController {
     reply: FastifyReply
   ) {
     try {
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -170,7 +200,10 @@ class AnalyticsController {
     reply: FastifyReply
   ) {
     try {
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -197,7 +230,10 @@ class AnalyticsController {
   ) {
     try {
       const { startDate, endDate, granularity = 'day' } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -225,7 +261,10 @@ class AnalyticsController {
   ) {
     try {
       const { startDate, endDate } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -252,7 +291,10 @@ class AnalyticsController {
   ) {
     try {
       const { startDate, endDate } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -279,7 +321,10 @@ class AnalyticsController {
   ) {
     try {
       const { startDate, endDate, limit = 10 } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -307,7 +352,10 @@ class AnalyticsController {
     reply: FastifyReply
   ) {
     try {
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
       const redis = getRedis();
 
       const today = new Date().toISOString().split('T')[0];
@@ -346,7 +394,10 @@ class AnalyticsController {
   ) {
     try {
       const { startDate, endDate } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -373,7 +424,10 @@ class AnalyticsController {
   ) {
     try {
       const { metrics, timeRange, filters, groupBy } = request.body;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       const result = await analyticsEngine.query({
         venueId,
@@ -403,7 +457,10 @@ class AnalyticsController {
   ) {
     try {
       const { period = '7d' } = request.query;
-      const venueId = request.venue!.id;
+      const venueId = this.getVenueId(request);
+      if (!venueId) {
+        return this.sendVenueRequiredError(reply);
+      }
 
       // Calculate date range based on period
       const endDate = new Date();

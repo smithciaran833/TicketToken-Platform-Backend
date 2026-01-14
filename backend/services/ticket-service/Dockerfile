@@ -1,45 +1,93 @@
-FROM node:20-alpine AS builder
+# ============================================
+# Ticket Service Dockerfile
+# Multi-stage build for optimal image size
+# ============================================
+
+# ---------------------------------------------
+# Stage 1: Dependencies
+# Install production dependencies only
+# ---------------------------------------------
+FROM node:18-alpine AS deps
+
 WORKDIR /app
-COPY backend/shared ./backend/shared
-COPY backend/services/ticket-service ./backend/services/ticket-service
-WORKDIR /app/backend/shared
+
+# Install native dependencies
+RUN apk add --no-cache python3 make g++
+
+# Copy package files
+COPY package.json package-lock.json ./
+
+# Install production dependencies only
+RUN npm ci --only=production && npm cache clean --force
+
+# ---------------------------------------------
+# Stage 2: Builder
+# Build TypeScript application
+# ---------------------------------------------
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json package-lock.json tsconfig.json ./
+
+# Install all dependencies (including devDependencies)
 RUN npm ci
-RUN npm run build || true
-WORKDIR /app/backend/services/ticket-service
-RUN npm ci
+
+# Copy source code
+COPY src/ ./src/
+
+# Build TypeScript
 RUN npm run build
 
-FROM node:20-alpine
+# ---------------------------------------------
+# Stage 3: Runner
+# Minimal production image
+# ---------------------------------------------
+FROM node:18-alpine AS runner
+
+# Security: Run as non-root user
+RUN addgroup --system --gid 1001 nodejs && \
+    adduser --system --uid 1001 ticketservice
+
 WORKDIR /app
-RUN apk add --no-cache dumb-init
-COPY --from=builder /app/backend/shared /app/backend/shared
-COPY --from=builder /app/backend/services/ticket-service/package.json /app/backend/services/ticket-service/package.json
-COPY --from=builder /app/backend/services/ticket-service/package-lock.json /app/backend/services/ticket-service/package-lock.json
-WORKDIR /app/backend/services/ticket-service
-RUN npm ci
-COPY --from=builder /app/backend/services/ticket-service/dist ./dist
 
-# Copy migration files
-COPY --from=builder /app/backend/services/ticket-service/knexfile.ts ./knexfile.ts
-COPY --from=builder /app/backend/services/ticket-service/src/migrations ./src/migrations
+# Set production environment
+ENV NODE_ENV=production
+ENV PORT=3004
 
-# Create entrypoint script for migrations
-RUN echo '#!/bin/sh' > /app/entrypoint.sh && \
-    echo 'set -e' >> /app/entrypoint.sh && \
-    echo 'echo "Running migrations for ticket-service..."' >> /app/entrypoint.sh && \
-    echo 'cd /app/backend/services/ticket-service' >> /app/entrypoint.sh && \
-    echo 'npm run migrate' >> /app/entrypoint.sh && \
-    echo 'if [ $? -ne 0 ]; then' >> /app/entrypoint.sh && \
-    echo '  echo "ERROR: Migration failed! Container will not start."' >> /app/entrypoint.sh && \
-    echo '  exit 1' >> /app/entrypoint.sh && \
-    echo 'fi' >> /app/entrypoint.sh && \
-    echo 'exec "$@"' >> /app/entrypoint.sh && \
-    chmod +x /app/entrypoint.sh
+# Copy production dependencies
+COPY --from=deps --chown=ticketservice:nodejs /app/node_modules ./node_modules
 
-RUN addgroup -g 1001 -S nodejs && adduser -S nodejs -u 1001 && chown -R nodejs:nodejs /app
-USER nodejs
+# Copy built application
+COPY --from=builder --chown=ticketservice:nodejs /app/dist ./dist
+COPY --from=builder --chown=ticketservice:nodejs /app/package.json ./
+
+# Copy migrations (needed for runtime migrations)
+COPY --chown=ticketservice:nodejs src/migrations ./src/migrations
+
+# Security: Remove unnecessary files
+RUN rm -rf /tmp/* /var/cache/apk/*
+
+# Switch to non-root user
+USER ticketservice
+
+# Expose application port
 EXPOSE 3004
-HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3004/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
-ENTRYPOINT ["/app/entrypoint.sh", "dumb-init", "--"]
-CMD ["node", "dist/services/ticket-service/src/index.js"]
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:3004/health || exit 1
+
+# Start the application
+CMD ["node", "dist/index.js"]
+
+# ---------------------------------------------
+# Metadata
+# ---------------------------------------------
+LABEL org.opencontainers.image.title="Ticket Service" \
+      org.opencontainers.image.description="TicketToken Ticket Management Service" \
+      org.opencontainers.image.vendor="TicketToken" \
+      org.opencontainers.image.source="https://github.com/tickettoken/platform" \
+      org.opencontainers.image.documentation="https://docs.tickettoken.io/services/ticket" \
+      maintainer="platform@tickettoken.io"

@@ -24,7 +24,7 @@ export class WebhookController {
     // 1. Verify webhook signature
     // CRITICAL: Fastify provides rawBody when content type parser is configured
     const rawBody = (request as any).rawBody || request.body;
-    
+
     try {
       event = this.stripe.webhooks.constructEvent(
         rawBody,
@@ -32,7 +32,7 @@ export class WebhookController {
         config.stripe.webhookSecret
       );
     } catch (err) {
-      log.warn('Invalid webhook signature', { err: err instanceof Error ? err.message : 'Unknown' });
+      log.warn({ err: err instanceof Error ? err.message : 'Unknown' }, 'Invalid webhook signature');
       return reply.status(400).send(`Webhook Error: ${err instanceof Error ? err.message : "Unknown error"}`);
     }
 
@@ -44,11 +44,11 @@ export class WebhookController {
 
       if (exists) {
         const cachedData = JSON.parse(exists);
-        log.info('Duplicate webhook ignored', {
+        log.info({
           eventId: event.id,
           type: event.type,
           processedAt: cachedData.processedAt
-        });
+        }, 'Duplicate webhook ignored');
 
         // Return 200 to prevent Stripe from retrying
         return reply.send({ received: true, duplicate: true });
@@ -77,13 +77,13 @@ export class WebhookController {
           created_at: new Date()
         }).onConflict('webhook_id').ignore();
 
-        log.info('Webhook stored for processing', {
+        log.info({
           eventId: event.id,
           type: event.type
-        });
+        }, 'Webhook stored for processing');
 
       } catch (dbErr) {
-        log.error('Failed to store webhook in database', { err: dbErr, eventId: event.id });
+        log.error({ err: dbErr, eventId: event.id }, 'Failed to store webhook in database');
         // Continue - Redis deduplication is primary defense
       }
 
@@ -104,18 +104,48 @@ export class WebhookController {
       return reply.send({ received: true });
 
     } catch (err) {
-      log.error('Webhook processing failed', {
+      log.error({
         err,
         eventId: event.id,
         type: event.type
-      });
+      }, 'Webhook processing failed');
 
-      // Delete Redis key to allow Stripe to retry
-      await RedisService.del(eventKey).catch(delErr => {
-        log.error('Failed to delete webhook key', { err: delErr });
-      });
+      // CRITICAL FIX: Queue for internal retry instead of telling Stripe to retry
+      // Returning 500 causes Stripe to retry indefinitely, leading to duplicate processing
+      try {
+        // Update Redis to mark as failed for internal retry
+        await RedisService.set(
+          eventKey,
+          JSON.stringify({
+            processedAt: new Date().toISOString(),
+            type: event.type,
+            status: 'failed',
+            error: err instanceof Error ? err.message : 'Unknown error',
+            retryCount: 1
+          }),
+          86400  // Keep for 24 hours for internal retry
+        );
 
-      return reply.status(500).send({ error: 'Processing failed' });
+        // Queue for internal async retry processing
+        await db('webhook_inbox')
+          .where({ webhook_id: event.id })
+          .update({
+            status: 'failed',
+            error: err instanceof Error ? err.message : 'Unknown error',
+            retry_count: db.raw('retry_count + 1'),
+            updated_at: new Date()
+          });
+      } catch (queueErr) {
+        log.error({ err: queueErr, eventId: event.id }, 'Failed to queue webhook for retry');
+      }
+
+      // CRITICAL: Always return 200 to Stripe to prevent infinite retries
+      // We handle retries internally via our own queue
+      return reply.status(200).send({
+        received: true,
+        processed: false,
+        queued_for_retry: true
+      });
     }
   }
 
@@ -138,15 +168,15 @@ export class WebhookController {
         break;
 
       default:
-        log.info('Unhandled webhook event type', { type: event.type });
+        log.info({ type: event.type }, 'Unhandled webhook event type');
     }
   }
 
   private async handlePaymentSuccess(paymentIntent: Stripe.PaymentIntent): Promise<void> {
-    log.info('Processing payment success', {
+    log.info({
       paymentIntentId: paymentIntent.id,
       amount: paymentIntent.amount
-    });
+    }, 'Processing payment success');
 
     // Update transaction status in database (using payment_transactions not transactions)
     await db('payment_transactions')
@@ -158,9 +188,9 @@ export class WebhookController {
   }
 
   private async handlePaymentFailure(paymentIntent: Stripe.PaymentIntent): Promise<void> {
-    log.info('Processing payment failure', {
+    log.info({
       paymentIntentId: paymentIntent.id
-    });
+    }, 'Processing payment failure');
 
     await db('payment_transactions')
       .where({ stripe_intent_id: paymentIntent.id })
@@ -171,19 +201,19 @@ export class WebhookController {
   }
 
   private async handleRefund(charge: Stripe.Charge): Promise<void> {
-    log.info('Processing refund', {
+    log.info({
       chargeId: charge.id,
       refunded: charge.refunded
-    });
+    }, 'Processing refund');
 
     // Implementation depends on your refund tracking
     // This is a placeholder
   }
 
   private async handlePaymentCanceled(paymentIntent: Stripe.PaymentIntent): Promise<void> {
-    log.info('Processing payment cancellation', {
+    log.info({
       paymentIntentId: paymentIntent.id
-    });
+    }, 'Processing payment cancellation');
 
     await db('payment_transactions')
       .where({ stripe_intent_id: paymentIntent.id })
@@ -214,7 +244,7 @@ export class WebhookController {
       // Deduplicate
       const exists = await RedisService.get(eventKey);
       if (exists) {
-        log.info('Duplicate Square webhook ignored', { eventId: event.event_id });
+        log.info({ eventId: event.event_id }, 'Duplicate Square webhook ignored');
         return reply.send({ received: true, duplicate: true });
       }
 
@@ -242,11 +272,11 @@ export class WebhookController {
         .onConflict('webhook_id')
         .ignore();
 
-      log.info('Square webhook stored', { eventId: event.event_id });
+      log.info({ eventId: event.event_id }, 'Square webhook stored');
 
       return reply.status(200).send({ received: true });
     } catch (error) {
-      log.error('Square webhook error', { err: error });
+      log.error({ err: error }, 'Square webhook error');
       return reply.status(500).send({ error: 'Processing failed' });
     }
   }

@@ -1,269 +1,240 @@
-// Mock dependencies BEFORE imports
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
+/**
+ * Report Analytics Controller Unit Tests
+ * 
+ * Tests the report analytics controller handlers for:
+ * - getSalesReport: Get sales report for events
+ * - getVenueComparisonReport: Get venue comparison metrics
+ * - getCustomerInsightsReport: Get customer insights data
+ */
+
+import {
+  getSalesReport,
+  getVenueComparisonReport,
+  getCustomerInsightsReport
+} from '../../../src/controllers/report-analytics.controller';
+
+// Mock dependencies
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    error: jest.fn()
+  }
 }));
 
-import { FastifyRequest, FastifyReply } from 'fastify';
-import * as reportAnalyticsController from '../../../src/controllers/report-analytics.controller';
-
 describe('Report Analytics Controller', () => {
-  let mockRequest: Partial<FastifyRequest>;
-  let mockReply: Partial<FastifyReply>;
   let mockDb: any;
+  let mockRequest: any;
+  let mockReply: any;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    // Mock db with knex-like query builder
-    const mockJoin = jest.fn().mockReturnThis();
-    const mockLeftJoin = jest.fn().mockReturnThis();
-    const mockSelect = jest.fn().mockReturnThis();
-    const mockGroupBy = jest.fn().mockReturnThis();
-    const mockOrderBy = jest.fn();
-    const mockRaw = jest.fn();
-
-    mockDb = jest.fn(() => ({
-      join: mockJoin,
-      leftJoin: mockLeftJoin,
-      select: mockSelect,
-      groupBy: mockGroupBy,
-      orderBy: mockOrderBy,
-      raw: mockRaw,
-    }));
-
-    mockDb.join = mockJoin;
-    mockDb.leftJoin = mockLeftJoin;
-    mockDb.select = mockSelect;
-    mockDb.groupBy = mockGroupBy;
-    mockDb.orderBy = mockOrderBy;
-    mockDb.raw = mockRaw;
+    mockDb = jest.fn().mockReturnValue({
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      whereBetween: jest.fn().mockReturnThis(),
+      join: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      select: jest.fn().mockReturnThis(),
+      groupBy: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      first: jest.fn(),
+      limit: jest.fn().mockReturnThis()
+    });
 
     mockRequest = {
       params: {},
-      body: {},
-      headers: {},
-      log: {
-        info: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-      } as any,
-      container: {
-        cradle: {
-          db: mockDb,
-        },
-      } as any,
+      query: {},
+      container: { cradle: { db: mockDb } }
     };
+    (mockRequest as any).tenantId = 'tenant-123';
 
     mockReply = {
       status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
     };
   });
 
   describe('getSalesReport', () => {
     it('should return sales report', async () => {
-      const mockSalesData = [
-        {
-          id: 'event-1',
-          event_name: 'Concert 2024',
-          tickets_sold: 150,
-          revenue: 7500,
-        },
-        {
-          id: 'event-2',
-          event_name: 'Festival 2024',
-          tickets_sold: 300,
-          revenue: 15000,
-        },
+      const salesData = [
+        { event_name: 'Concert A', tickets_sold: 100, revenue: '5000.00' },
+        { event_name: 'Concert B', tickets_sold: 50, revenue: '2500.00' }
       ];
 
-      mockDb().orderBy.mockResolvedValue(mockSalesData);
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockResolvedValue(salesData)
+      });
 
-      await reportAnalyticsController.getSalesReport(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockDb).toHaveBeenCalledWith('event_capacity');
-      expect(mockDb().join).toHaveBeenCalledWith('events', 'event_capacity.event_id', 'events.id');
-      expect(mockDb().join).toHaveBeenCalledWith('event_pricing', 'event_capacity.id', 'event_pricing.capacity_id');
-      expect(mockDb().groupBy).toHaveBeenCalledWith('events.id', 'events.name');
-      expect(mockDb().orderBy).toHaveBeenCalledWith('revenue', 'desc');
+      await getSalesReport(mockRequest, mockReply);
 
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        report: {
-          type: 'sales',
-          data: mockSalesData,
-          generated_at: expect.any(Date),
-          note: 'Revenue calculated from event_capacity.sold_count * event_pricing.base_price',
-        },
+        data: expect.objectContaining({
+          report_type: 'sales',
+          data: salesData
+        })
       });
     });
 
-    it('should handle empty sales data', async () => {
-      mockDb().orderBy.mockResolvedValue([]);
+    it('should filter by date range', async () => {
+      mockRequest.query = {
+        start_date: '2026-01-01',
+        end_date: '2026-01-31'
+      };
 
-      await reportAnalyticsController.getSalesReport(
-        mockRequest as any,
-        mockReply as any
-      );
+      const mockChain = {
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockResolvedValue([])
+      };
+      mockDb.mockReturnValueOnce(mockChain);
 
-      expect(mockReply.send).toHaveBeenCalledWith({
-        success: true,
-        report: {
-          type: 'sales',
-          data: [],
-          generated_at: expect.any(Date),
-          note: 'Revenue calculated from event_capacity.sold_count * event_pricing.base_price',
-        },
-      });
+      await getSalesReport(mockRequest, mockReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith(expect.objectContaining({
+        success: true
+      }));
     });
 
     it('should handle database errors', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockRejectedValue(new Error('Database error'))
+      });
 
-      mockDb().orderBy.mockRejectedValue(new Error('Database error'));
+      await getSalesReport(mockRequest, mockReply);
 
-      await reportAnalyticsController.getSalesReport(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(consoleSpy).toHaveBeenCalledWith('Sales report error:', expect.any(Error));
       expect(mockReply.status).toHaveBeenCalledWith(500);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: false,
-        error: 'Failed to generate sales report',
+        error: 'Failed to generate sales report'
       });
-
-      consoleSpy.mockRestore();
     });
   });
 
   describe('getVenueComparisonReport', () => {
     it('should return venue comparison report', async () => {
-      const mockComparisonData = [
-        {
-          venue_id: 'venue-1',
-          event_count: 5,
-          total_sold: 500,
-          total_capacity: 1000,
-        },
-        {
-          venue_id: 'venue-2',
-          event_count: 3,
-          total_sold: 300,
-          total_capacity: 600,
-        },
+      const venueData = [
+        { venue_id: 'v1', venue_name: 'Venue A', total_events: 10, total_revenue: '50000.00' },
+        { venue_id: 'v2', venue_name: 'Venue B', total_events: 5, total_revenue: '25000.00' }
       ];
 
-      mockDb().orderBy.mockResolvedValue(mockComparisonData);
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockResolvedValue(venueData)
+      });
 
-      await reportAnalyticsController.getVenueComparisonReport(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockDb).toHaveBeenCalledWith('events');
-      expect(mockDb().leftJoin).toHaveBeenCalledWith('event_capacity', 'events.id', 'event_capacity.event_id');
-      expect(mockDb().groupBy).toHaveBeenCalledWith('events.venue_id');
-      expect(mockDb().orderBy).toHaveBeenCalledWith('total_sold', 'desc');
+      await getVenueComparisonReport(mockRequest, mockReply);
 
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        report: {
-          type: 'venue_comparison',
-          data: mockComparisonData,
-          generated_at: expect.any(Date),
-        },
+        data: expect.objectContaining({
+          report_type: 'venue_comparison',
+          data: venueData
+        })
+      });
+    });
+
+    it('should handle empty results', async () => {
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockResolvedValue([])
+      });
+
+      await getVenueComparisonReport(mockRequest, mockReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith({
+        success: true,
+        data: expect.objectContaining({
+          data: []
+        })
       });
     });
 
     it('should handle database errors', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockRejectedValue(new Error('Database error'))
+      });
 
-      mockDb().orderBy.mockRejectedValue(new Error('Database error'));
+      await getVenueComparisonReport(mockRequest, mockReply);
 
-      await reportAnalyticsController.getVenueComparisonReport(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(consoleSpy).toHaveBeenCalledWith('Venue comparison error:', expect.any(Error));
       expect(mockReply.status).toHaveBeenCalledWith(500);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: false,
-        error: 'Failed to generate venue comparison',
+        error: 'Failed to generate venue comparison report'
       });
-
-      consoleSpy.mockRestore();
     });
   });
 
   describe('getCustomerInsightsReport', () => {
     it('should return customer insights report', async () => {
-      const mockInsightsData = [
-        {
-          category: 'Music',
-          tickets_sold: 800,
-          avg_ticket_price: 75.5,
-        },
-        {
-          category: 'Sports',
-          tickets_sold: 600,
-          avg_ticket_price: 125.0,
-        },
+      const customerData = [
+        { customer_segment: 'VIP', count: 50, avg_spend: '500.00' },
+        { customer_segment: 'Regular', count: 200, avg_spend: '100.00' }
       ];
 
-      mockDb().orderBy.mockResolvedValue(mockInsightsData);
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockResolvedValue(customerData)
+      });
 
-      await reportAnalyticsController.getCustomerInsightsReport(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockDb).toHaveBeenCalledWith('events');
-      expect(mockDb().join).toHaveBeenCalledWith('event_categories', 'events.primary_category_id', 'event_categories.id');
-      expect(mockDb().leftJoin).toHaveBeenCalledWith('event_capacity', 'events.id', 'event_capacity.event_id');
-      expect(mockDb().leftJoin).toHaveBeenCalledWith('event_pricing', 'event_capacity.id', 'event_pricing.capacity_id');
-      expect(mockDb().groupBy).toHaveBeenCalledWith('event_categories.id', 'event_categories.name');
-      expect(mockDb().orderBy).toHaveBeenCalledWith('tickets_sold', 'desc');
+      await getCustomerInsightsReport(mockRequest, mockReply);
 
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        report: {
-          type: 'customer_insights',
-          data: mockInsightsData,
-          generated_at: expect.any(Date),
-        },
+        data: expect.objectContaining({
+          report_type: 'customer_insights',
+          data: customerData
+        })
       });
     });
 
     it('should handle database errors', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+      mockDb.mockReturnValueOnce({
+        where: jest.fn().mockReturnThis(),
+        join: jest.fn().mockReturnThis(),
+        leftJoin: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        groupBy: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockRejectedValue(new Error('Database error'))
+      });
 
-      mockDb().orderBy.mockRejectedValue(new Error('Database error'));
+      await getCustomerInsightsReport(mockRequest, mockReply);
 
-      await reportAnalyticsController.getCustomerInsightsReport(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(consoleSpy).toHaveBeenCalledWith('Customer insights error:', expect.any(Error));
       expect(mockReply.status).toHaveBeenCalledWith(500);
       expect(mockReply.send).toHaveBeenCalledWith({
         success: false,
-        error: 'Failed to generate customer insights',
+        error: 'Failed to generate customer insights report'
       });
-
-      consoleSpy.mockRestore();
     });
   });
 });

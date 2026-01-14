@@ -66,6 +66,6 @@ export class VenueBalanceService {
     
     // In production, would initiate actual bank transfer here
     // For now, just mark as processed
-    log.info('Processing payout', { amount, venueId });
+    log.info({ amount, venueId }, 'Processing payout');
   }
 }

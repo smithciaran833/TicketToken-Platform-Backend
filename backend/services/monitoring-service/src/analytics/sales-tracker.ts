@@ -4,6 +4,8 @@ import { kafkaProducer } from '../streaming/kafka-producer';
 import { logger } from '../utils/logger';
 import * as tf from '@tensorflow/tfjs-node';
 import { EventEmitter } from 'events';
+import { eventServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
 
 interface SalesVelocity {
   eventId: string;
@@ -13,6 +15,17 @@ interface SalesVelocity {
   predictedSelloutTime?: Date;
   currentCapacity: number;
   remainingTickets: number;
+}
+
+/**
+ * Helper to create request context for service calls
+ * Sales tracker operates as a system service
+ */
+function createSystemContext(): RequestContext {
+  return {
+    tenantId: 'system',
+    traceId: `sales-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  };
 }
 
 export class EventSalesTracker extends EventEmitter {
@@ -68,6 +81,11 @@ export class EventSalesTracker extends EventEmitter {
     }
   }
 
+  /**
+   * NOTE: This method queries ticket_transactions which is owned by payment-service.
+   * This is an acceptable read-replica pattern for ML training as per Phase 5 plan.
+   * A paymentServiceClient.getTransactionHistory() could be added for full refactoring.
+   */
   private async trainModel() {
     try {
       const historicalData = await pgPool.query(`
@@ -234,6 +252,11 @@ export class EventSalesTracker extends EventEmitter {
     }
   }
 
+  /**
+   * NOTE: This method queries ticket_transactions and events for real-time velocity.
+   * This is an acceptable read-replica pattern for monitoring as per Phase 5 plan.
+   * The complex time-series aggregation is best handled at the database level.
+   */
   private async calculateVelocity(eventId: string): Promise<SalesVelocity> {
     const result = await pgPool.query(`
       WITH sales_data AS (
@@ -279,6 +302,10 @@ export class EventSalesTracker extends EventEmitter {
     };
   }
 
+  /**
+   * NOTE: This method queries ticket_transactions for ML prediction.
+   * This is an acceptable read-replica pattern for analytics as per Phase 5 plan.
+   */
   private async predictSellout(eventId: string, velocity: SalesVelocity): Promise<Date | null> {
     if (!this.salesModel || velocity.remainingTickets <= 0) return null;
 
@@ -337,21 +364,21 @@ export class EventSalesTracker extends EventEmitter {
     return null;
   }
 
+  /**
+   * REFACTORED: Get active events via event-service client
+   * Previously did direct DB query: SELECT id, name FROM events WHERE sale_start < NOW()...
+   */
   private startTracking() {
     // Real-time tracking every 30 seconds
     setInterval(async () => {
       if (!this.isInitialized) return;
+      const ctx = createSystemContext();
 
       try {
-        const activeEvents = await pgPool.query(`
-          SELECT id, name
-          FROM events
-          WHERE sale_start < NOW()
-            AND sale_end > NOW()
-            AND tickets_sold < total_tickets
-        `);
+        // REFACTORED: Use eventServiceClient instead of direct DB query
+        const activeEventsResponse = await eventServiceClient.getActiveEvents(ctx);
 
-        for (const event of activeEvents.rows) {
+        for (const event of activeEventsResponse.events) {
           const velocity = await this.calculateVelocity(event.id);
           const prediction = await this.predictSellout(event.id, velocity);
 

@@ -129,7 +129,7 @@ export function validateRequest<T>(schema: Joi.ObjectSchema, data: unknown): { v
   if (error) {
     return {
       value: value as T,
-      error: error.details[0].message
+      error: error.details[0]?.message || "Validation failed"
     };
   }
   

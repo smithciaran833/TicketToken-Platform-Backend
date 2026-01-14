@@ -1,5 +1,5 @@
 import { Connection, ConnectionConfig } from '@solana/web3.js';
-import { CircuitBreaker } from './retry';
+import { CircuitBreaker } from './circuit-breaker';
 import logger from './logger';
 import { rpcErrorsTotal } from './metrics';
 
@@ -41,8 +41,8 @@ export class RPCFailoverManager {
         priority: index, // Lower index = higher priority
         circuitBreaker: new CircuitBreaker({
           failureThreshold: 5,
-          resetTimeoutMs: 60000,
-          halfOpenRequests: 3
+          resetTimeout: 60000,
+          successThreshold: 3
         }),
         isHealthy: true,
         consecutiveFailures: 0
@@ -96,8 +96,7 @@ export class RPCFailoverManager {
         
         // Execute through circuit breaker
         const result = await endpoint.circuitBreaker.execute(
-          () => fn(connection),
-          context
+          () => fn(connection)
         );
 
         // Reset failure count on success

@@ -69,7 +69,8 @@ async function seed() {
       transfer_cutoff_hours: 2,
       listing_advance_hours: 720,
       royalty_percentage: 5.0,
-      royalty_wallet_address: 'DRpbCBMxVnDK7maPdrPyKfuBWFb3m3EzsVenue1',
+      // Valid Solana devnet wallet address for testing
+      royalty_wallet_address: 'DRpbCBMxVnDK7maPdrPyKfuBWFb3m3EzsM8zD76aHvf3',
       created_at: new Date(),
       updated_at: new Date()
     });
@@ -107,7 +108,7 @@ async function seed() {
       id: ticketTypeId,
       event_id: eventId,
       name: 'General Admission',
-      price: 150.00,
+      price: 15000, // INTEGER CENTS ($150.00)
       quantity: 1000,
       created_at: new Date(),
       updated_at: new Date()
@@ -139,11 +140,12 @@ async function seed() {
       seller_id: userId1,
       event_id: eventId,
       venue_id: venueId,
-      price: 200.00,
-      original_face_value: 150.00,
+      price: 20000, // INTEGER CENTS ($200.00)
+      original_face_value: 15000, // INTEGER CENTS ($150.00)
       price_multiplier: 1.33,
       status: 'active',
-      wallet_address: 'DRpbCBMxVnDK7maPdrPyKfuBWFb3m3EzsTest1',
+      // Valid Solana devnet wallet address for testing
+      wallet_address: 'DRpbCBMxVnDK7maPdrPyKfuBWFb3m3EzsM8zD76aHvf3',
       view_count: 0,
       favorite_count: 0,
       created_at: new Date(),
@@ -159,11 +161,12 @@ async function seed() {
       seller_id: userId1,
       event_id: eventId,
       venue_id: venueId,
-      price: 180.00,
-      original_face_value: 150.00,
+      price: 18000, // INTEGER CENTS ($180.00)
+      original_face_value: 15000, // INTEGER CENTS ($150.00)
       price_multiplier: 1.2,
       status: 'active',
-      wallet_address: 'DRpbCBMxVnDK7maPdrPyKfuBWFb3m3EzsTest1',
+      // Valid Solana devnet wallet address for testing
+      wallet_address: 'DRpbCBMxVnDK7maPdrPyKfuBWFb3m3EzsM8zD76aHvf3',
       view_count: 5,
       favorite_count: 2,
       created_at: new Date(),

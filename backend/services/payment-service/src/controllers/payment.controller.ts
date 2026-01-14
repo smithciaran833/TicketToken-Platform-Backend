@@ -53,7 +53,7 @@ export class PaymentController {
     const sessionId = request.id; // Fastify request ID
 
     // 1. Check waiting room status
-    this.log.info('Checking waiting room status', { eventId: paymentRequest.eventId });
+    this.log.info({ eventId: paymentRequest.eventId }, 'Checking waiting room status');
 
     const queueStats = await this.waitingRoom.getQueueStats(paymentRequest.eventId);
     const hasActiveWaitingRoom = queueStats.totalInQueue > 0 || queueStats.activeUsers > 0;
@@ -87,7 +87,7 @@ export class PaymentController {
     }
 
     // 2. Bot detection
-    this.log.info('Starting bot detection', { userId, sessionId });
+    this.log.info({ userId, sessionId }, 'Starting bot detection');
     const botCheck = await this.botDetector.detectBot({
       userId,
       sessionId,
@@ -105,7 +105,7 @@ export class PaymentController {
     }
 
     // 3. Fraud checks
-    this.log.info('Starting fraud checks', { userId });
+    this.log.info({ userId }, 'Starting fraud checks');
     const fraudCheck = await this.scalperDetector.detectScalper(
       userId,
       {
@@ -124,7 +124,7 @@ export class PaymentController {
     }
 
     // 4. Velocity checks
-    this.log.info('Starting velocity checks', { userId, eventId: paymentRequest.eventId });
+    this.log.info({ userId, eventId: paymentRequest.eventId }, 'Starting velocity checks');
     const velocityCheck = await this.velocityChecker.checkVelocity(
       userId,
       paymentRequest.eventId,
@@ -162,7 +162,7 @@ export class PaymentController {
     const orderId = `order_${Date.now()}`;
     const amountCents = Math.round(totalAmount * 100); // Convert to cents
 
-    this.log.info('Processing payment', { amountCents, userId });
+    this.log.info({ amountCents, userId }, 'Processing payment');
 
     const transaction = await this.paymentProcessor.processPayment({
       userId,
@@ -262,7 +262,7 @@ export class PaymentController {
         nftStatus
       });
     } catch (error) {
-      this.log.error('Error fetching transaction', { error, transactionId });
+      this.log.error({ error, transactionId }, 'Error fetching transaction');
       return reply.status(500).send({
         error: 'Failed to fetch transaction'
       });
@@ -334,7 +334,7 @@ export class PaymentController {
         refund: refundResult.rows[0]
       });
     } catch (error) {
-      this.log.error('Error processing refund', { error, transactionId });
+      this.log.error({ error, transactionId }, 'Error processing refund');
       return reply.status(500).send({
         error: 'Failed to process refund'
       });

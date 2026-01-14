@@ -66,7 +66,7 @@ export function validateEnv(): Record<string, any> {
   });
 
   if (error) {
-    const errors = error.details.map(d => `  ❌ ${d.message}`).join('\n');
+    const errors = error.details.map((d: any) => `  ❌ ${d.message}`).join('\n');
     logger.error('Environment validation failed:\n' + errors);
     console.error('\n❌ Environment Variable Validation Failed:\n' + errors + '\n');
     process.exit(1);

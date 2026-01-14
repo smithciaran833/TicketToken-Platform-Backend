@@ -9,51 +9,51 @@ export class MetricsService {
   private registry: Registry;
   
   // Upload metrics
-  public uploadCounter: Counter;
-  public uploadDuration: Histogram;
-  public uploadSizeHistogram: Histogram;
+  public uploadCounter!: Counter;
+  public uploadDuration!: Histogram;
+  public uploadSizeHistogram!: Histogram;
   
   // Download metrics
-  public downloadCounter: Counter;
-  public downloadDuration: Histogram;
+  public downloadCounter!: Counter;
+  public downloadDuration!: Histogram;
   
   // Processing metrics
-  public processingDuration: Histogram;
-  public processingCounter: Counter;
+  public processingDuration!: Histogram;
+  public processingCounter!: Counter;
   
   // Virus scan metrics
-  public virusScanCounter: Counter;
-  public virusScanDuration: Histogram;
-  public infectedFilesCounter: Counter;
+  public virusScanCounter!: Counter;
+  public virusScanDuration!: Histogram;
+  public infectedFilesCounter!: Counter;
   
   // Storage metrics
-  public storageOperationDuration: Histogram;
-  public storageErrorCounter: Counter;
+  public storageOperationDuration!: Histogram;
+  public storageErrorCounter!: Counter;
   
   // Authentication metrics
-  public authAttempts: Counter;
-  public authFailures: Counter;
+  public authAttempts!: Counter;
+  public authFailures!: Counter;
   
   // Rate limit metrics
-  public rateLimitExceeded: Counter;
+  public rateLimitExceeded!: Counter;
   
   // Error metrics
-  public errorCounter: Counter;
-  public http4xxCounter: Counter;
-  public http5xxCounter: Counter;
+  public errorCounter!: Counter;
+  public http4xxCounter!: Counter;
+  public http5xxCounter!: Counter;
   
   // Resource metrics
-  public activeConnections: Gauge;
-  public queueSize: Gauge;
-  public cacheHitRate: Gauge;
+  public activeConnections!: Gauge;
+  public queueSize!: Gauge;
+  public cacheHitRate!: Gauge;
   
   // File metrics
-  public totalFiles: Gauge;
-  public totalFileSize: Gauge;
-  public filesByType: Counter;
+  public totalFiles!: Gauge;
+  public totalFileSize!: Gauge;
+  public filesByType!: Counter;
   
   // Storage quota metrics
-  public storageQuotaAlert: Counter;
+  public storageQuotaAlert!: Counter;
 
   constructor() {
     // Create a new registry

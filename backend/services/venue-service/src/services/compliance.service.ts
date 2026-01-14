@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
+import { getConfig } from '../config/index';
 
 export interface ComplianceReport {
   venueId: string;
@@ -470,7 +471,7 @@ export class ComplianceService {
 
       // Notify compliance team
       await db('email_queue').insert({
-        to_email: process.env.COMPLIANCE_TEAM_EMAIL || 'compliance@tickettoken.com',
+        to_email: getConfig().compliance.teamEmail,
         subject: `Compliance Review Scheduled - Venue ${venue.name}`,
         template: 'compliance_team_notification',
         data: {

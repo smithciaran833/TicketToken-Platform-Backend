@@ -1,5 +1,6 @@
-import axios, { AxiosInstance } from 'axios';
+import axios from 'axios';
 import { credentialEncryptionService } from '../credential-encryption.service';
+import { config } from '../../config';
 
 export interface SquareCustomer {
   id?: string;
@@ -47,13 +48,15 @@ export interface SquareSyncResult {
 }
 
 export class SquareSyncService {
-  private client: AxiosInstance | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private client: any = null;
   private locationId: string | null = null;
 
   /**
    * Initialize Square API client with credentials
    */
-  private async initializeClient(venueId: string): Promise<AxiosInstance> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private async initializeClient(venueId: string): Promise<any> {
     if (this.client && this.locationId) {
       return this.client;
     }
@@ -69,7 +72,7 @@ export class SquareSyncService {
       throw new Error(`No Square credentials found for venue ${venueId}`);
     }
 
-    const baseURL = process.env.SQUARE_ENVIRONMENT === 'sandbox'
+    const baseURL = config.providers.square.environment === 'sandbox'
       ? 'https://connect.squareupsandbox.com'
       : 'https://connect.squareup.com';
 

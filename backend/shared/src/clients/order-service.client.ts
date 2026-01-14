@@ -1,0 +1,155 @@
+/**
+ * Order Service Client
+ * 
+ * Client for communicating with order-service internal APIs.
+ * Extends BaseServiceClient for circuit breaker, retry, and tracing support.
+ */
+
+import { BaseServiceClient, RequestContext } from '../http-client/base-service-client';
+import {
+  Order,
+  GetOrderResponse,
+  OrderItem,
+  GetOrderItemsResponse,
+  // Phase 5b types
+  GetOrdersWithoutTicketsResponse,
+  OrdersWithoutTicketsOptions,
+  GetOrderForPaymentResponse,
+} from './types';
+
+/**
+ * Client for order-service internal APIs
+ * 
+ * @example
+ * ```typescript
+ * const client = new OrderServiceClient();
+ * const order = await client.getOrder('order-123', {
+ *   tenantId: 'tenant-456',
+ *   traceId: 'trace-789'
+ * });
+ * ```
+ */
+export class OrderServiceClient extends BaseServiceClient {
+  constructor() {
+    super({
+      baseURL: process.env.ORDER_SERVICE_URL || 'http://order-service:3003',
+      serviceName: 'order-service',
+      timeout: 10000,
+    });
+  }
+
+  /**
+   * Get order details by ID
+   * 
+   * @param orderId - The order ID
+   * @param ctx - Request context with tenant info
+   * @returns Full order details
+   */
+  async getOrder(orderId: string, ctx: RequestContext): Promise<Order> {
+    const response = await this.get<GetOrderResponse>(
+      `/internal/orders/${orderId}`,
+      ctx
+    );
+    return response.data.order;
+  }
+
+  /**
+   * Get order items for an order
+   * 
+   * @param orderId - The order ID
+   * @param ctx - Request context with tenant info
+   * @returns List of order items with ticket type info
+   */
+  async getOrderItems(orderId: string, ctx: RequestContext): Promise<OrderItem[]> {
+    const response = await this.get<GetOrderItemsResponse>(
+      `/internal/orders/${orderId}/items`,
+      ctx
+    );
+    return response.data.items;
+  }
+
+  /**
+   * Get order with items (helper method)
+   * 
+   * @param orderId - The order ID
+   * @param ctx - Request context with tenant info
+   * @returns Order with items array
+   */
+  async getOrderWithItems(orderId: string, ctx: RequestContext): Promise<Order & { items: OrderItem[] }> {
+    const [order, items] = await Promise.all([
+      this.getOrder(orderId, ctx),
+      this.getOrderItems(orderId, ctx),
+    ]);
+    return { ...order, items };
+  }
+
+  // ==========================================================================
+  // PHASE 5b NEW METHODS - Methods for new internal endpoints
+  // ==========================================================================
+
+  /**
+   * Get orders that have been paid but don't have associated tickets
+   * Used for payment reconciliation to find orphaned payments
+   * 
+   * @param ctx - Request context with tenant info
+   * @param options - Query options for filtering
+   * @returns List of orphaned orders
+   */
+  async getOrdersWithoutTickets(
+    ctx: RequestContext,
+    options?: OrdersWithoutTicketsOptions
+  ): Promise<GetOrdersWithoutTicketsResponse> {
+    const params = new URLSearchParams();
+    if (options?.minutesOld) params.append('minutesOld', options.minutesOld.toString());
+    if (options?.status) params.append('status', options.status);
+    if (options?.limit) params.append('limit', options.limit.toString());
+    
+    const queryString = params.toString();
+    const path = `/internal/orders/without-tickets${queryString ? `?${queryString}` : ''}`;
+    
+    const response = await this.get<GetOrdersWithoutTicketsResponse>(path, ctx);
+    return response.data;
+  }
+
+  /**
+   * Get order with payment context and validation for payment processing
+   * Includes optimistic locking version and payment eligibility checks
+   * 
+   * @param orderId - The order ID
+   * @param ctx - Request context with tenant info
+   * @returns Order with payment context and items
+   */
+  async getOrderForPayment(orderId: string, ctx: RequestContext): Promise<GetOrderForPaymentResponse> {
+    const response = await this.get<GetOrderForPaymentResponse>(
+      `/internal/orders/${orderId}/for-payment`,
+      ctx
+    );
+    return response.data;
+  }
+
+  /**
+   * Check if order can be processed for payment (helper method)
+   * 
+   * @param orderId - The order ID
+   * @param ctx - Request context with tenant info
+   * @returns true if order is eligible for payment processing
+   */
+  async canProcessPayment(orderId: string, ctx: RequestContext): Promise<boolean> {
+    const result = await this.getOrderForPayment(orderId, ctx);
+    return result.paymentContext.canProcessPayment;
+  }
+
+  /**
+   * Check for orphaned orders (helper method)
+   * 
+   * @param ctx - Request context with tenant info
+   * @returns true if there are orphaned orders needing attention
+   */
+  async hasOrphanedOrders(ctx: RequestContext): Promise<boolean> {
+    const result = await this.getOrdersWithoutTickets(ctx, { limit: 1 });
+    return result.count > 0;
+  }
+}
+
+/** Singleton instance of OrderServiceClient */
+export const orderServiceClient = new OrderServiceClient();

@@ -1,16 +1,13 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { Schema } from 'joi';
 
 // Phase 2.5: Joi validation middleware
-
-export function validateRequest(schema: Schema) {
+export function validateRequest(schema: any) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const validated = await schema.validateAsync(request.body, {
         abortEarly: false,
         stripUnknown: true
       });
-      
       // Replace request body with validated data
       request.body = validated;
     } catch (error: any) {
@@ -18,7 +15,6 @@ export function validateRequest(schema: Schema) {
         field: d.path.join('.'),
         message: d.message
       })) || [];
-
       return reply.status(400).send({
         success: false,
         error: 'VALIDATION_ERROR',
@@ -29,21 +25,19 @@ export function validateRequest(schema: Schema) {
   };
 }
 
-export function validateParams(schema: Schema) {
+export function validateParams(schema: any) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const validated = await schema.validateAsync(request.params, {
         abortEarly: false,
         stripUnknown: true
       });
-      
       request.params = validated;
     } catch (error: any) {
       const details = error.details?.map((d: any) => ({
         field: d.path.join('.'),
         message: d.message
       })) || [];
-
       return reply.status(400).send({
         success: false,
         error: 'VALIDATION_ERROR',
@@ -54,21 +48,19 @@ export function validateParams(schema: Schema) {
   };
 }
 
-export function validateQuery(schema: Schema) {
+export function validateQuery(schema: any) {
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const validated = await schema.validateAsync(request.query, {
         abortEarly: false,
         stripUnknown: true
       });
-      
       request.query = validated;
     } catch (error: any) {
       const details = error.details?.map((d: any) => ({
         field: d.path.join('.'),
         message: d.message
       })) || [];
-
       return reply.status(400).send({
         success: false,
         error: 'VALIDATION_ERROR',

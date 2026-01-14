@@ -64,7 +64,7 @@ export class FeeCalculatorService {
       const platformRevenue = serviceFee + processingFee;
       const venuePayout = subtotal;
 
-      logger.info('Fees calculated', {
+      logger.info({
         venueId,
         tier: pricingTier.tierName,
         subtotal,
@@ -84,7 +84,7 @@ export class FeeCalculatorService {
         platformRevenue: Math.round(platformRevenue * 100) / 100
       };
     } catch (error) {
-      logger.error('Error calculating fees:', error);
+      logger.error('Error calculating fees:', error instanceof Error ? error.message : String(error));
       return this.calculateFeesWithTier(subtotal, ticketCount, this.defaultTier);
     }
   }

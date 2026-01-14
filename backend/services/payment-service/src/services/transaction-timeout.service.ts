@@ -46,25 +46,25 @@ export class TransactionTimeoutService {
       return;
     }
 
-    logger.info('Starting transaction timeout service', {
+    logger.info({
       pendingTimeout: this.config.pendingTimeoutMinutes,
       processingTimeout: this.config.processingTimeoutMinutes,
       checkInterval: this.config.checkIntervalMinutes,
-    });
+    }, 'Starting transaction timeout service');
 
     // Run immediately
     this.checkTimeouts().catch((error) => {
-      logger.error('Initial timeout check failed', {
+      logger.error({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Initial timeout check failed');
     });
 
     // Then run on interval
     this.intervalId = setInterval(() => {
       this.checkTimeouts().catch((error) => {
-        logger.error('Scheduled timeout check failed', {
+        logger.error({
           error: error instanceof Error ? error.message : 'Unknown error',
-        });
+        }, 'Scheduled timeout check failed');
       });
     }, this.config.checkIntervalMinutes * 60 * 1000);
   }
@@ -95,7 +95,7 @@ export class TransactionTimeoutService {
     try {
       // Find timed out pending transactions
       const pendingTimeouts = await this.findTimedOutTransactions('pending');
-      
+
       // Find timed out processing transactions
       const processingTimeouts = await this.findTimedOutTransactions('processing');
 
@@ -106,11 +106,11 @@ export class TransactionTimeoutService {
         return result;
       }
 
-      logger.info('Found timed out transactions', {
+      logger.info({
         count: allTimeouts.length,
         pending: pendingTimeouts.length,
         processing: processingTimeouts.length,
-      });
+      }, 'Found timed out transactions');
 
       // Process each timeout
       for (const transaction of allTimeouts) {
@@ -126,22 +126,22 @@ export class TransactionTimeoutService {
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : 'Unknown error';
           result.errors.push(`Transaction ${transaction.transaction_id}: ${errorMsg}`);
-          
-          logger.error('Failed to handle timeout', {
+
+          logger.error({
             transactionId: transaction.transaction_id,
             error: errorMsg,
-          });
+          }, 'Failed to handle timeout');
         }
       }
 
       const duration = (Date.now() - startTime) / 1000;
-      
-      logger.info('Timeout check completed', {
+
+      logger.info({
         timedOutCount: result.timedOutCount,
         releasedInventory: result.releasedInventoryCount,
         errorCount: result.errors.length,
         durationSeconds: duration,
-      });
+      }, 'Timeout check completed');
 
       // Record metrics
       metricsService.paymentTotal.inc({
@@ -150,9 +150,9 @@ export class TransactionTimeoutService {
       }, result.timedOutCount);
 
     } catch (error) {
-      logger.error('Timeout check failed', {
+      logger.error({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Timeout check failed');
       result.errors.push('Timeout check process failed');
     }
 
@@ -163,12 +163,12 @@ export class TransactionTimeoutService {
    * Find transactions that have timed out
    */
   private async findTimedOutTransactions(status: 'pending' | 'processing'): Promise<any[]> {
-    const timeoutMinutes = status === 'pending' 
+    const timeoutMinutes = status === 'pending'
       ? this.config.pendingTimeoutMinutes
       : this.config.processingTimeoutMinutes;
 
     const query = `
-      SELECT 
+      SELECT
         pt.transaction_id,
         pt.tenant_id,
         pt.user_id,
@@ -179,7 +179,7 @@ export class TransactionTimeoutService {
         COALESCE(inv.reserved, false) as has_reserved_inventory,
         u.email as user_email
       FROM payment_transactions pt
-      LEFT JOIN inventory_reserv ations inv ON pt.transaction_id = inv.transaction_id
+      LEFT JOIN inventory_reservations inv ON pt.transaction_id = inv.transaction_id
       LEFT JOIN users u ON pt.user_id = u.user_id
       WHERE pt.status = $1
         AND pt.created_at < NOW() - INTERVAL '${timeoutMinutes} minutes'
@@ -255,11 +255,11 @@ export class TransactionTimeoutService {
 
       await client.query('COMMIT');
 
-      logger.info('Transaction timeout handled', {
+      logger.info({
         transactionId: transaction.transaction_id,
         status: transaction.status,
         ageMinutes: this.getTimeoutDuration(transaction),
-      });
+      }, 'Transaction timeout handled');
 
     } catch (error) {
       await client.query('ROLLBACK');
@@ -283,7 +283,7 @@ export class TransactionTimeoutService {
    */
   async timeoutTransaction(transactionId: string, reason: string): Promise<boolean> {
     const query = `
-      SELECT 
+      SELECT
         pt.*,
         COALESCE(inv.reserved, false) as has_reserved_inventory
       FROM payment_transactions pt
@@ -308,10 +308,10 @@ export class TransactionTimeoutService {
       timeout_reason: reason,
     });
 
-    logger.info('Transaction manually timed out', {
+    logger.info({
       transactionId,
       reason,
-    });
+    }, 'Transaction manually timed out');
 
     return true;
   }
@@ -325,7 +325,7 @@ export class TransactionTimeoutService {
     endDate: Date
   ): Promise<any> {
     const query = `
-      SELECT 
+      SELECT
         COUNT(*) as total_timeouts,
         SUM(amount_cents) as total_amount_cents,
         AVG(EXTRACT(EPOCH FROM (timeout_at - created_at))/60) as avg_duration_minutes,

@@ -337,6 +337,6 @@ export class BotDetectorService {
   }>): Promise<void> {
     // Update bot detection model based on verified data
     // In production, this would update ML model weights
-    log.info('Training bot detection model', { sampleCount: verifiedData.length });
+    log.info({ sampleCount: verifiedData.length }, 'Training bot detection model');
   }
 }

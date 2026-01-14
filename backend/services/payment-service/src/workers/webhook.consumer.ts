@@ -59,7 +59,7 @@ export async function startWebhookConsumer() {
       // Acknowledge message
       channel.ack(msg);
     } catch (error) {
-      log.error('Webhook processing error', { error });
+      log.error({ error }, 'Webhook processing error');
       // Requeue on failure
       channel.nack(msg, false, true);
     }

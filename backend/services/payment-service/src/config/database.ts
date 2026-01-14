@@ -13,7 +13,7 @@ export const pool = new Pool({
 });
 
 pool.on('error', (err) => {
-  log.error('Unexpected error on idle database client', { error: err });
+  log.error({ error: err }, 'Unexpected error on idle database client');
 });
 
 export async function query(text: string, params?: any[]) {
@@ -21,7 +21,7 @@ export async function query(text: string, params?: any[]) {
   const res = await pool.query(text, params);
   const duration = Date.now() - start;
   if (duration > 1000) {
-    log.warn('Slow query detected', { text, duration, rows: res.rowCount });
+    log.warn({ text, duration, rows: res.rowCount }, 'Slow query detected');
   }
   return res;
 }
@@ -29,8 +29,7 @@ export async function query(text: string, params?: any[]) {
 export async function getClient() {
   const client = await pool.connect();
   const originalRelease = client.release.bind(client);
-  
-  // Timeout after 60 seconds
+
   const timeout = setTimeout(() => {
     log.error('Client checked out for more than 60 seconds');
   }, 60000);
@@ -40,11 +39,7 @@ export async function getClient() {
     originalRelease();
   };
 
-  return {
-    query: client.query.bind(client),
-    release,
-    client
-  };
+  return { query: client.query.bind(client), release, client };
 }
 
 export const db = knex({
@@ -56,12 +51,6 @@ export const db = knex({
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
   },
-  pool: {
-    min: 2,
-    max: 10
-  },
-  migrations: {
-    tableName: 'knex_migrations_payment',
-    directory: './src/migrations'
-  }
+  pool: { min: 2, max: 10 },
+  migrations: { tableName: 'knex_migrations_payment', directory: './src/migrations' }
 });

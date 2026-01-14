@@ -1,30 +1,208 @@
-import { FastifyInstance } from 'fastify';
-import { Pool } from 'pg';
-import { Redis } from 'ioredis';
-import { circuitBreakerRegistry } from '../utils/circuit-breaker';
-
 /**
- * HEALTH CHECK ROUTES
- * 
- * Provides detailed health status for monitoring and orchestration
- * Phase 7: Production Readiness & Reliability
+ * Health Check Routes for Transfer Service
+ *
+ * AUDIT FIX LOW-1: No health check routes → Comprehensive health endpoints
+ *
+ * Endpoints:
+ * - GET /health - Full health check
+ * - GET /health/live - Liveness probe (Kubernetes)
+ * - GET /health/ready - Readiness probe (Kubernetes)
  */
 
-interface HealthCheckDependencies {
-  db: Pool;
-  redis: Redis;
+import { FastifyInstance, FastifyPluginOptions } from 'fastify';
+import { getPool } from '../config/database';
+import logger from '../utils/logger';
+
+// =============================================================================
+// TYPES
+// =============================================================================
+
+interface HealthStatus {
+  status: 'healthy' | 'unhealthy' | 'degraded';
+  timestamp: string;
+  version: string;
+  uptime: number;
+  checks: Record<string, ComponentHealth>;
 }
 
-export async function registerHealthRoutes(
-  app: FastifyInstance,
-  deps: HealthCheckDependencies
-) {
+interface ComponentHealth {
+  status: 'healthy' | 'unhealthy' | 'degraded';
+  latencyMs?: number;
+  message?: string;
+}
+
+// =============================================================================
+// HEALTH CHECK FUNCTIONS
+// =============================================================================
+
+const startTime = Date.now();
+
+/**
+ * Check database connectivity
+ */
+async function checkDatabase(): Promise<ComponentHealth> {
+  const start = Date.now();
+
+  try {
+    const pool = getPool();
+    await pool.query('SELECT 1');
+
+    return {
+      status: 'healthy',
+      latencyMs: Date.now() - start
+    };
+  } catch (error) {
+    logger.error({ error }, 'Database health check failed');
+    return {
+      status: 'unhealthy',
+      latencyMs: Date.now() - start,
+      message: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
+ * Check Redis connectivity
+ */
+async function checkRedis(): Promise<ComponentHealth> {
+  const start = Date.now();
+
+  try {
+    const cacheModule = await import('../services/cache.service');
+    // Try to get redis from the module - handle various export patterns
+    const cacheService = cacheModule.default || cacheModule;
+    const redis = (cacheService as any).redis || (cacheService as any).getRedis?.() || null;
+
+    if (!redis) {
+      return {
+        status: 'degraded',
+        message: 'Redis not configured'
+      };
+    }
+
+    await redis.ping();
+
+    return {
+      status: 'healthy',
+      latencyMs: Date.now() - start
+    };
+  } catch (error) {
+    logger.error({ error }, 'Redis health check failed');
+    return {
+      status: 'unhealthy',
+      latencyMs: Date.now() - start,
+      message: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
+ * Check Solana RPC connectivity
+ */
+async function checkSolanaRpc(): Promise<ComponentHealth> {
+  const start = Date.now();
+
+  try {
+    const rpcModule = await import('../utils/rpc-failover');
+    // Try to get connection from the module - handle various export patterns
+    const rpcService = rpcModule.default || rpcModule;
+    const rpcUrl = process.env.SOLANA_RPC_URL;
+    
+    if (!rpcUrl) {
+      return {
+        status: 'degraded',
+        message: 'Solana RPC URL not configured'
+      };
+    }
+
+    const getConn = (rpcService as any).getConnection;
+    if (!getConn) {
+      return {
+        status: 'degraded',
+        message: 'Solana RPC module not properly initialized'
+      };
+    }
+
+    const rpc = getConn(rpcUrl);
+    await rpc.getLatestBlockhash('confirmed');
+
+    return {
+      status: 'healthy',
+      latencyMs: Date.now() - start
+    };
+  } catch (error) {
+    logger.error({ error }, 'Solana RPC health check failed');
+    return {
+      status: 'unhealthy',
+      latencyMs: Date.now() - start,
+      message: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
+ * Calculate overall health status
+ */
+function calculateOverallStatus(
+  checks: Record<string, ComponentHealth>
+): 'healthy' | 'unhealthy' | 'degraded' {
+  const statuses = Object.values(checks).map(c => c.status);
+
+  if (statuses.includes('unhealthy')) {
+    return 'unhealthy';
+  }
+
+  if (statuses.includes('degraded')) {
+    return 'degraded';
+  }
+
+  return 'healthy';
+}
+
+// =============================================================================
+// ROUTES
+// =============================================================================
+
+export async function healthRoutes(
+  fastify: FastifyInstance,
+  _opts: FastifyPluginOptions
+): Promise<void> {
   /**
-   * Basic liveness probe
-   * Returns 200 if service is running
+   * Full health check
    */
-  app.get('/health', async (request, reply) => {
-    return reply.code(200).send({
+  fastify.get('/health', async (_request, reply) => {
+    const checks: Record<string, ComponentHealth> = {};
+
+    const [database, redis, solana] = await Promise.all([
+      checkDatabase(),
+      checkRedis(),
+      checkSolanaRpc()
+    ]);
+
+    checks.database = database;
+    checks.redis = redis;
+    checks.solana = solana;
+
+    const status = calculateOverallStatus(checks);
+
+    const healthStatus: HealthStatus = {
+      status,
+      timestamp: new Date().toISOString(),
+      version: process.env.npm_package_version || '1.0.0',
+      uptime: Math.floor((Date.now() - startTime) / 1000),
+      checks
+    };
+
+    const statusCode = status === 'healthy' ? 200 : status === 'degraded' ? 200 : 503;
+
+    return reply.status(statusCode).send(healthStatus);
+  });
+
+  /**
+   * Liveness probe
+   */
+  fastify.get('/health/live', async (_request, reply) => {
+    return reply.status(200).send({
       status: 'ok',
       timestamp: new Date().toISOString()
     });
@@ -32,117 +210,32 @@ export async function registerHealthRoutes(
 
   /**
    * Readiness probe
-   * Returns 200 if service is ready to accept requests
    */
-  app.get('/health/ready', async (request, reply) => {
+  fastify.get('/health/ready', async (_request, reply) => {
     try {
-      // Check database connection
-      await deps.db.query('SELECT 1');
+      const database = await checkDatabase();
 
-      // Check Redis connection
-      await deps.redis.ping();
-
-      return reply.code(200).send({
-        status: 'ready',
-        timestamp: new Date().toISOString(),
-        checks: {
-          database: 'ok',
-          redis: 'ok'
-        }
-      });
-    } catch (error) {
-      return reply.code(503).send({
-        status: 'not_ready',
-        timestamp: new Date().toISOString(),
-        error: error instanceof Error ? error.message : 'Unknown error'
-      });
-    }
-  });
-
-  /**
-   * Detailed health check
-   * Provides comprehensive status of all dependencies
-   */
-  app.get('/health/detailed', async (request, reply) => {
-    const checks: any = {
-      timestamp: new Date().toISOString(),
-      status: 'healthy',
-      version: process.env.npm_package_version || '1.0.0',
-      uptime: process.uptime(),
-      memory: process.memoryUsage(),
-      dependencies: {}
-    };
-
-    // Check database
-    try {
-      const dbStart = Date.now();
-      const result = await deps.db.query('SELECT NOW()');
-      checks.dependencies.database = {
-        status: 'ok',
-        responseTime: Date.now() - dbStart,
-        serverTime: result.rows[0].now
-      };
-    } catch (error) {
-      checks.status = 'degraded';
-      checks.dependencies.database = {
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-
-    // Check Redis
-    try {
-      const redisStart = Date.now();
-      await deps.redis.ping();
-      checks.dependencies.redis = {
-        status: 'ok',
-        responseTime: Date.now() - redisStart
-      };
-    } catch (error) {
-      checks.status = 'degraded';
-      checks.dependencies.redis = {
-        status: 'error',
-        error: error instanceof Error ? error.message : 'Unknown error'
-      };
-    }
-
-    // Check circuit breakers
-    const circuitBreakers = circuitBreakerRegistry.getAllStats();
-    if (circuitBreakers.length > 0) {
-      checks.circuitBreakers = circuitBreakers;
-      
-      // Mark as degraded if any circuit is open
-      if (circuitBreakers.some(cb => cb.state === 'OPEN')) {
-        checks.status = 'degraded';
+      if (database.status === 'unhealthy') {
+        return reply.status(503).send({
+          status: 'not_ready',
+          reason: 'Database unavailable',
+          timestamp: new Date().toISOString()
+        });
       }
+
+      return reply.status(200).send({
+        status: 'ready',
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.error({ error }, 'Readiness check failed');
+      return reply.status(503).send({
+        status: 'not_ready',
+        reason: 'Health check error',
+        timestamp: new Date().toISOString()
+      });
     }
-
-    const statusCode = checks.status === 'healthy' ? 200 : 503;
-    return reply.code(statusCode).send(checks);
-  });
-
-  /**
-   * Database pool statistics
-   */
-  app.get('/health/db-pool', async (request, reply) => {
-    return reply.send({
-      totalCount: deps.db.totalCount,
-      idleCount: deps.db.idleCount,
-      waitingCount: deps.db.waitingCount
-    });
-  });
-
-  /**
-   * Memory statistics
-   */
-  app.get('/health/memory', async (request, reply) => {
-    const memory = process.memoryUsage();
-    return reply.send({
-      rss: `${(memory.rss / 1024 / 1024).toFixed(2)} MB`,
-      heapTotal: `${(memory.heapTotal / 1024 / 1024).toFixed(2)} MB`,
-      heapUsed: `${(memory.heapUsed / 1024 / 1024).toFixed(2)} MB`,
-      external: `${(memory.external / 1024 / 1024).toFixed(2)} MB`,
-      arrayBuffers: `${(memory.arrayBuffers / 1024 / 1024).toFixed(2)} MB`
-    });
   });
 }
+
+export default healthRoutes;

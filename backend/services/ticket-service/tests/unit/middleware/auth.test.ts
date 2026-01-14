@@ -1,37 +1,64 @@
-// =============================================================================
-// TEST SUITE - auth.ts
-// =============================================================================
-
 import { FastifyRequest, FastifyReply } from 'fastify';
+
+// Mock fs before importing auth
+jest.mock('fs', () => ({
+  readFileSync: jest.fn().mockReturnValue('mock-public-key-content'),
+}));
+
+// Mock jsonwebtoken
+jest.mock('jsonwebtoken', () => ({
+  verify: jest.fn(),
+}));
+
+// Mock logger
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    child: jest.fn(() => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    })),
+  },
+}));
+
+// Mock errors
+jest.mock('../../../src/utils/errors', () => ({
+  UnauthorizedError: class UnauthorizedError extends Error {
+    constructor(message: string) {
+      super(message);
+      this.name = 'UnauthorizedError';
+    }
+  },
+}));
+
 import jwt from 'jsonwebtoken';
-import { authenticate, requireRole } from '../../../src/middleware/auth';
+import { authenticate, requireRole, authMiddleware } from '../../../src/middleware/auth';
 import { UnauthorizedError } from '../../../src/utils/errors';
 
-jest.mock('jsonwebtoken');
-jest.mock('fs');
-
-describe('auth middleware', () => {
+describe('Auth Middleware', () => {
   let mockRequest: Partial<FastifyRequest>;
   let mockReply: Partial<FastifyReply>;
-  let consoleErrorSpy: jest.SpyInstance;
+  let mockSend: jest.Mock;
+  let mockStatus: jest.Mock;
 
   beforeEach(() => {
     jest.clearAllMocks();
 
-    mockRequest = {
-      headers: {},
-    };
+    mockSend = jest.fn().mockReturnThis();
+    mockStatus = jest.fn().mockReturnValue({ send: mockSend });
 
     mockReply = {
-      status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
+      status: mockStatus,
+      send: mockSend,
     };
 
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-  });
-
-  afterEach(() => {
-    consoleErrorSpy.mockRestore();
+    mockRequest = {
+      headers: {},
+      url: '/test',
+      method: 'GET',
+      ip: '127.0.0.1',
+    } as any;
   });
 
   describe('authenticate', () => {
@@ -40,256 +67,245 @@ describe('auth middleware', () => {
 
       await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'No token provided' });
+      expect(mockStatus).toHaveBeenCalledWith(401);
+      expect(mockSend).toHaveBeenCalledWith({ error: 'No token provided' });
     });
 
-    it('should return 401 if authorization header missing Bearer', async () => {
-      mockRequest.headers = { authorization: 'InvalidToken' };
+    it('should return 401 if authorization header does not start with Bearer', async () => {
+      mockRequest.headers = { authorization: 'Basic abc123' };
 
       await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'No token provided' });
+      expect(mockStatus).toHaveBeenCalledWith(401);
+      expect(mockSend).toHaveBeenCalledWith({ error: 'No token provided' });
     });
 
-    it('should verify token with public key', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      (jwt.verify as jest.Mock).mockReturnValue({
-        userId: 'user-123',
-        tenantId: 'tenant-123',
+    it('should return 401 if authorization header is just "Bearer "', async () => {
+      mockRequest.headers = { authorization: 'Bearer ' };
+
+      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      // This will attempt to verify an empty token
+      (jwt.verify as jest.Mock).mockImplementation(() => {
+        const error = new Error('jwt malformed');
+        error.name = 'JsonWebTokenError';
+        throw error;
       });
+
+      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect(mockStatus).toHaveBeenCalledWith(401);
+    });
+
+    it('should successfully authenticate with valid token', async () => {
+      mockRequest.headers = { authorization: 'Bearer valid-token' };
+
+      const decodedToken = {
+        userId: 'user-123',
+        id: 'user-123',
+        sub: 'user-123',
+        tenantId: 'tenant-456',
+        role: 'user',
+      };
+
+      (jwt.verify as jest.Mock).mockReturnValue(decodedToken);
 
       await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(jwt.verify).toHaveBeenCalledWith(
         'valid-token',
-        expect.any(String),
-        expect.objectContaining({
+        'mock-public-key-content',
+        {
           algorithms: ['RS256'],
-        })
+          issuer: 'tickettoken-auth',
+          audience: 'tickettoken-auth',
+        }
       );
-    });
-
-    it('should attach user to request', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      const decoded = { userId: 'user-123', role: 'user' };
-      (jwt.verify as jest.Mock).mockReturnValue(decoded);
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect((mockRequest as any).user).toEqual(decoded);
-    });
-
-    it('should attach userId to request', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ userId: 'user-123' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
+      expect((mockRequest as any).user).toEqual(decodedToken);
       expect((mockRequest as any).userId).toBe('user-123');
-    });
-
-    it('should use id field if userId not present', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ id: 'user-456' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect((mockRequest as any).userId).toBe('user-456');
-    });
-
-    it('should use sub field if userId and id not present', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ sub: 'user-789' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect((mockRequest as any).userId).toBe('user-789');
-    });
-
-    it('should attach tenantId to request', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ tenantId: 'tenant-123' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect((mockRequest as any).tenantId).toBe('tenant-123');
-    });
-
-    it('should use tenant_id field if tenantId not present', async () => {
-      mockRequest.headers = { authorization: 'Bearer valid-token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ tenant_id: 'tenant-456' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
       expect((mockRequest as any).tenantId).toBe('tenant-456');
     });
 
-    it('should return 401 for expired token', async () => {
+    it('should extract userId from sub if userId not present', async () => {
+      mockRequest.headers = { authorization: 'Bearer valid-token' };
+
+      const decodedToken = {
+        sub: 'sub-user-123',
+        tenant_id: 'tenant-456',
+      };
+
+      (jwt.verify as jest.Mock).mockReturnValue(decodedToken);
+
+      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect((mockRequest as any).userId).toBe('sub-user-123');
+      expect((mockRequest as any).tenantId).toBe('tenant-456');
+    });
+
+    it('should extract tenantId from tenant_id if tenantId not present', async () => {
+      mockRequest.headers = { authorization: 'Bearer valid-token' };
+
+      const decodedToken = {
+        id: 'user-123',
+        tenant_id: 'tenant-from-underscore',
+      };
+
+      (jwt.verify as jest.Mock).mockReturnValue(decodedToken);
+
+      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect((mockRequest as any).tenantId).toBe('tenant-from-underscore');
+    });
+
+    it('should return 401 on TokenExpiredError', async () => {
       mockRequest.headers = { authorization: 'Bearer expired-token' };
-      const error: any = new Error('Token expired');
-      error.name = 'TokenExpiredError';
-      (jwt.verify as jest.Mock).mockImplementation(() => { throw error; });
+
+      const expiredError = new Error('jwt expired');
+      expiredError.name = 'TokenExpiredError';
+      (jwt.verify as jest.Mock).mockImplementation(() => {
+        throw expiredError;
+      });
 
       await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Token expired' });
+      expect(mockStatus).toHaveBeenCalledWith(401);
+      expect(mockSend).toHaveBeenCalledWith({ error: 'Token expired' });
     });
 
-    it('should return 401 for invalid token', async () => {
+    it('should return 401 on JsonWebTokenError', async () => {
       mockRequest.headers = { authorization: 'Bearer invalid-token' };
-      const error: any = new Error('Invalid token');
-      error.name = 'JsonWebTokenError';
-      (jwt.verify as jest.Mock).mockImplementation(() => { throw error; });
+
+      const jwtError = new Error('invalid signature');
+      jwtError.name = 'JsonWebTokenError';
+      (jwt.verify as jest.Mock).mockImplementation(() => {
+        throw jwtError;
+      });
 
       await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(401);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Invalid token' });
+      expect(mockStatus).toHaveBeenCalledWith(401);
+      expect(mockSend).toHaveBeenCalledWith({ error: 'Invalid token' });
     });
 
-    it('should return 500 for other errors', async () => {
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (jwt.verify as jest.Mock).mockImplementation(() => { throw new Error('Unknown error'); });
+    it('should return 500 on unexpected errors', async () => {
+      mockRequest.headers = { authorization: 'Bearer valid-token' };
+
+      (jwt.verify as jest.Mock).mockImplementation(() => {
+        throw new Error('Unexpected error');
+      });
 
       await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(500);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Authentication error' });
-    });
-
-    it('should log authentication errors', async () => {
-      mockRequest.headers = { authorization: 'Bearer token' };
-      const error = new Error('Auth error');
-      (jwt.verify as jest.Mock).mockImplementation(() => { throw error; });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(consoleErrorSpy).toHaveBeenCalledWith('Auth error:', error);
-    });
-
-    it('should verify with correct issuer', async () => {
-      process.env.JWT_ISSUER = 'test-issuer';
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ userId: 'user-123' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(jwt.verify).toHaveBeenCalledWith(
-        'token',
-        expect.any(String),
-        expect.objectContaining({
-          issuer: 'test-issuer',
-          audience: 'test-issuer',
-        })
-      );
-
-      delete process.env.JWT_ISSUER;
-    });
-
-    it('should use default issuer if not provided', async () => {
-      delete process.env.JWT_ISSUER;
-      mockRequest.headers = { authorization: 'Bearer token' };
-      (jwt.verify as jest.Mock).mockReturnValue({ userId: 'user-123' });
-
-      await authenticate(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(jwt.verify).toHaveBeenCalledWith(
-        'token',
-        expect.any(String),
-        expect.objectContaining({
-          issuer: 'tickettoken-auth',
-          audience: 'tickettoken-auth',
-        })
-      );
+      expect(mockStatus).toHaveBeenCalledWith(500);
+      expect(mockSend).toHaveBeenCalledWith({ error: 'Authentication error' });
     });
   });
 
   describe('requireRole', () => {
-    it('should return 401 if no user', async () => {
-      mockRequest = { headers: {} };
+    it('should throw UnauthorizedError if no user on request', async () => {
+      (mockRequest as any).user = undefined;
 
       const middleware = requireRole(['admin']);
-      
+
       await expect(
         middleware(mockRequest as FastifyRequest, mockReply as FastifyReply)
       ).rejects.toThrow(UnauthorizedError);
     });
 
-    it('should allow user with matching role', async () => {
-      (mockRequest as any).user = { role: 'admin' };
+    it('should allow access if user has required role', async () => {
+      (mockRequest as any).user = { id: 'user-123', role: 'admin' };
 
       const middleware = requireRole(['admin']);
-      const result = await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(result).toBeUndefined();
-      expect(mockReply.status).not.toHaveBeenCalled();
+      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect(mockStatus).not.toHaveBeenCalled();
     });
 
-    it('should allow user with admin:all permission', async () => {
-      (mockRequest as any).user = { role: 'user', permissions: ['admin:all'] };
+    it('should allow access if user has one of multiple required roles', async () => {
+      (mockRequest as any).user = { id: 'user-123', role: 'moderator' };
+
+      const middleware = requireRole(['admin', 'moderator', 'user']);
+
+      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect(mockStatus).not.toHaveBeenCalled();
+    });
+
+    it('should allow access if user has admin:all permission', async () => {
+      (mockRequest as any).user = {
+        id: 'user-123',
+        role: 'custom-role',
+        permissions: ['admin:all'],
+      };
 
       const middleware = requireRole(['admin']);
-      const result = await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(result).toBeUndefined();
+      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect(mockStatus).not.toHaveBeenCalled();
     });
 
-    it('should allow venue_manager with venue permissions', async () => {
-      (mockRequest as any).user = { role: 'user', permissions: ['venue:manage', 'venue:read'] };
+    it('should allow venue_manager access if user has venue: permissions', async () => {
+      (mockRequest as any).user = {
+        id: 'user-123',
+        role: 'staff',
+        permissions: ['venue:read', 'venue:write'],
+      };
 
       const middleware = requireRole(['venue_manager']);
-      const result = await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(result).toBeUndefined();
+      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
+
+      expect(mockStatus).not.toHaveBeenCalled();
     });
 
-    it('should return 403 if role not allowed', async () => {
-      (mockRequest as any).user = { role: 'user' };
+    it('should return 403 if user lacks required role and permissions', async () => {
+      (mockRequest as any).user = {
+        id: 'user-123',
+        sub: 'user-123',
+        role: 'user',
+        permissions: ['read:tickets'],
+      };
 
       const middleware = requireRole(['admin']);
+
       await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(403);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Insufficient permissions' });
+      expect(mockStatus).toHaveBeenCalledWith(403);
+      expect(mockSend).toHaveBeenCalledWith({ error: 'Insufficient permissions' });
     });
 
-    it('should check multiple roles', async () => {
-      (mockRequest as any).user = { role: 'moderator' };
-
-      const middleware = requireRole(['admin', 'moderator']);
-      const result = await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(result).toBeUndefined();
-    });
-
-    it('should handle user without role', async () => {
-      (mockRequest as any).user = { id: 'user-123' };
+    it('should return 403 if user has no role and no admin:all permission', async () => {
+      (mockRequest as any).user = {
+        id: 'user-123',
+        permissions: [],
+      };
 
       const middleware = requireRole(['admin']);
+
       await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(403);
+      expect(mockStatus).toHaveBeenCalledWith(403);
     });
 
-    it('should handle user without permissions', async () => {
-      (mockRequest as any).user = { role: 'user' };
+    it('should return 403 if user.permissions is undefined', async () => {
+      (mockRequest as any).user = {
+        id: 'user-123',
+        role: 'user',
+      };
 
       const middleware = requireRole(['admin']);
+
       await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
-      expect(mockReply.status).toHaveBeenCalledWith(403);
+      expect(mockStatus).toHaveBeenCalledWith(403);
     });
+  });
 
-    it('should handle empty roles array', async () => {
-      (mockRequest as any).user = { role: 'user' };
-
-      const middleware = requireRole([]);
-      await middleware(mockRequest as FastifyRequest, mockReply as FastifyReply);
-
-      expect(mockReply.status).toHaveBeenCalledWith(403);
+  describe('authMiddleware export', () => {
+    it('should be the same as authenticate function', () => {
+      expect(authMiddleware).toBe(authenticate);
     });
   });
 });

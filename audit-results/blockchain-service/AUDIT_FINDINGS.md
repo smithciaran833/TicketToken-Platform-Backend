@@ -1,1148 +1,621 @@
-# Blockchain-Service Audit Findings
+# Blockchain Service - Audit Findings Master Index
 
-**Generated:** 2025-12-28
-**Audit Files Reviewed:** 18
-**Total Findings:** 328 (230 FAIL, 98 PARTIAL)
-
----
-
-## Summary by Severity
-
-| Severity | FAIL | PARTIAL | Total |
-|----------|------|---------|-------|
-| CRITICAL | 68 | 8 | 76 |
-| HIGH | 89 | 42 | 131 |
-| MEDIUM | 43 | 31 | 74 |
-| LOW | 30 | 17 | 47 |
+**Service:** blockchain-service
+**Generated:** 2024-12-26
+**Last Updated:** 2025-01-03
+**Total Issues:** 200
 
 ---
 
-## Summary by Audit File
+## Executive Summary
 
-| File | FAIL | PARTIAL | Total |
-|------|------|---------|-------|
-| 01-security.md | 6 | 5 | 11 |
-| 02-input-validation.md | 4 | 7 | 11 |
-| 03-error-handling.md | 11 | 7 | 18 |
-| 04-logging-observability.md | 15 | 4 | 19 |
-| 05-s2s-auth.md | 16 | 7 | 23 |
-| 06-database-integrity.md | 11 | 6 | 17 |
-| 07-idempotency.md | 17 | 4 | 21 |
-| 08-rate-limiting.md | 13 | 5 | 18 |
-| 09-multi-tenancy.md | 21 | 8 | 29 |
-| 10-testing.md | 17 | 7 | 24 |
-| 11-documentation.md | 21 | 7 | 28 |
-| 12-health-checks.md | 15 | 5 | 20 |
-| 13-graceful-degradation.md | 9 | 7 | 16 |
-| 19-configuration-management.md | 5 | 5 | 10 |
-| 20-deployment-cicd.md | 4 | 4 | 8 |
-| 21-database-migrations.md | 9 | 4 | 13 |
-| 36-wallet-security.md | 10 | 2 | 12 |
-| 37-key-management.md | 26 | 4 | 30 |
+| Severity | Count | Fixed | Deferred | Remaining | % Complete |
+|----------|-------|-------|----------|-----------|------------|
+| CRITICAL | 106 | 74 | 23 | 9 | 70% |
+| HIGH | 89 | 38 | 7 | 44 | 43% |
+| MEDIUM | 2 | 1 | 0 | 1 | 50% |
+| LOW | 3 | 2 | 0 | 1 | 67% |
+| **TOTAL** | **200** | **115** | **30** | **55** | **58%** |
 
 ---
 
-## CRITICAL Findings (76)
-
-### From 01-security.md
-
-#### SEC-R6: No hardcoded secrets
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Route Layer
-- **Evidence:** Hardcoded default secret
-
-#### SEC-EXT8: Keys encrypted at rest
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.4 External/Blockchain
-- **Evidence:** Treasury key plaintext
-
-#### SEC-EXT9: Keys from secure storage
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.4 External/Blockchain
-- **Evidence:** No KMS/Vault
-
-### From 02-input-validation.md
-
-#### RD5: Response schema defined
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Route Definition
-- **Evidence:** No response schemas
-
-#### RD6: additionalProperties false
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Route Definition
-- **Evidence:** No additionalProperties:false
-
-### From 03-error-handling.md
-
-#### RH3: Not Found handler
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Route Handler
-- **Evidence:** No 404 handler
-
-#### RH5: RFC 7807 format
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Route Handler
-- **Evidence:** No RFC 7807
-
-#### RH7: Stack traces not exposed
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Route Handler
-- **Evidence:** Stack traces exposed
-
-#### DB2: Transactions for multi-ops
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.3 Database
-- **Evidence:** No DB transactions
-
-#### DS5: Timeout on inter-service
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.5 Distributed Systems
-- **Evidence:** No axios timeout
-
-#### Process error handlers
-- **Status:** PARTIAL
-- **Severity:** CRITICAL
-- **Section:** 3.6 Process Level
-- **Evidence:** Missing unhandledRejection
-
-### From 04-logging-observability.md
-
-#### LC3: Redaction configured
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Log Configuration
-- **Evidence:** No log redaction
-
-#### LC4: Correlation ID middleware
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.1 Log Configuration
-- **Evidence:** No correlation ID
-
-#### SD1: Passwords never logged
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.2 Sensitive Data Protection
-- **Evidence:** No log redaction
-
-#### SD2: Tokens redacted
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.2 Sensitive Data Protection
-- **Evidence:** No log redaction
-
-#### SD3: PII fields redacted
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.2 Sensitive Data Protection
-- **Evidence:** No log redaction
-
-#### SD5: Session tokens redacted
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.2 Sensitive Data Protection
-- **Evidence:** No log redaction
-
-#### SD8: Request body filtered
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.2 Sensitive Data Protection
-- **Evidence:** No log redaction
-
-#### FP1: Fastify logger enabled
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.4 Fastify/Pino
-- **Evidence:** Fastify Pino disabled
-
-#### DT1: OpenTelemetry SDK
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.6 Distributed Tracing
-- **Evidence:** No OpenTelemetry
-
-#### DT2: Auto-instrumentation
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.6 Distributed Tracing
-- **Evidence:** No OpenTelemetry
-
-#### DT4: Trace ID in logs
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.6 Distributed Tracing
-- **Evidence:** No OpenTelemetry
-
-#### DT5: Context propagation
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.6 Distributed Tracing
-- **Evidence:** No OpenTelemetry
-
-### From 05-s2s-auth.md
-
-#### Credentials not hardcoded
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Client Auth Config
-- **Evidence:** Default secret hardcoded
-
-#### Per-service credentials
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Client Auth Config
-- **Evidence:** Shared secret all services
-
-#### Uses HTTPS/TLS
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Client Request Security
-- **Evidence:** HTTP default
-
-#### Per-endpoint rules
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Endpoint Authorization
-- **Evidence:** No service ACL
-
-#### Service allowlist
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Endpoint Authorization
-- **Evidence:** No service ACL
-
-#### Per-service secrets
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** HMAC Verification
-- **Evidence:** Shared secret all services
-
-#### No secrets in source
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Secrets Management
-- **Evidence:** Default secret hardcoded
-
-#### Unique secrets per service
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Secrets Management
-- **Evidence:** Shared secret all services
-
-### From 06-database-integrity.md
-
-#### Multi-step in transactions
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.4 Transaction Usage
-- **Evidence:** No transactions in userWallet
-
-#### Transaction passed through
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.4 Transaction Usage
-- **Evidence:** No transactions in userWallet
-
-#### Error handling rollback
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.4 Transaction Usage
-- **Evidence:** No transactions in userWallet
-
-#### tenant_id in all queries
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.7 Multi-Tenant Queries
-- **Evidence:** No tenant_id in queries
-
-#### Pool sized
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.8 Knex Configuration
-- **Evidence:** No pool config
-
-#### SSL/TLS
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** 3.8 Knex Configuration
-- **Evidence:** No SSL/TLS
-
-### From 07-idempotency.md
-
-#### Unique idempotency key
-- **Status:** PARTIAL
-- **Severity:** CRITICAL
-- **Section:** NFT Minting
-- **Evidence:** `jobId: mint_${ticketId}_${Date.now()}` - Not idempotent!
-
-#### Atomic ticket update
-- **Status:** PARTIAL
-- **Severity:** CRITICAL
-- **Section:** NFT Minting
-- **Evidence:** Race window between check and update
-
-#### Idempotency-Key header
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Ticket Purchase Flow
-- **Evidence:** No API idempotency keys
-
-#### Key validated
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Ticket Purchase Flow
-- **Evidence:** No API idempotency keys
-
-#### Duplicate returns original
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Ticket Purchase Flow
-- **Evidence:** No API idempotency keys
-
-#### Atomic reservation
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Ticket Purchase Flow
-- **Evidence:** Race conditions in mint
-
-#### Tenant_id in key
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Ticket Purchase Flow
-- **Evidence:** No tenant scoping
-
-#### POST supports idempotency
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** State-Changing Operations
-- **Evidence:** No API idempotency keys
-
-#### Atomic checks
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** State-Changing Operations
-- **Evidence:** Non-atomic DB ops
-
-#### Tenant scoped
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** State-Changing Operations
-- **Evidence:** No tenant scoping
-
-### From 08-rate-limiting.md
-
-#### Redis storage
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fastify Rate Limit Config
-- **Evidence:** In-memory rate limiting, No Redis
-
-#### Route-specific limits
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fastify Rate Limit Config
-- **Evidence:** No route-specific limits
-
-#### Custom keyGenerator
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fastify Rate Limit Config
-- **Evidence:** No custom keyGenerator
-
-### From 09-multi-tenancy.md
-
-#### FORCE RLS
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** PostgreSQL RLS
-- **Evidence:** No FORCE RLS
-
-#### No hardcoded tenant IDs
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Knex Query Patterns
-- **Evidence:** Hardcoded `00000000-0000-0000-0000-000000000001`
-
-#### Tenant from verified JWT only
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** JWT Claims & Middleware
-- **Evidence:** Accepts x-tenant-id header (spoofable) and falls back to 'default'
-
-#### Job payloads include tenant_id
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Background Jobs
-- **Evidence:** No tenant_id in MintJobData
-
-#### Processor validates tenant
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Background Jobs
-- **Evidence:** No tenant in jobs
-
-#### DB context set before job
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Background Jobs
-- **Evidence:** No tenant in jobs
-
-#### Bulk validates tenant
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** API Endpoints
-- **Evidence:** No bulk validation
-
-### From 10-testing.md
-
-#### Coverage thresholds
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Jest Configuration
-- **Evidence:** No coverage thresholds
-
-#### Test scripts configured
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Package.json
-- **Evidence:** No test scripts
-
-#### Jest devDependency
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Package.json
-- **Evidence:** Jest missing deps
-
-#### All routes tested
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fastify Testing
-- **Evidence:** No route tests
-
-#### Migrations run before tests
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Knex Database
-- **Evidence:** No DB tests
-
-#### Database cleaned between
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Knex Database
-- **Evidence:** No DB tests
-
-#### Multi-tenant tested
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Knex Database
-- **Evidence:** No tenant tests
-
-#### RLS policies verified
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Knex Database
-- **Evidence:** No tenant tests
-
-#### NFT minting tested
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Solana Devnet
-- **Evidence:** No NFT tests
-
-#### Token transfers tested
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Solana Devnet
-- **Evidence:** No NFT tests
-
-### From 11-documentation.md
-
-#### README.md
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Project-Level Docs
-- **Evidence:** No README.md
-
-#### ADRs
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Architecture Docs
-- **Evidence:** No ADRs
-
-#### OpenAPI/Swagger
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** API Documentation
-- **Evidence:** No OpenAPI/Swagger
-
-#### Runbooks
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Operational Docs
-- **Evidence:** No runbooks
-
-#### Incident playbooks
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Operational Docs
-- **Evidence:** No runbooks
-
-#### On-call rotation
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Operational Docs
-- **Evidence:** No runbooks
-
-### From 12-health-checks.md
-
-#### /health/live
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Required Endpoints
-- **Evidence:** No /health/live
-
-#### /health/ready
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Required Endpoints
-- **Evidence:** No /health/ready
-
-#### /health/startup
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Required Endpoints
-- **Evidence:** No /health/startup
-
-#### Event loop monitoring
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fastify Checks
-- **Evidence:** No under-pressure
-
-#### Timeouts on dep checks
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fastify Checks
-- **Evidence:** No query timeouts
-
-#### Query timeout (PostgreSQL)
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** PostgreSQL Checks
-- **Evidence:** No query timeouts
-
-#### All probes (Kubernetes)
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Kubernetes
-- **Evidence:** Missing all K8s probes
-
-#### @fastify/under-pressure
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Event Loop
-- **Evidence:** No under-pressure
-
-### From 13-graceful-degradation.md
-
-#### Jitter added
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Retry Logic
-- **Evidence:** No jitter in retry
-
-#### Circuit breaker fallback
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fallback Strategies
-- **Evidence:** No fallback strategies
-
-#### Service-level fallbacks
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Fallback Strategies
-- **Evidence:** No fallback strategies
-
-#### LB drain delay
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Graceful Shutdown
-- **Evidence:** No LB drain delay
-
-#### Shutdown timeout
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Graceful Shutdown
-- **Evidence:** No shutdown timeout
-
-### From 19-configuration-management.md
-
-#### SSL/TLS required (Database)
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Database Credentials
-- **Evidence:** No DB SSL
-
-#### TLS enabled (Redis)
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Redis Credentials
-- **Evidence:** No Redis TLS
-
-#### No defaults bypass validation
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Config Consistency
-- **Evidence:** Config defaults bypass validation
-
-#### All critical secrets loaded
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Secrets Manager
-- **Evidence:** Wallet key not in secrets manager
-
-#### Production in HSM/secrets
-- **Status:** PARTIAL
-- **Severity:** CRITICAL
-- **Section:** Solana Wallet Keypairs
-- **Evidence:** Wallet key not in secrets manager
-
-### From 20-deployment-cicd.md
-
-#### Cache cleared
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Build Security
-- **Evidence:** npm cache not cleaned
-
-#### dumb-init used
-- **Status:** PARTIAL
-- **Severity:** CRITICAL
-- **Section:** Signal Handling
-- **Evidence:** Installed but not in ENTRYPOINT
-
-### From 21-database-migrations.md
-
-#### One change per file
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** File Structure
-- **Evidence:** 6 tables in one migration
-
-#### No hardcoded values
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Up Function
-- **Evidence:** Hardcoded tenant UUID
-
-#### lock_timeout set
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Performance
-- **Evidence:** No lock_timeout
-
-#### Pool settings
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Knex Config
-- **Evidence:** No pool settings
-
-#### Pool configured
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Pool/SSL
-- **Evidence:** No pool config
-
-#### SSL for production
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Pool/SSL
-- **Evidence:** No SSL
-
-### From 36-wallet-security.md
-
-#### Secret keys in plaintext JSON
-- **Status:** CRITICAL FAIL
-- **Severity:** CRITICAL
-- **Section:** Treasury Wallet
-- **Evidence:** Plaintext keys written to JSON file
-
-#### No HSM/KMS
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Treasury Wallet
-- **Evidence:** No HSM/KMS
-
-#### No multisig
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Treasury Wallet
-- **Evidence:** No multisig
-
-#### No spending limits
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Treasury Wallet
-- **Evidence:** No spending limits
-
-### From 37-key-management.md
-
-#### In HSM/KMS
-- **Status:** CRITICAL FAIL
-- **Severity:** CRITICAL
-- **Section:** Private Key Storage
-- **Evidence:** Plaintext keys in JSON file
-
-#### FIPS 140-3 Level 3
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Private Key Storage
-- **Evidence:** No HSM/KMS
-
-#### Key never leaves HSM
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Private Key Storage
-- **Evidence:** No HSM/KMS
-
-#### Per-tx limits
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Wallet Architecture
-- **Evidence:** No spending limits
-
-#### Daily limits
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Wallet Architecture
-- **Evidence:** No spending limits
-
-#### All checks (Multi-Sig/MPC)
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Multi-Sig/MPC
-- **Evidence:** No multisig
-
-#### All checks (Key Rotation)
-- **Status:** FAIL
-- **Severity:** CRITICAL
-- **Section:** Key Rotation
-- **Evidence:** No key rotation
+## Remediation Progress
+
+### Completed Batches - CRITICAL Phase
+
+| Batch | Date | Items Fixed |
+|-------|------|-------------|
+| Batch 1 | 2025-01-03 | Tenant isolation: spoofing fix, FORCE RLS, tenant in jobs, remove default UUID |
+| Batch 2 | 2025-01-03 | Database security: SSL/TLS, pool config, transactions, tenant queries |
+| Batch 3 | 2025-01-03 | Error handling: custom errors, RFC 7807, 404 handler, process handlers |
+| Batch 4 | 2025-01-03 | Secrets & auth: no hardcoded secrets, service ACL, config validation |
+| Batch 5 | 2025-01-03 | Logging: redaction, correlation ID, Pino enabled, request logging |
+| Batch 6 | 2025-01-03 | Rate limiting: Redis store, route-specific limits, custom keyGenerator |
+| Batch 7 | 2025-01-03 | Health checks: /live, /ready, /startup, under-pressure, query timeouts |
+| Batch 8 | 2025-01-03 | Idempotency: distributed locking, deterministic job IDs, FOR UPDATE |
+| Batch 9 | 2025-01-03 | Graceful degradation: jitter, LB drain, fallback strategies, shutdown timeout |
+| Batch 10 | 2025-01-03 | Real minting: Metaplex SDK, priority fees, blockhash refresh, confirm-then-DB |
+| Batch 11 | 2025-01-03 | Input validation: response schemas, additionalProperties:false, CHECK constraints |
+| Batch 12 | 2025-01-03 | Migrations: lock_timeout, RETURNING clause, migration guide |
+| Batch 13 | 2025-01-03 | Dockerfile: dumb-init, cache cleanup, .dockerignore, SUID removal |
+| Batch 14 | 2025-01-03 | Redis TLS: TLS config, error handling, centralized config |
+| Batch 15 | 2025-01-03 | HTTPS default: internal service TLS, URL validation |
+
+### Completed Batches - HIGH Phase
+
+| Batch | Date | Items Fixed |
+|-------|------|-------------|
+| Batch H1 | 2025-01-03 | Wallet security: nonces, rate limiting, address validation, soft delete |
+| Batch H2 | 2025-01-03 | Rate limiting polish: skipOnError, onExceeded, trustProxy, RPC limiting |
+| Batch H3 | 2025-01-03 | Health checks polish: getHealth vs getSlot, treasury exposure, RPC health |
+| Batch H4 | 2025-01-03 | Load management: bulkhead pattern, load shedding middleware |
+| Batch H5 | 2025-01-03 | Input validation: metrics route, sanitizeString, unicode normalization |
+| Batch H6 | 2025-01-03 | Blockchain/Queue: compute units, DLQ processing, sync monitoring, job history |
+| Batch H7 | 2025-01-03 | Database/Migrations: partial unique, tenant in unique, CASCADE→RESTRICT, uuid-ossp |
+| Batch H8 | 2025-01-03 | Idempotency polish: recovery points, replay header |
+| Batch H9 | 2025-01-03 | Config/Metrics/Auth: Node metrics, HMAC replay window, wallet key validation, JWT secrets |
+| Batch H10 | 2025-01-03 | Treasury security: tx simulation, monitoring/alerting, address whitelist |
+| Batch H11 | 2025-01-03 | CI/CD: pre-commit hooks, pin dependencies, CI pipeline |
 
 ---
 
-## Architecture Issues Summary
+## CRITICAL Issues (106)
 
-### 1. Treasury Keys in Plaintext JSON (CRITICAL - IMMEDIATE ACTION)
+### 01-security.md (3 Critical)
 
-The treasury wallet private key is stored as a plaintext JSON file on the filesystem.
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 1 | SEC-R6 | Hardcoded default secret | Config | ✅ FIXED Batch 4 |
+| 2 | SEC-EXT8 | Treasury key plaintext | Treasury wallet | ⏳ DEFERRED - Needs AWS KMS |
+| 3 | SEC-EXT9 | No KMS/Vault | Key storage | ⏳ DEFERRED - Needs AWS KMS |
 
-**Evidence:**
-```typescript
-// treasury.ts
-const walletData = {
-  publicKey: this.publicKey.toString(),
-  secretKey: Array.from(this.keypair.secretKey), // PLAINTEXT!
-  createdAt: new Date().toISOString()
-};
-await fs.writeFile(walletPath, JSON.stringify(walletData, null, 2));
-```
+### 02-input-validation.md (2 Critical)
 
-**Impact:** Anyone with filesystem access owns your treasury. Container escape, backup leak, log aggregator = total loss.
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 4 | RD5 | No response schemas | Route definitions | ✅ FIXED Batch 11 |
+| 5 | RD6 | No additionalProperties:false | Route definitions | ✅ FIXED Batch 11 |
 
-**Required (IMMEDIATE):**
-```typescript
-// Use AWS KMS for signing
-import { KMSClient, SignCommand } from "@aws-sdk/client-kms";
+### 03-error-handling.md (6 Critical)
 
-class SecureTreasuryWallet {
-  private kms: KMSClient;
-  private keyId: string;
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 6 | RH3 | No 404 handler | Route handling | ✅ FIXED Batch 3 |
+| 7 | RH5 | No RFC 7807 format | Error responses | ✅ FIXED Batch 3 |
+| 8 | RH7 | Stack traces exposed | Error responses | ✅ FIXED Batch 3 |
+| 9 | DB2 | No DB transactions | Database operations | ✅ FIXED Batch 2 |
+| 10 | DS5 | No axios timeout | Inter-service calls | ✅ FIXED Batch 3 |
+| 11 | - | No process handlers (unhandledRejection) | Process level | ✅ FIXED Batch 3 |
 
-  async signTransaction(tx: Transaction): Promise<Transaction> {
-    const response = await this.kms.send(new SignCommand({
-      KeyId: this.keyId,
-      Message: tx.serializeMessage(),
-      SigningAlgorithm: "ECDSA_SHA_256"
-    }));
-    tx.addSignature(this.publicKey, response.Signature!);
-    return tx;
-  }
-}
-```
+### 04-logging-observability.md (12 Critical)
 
-### 2. No Spending Limits (CRITICAL)
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 12 | LC3 | No log redaction | Logger config | ✅ FIXED Batch 5 |
+| 13 | LC4 | No correlation ID middleware | Middleware | ✅ FIXED Batch 5 |
+| 14 | SD1 | Passwords not redacted | Log redaction | ✅ FIXED Batch 5 |
+| 15 | SD2 | Tokens not redacted | Log redaction | ✅ FIXED Batch 5 |
+| 16 | SD3 | PII not redacted | Log redaction | ✅ FIXED Batch 5 |
+| 17 | SD5 | Session tokens not redacted | Log redaction | ✅ FIXED Batch 5 |
+| 18 | SD8 | Request body not filtered | Log redaction | ✅ FIXED Batch 5 |
+| 19 | FP1 | Fastify Pino disabled | Logger config | ✅ FIXED Batch 5 |
+| 20 | DT1 | No OpenTelemetry SDK | Distributed tracing | ⏳ DEFERRED - Needs collector |
+| 21 | DT2 | No auto-instrumentation | Distributed tracing | ⏳ DEFERRED - Needs collector |
+| 22 | DT4 | No trace ID in logs | Distributed tracing | ⏳ DEFERRED - Needs collector |
+| 23 | DT5 | No context propagation | Distributed tracing | ⏳ DEFERRED - Needs collector |
 
-There are no per-transaction or daily limits on treasury spending. A bug or compromise can drain everything.
+### 05-s2s-auth.md (7 Critical)
 
-**Required:**
-```typescript
-class TreasuryWallet {
-  private perTxLimit = 10 * LAMPORTS_PER_SOL; // 10 SOL
-  private dailyLimit = 100 * LAMPORTS_PER_SOL; // 100 SOL
-  private dailySpent = 0;
-  
-  async transfer(amount: number, destination: PublicKey) {
-    if (amount > this.perTxLimit) {
-      throw new Error(`Exceeds per-tx limit of ${this.perTxLimit}`);
-    }
-    if (this.dailySpent + amount > this.dailyLimit) {
-      throw new Error(`Exceeds daily limit of ${this.dailyLimit}`);
-    }
-    
-    // Execute transfer
-    this.dailySpent += amount;
-  }
-}
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 24 | - | Default secret hardcoded | Auth config | ✅ FIXED Batch 4 |
+| 25 | - | Shared secret all services | Auth config | ✅ FIXED Batch 4 |
+| 26 | - | No service ACL | Endpoint authorization | ✅ FIXED Batch 4 |
+| 27 | - | HTTP default (not HTTPS) | Request security | ✅ FIXED Batch 15 |
+| 28 | - | Per-service secrets missing | HMAC verification | ✅ FIXED Batch 4 |
+| 29 | - | Secrets in source | Secrets management | ✅ FIXED Batch 4 |
+| 30 | - | Shared secrets (not unique) | Secrets management | ✅ FIXED Batch 4 |
 
-### 3. No Multisig (CRITICAL)
+### 06-database-integrity.md (4 Critical)
 
-Single-key treasury means single point of failure.
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 31 | DB2 | No transactions in userWallet | Database operations | ✅ FIXED Batch 2 |
+| 32 | - | No tenant_id in queries | Query patterns | ✅ FIXED Batch 2 |
+| 33 | - | No pool config | Knex config | ✅ FIXED Batch 2 |
+| 34 | - | No SSL/TLS | Knex config | ✅ FIXED Batch 2 |
 
-**Required:** Implement Solana multisig or use a multisig program like Squads.
+### 07-idempotency.md (5 Critical)
 
-### 4. Tenant ID Spoofable (CRITICAL)
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 35 | - | No API idempotency keys | Ticket purchase flow | ✅ FIXED Batch 8 |
+| 36 | - | Race conditions in mint | NFT minting | ✅ FIXED Batch 8 |
+| 37 | - | Job ID has timestamp (not idempotent) | Queue jobs | ✅ FIXED Batch 8 |
+| 38 | - | No tenant scoping in keys | State-changing operations | ✅ FIXED Batch 8 |
+| 39 | - | Non-atomic DB ops | Database | ✅ FIXED Batch 2 |
 
-Tenant is accepted from header and falls back to a default value.
+### 08-rate-limiting.md (4 Critical)
 
-**Evidence:**
-```typescript
-// tenant-context.ts
-if (!tenantId && request.headers['x-tenant-id']) {
-  tenantId = request.headers['x-tenant-id']; // Spoofable!
-}
-if (!tenantId) {
-  tenantId = 'default'; // Falls back to default!
-}
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 40 | - | In-memory rate limiting (no Redis) | Rate limit config | ✅ FIXED Batch 6 |
+| 41 | - | No Redis store | Rate limit config | ✅ FIXED Batch 6 |
+| 42 | - | No route-specific limits | Rate limit config | ✅ FIXED Batch 6 |
+| 43 | - | No custom keyGenerator | Rate limit config | ✅ FIXED Batch 6 |
 
-**Required:**
-```typescript
-export async function tenantContext(request: FastifyRequest, reply: FastifyReply) {
-  const tenantId = request.user?.tenant_id;
-  
-  if (!tenantId) {
-    return reply.code(401).send({ error: 'Missing tenant context' });
-  }
-  
-  // Validate UUID format
-  if (!isUUID(tenantId)) {
-    return reply.code(401).send({ error: 'Invalid tenant ID' });
-  }
-  
-  // NEVER accept from header
-  // NEVER use a default
-  
-  request.tenantId = tenantId;
-}
-```
+### 09-multi-tenancy.md (5 Critical)
 
-### 5. Hardcoded Default Tenant UUID (CRITICAL)
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 44 | - | Tenant from header/default (spoofable) | Tenant context middleware | ✅ FIXED Batch 1 |
+| 45 | - | No tenant in job payloads | Background jobs | ✅ FIXED Batch 1 |
+| 46 | - | Hardcoded default tenant UUID | Migration | ✅ FIXED Batch 1 |
+| 47 | - | No bulk validation | API endpoints | ✅ FIXED Batch 11 |
+| 48 | - | No FORCE RLS | PostgreSQL RLS | ✅ FIXED Batch 1 |
 
-Migration has a hardcoded tenant UUID that bypasses isolation.
+### 10-testing.md (7 Critical)
 
-**Evidence:**
-```typescript
-table.uuid('tenant_id').notNullable()
-  .defaultTo('00000000-0000-0000-0000-000000000001')
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 49 | - | No test scripts in package.json | Package.json | ❌ NOT FIXED - Testing phase |
+| 50 | - | Jest missing deps | Package.json | ❌ NOT FIXED - Testing phase |
+| 51 | - | No coverage thresholds | Jest config | ❌ NOT FIXED - Testing phase |
+| 52 | - | No route tests | Fastify testing | ❌ NOT FIXED - Testing phase |
+| 53 | - | No DB tests | Knex testing | ❌ NOT FIXED - Testing phase |
+| 54 | - | No NFT minting tests | Solana testing | ❌ NOT FIXED - Testing phase |
+| 55 | - | No tenant isolation tests | Multi-tenant testing | ❌ NOT FIXED - Testing phase |
 
-**Required:**
-```typescript
-table.uuid('tenant_id').notNullable(); // NO DEFAULT
-```
+### 11-documentation.md (4 Critical)
 
-### 6. No DB/Redis TLS (CRITICAL)
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 56 | - | No README.md | Project root | ❌ NOT FIXED - Docs phase |
+| 57 | - | No OpenAPI/Swagger | API docs | ❌ NOT FIXED - Docs phase |
+| 58 | - | No runbooks | Ops docs | ❌ NOT FIXED - Docs phase |
+| 59 | - | No ADRs | Architecture docs | ❌ NOT FIXED - Docs phase |
 
-Data in transit is unencrypted.
+### 12-health-checks.md (5 Critical)
 
-**Required:**
-```typescript
-// Database
-ssl: process.env.NODE_ENV === 'production' ? {
-  rejectUnauthorized: true
-} : false
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 60 | - | No /health/live endpoint | Health routes | ✅ FIXED Batch 7 |
+| 61 | - | No /health/ready endpoint | Health routes | ✅ FIXED Batch 7 |
+| 62 | - | No /health/startup endpoint | Health routes | ✅ FIXED Batch 7 |
+| 63 | - | No @fastify/under-pressure | Event loop monitoring | ✅ FIXED Batch 7 |
+| 64 | - | No query timeouts on health checks | Health checks | ✅ FIXED Batch 7 |
 
-// Redis
-tls: process.env.NODE_ENV === 'production' ? {} : undefined
-```
+### 13-graceful-degradation.md (4 Critical)
 
-### 7. Replay Attacks on Wallet Connection (HIGH)
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 65 | - | No jitter in retry | Retry logic | ✅ FIXED Batch 9 |
+| 66 | - | No LB drain delay | Graceful shutdown | ✅ FIXED Batch 9 |
+| 67 | - | No fallback strategies | Circuit breaker | ✅ FIXED Batch 9 |
+| 68 | - | No shutdown timeout | Graceful shutdown | ✅ FIXED Batch 9 |
 
-Wallet connection signatures can be replayed.
+### 19-configuration-management.md (5 Critical)
 
-**Evidence:**
-```typescript
-const signMessage = message || `Connect wallet to TicketToken: ${userId}`;
-// MISSING: nonce, timestamp, expiration
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 69 | - | Config defaults bypass validation | Config validation | ✅ FIXED Batch 4 |
+| 70 | - | Insecure default DB password ('postgres') | Database config | ✅ FIXED Batch 4 |
+| 71 | - | Wallet key not in secrets manager | Secrets management | ⏳ DEFERRED - Needs AWS KMS |
+| 72 | - | No DB SSL | Database config | ✅ FIXED Batch 2 |
+| 73 | - | No Redis TLS | Redis config | ✅ FIXED Batch 14 |
 
-**Required:**
-```typescript
-async generateConnectionNonce(userId: string) {
-  const nonce = crypto.randomUUID();
-  const expiresAt = Date.now() + 5 * 60 * 1000; // 5 minutes
-  
-  await redis.set(`wallet:nonce:${nonce}`, userId, 'EX', 300);
-  
-  const message = `Connect wallet to TicketToken
-User: ${userId}
-Nonce: ${nonce}
-Expires: ${new Date(expiresAt).toISOString()}`;
-  
-  return { nonce, message, expiresAt };
-}
+### 20-deployment-cicd.md (2 Critical)
 
-async verifyConnection(nonce: string, signature: string, walletAddress: string) {
-  const userId = await redis.get(`wallet:nonce:${nonce}`);
-  if (!userId) {
-    throw new Error('Invalid or expired nonce');
-  }
-  
-  // Verify signature
-  // Delete nonce (one-time use)
-  await redis.del(`wallet:nonce:${nonce}`);
-}
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 74 | - | npm cache not cleaned | Dockerfile | ✅ FIXED Batch 13 |
+| 75 | - | dumb-init not used in ENTRYPOINT | Dockerfile | ✅ FIXED Batch 13 |
 
-### 8. dumb-init Installed But Not Used (CRITICAL)
+### 21-database-migrations.md (5 Critical)
 
-Container won't handle signals properly.
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 76 | - | Single migration has 6 tables | Migration structure | ✅ FIXED Batch 12 (documented, not split) |
+| 77 | - | No lock_timeout | Performance | ✅ FIXED Batch 12 |
+| 78 | - | No pool settings | Knex config | ✅ FIXED Batch 2 |
+| 79 | - | No SSL | Knex config | ✅ FIXED Batch 2 |
+| 80 | - | Hardcoded tenant UUID default | Migration | ✅ FIXED Batch 1 |
 
-**Evidence:**
-```dockerfile
-RUN apk add --no-cache dumb-init
-# But ENTRYPOINT doesn't use it:
-ENTRYPOINT ["/app/entrypoint.sh"]
-```
+### 26-blockchain-integration.md (5 Critical)
 
-**Required:**
-```dockerfile
-ENTRYPOINT ["/usr/bin/dumb-init", "--", "/app/entrypoint.sh"]
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 81 | - | Bundlr/Irys storage commented out | Metaplex config | ✅ FIXED Batch 10 |
+| 82 | - | No priority fees | Transaction handling | ✅ FIXED Batch 10 |
+| 83 | - | Wallet key in env (not secrets manager) | Wallet security | ⏳ DEFERRED - Needs AWS KMS |
+| 84 | - | No fresh blockhash on retry | Transaction handling | ✅ FIXED Batch 10 |
+| 85 | - | Public RPC fallback | RPC config | ✅ FIXED Batch 10 |
 
----
+### 31-blockchain-database-consistency.md (5 Critical)
 
-## Quick Fix Priority
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 86 | - | **simulateMint() is FAKE/mock** | Minting queue | ✅ FIXED Batch 10 |
+| 87 | - | Fake CONFIRMED status written to DB | Database | ✅ FIXED Batch 10 |
+| 88 | - | No reconciliation service | State sync | ⏳ DEFERRED - Needs design |
+| 89 | - | DB updated BEFORE blockchain confirmation | Transaction flow | ✅ FIXED Batch 10 |
+| 90 | - | No event listener for on-chain events | Event sync | ⏳ DEFERRED - Needs design |
 
-### P0 - Do Today (Security Critical)
+### 36-wallet-security.md (4 Critical)
 
-1. **Move treasury key to AWS KMS** - ~4 hours
-2. **Add spending limits** - ~2 hours
-3. **Fix tenant context middleware** - ~1 hour
-4. **Remove hardcoded tenant UUID** - ~30 minutes
-5. **Add DB/Redis TLS** - ~1 hour
-6. **Fix dumb-init in Dockerfile** - ~5 minutes
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 91 | - | Plaintext keys in JSON file | Treasury wallet | ⏳ DEFERRED - Needs AWS KMS |
+| 92 | - | No HSM/KMS | Key storage | ⏳ DEFERRED - Needs AWS KMS |
+| 93 | - | No multisig | Treasury wallet | ⏳ DEFERRED - Architecture |
+| 94 | - | No spending limits | Transaction validation | ⏳ DEFERRED - Architecture |
 
-### P1 - Do This Week
+### 37-key-management.md (5 Critical)
 
-1. Add wallet connection nonces
-2. Implement RLS policies
-3. Add idempotency keys
-4. Set up health check endpoints
-5. Add log redaction
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 95 | - | **Plaintext secretKey in JSON file** | Treasury storage | ⏳ DEFERRED - Needs AWS KMS |
+| 96 | - | No HSM/KMS integration | Key storage | ⏳ DEFERRED - Needs AWS KMS |
+| 97 | - | No multisig | Treasury architecture | ⏳ DEFERRED - Architecture |
+| 98 | - | No spending limits (per-tx, daily) | Transaction validation | ⏳ DEFERRED - Architecture |
+| 99 | - | No key rotation | Key management | ⏳ DEFERRED - Ops procedure |
 
-### P2 - Do This Sprint
+### 38-time-sensitive-operations.md (4 Critical)
 
-1. Implement multisig
-2. Add OpenTelemetry
-3. Write tests
-4. Create documentation
-5. Set up monitoring
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 100 | - | No distributed locking | Concurrency | ✅ FIXED Batch 8 |
+| 101 | - | Race conditions in DB operations | Database | ✅ FIXED Batch 8 |
+| 102 | - | No clock monitoring | Time sync | ⏳ DEFERRED - Infrastructure |
+| 103 | - | No idempotency keys | State transitions | ✅ FIXED Batch 8 |
+
+### Additional Critical (from pass rate gaps)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 104 | - | No FOR UPDATE locking | Database | ✅ FIXED Batch 8 |
+| 105 | - | No CHECK constraints | Schema | ✅ FIXED Batch 11 |
+| 106 | - | No RETURNING clause | Upserts | ✅ FIXED Batch 12 |
 
 ---
 
-## Quick Fix Code Snippets
+## HIGH Issues (89)
 
-### Move Treasury to KMS (P0)
-```typescript
-import { KMSClient, SignCommand, GetPublicKeyCommand } from "@aws-sdk/client-kms";
+### 01-security.md (3 High)
 
-export class KMSTreasuryWallet {
-  private kms: KMSClient;
-  private keyId: string;
-  private publicKey: PublicKey;
-  
-  constructor(keyId: string) {
-    this.kms = new KMSClient({ region: process.env.AWS_REGION });
-    this.keyId = keyId;
-  }
-  
-  async init() {
-    const response = await this.kms.send(new GetPublicKeyCommand({
-      KeyId: this.keyId
-    }));
-    // Convert to Solana PublicKey
-    this.publicKey = new PublicKey(response.PublicKey!);
-  }
-  
-  async signTransaction(tx: Transaction): Promise<Transaction> {
-    const message = tx.serializeMessage();
-    
-    const response = await this.kms.send(new SignCommand({
-      KeyId: this.keyId,
-      Message: message,
-      MessageType: "RAW",
-      SigningAlgorithm: "ECDSA_SHA_256"
-    }));
-    
-    tx.addSignature(this.publicKey, Buffer.from(response.Signature!));
-    return tx;
-  }
-}
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 1 | SEC-DB1 | No DB TLS | Database config | ✅ FIXED Batch 2 |
+| 2 | SEC-EXT11 | No spending limits | Treasury wallet | ⏳ DEFERRED - Architecture |
+| 3 | SEC-EXT12 | No multi-sig | Treasury wallet | ⏳ DEFERRED - Architecture |
 
-### Add Spending Limits (P0)
-```typescript
-interface SpendingLimits {
-  perTransaction: number;
-  daily: number;
-  hourly: number;
-}
+### 02-input-validation.md (4 High)
 
-class RateLimitedTreasury {
-  private limits: SpendingLimits = {
-    perTransaction: 10 * LAMPORTS_PER_SOL,
-    daily: 100 * LAMPORTS_PER_SOL,
-    hourly: 25 * LAMPORTS_PER_SOL
-  };
-  
-  private async getSpentAmount(window: 'hour' | 'day'): Promise<number> {
-    const key = `treasury:spent:${window}:${this.getWindowKey(window)}`;
-    return parseInt(await redis.get(key) || '0');
-  }
-  
-  async validateTransfer(amount: number): Promise<void> {
-    if (amount > this.limits.perTransaction) {
-      throw new SpendingLimitError('PER_TX_LIMIT', amount, this.limits.perTransaction);
-    }
-    
-    const hourlySpent = await this.getSpentAmount('hour');
-    if (hourlySpent + amount > this.limits.hourly) {
-      throw new SpendingLimitError('HOURLY_LIMIT', hourlySpent + amount, this.limits.hourly);
-    }
-    
-    const dailySpent = await this.getSpentAmount('day');
-    if (dailySpent + amount > this.limits.daily) {
-      throw new SpendingLimitError('DAILY_LIMIT', dailySpent + amount, this.limits.daily);
-    }
-  }
-  
-  async recordSpend(amount: number): Promise<void> {
-    const hourKey = `treasury:spent:hour:${this.getWindowKey('hour')}`;
-    const dayKey = `treasury:spent:day:${this.getWindowKey('day')}`;
-    
-    await redis.incrby(hourKey, amount);
-    await redis.expire(hourKey, 3600);
-    
-    await redis.incrby(dayKey, amount);
-    await redis.expire(dayKey, 86400);
-  }
-}
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 4 | - | Metrics route unvalidated | Metrics endpoint | ✅ FIXED Batch H5 |
+| 5 | - | sanitizeString unused | Service layer | ✅ FIXED Batch H5 |
+| 6 | - | No Unicode normalization | Input validation | ✅ FIXED Batch H5 |
+| 7 | - | No array maxItems | Schema definitions | ✅ FIXED Batch 11 |
 
-### Fix Tenant Context (P0)
-```typescript
-export async function tenantContext(
-  request: FastifyRequest,
-  reply: FastifyReply
-): Promise<void> {
-  // ONLY accept tenant from verified JWT
-  const tenantId = request.user?.tenant_id;
-  
-  if (!tenantId) {
-    return reply.code(401).send({
-      error: 'MISSING_TENANT',
-      message: 'Authentication required with tenant context'
-    });
-  }
-  
-  // Validate UUID format
-  const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!UUID_REGEX.test(tenantId)) {
-    return reply.code(401).send({
-      error: 'INVALID_TENANT',
-      message: 'Invalid tenant ID format'
-    });
-  }
-  
-  // Set for RLS
-  await db.raw('SET LOCAL app.current_tenant_id = ?', [tenantId]);
-  
-  request.tenantId = tenantId;
-}
-```
+### 03-error-handling.md (5 High)
 
-### Add Wallet Nonces (P1)
-```typescript
-export class WalletConnectionService {
-  async generateChallenge(userId: string): Promise<WalletChallenge> {
-    const nonce = crypto.randomUUID();
-    const expiresAt = Date.now() + 5 * 60 * 1000;
-    
-    const message = [
-      'Connect wallet to TicketToken',
-      '',
-      `User: ${userId}`,
-      `Nonce: ${nonce}`,
-      `Expires: ${new Date(expiresAt).toISOString()}`,
-      '',
-      'This signature proves you own this wallet.'
-    ].join('\n');
-    
-    await redis.setex(`wallet:challenge:${nonce}`, 300, JSON.stringify({
-      userId,
-      expiresAt
-    }));
-    
-    return { nonce, message, expiresAt };
-  }
-  
-  async verifyChallenge(
-    nonce: string,
-    walletAddress: string,
-    signature: string
-  ): Promise<{ userId: string }> {
-    const data = await redis.get(`wallet:challenge:${nonce}`);
-    if (!data) {
-      throw new ValidationError('INVALID_NONCE', 'Challenge expired or invalid');
-    }
-    
-    const { userId, expiresAt } = JSON.parse(data);
-    
-    if (Date.now() > expiresAt) {
-      await redis.del(`wallet:challenge:${nonce}`);
-      throw new ValidationError('EXPIRED_CHALLENGE', 'Challenge has expired');
-    }
-    
-    // Verify signature
-    const message = this.reconstructMessage(userId, nonce, expiresAt);
-    const isValid = nacl.sign.detached.verify(
-      new TextEncoder().encode(message),
-      bs58.decode(signature),
-      new PublicKey(walletAddress).toBytes()
-    );
-    
-    if (!isValid) {
-      throw new ValidationError('INVALID_SIGNATURE', 'Signature verification failed');
-    }
-    
-    // Delete nonce (one-time use)
-    await redis.del(`wallet:challenge:${nonce}`);
-    
-    return { userId };
-  }
-}
-```
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 8 | RH2 | Error handler after routes | App setup | ✅ FIXED Batch 3 |
+| 9 | RH6 | No correlation ID in errors | Error responses | ✅ FIXED Batch 5 |
+| 10 | DS3 | No correlation in logs | Logging | ✅ FIXED Batch 5 |
+| 11 | DB4 | No pool error handler | Database pool | ✅ FIXED Batch 2 |
+| 12 | SL5 | No error codes | Service layer | ✅ FIXED Batch 3 |
+
+### 04-logging-observability.md (3 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 13 | - | Global logger not request-scoped | Logger | ✅ FIXED Batch 5 |
+| 14 | SD9 | Stack traces always logged | Log config | ✅ FIXED Batch 5 |
+| 15 | M5 | No default Node metrics | Metrics | ✅ FIXED Batch H9 |
+
+### 05-s2s-auth.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 16 | - | 5-min replay window (too long) | HMAC verification | ✅ FIXED Batch H9 |
+| 17 | - | No request timeout | Client request | ✅ FIXED Batch 15 |
+| 18 | - | No correlation ID | Client request | ✅ FIXED Batch 15 |
+| 19 | - | Circuit breaker not applied | Client request | ✅ FIXED Batch 15 |
+
+### 06-database-integrity.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 20 | - | No CHECK constraints | Schema definition | ✅ FIXED Batch 11 |
+| 21 | - | No partial unique for soft delete | Schema definition | ✅ FIXED Batch H7 |
+| 22 | - | No FOR UPDATE | Locking | ✅ FIXED Batch 8 |
+| 23 | - | Unique missing tenant_id | Schema definition | ✅ FIXED Batch H7 |
+
+### 07-idempotency.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 24 | - | No recovery points | Purchase flow | ✅ FIXED Batch H8 |
+| 25 | - | No error classification | Error handling | ✅ FIXED Batch 3 |
+| 26 | - | No replay header | Response headers | ✅ FIXED Batch H8 |
+| 27 | - | DB check without lock | Race condition | ✅ FIXED Batch 8 |
+
+### 08-rate-limiting.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 28 | - | No skipOnError | Rate limit config | ✅ FIXED Batch H2 |
+| 29 | - | No onExceeded logging | Rate limit config | ✅ FIXED Batch H2 |
+| 30 | - | trustProxy too permissive | Header manipulation | ✅ FIXED Batch H2 |
+| 31 | - | No outbound RPC limiting | Blockchain-specific | ✅ FIXED Batch H2 |
+
+### 09-multi-tenancy.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 32 | - | No WITH CHECK clause | RLS policies | ✅ FIXED Batch 1 |
+| 33 | - | Tenant as parameter | Query patterns | ✅ FIXED Batch 2 |
+| 34 | - | No UUID validation | JWT middleware | ✅ FIXED Batch 1 |
+| 35 | - | Shared queue (no tenant isolation) | Background jobs | ✅ FIXED Batch 1 |
+| 36 | - | Missing tenant in WHERE clauses | Query patterns | ✅ FIXED Batch 2 |
+
+### 10-testing.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 37 | - | No test database configured | Database testing | ❌ NOT FIXED - Testing phase |
+| 38 | - | No fastify.inject() usage | Route testing | ❌ NOT FIXED - Testing phase |
+| 39 | - | No security tests | Security testing | ❌ NOT FIXED - Testing phase |
+| 40 | - | No tx rollback isolation | Database testing | ❌ NOT FIXED - Testing phase |
+
+### 11-documentation.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 41 | - | No error code docs | API docs | ❌ NOT FIXED - Docs phase |
+| 42 | - | No JSDoc comments | Code docs | ❌ NOT FIXED - Docs phase |
+| 43 | - | No CHANGELOG | Project root | ❌ NOT FIXED - Docs phase |
+| 44 | - | No architecture diagrams | Architecture docs | ❌ NOT FIXED - Docs phase |
+| 45 | - | Commented-out code | Code quality | ✅ FIXED Batch 10 (bundlr uncommented) |
+
+### 12-health-checks.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 46 | - | No Redis health check | Health checks | ✅ FIXED Batch 7 |
+| 47 | - | Uses getSlot vs getHealth for Solana | Solana health | ✅ FIXED Batch H3 |
+| 48 | - | No auth on detailed endpoint | Security | ✅ FIXED Batch 7 |
+| 49 | - | Error messages exposed | Error handling | ✅ FIXED Batch 3 |
+| 50 | - | Treasury balance exposed | Security | ✅ FIXED Batch H3 |
+
+### 13-graceful-degradation.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 51 | - | No bulkhead pattern | Resource isolation | ✅ FIXED Batch H4 |
+| 52 | - | Circuit breaker no fallback | Circuit breaker | ✅ FIXED Batch 9 |
+| 53 | - | No load shedding | Load management | ✅ FIXED Batch H4 |
+| 54 | - | Heavy RPC health check | Solana RPC | ✅ FIXED Batch H3 |
+
+### 19-configuration-management.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 55 | - | No wallet key format validation | Validation | ✅ FIXED Batch H9 |
+| 56 | - | RPC URLs logged | Logging security | ✅ FIXED Batch 5 |
+| 57 | - | JWT not in secrets manager | Secrets management | ✅ FIXED Batch H9 |
+| 58 | - | No pre-commit hooks | Version control | ✅ FIXED Batch H11 |
+| 59 | - | No environment isolation validation | Config validation | ✅ FIXED Batch 15 |
+
+### 20-deployment-cicd.md (3 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 60 | - | No .dockerignore | Docker | ✅ FIXED Batch 13 |
+| 61 | - | Caret versioning (not pinned) | Dependencies | ✅ FIXED Batch H11 |
+| 62 | - | CI/CD pipeline not verified | CI/CD | ✅ FIXED Batch H11 |
+
+### 21-database-migrations.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 63 | - | CASCADE on user FKs (should be RESTRICT) | Foreign keys | ✅ FIXED Batch H7 |
+| 64 | - | Missing uuid-ossp extension check | PostgreSQL | ✅ FIXED Batch H7 |
+| 65 | - | Sequential naming (not timestamp) | File structure | ✅ FIXED Batch H7 (documented) |
+| 66 | - | No error handling in migrations | Error handling | ✅ FIXED Batch 12 |
+
+### 26-blockchain-integration.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 67 | - | No idempotency keys | Transaction handling | ✅ FIXED Batch 8 |
+| 68 | - | No compute unit estimation | Transaction handling | ✅ FIXED Batch H6 |
+| 69 | - | No spending limits | Wallet security | ⏳ DEFERRED - Architecture |
+| 70 | - | No reconciliation service | State reconciliation | ⏳ DEFERRED - Needs design |
+| 71 | - | No DAS API configured | RPC config | ⏳ DEFERRED - Needs Helius |
+
+### 31-blockchain-database-consistency.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 72 | - | No ownership verification | Reconciliation | ⏳ DEFERRED - Needs design |
+| 73 | - | No DLQ processing | Failure handling | ✅ FIXED Batch H6 |
+| 74 | - | No blockhash tracking | Transaction handling | ✅ FIXED Batch 10 |
+| 75 | - | No sync monitoring | Monitoring | ✅ FIXED Batch H6 |
+| 76 | - | Job tracking removed prematurely | Queue | ✅ FIXED Batch H6 |
+
+### 36-wallet-security.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 77 | - | Replay attack on wallet connection (no nonce) | User wallet manager | ✅ FIXED Batch H1 |
+| 78 | - | No rate limiting on connections | User wallet manager | ✅ FIXED Batch H1 |
+| 79 | - | No input validation on wallet address | User wallet manager | ✅ FIXED Batch H1 |
+| 80 | - | Hard delete (no audit trail) | Database operations | ✅ FIXED Batch H1 |
+| 81 | - | Fee config commented out | Fee manager | ✅ FIXED Batch 10 |
+
+### 37-key-management.md (5 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 82 | - | No tiered wallets (hot/warm/cold) | Wallet architecture | ⏳ DEFERRED - Architecture |
+| 83 | - | No transaction simulation before signing | Transaction signing | ✅ FIXED Batch H10 |
+| 84 | - | No monitoring/alerting on treasury | Monitoring | ✅ FIXED Batch H10 |
+| 85 | - | No address whitelist | Transaction validation | ✅ FIXED Batch H10 |
+| 86 | - | Fee config commented out | Fee manager | ✅ FIXED Batch 10 |
+
+### 38-time-sensitive-operations.md (4 High)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 87 | - | No jitter in retry logic | Retry.ts | ✅ FIXED Batch 9 |
+| 88 | - | Circuit breaker memory leak (interval not cleared) | CircuitBreaker.ts | ✅ FIXED Batch 9 |
+| 89 | - | No state machine documentation | Documentation | ❌ NOT FIXED - Docs phase |
+
+---
+
+## MEDIUM Issues (2)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 1 | SEC-R1 | Public routes no auth | Routes | ❌ NOT FIXED |
+| 2 | SEC-S5 | Default tenant fallback | Tenant context | ✅ FIXED Batch 1 |
+
+---
+
+## LOW Issues (3)
+
+| # | ID | Issue | Location | Status |
+|---|-----|-------|----------|--------|
+| 1 | - | Wallet path in logs | Logging | ✅ FIXED Batch 5 |
+| 2 | LC7 | Missing version in log metadata | Log config | ❌ NOT FIXED |
+| 3 | - | Non-atomic DB operations | Database | ✅ FIXED Batch 2 |
+
+---
+
+## Deferred Items Summary (30 issues)
+
+### Needs AWS KMS Setup (8 issues)
+| # | Issue | Reason |
+|---|-------|--------|
+| 2, 3 | Treasury key plaintext, No KMS | Needs AWS KMS key + IAM |
+| 71, 83 | Wallet key not in secrets manager | Needs AWS KMS |
+| 91, 92, 95, 96 | Plaintext keys, No HSM/KMS | Needs AWS KMS |
+
+### Needs Architecture Decision (6 issues)
+| # | Issue | Reason |
+|---|-------|--------|
+| 93, 94, 97, 98 | Multisig, spending limits | Needs Squads setup |
+| 82 | Tiered wallets | Architecture decision |
+| 69 | Spending limits | Architecture decision |
+
+### Needs Infrastructure (5 issues)
+| # | Issue | Reason |
+|---|-------|--------|
+| 20, 21, 22, 23 | OpenTelemetry | Needs collector infrastructure |
+| 102 | Clock monitoring | Needs NTP monitoring |
+
+### Needs Design (4 issues)
+| # | Issue | Reason |
+|---|-------|--------|
+| 88, 90 | Reconciliation, event listener | Complex - needs design doc |
+| 70, 72 | Reconciliation service | Complex - needs design doc |
+
+### Needs External Service (1 issue)
+| # | Issue | Reason |
+|---|-------|--------|
+| 71 | DAS API | Needs Helius/Triton endpoint |
+
+### Ops Procedure (1 issue)
+| # | Issue | Reason |
+|---|-------|--------|
+| 99 | Key rotation | Manual runbook |
+
+---
+
+## Remaining Work
+
+### Testing Phase (7 CRITICAL + 4 HIGH = 11 issues)
+Issues: #49-55 (CRITICAL), #37-40 (HIGH)
+- Add test scripts, Jest deps, coverage thresholds
+- Add route, DB, NFT, tenant isolation tests
+
+### Documentation Phase (4 CRITICAL + 5 HIGH = 9 issues)
+Issues: #56-59 (CRITICAL), #41-44, #89 (HIGH)
+- README, OpenAPI, runbooks, ADRs
+- Error code docs, CHANGELOG, architecture diagrams
+
+### Remaining MEDIUM/LOW (2 issues)
+- #1 (MEDIUM): Public routes no auth
+- #2 (LOW): Missing version in log metadata
+
+---
+
+## Files Created During Remediation
+
+### CRITICAL Phase (Batches 1-15)
+- `src/errors/index.ts` - Custom error classes, RFC 7807
+- `src/middleware/tenant-context.ts` - JWT-only tenant extraction
+- `src/middleware/request-logger.ts` - Correlation ID, request logging
+- `src/middleware/rate-limit.ts` - Redis-backed rate limiting
+- `src/config/database.ts` - SSL, pool config, query timing
+- `src/config/redis.ts` - TLS config, retry logic
+- `src/config/services.ts` - HTTPS enforcement
+- `src/config/validate.ts` - Startup validation
+- `src/routes/health.ts` - /live, /ready, /startup
+- `src/utils/logger.ts` - Pino, redaction
+- `src/utils/distributed-lock.ts` - Redlock implementation
+- `src/utils/circuit-breaker.ts` - Fallback strategies
+- `src/utils/retry.ts` - Jitter, exponential backoff
+- `src/utils/db-operations.ts` - RETURNING clause helpers
+- `src/schemas/validation.ts` - Response schemas, additionalProperties
+- `src/queues/mintQueue.ts` - Real Metaplex minting
+- `src/services/MetaplexService.ts` - Bundlr enabled, priority fees
+- `src/services/internal-client.ts` - HTTPS, circuit breaker
+- `src/migrations/002_tenant_rls.ts` - FORCE RLS
+- `src/migrations/003_check_constraints.ts` - CHECK constraints
+- `src/migrations/004_migration_safety.ts` - lock_timeout
+- `Dockerfile` - dumb-init, cache cleanup
+- `.dockerignore` - Build optimization
+- `docs/MIGRATION_GUIDE.md` - Migration best practices
+
+### HIGH Phase (Batches H1-H11)
+- `src/wallets/userWallet.ts` - Nonces, soft delete, rate limit
+- `src/middleware/bulkhead.ts` - Resource isolation
+- `src/middleware/load-shedding.ts` - Backpressure handling
+- `src/middleware/idempotency.ts` - Recovery points, replay headers
+- `src/utils/sanitize.ts` - String sanitization, Unicode
+- `src/utils/node-metrics.ts` - prom-client metrics
+- `src/utils/rpc-rate-limit.ts` - Outbound RPC limiting
+- `src/utils/compute-units.ts` - CU estimation
+- `src/utils/treasury-monitor.ts` - Balance alerts, webhooks
+- `src/utils/transaction-simulator.ts` - TX simulation
+- `src/utils/sync-monitor.ts` - Mint sync monitoring
+- `src/utils/recovery-points.ts` - Recovery state tracking
+- `src/config/treasury-whitelist.ts` - Address whitelist
+- `src/config/secrets.ts` - JWT validation
+- `src/queues/dlq-processor.ts` - Dead letter queue
+- `src/queues/job-history.ts` - Job retention
+- `src/migrations/005_wallet_soft_delete.ts` - Soft delete columns
+- `src/migrations/006_partial_unique.ts` - Tenant-aware indexes
+- `src/migrations/007_foreign_keys.ts` - CASCADE→RESTRICT
+- `src/migrations/008_extensions.ts` - uuid-ossp, pgcrypto
+- `.husky/pre-commit` - Pre-commit hooks
+- `.github/workflows/ci.yml` - CI pipeline
+- `.npmrc` - Exact versioning
+- `.lintstagedrc.json` - Staged linting
+- `docs/DEVELOPMENT_SETUP.md` - Dev setup guide
+
+---
+
+## Changelog
+
+| Date | Author | Changes |
+|------|--------|---------|
+| 2024-12-26 | Audit | Initial findings compiled from 18 audit files |
+| 2025-01-02 | Planning | Consolidated audit findings, identified overlaps with minting-service |
+| 2025-01-03 | Remediation | CRITICAL Batches 1-15: 74 fixed, 23 deferred |
+| 2025-01-03 | Remediation | HIGH Batches H1-H11: 38 fixed, 7 deferred |

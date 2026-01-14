@@ -26,7 +26,6 @@ export class ScalperDetectorService {
     const signals: FraudSignal[] = [];
     let totalScore = 0;
 
-    // Check rapid purchases
     const rapidCheck = await this.checkRapidPurchases(userId);
     if (rapidCheck.isRapid) {
       const score = 30;
@@ -43,7 +42,6 @@ export class ScalperDetectorService {
       totalScore += score;
     }
 
-    // Check multiple events
     const multiEventCheck = await this.checkMultipleEvents(userId);
     if (multiEventCheck.count > 3) {
       const score = 20;
@@ -59,7 +57,6 @@ export class ScalperDetectorService {
       totalScore += score;
     }
 
-    // Check purchase patterns
     const patternCheck = await this.checkPurchasePatterns(userId);
     if (patternCheck.suspicious) {
       const score = 25;
@@ -75,7 +72,6 @@ export class ScalperDetectorService {
       totalScore += score;
     }
 
-    // Check device fingerprint
     if (deviceFingerprint) {
       const deviceCheck = await this.checkDeviceFingerprint(deviceFingerprint);
       if (deviceCheck.flagged) {
@@ -93,7 +89,6 @@ export class ScalperDetectorService {
       }
     }
 
-    // Determine decision
     let decision: FraudDecision;
     if (totalScore >= 50) {
       decision = FraudDecision.DECLINE;
@@ -133,7 +128,7 @@ export class ScalperDetectorService {
         windowMinutes
       };
     } catch (error) {
-      log.error('Redis error in checkRapidPurchases', { error });
+      log.error({ error }, 'Redis error in checkRapidPurchases');
       return { isRapid: false, count: 0, windowMinutes };
     }
   }
@@ -190,7 +185,7 @@ export class ScalperDetectorService {
       const exists = await redis.exists(flaggedKey);
       return { flagged: exists === 1 };
     } catch (error) {
-      log.error('Redis error in checkDeviceFingerprint', { error });
+      log.error({ error }, 'Redis error in checkDeviceFingerprint');
       return { flagged: false };
     }
   }
@@ -201,7 +196,7 @@ export class ScalperDetectorService {
       const flaggedKey = `device:flagged:${fingerprint}`;
       await redis.setex(flaggedKey, 30 * 24 * 60 * 60, reason);
     } catch (error) {
-      log.error('Error flagging device', { error });
+      log.error({ error }, 'Error flagging device');
     }
   }
 }

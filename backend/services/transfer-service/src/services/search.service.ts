@@ -6,6 +6,19 @@ import logger from '../utils/logger';
  * 
  * Advanced search and filtering for transfers
  * Phase 8: Advanced Features
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service uses complex SQL JOINs across multiple tables (ticket_transfers, tickets,
+ * events, users) for search and filtering operations. This is intentional because:
+ * 
+ * 1. Search operations require efficient DB-level JOINs for performance
+ * 2. Breaking into multiple service calls would significantly degrade search performance
+ * 3. These are READ-ONLY queries for UI data enrichment (ticket_number, event_name, user_emails)
+ * 4. The primary data (ticket_transfers) is transfer-service owned
+ * 5. Secondary data fetched is for display purposes and doesn't affect business logic
+ * 
+ * Future optimization: Consider implementing a materialized search view or
+ * Elasticsearch index for cross-service search functionality.
  */
 
 export interface SearchFilters {
@@ -282,7 +295,7 @@ export class SearchService {
   /**
    * Get faceted search counts
    */
-  async getFacets(tenantId: string, filters: SearchFilters = {}): Promise<any> {
+  async getFacets(tenantId: string, _filters: SearchFilters = {}): Promise<any> {
     try {
       // Get status counts
       const statusResult = await this.pool.query(`

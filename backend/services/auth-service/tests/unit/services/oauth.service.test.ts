@@ -1,403 +1,662 @@
-import { OAuthService } from '../../../src/services/oauth.service';
-import { AuthenticationError } from '../../../src/errors';
+import { AuthenticationError, ValidationError } from '../../../src/errors';
 
-// Mock dependencies
-jest.mock('google-auth-library');
-jest.mock('apple-signin-auth');
-jest.mock('crypto');
-jest.mock('../../../src/config/database', () => ({
-  db: jest.fn(() => ({
-    where: jest.fn().mockReturnThis(),
-    first: jest.fn(),
-    insert: jest.fn(),
-    update: jest.fn(),
-  })),
+// Mocks
+const mockPool = {
+  query: jest.fn(),
+  connect: jest.fn(),
+};
+
+const mockClient = {
+  query: jest.fn(),
+  release: jest.fn(),
+};
+
+const mockJwtService = {
+  generateTokenPair: jest.fn().mockResolvedValue({
+    accessToken: 'mock-access-token',
+    refreshToken: 'mock-refresh-token',
+  }),
+  initialize: jest.fn(),
+};
+
+const mockGoogleClient = {
+  getToken: jest.fn(),
+  verifyIdToken: jest.fn(),
+};
+
+const mockAuditService = {
+  logSessionCreated: jest.fn().mockResolvedValue(undefined),
+  log: jest.fn().mockResolvedValue(undefined),
+};
+
+// Mock axios
+jest.mock('axios', () => ({
+  post: jest.fn(),
+  get: jest.fn(),
 }));
-jest.mock('../../../src/services/jwt.service');
+
+// Mock google-auth-library
+jest.mock('google-auth-library', () => ({
+  OAuth2Client: jest.fn().mockImplementation(() => mockGoogleClient),
+}));
+
+// Mock database
+jest.mock('../../../src/config/database', () => ({
+  pool: mockPool,
+}));
+
+// Mock env
 jest.mock('../../../src/config/env', () => ({
   env: {
-    GOOGLE_CLIENT_ID: 'test-google-client-id',
-    GOOGLE_CLIENT_SECRET: 'test-google-secret',
-    GOOGLE_REDIRECT_URI: 'http://localhost/callback',
-    APPLE_CLIENT_ID: 'com.test.app',
+    GOOGLE_CLIENT_ID: 'google-client-id',
+    GOOGLE_CLIENT_SECRET: 'google-client-secret',
+    GOOGLE_REDIRECT_URI: 'http://localhost/callback/google',
+    GITHUB_CLIENT_ID: 'github-client-id',
+    GITHUB_CLIENT_SECRET: 'github-client-secret',
+    GITHUB_REDIRECT_URI: 'http://localhost/callback/github',
   },
 }));
 
-import { OAuth2Client } from 'google-auth-library';
-import * as AppleAuth from 'apple-signin-auth';
-import crypto from 'crypto';
-import { db } from '../../../src/config/database';
-import { JWTService } from '../../../src/services/jwt.service';
+// Mock audit service
+jest.mock('../../../src/services/audit.service', () => ({
+  auditService: mockAuditService,
+}));
+
+// Mock circuit breaker to just call the function directly
+jest.mock('../../../src/utils/circuit-breaker', () => ({
+  withCircuitBreaker: jest.fn((name, fn) => fn),
+}));
+
+import axios from 'axios';
+import { OAuthService } from '../../../src/services/oauth.service';
 
 describe('OAuthService', () => {
   let service: OAuthService;
-  let mockGoogleClient: any;
-  let mockDb: any;
 
   beforeEach(() => {
-    mockGoogleClient = {
-      verifyIdToken: jest.fn(),
-    };
-
-    (OAuth2Client as any) = jest.fn(() => mockGoogleClient);
-
-    (JWTService as jest.MockedClass<typeof JWTService>).mockImplementation(() => ({
-      generateTokenPair: jest.fn(),
-    } as any));
-
-    mockDb = db as jest.MockedFunction<typeof db>;
-    service = new OAuthService();
     jest.clearAllMocks();
+    
+    // Reset all mock implementations
+    mockPool.query.mockReset();
+    mockPool.connect.mockReset();
+    mockClient.query.mockReset();
+    mockClient.release.mockReset();
+    mockGoogleClient.getToken.mockReset();
+    mockGoogleClient.verifyIdToken.mockReset();
+    (axios.post as jest.Mock).mockReset();
+    (axios.get as jest.Mock).mockReset();
+    
+    mockPool.connect.mockResolvedValue(mockClient);
+    
+    service = new OAuthService(mockJwtService as any);
   });
 
-  describe('verifyGoogleToken', () => {
-    const idToken = 'google-id-token';
+  describe('constructor', () => {
+    it('should create OAuth2Client with config', () => {
+      expect(service).toBeDefined();
+    });
 
-    it('should verify and return Google profile', async () => {
-      const mockPayload = {
+    it('should use provided JWTService', () => {
+      const customJwt = { generateTokenPair: jest.fn() };
+      const svc = new OAuthService(customJwt as any);
+      expect(svc).toBeDefined();
+    });
+  });
+
+  describe('authenticate', () => {
+    describe('Google OAuth', () => {
+      const mockGoogleProfile = {
         sub: 'google-user-123',
-        email: 'user@gmail.com',
+        email: 'test@gmail.com',
         given_name: 'John',
         family_name: 'Doe',
-        picture: 'https://example.com/photo.jpg',
+        picture: 'https://google.com/avatar.jpg',
         email_verified: true,
       };
 
-      mockGoogleClient.verifyIdToken.mockResolvedValue({
-        getPayload: () => mockPayload,
+      const setupGoogleSuccess = () => {
+        mockGoogleClient.getToken.mockResolvedValue({
+          tokens: { id_token: 'mock-id-token' },
+        });
+        mockGoogleClient.verifyIdToken.mockResolvedValue({
+          getPayload: () => mockGoogleProfile,
+        });
+
+        // Mock findOrCreateUser transaction
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [] }) // BEGIN
+          .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+          .mockResolvedValueOnce({ rows: [] }) // Check oauth_connections
+          .mockResolvedValueOnce({ rows: [] }) // Check users by email
+          .mockResolvedValueOnce({ rows: [] }) // Insert user
+          .mockResolvedValueOnce({ rows: [] }) // Insert oauth_connection
+          .mockResolvedValueOnce({ rows: [{
+            id: 'new-user-id',
+            email: 'test@gmail.com',
+            first_name: 'John',
+            last_name: 'Doe',
+            email_verified: true,
+            tenant_id: 'tenant-123',
+          }] })
+          .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+        mockPool.query.mockResolvedValue({ rows: [] });
+      };
+
+      it('should authenticate with Google successfully', async () => {
+        setupGoogleSuccess();
+
+        const result = await service.authenticate('google', 'auth-code', 'tenant-123', '127.0.0.1', 'Chrome');
+
+        expect(mockGoogleClient.getToken).toHaveBeenCalledWith('auth-code');
+        expect(mockGoogleClient.verifyIdToken).toHaveBeenCalled();
+        expect(result).toHaveProperty('user');
+        expect(result).toHaveProperty('tokens');
+        expect(result).toHaveProperty('sessionId');
+        expect(result.provider).toBe('google');
       });
 
-      const profile = await service.verifyGoogleToken(idToken);
+      it('should throw AuthenticationError if no id_token from Google', async () => {
+        mockGoogleClient.getToken.mockResolvedValue({ tokens: {} });
 
-      expect(profile).toEqual({
-        id: 'google-user-123',
-        email: 'user@gmail.com',
-        firstName: 'John',
-        lastName: 'Doe',
-        picture: 'https://example.com/photo.jpg',
-        provider: 'google',
-        verified: true,
+        await expect(service.authenticate('google', 'bad-code'))
+          .rejects.toThrow(AuthenticationError);
+      });
+
+      it('should throw AuthenticationError if invalid Google payload', async () => {
+        mockGoogleClient.getToken.mockResolvedValue({
+          tokens: { id_token: 'mock-id-token' },
+        });
+        mockGoogleClient.verifyIdToken.mockResolvedValue({
+          getPayload: () => null,
+        });
+
+        await expect(service.authenticate('google', 'bad-code'))
+          .rejects.toThrow(AuthenticationError);
+      });
+
+      it('should throw AuthenticationError if Google payload has no email', async () => {
+        mockGoogleClient.getToken.mockResolvedValue({
+          tokens: { id_token: 'mock-id-token' },
+        });
+        mockGoogleClient.verifyIdToken.mockResolvedValue({
+          getPayload: () => ({ sub: 'user-123' }),
+        });
+
+        await expect(service.authenticate('google', 'bad-code'))
+          .rejects.toThrow(AuthenticationError);
+      });
+
+      it('should handle Google API errors', async () => {
+        mockGoogleClient.getToken.mockRejectedValue(new Error('Google API error'));
+
+        await expect(service.authenticate('google', 'bad-code'))
+          .rejects.toThrow(AuthenticationError);
       });
     });
 
-    it('should throw error when payload is null', async () => {
-      mockGoogleClient.verifyIdToken.mockResolvedValue({
-        getPayload: () => null,
+    describe('GitHub OAuth', () => {
+      const mockGitHubProfile = {
+        id: 12345,
+        login: 'johndoe',
+        name: 'John Doe',
+        email: 'john@github.com',
+        avatar_url: 'https://github.com/avatar.jpg',
+      };
+
+      const setupGitHubSuccess = () => {
+        (axios.post as jest.Mock).mockResolvedValue({
+          data: { access_token: 'github-access-token' },
+        });
+        (axios.get as jest.Mock).mockImplementation((url: string) => {
+          if (url === 'https://api.github.com/user') {
+            return Promise.resolve({ data: mockGitHubProfile });
+          }
+          if (url === 'https://api.github.com/user/emails') {
+            return Promise.resolve({
+              data: [{ email: 'john@github.com', primary: true, verified: true }],
+            });
+          }
+          return Promise.reject(new Error('Unknown URL'));
+        });
+
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [] }) // BEGIN
+          .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+          .mockResolvedValueOnce({ rows: [] }) // Check oauth_connections
+          .mockResolvedValueOnce({ rows: [] }) // Check users by email
+          .mockResolvedValueOnce({ rows: [] }) // Insert user
+          .mockResolvedValueOnce({ rows: [] }) // Insert oauth_connection
+          .mockResolvedValueOnce({ rows: [{
+            id: 'new-user-id',
+            email: 'john@github.com',
+            first_name: 'John',
+            last_name: 'Doe',
+            email_verified: true,
+            tenant_id: 'tenant-123',
+          }] })
+          .mockResolvedValueOnce({ rows: [] }); // COMMIT
+
+        mockPool.query.mockResolvedValue({ rows: [] });
+      };
+
+      it('should authenticate with GitHub successfully', async () => {
+        setupGitHubSuccess();
+
+        const result = await service.authenticate('github', 'auth-code', 'tenant-123');
+
+        expect(axios.post).toHaveBeenCalledWith(
+          'https://github.com/login/oauth/access_token',
+          expect.objectContaining({ code: 'auth-code' }),
+          expect.any(Object)
+        );
+        expect(result).toHaveProperty('user');
+        expect(result).toHaveProperty('tokens');
+        expect(result.provider).toBe('github');
       });
 
-      await expect(service.verifyGoogleToken(idToken))
-        .rejects.toThrow(AuthenticationError);
+      it('should fetch email from /user/emails if not in profile', async () => {
+        const profileWithoutEmail = { ...mockGitHubProfile, email: null };
+        (axios.post as jest.Mock).mockResolvedValue({
+          data: { access_token: 'github-access-token' },
+        });
+        (axios.get as jest.Mock).mockImplementation((url: string) => {
+          if (url === 'https://api.github.com/user') {
+            return Promise.resolve({ data: profileWithoutEmail });
+          }
+          if (url === 'https://api.github.com/user/emails') {
+            return Promise.resolve({
+              data: [{ email: 'private@github.com', primary: true }],
+            });
+          }
+          return Promise.reject(new Error('Unknown URL'));
+        });
+
+        mockClient.query
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [] })
+          .mockResolvedValueOnce({ rows: [{
+            id: 'user-id',
+            email: 'private@github.com',
+            tenant_id: 'tenant-123',
+          }] })
+          .mockResolvedValueOnce({ rows: [] });
+
+        mockPool.query.mockResolvedValue({ rows: [] });
+
+        await service.authenticate('github', 'auth-code');
+
+        expect(axios.get).toHaveBeenCalledWith(
+          'https://api.github.com/user/emails',
+          expect.any(Object)
+        );
+      });
+
+      it('should throw AuthenticationError if no email found', async () => {
+        (axios.post as jest.Mock).mockResolvedValue({
+          data: { access_token: 'github-access-token' },
+        });
+        (axios.get as jest.Mock).mockImplementation((url: string) => {
+          if (url === 'https://api.github.com/user') {
+            return Promise.resolve({ data: { ...mockGitHubProfile, email: null } });
+          }
+          if (url === 'https://api.github.com/user/emails') {
+            return Promise.resolve({ data: [] });
+          }
+          return Promise.reject(new Error('Unknown URL'));
+        });
+
+        await expect(service.authenticate('github', 'auth-code'))
+          .rejects.toThrow(AuthenticationError);
+      });
+
+      it('should handle GitHub API errors', async () => {
+        (axios.post as jest.Mock).mockRejectedValue(new Error('GitHub API error'));
+
+        await expect(service.authenticate('github', 'bad-code'))
+          .rejects.toThrow(AuthenticationError);
+      });
     });
 
-    it('should throw error when verification fails', async () => {
-      mockGoogleClient.verifyIdToken.mockRejectedValue(new Error('Invalid token'));
-
-      await expect(service.verifyGoogleToken(idToken))
-        .rejects.toThrow('Google token verification failed');
+    describe('Unsupported provider', () => {
+      it('should throw ValidationError for unsupported provider', async () => {
+        await expect(service.authenticate('facebook', 'code'))
+          .rejects.toThrow(ValidationError);
+      });
     });
   });
 
-  describe('verifyAppleToken', () => {
-    const idToken = 'apple-id-token';
-
-    it('should verify and return Apple profile', async () => {
-      const mockToken = {
-        sub: 'apple-user-123',
-        email: 'user@icloud.com',
-        email_verified: 'true',
-      };
-
-      (AppleAuth.verifyIdToken as jest.Mock).mockResolvedValue(mockToken);
-
-      const profile = await service.verifyAppleToken(idToken);
-
-      expect(profile).toEqual({
-        id: 'apple-user-123',
-        email: 'user@icloud.com',
-        provider: 'apple',
-        verified: true,
+  describe('linkProvider', () => {
+    const setupGoogleMock = () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
       });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'google-user-456',
+          email: 'test@gmail.com',
+          email_verified: true,
+        }),
+      });
+    };
+
+    it('should link Google account to existing user', async () => {
+      setupGoogleMock();
+      
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-123' }] }) // User check
+        .mockResolvedValueOnce({ rows: [] }) // Existing connection check
+        .mockResolvedValueOnce({ rows: [] }) // Other user check
+        .mockResolvedValueOnce({ rows: [] }); // Insert connection
+
+      const result = await service.linkProvider('user-123', 'google', 'auth-code');
+
+      expect(result.success).toBe(true);
+      expect(result.provider).toBe('google');
     });
 
-    it('should handle missing email', async () => {
-      (AppleAuth.verifyIdToken as jest.Mock).mockResolvedValue({
-        sub: 'apple-user-123',
-        email_verified: 'false',
-      });
+    it('should throw ValidationError if user not found', async () => {
+      setupGoogleMock();
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const profile = await service.verifyAppleToken(idToken);
-
-      expect(profile.email).toBe('');
-      expect(profile.verified).toBe(false);
+      await expect(service.linkProvider('invalid-user', 'google', 'code'))
+        .rejects.toThrow(ValidationError);
     });
 
-    it('should throw error when verification fails', async () => {
-      (AppleAuth.verifyIdToken as jest.Mock).mockRejectedValue(new Error('Invalid token'));
+    it('should throw ValidationError if provider already linked', async () => {
+      setupGoogleMock();
+      
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-123' }] }) // User exists
+        .mockResolvedValueOnce({ rows: [{ id: 'existing-connection' }] }); // Already linked
 
-      await expect(service.verifyAppleToken(idToken))
-        .rejects.toThrow('Apple token verification failed');
+      try {
+        await service.linkProvider('user-123', 'google', 'code');
+        fail('Expected ValidationError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError);
+        expect((error as ValidationError).errors).toContainEqual(
+          expect.stringContaining('already linked to your account')
+        );
+      }
+    });
+
+    it('should throw ValidationError if OAuth account linked to another user', async () => {
+      setupGoogleMock();
+      
+      mockPool.query
+        .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-123' }] }) // User exists
+        .mockResolvedValueOnce({ rows: [] }) // Not linked to this user
+        .mockResolvedValueOnce({ rows: [{ user_id: 'other-user' }] }); // Linked to another
+
+      try {
+        await service.linkProvider('user-123', 'google', 'code');
+        fail('Expected ValidationError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError);
+        expect((error as ValidationError).errors).toContainEqual(
+          expect.stringContaining('already linked to another user')
+        );
+      }
+    });
+
+    it('should throw ValidationError for unsupported provider', async () => {
+      await expect(service.linkProvider('user-123', 'facebook', 'code'))
+        .rejects.toThrow(ValidationError);
+    });
+  });
+
+  describe('unlinkProvider', () => {
+    it('should unlink provider successfully', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'connection-id' }] });
+
+      const result = await service.unlinkProvider('user-123', 'google');
+
+      expect(result.success).toBe(true);
+      expect(result.message).toContain('unlinked successfully');
+    });
+
+    it('should throw ValidationError if no connection exists', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      try {
+        await service.unlinkProvider('user-123', 'google');
+        fail('Expected ValidationError');
+      } catch (error) {
+        expect(error).toBeInstanceOf(ValidationError);
+        expect((error as ValidationError).errors).toContainEqual(
+          expect.stringContaining('No google account linked')
+        );
+      }
     });
   });
 
   describe('findOrCreateUser', () => {
-    const profile = {
-      id: 'oauth-123',
-      email: 'user@example.com',
-      firstName: 'John',
-      lastName: 'Doe',
-      provider: 'google' as const,
-      verified: true,
-    };
+    it('should return existing user if OAuth connection exists', async () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
+      });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'oauth-123',
+          email: 'existing@example.com',
+          email_verified: true,
+        }),
+      });
 
-    it('should return existing user if found', async () => {
-      const existingUser = { id: 'user-123', email: 'user@example.com' };
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(existingUser),
-        insert: jest.fn(),
-        update: jest.fn().mockResolvedValue(1),
-      };
-      mockDb.mockReturnValue(mockQuery);
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+        .mockResolvedValueOnce({ rows: [{ user_id: 'existing-user' }] }) // OAuth found
+        .mockResolvedValueOnce({ rows: [] }) // Update oauth_connections
+        .mockResolvedValueOnce({ rows: [] }) // Update users
+        .mockResolvedValueOnce({ rows: [{ 
+          id: 'existing-user', 
+          email: 'existing@example.com',
+          tenant_id: 'tenant-123',
+        }] })
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
-      const user = await service.findOrCreateUser(profile);
+      mockPool.query.mockResolvedValue({ rows: [] });
 
-      expect(user).toEqual(existingUser);
-      expect(mockQuery.where).toHaveBeenCalledWith({ email: profile.email });
+      const result = await service.authenticate('google', 'code');
+
+      expect(result.user.email).toBe('existing@example.com');
     });
 
-    it('should create new user if not found', async () => {
-      const newUserId = 'new-user-123';
-      (crypto.randomUUID as jest.Mock).mockReturnValue(newUserId);
+    it('should link to existing user by email', async () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
+      });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'new-oauth-id',
+          email: 'emailuser@example.com',
+          email_verified: true,
+        }),
+      });
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn()
-          .mockResolvedValueOnce(null)
-          .mockResolvedValueOnce({ id: newUserId }),
-        insert: jest.fn().mockResolvedValue([1]),
-        update: jest.fn().mockResolvedValue(1),
-      };
-      mockDb.mockReturnValue(mockQuery);
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+        .mockResolvedValueOnce({ rows: [] }) // No OAuth connection
+        .mockResolvedValueOnce({ rows: [{ id: 'email-user' }] }) // User by email
+        .mockResolvedValueOnce({ rows: [] }) // Insert oauth_connection
+        .mockResolvedValueOnce({ rows: [{ 
+          id: 'email-user', 
+          email: 'emailuser@example.com',
+          tenant_id: 'tenant-123',
+        }] })
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
-      const user = await service.findOrCreateUser(profile);
+      mockPool.query.mockResolvedValue({ rows: [] });
 
-      expect(mockQuery.insert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: newUserId,
-          email: profile.email,
-          first_name: profile.firstName,
-          last_name: profile.lastName,
-          email_verified: profile.verified,
-          password_hash: null,
-        })
-      );
-      expect(user.id).toBe(newUserId);
+      const result = await service.authenticate('google', 'code');
+
+      expect(result.user.email).toBe('emailuser@example.com');
     });
 
-    it('should store OAuth connection for new provider', async () => {
-      const existingUser = { id: 'user-123', email: 'user@example.com' };
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn()
-          .mockResolvedValueOnce(existingUser)
-          .mockResolvedValueOnce(null),
-        insert: jest.fn().mockResolvedValue([1]),
-        update: jest.fn().mockResolvedValue(1),
-      };
-      mockDb.mockReturnValue(mockQuery);
+    it('should create new user if no existing user', async () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
+      });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'brand-new-oauth',
+          email: 'newuser@example.com',
+          email_verified: true,
+        }),
+      });
 
-      await service.findOrCreateUser(profile);
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+        .mockResolvedValueOnce({ rows: [] }) // No OAuth connection
+        .mockResolvedValueOnce({ rows: [] }) // No user by email
+        .mockResolvedValueOnce({ rows: [] }) // Insert user
+        .mockResolvedValueOnce({ rows: [] }) // Insert oauth_connection
+        .mockResolvedValueOnce({ rows: [{ 
+          id: 'new-user', 
+          email: 'newuser@example.com', 
+          tenant_id: 'tenant-123',
+        }] })
+        .mockResolvedValueOnce({ rows: [] }); // COMMIT
 
-      expect(mockQuery.insert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          user_id: existingUser.id,
-          provider: profile.provider,
-          provider_user_id: profile.id,
-        })
-      );
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      const result = await service.authenticate('google', 'code');
+
+      expect(result.user.email).toBe('newuser@example.com');
     });
 
-    it('should update existing OAuth connection', async () => {
-      const existingUser = { id: 'user-123', email: 'user@example.com' };
-      const existingConnection = { id: 'conn-123', user_id: 'user-123' };
-      
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn()
-          .mockResolvedValueOnce(existingUser)
-          .mockResolvedValueOnce(existingConnection),
-        update: jest.fn().mockResolvedValue(1),
-      };
-      mockDb.mockReturnValue(mockQuery);
+    it('should rollback transaction on error', async () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
+      });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'oauth-123',
+          email: 'test@example.com',
+          email_verified: true,
+        }),
+      });
 
-      await service.findOrCreateUser(profile);
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+        .mockRejectedValueOnce(new Error('Database error')); // Query fails
 
-      expect(mockQuery.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          profile_data: expect.any(String),
-        })
+      await expect(service.authenticate('google', 'code')).rejects.toThrow('Database error');
+      expect(mockClient.query).toHaveBeenCalledWith('ROLLBACK');
+      expect(mockClient.release).toHaveBeenCalled();
+    });
+
+    it('should use default tenant if not provided', async () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
+      });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'oauth-123',
+          email: 'test@example.com',
+          email_verified: true,
+        }),
+      });
+
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] }) // BEGIN
+        .mockResolvedValueOnce({ rows: [] }) // SET LOCAL
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ 
+          id: 'user', 
+          email: 'test@example.com', 
+          tenant_id: '00000000-0000-0000-0000-000000000001',
+        }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      await service.authenticate('google', 'code');
+
+      expect(mockClient.query).toHaveBeenCalledWith(
+        expect.stringContaining('00000000-0000-0000-0000-000000000001')
       );
+    });
+  });
+
+  describe('createSession', () => {
+    it('should create session and call audit service', async () => {
+      mockGoogleClient.getToken.mockResolvedValue({
+        tokens: { id_token: 'mock-id-token' },
+      });
+      mockGoogleClient.verifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'oauth-123',
+          email: 'test@example.com',
+          email_verified: true,
+        }),
+      });
+
+      mockClient.query
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ user_id: 'user-123' }] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ 
+          id: 'user-123', 
+          email: 'test@example.com', 
+          tenant_id: 'tenant-123',
+        }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      mockPool.query.mockResolvedValue({ rows: [] });
+
+      await service.authenticate('google', 'code', 'tenant-123', '192.168.1.1', 'Test Agent');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('INSERT INTO user_sessions'),
+        expect.arrayContaining(['192.168.1.1', 'Test Agent'])
+      );
+      expect(mockAuditService.logSessionCreated).toHaveBeenCalled();
     });
   });
 
   describe('handleOAuthLogin', () => {
-    const token = 'oauth-token-123';
-
-    it('should handle Google OAuth login', async () => {
-      const mockPayload = {
-        sub: 'google-123',
-        email: 'user@gmail.com',
-        given_name: 'John',
-        family_name: 'Doe',
-        email_verified: true,
-      };
-
-      mockGoogleClient.verifyIdToken.mockResolvedValue({
-        getPayload: () => mockPayload,
+    it('should call authenticate', async () => {
+      const spy = jest.spyOn(service, 'authenticate').mockResolvedValue({
+        user: {},
+        tokens: {},
+        sessionId: 'session-123',
+        provider: 'google',
       });
 
-      const existingUser = { 
-        id: 'user-123', 
-        email: 'user@gmail.com',
-        first_name: 'John',
-        last_name: 'Doe',
-        email_verified: true,
-      };
+      await service.handleOAuthLogin('google', 'token');
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(existingUser),
-        insert: jest.fn(),
-        update: jest.fn().mockResolvedValue(1),
-      };
-      mockDb.mockReturnValue(mockQuery);
-
-      const mockJWT = (service as any).jwtService;
-      mockJWT.generateTokenPair.mockResolvedValue({
-        accessToken: 'access-token',
-        refreshToken: 'refresh-token',
-      });
-
-      const result = await service.handleOAuthLogin('google', token);
-
-      expect(result.success).toBe(true);
-      expect(result.user.id).toBe('user-123');
-      expect(result.provider).toBe('google');
-      expect(result.tokens).toBeDefined();
-    });
-
-    it('should handle Apple OAuth login', async () => {
-      (AppleAuth.verifyIdToken as jest.Mock).mockResolvedValue({
-        sub: 'apple-123',
-        email: 'user@icloud.com',
-        email_verified: 'true',
-      });
-
-      const existingUser = { 
-        id: 'user-123', 
-        email: 'user@icloud.com',
-        email_verified: true,
-      };
-
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue(existingUser),
-        insert: jest.fn(),
-        update: jest.fn().mockResolvedValue(1),
-      };
-      mockDb.mockReturnValue(mockQuery);
-
-      const mockJWT = (service as any).jwtService;
-      mockJWT.generateTokenPair.mockResolvedValue({
-        accessToken: 'access-token',
-        refreshToken: 'refresh-token',
-      });
-
-      const result = await service.handleOAuthLogin('apple', token);
-
-      expect(result.success).toBe(true);
-      expect(result.provider).toBe('apple');
-    });
-
-    it('should throw error for unsupported provider', async () => {
-      await expect(service.handleOAuthLogin('facebook' as any, token))
-        .rejects.toThrow('Unsupported OAuth provider');
+      expect(spy).toHaveBeenCalledWith('google', 'token');
+      spy.mockRestore();
     });
   });
 
   describe('linkOAuthProvider', () => {
-    const userId = 'user-123';
-    const token = 'oauth-token-123';
-
-    it('should link Google provider to existing account', async () => {
-      const mockPayload = {
-        sub: 'google-123',
-        email: 'user@gmail.com',
-        email_verified: true,
-      };
-
-      mockGoogleClient.verifyIdToken.mockResolvedValue({
-        getPayload: () => mockPayload,
+    it('should call linkProvider', async () => {
+      const spy = jest.spyOn(service, 'linkProvider').mockResolvedValue({
+        success: true,
+        message: 'Linked',
+        provider: 'github',
       });
 
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn()
-          .mockResolvedValueOnce(null)
-          .mockResolvedValueOnce(null),
-        insert: jest.fn().mockResolvedValue([1]),
-      };
-      mockDb.mockReturnValue(mockQuery);
+      await service.linkOAuthProvider('user-123', 'github', 'token');
 
-      const result = await service.linkOAuthProvider(userId, 'google', token);
-
-      expect(result.success).toBe(true);
-      expect(result.provider).toBe('google');
-      expect(mockQuery.insert).toHaveBeenCalled();
-    });
-
-    it('should throw error if provider already linked', async () => {
-      const mockPayload = {
-        sub: 'google-123',
-        email: 'user@gmail.com',
-        email_verified: true,
-      };
-
-      mockGoogleClient.verifyIdToken.mockResolvedValue({
-        getPayload: () => mockPayload,
-      });
-
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn().mockResolvedValue({ id: 'conn-123' }),
-      };
-      mockDb.mockReturnValue(mockQuery);
-
-      await expect(service.linkOAuthProvider(userId, 'google', token))
-        .rejects.toThrow('google account already linked');
-    });
-
-    it('should throw error if OAuth account linked to another user', async () => {
-      const mockPayload = {
-        sub: 'google-123',
-        email: 'user@gmail.com',
-        email_verified: true,
-      };
-
-      mockGoogleClient.verifyIdToken.mockResolvedValue({
-        getPayload: () => mockPayload,
-      });
-
-      const mockQuery = {
-        where: jest.fn().mockReturnThis(),
-        first: jest.fn()
-          .mockResolvedValueOnce(null)
-          .mockResolvedValueOnce({ user_id: 'other-user' }),
-      };
-      mockDb.mockReturnValue(mockQuery);
-
-      await expect(service.linkOAuthProvider(userId, 'google', token))
-        .rejects.toThrow('This OAuth account is already linked to another user');
+      expect(spy).toHaveBeenCalledWith('user-123', 'github', 'token');
+      spy.mockRestore();
     });
   });
 });

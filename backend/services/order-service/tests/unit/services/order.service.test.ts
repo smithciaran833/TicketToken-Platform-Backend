@@ -1,499 +1,601 @@
-import { OrderService } from '../../../src/services/order.service';
-import { OrderStatus } from '../../../src/types/order.types';
-import { Pool } from 'pg';
+/**
+ * Unit Tests: Order Service
+ * Tests order lifecycle management with circuit breakers and distributed locks
+ */
 
-// Mock dependencies
-jest.mock('../../../src/services/ticket.client');
-jest.mock('../../../src/services/payment.client');
-jest.mock('../../../src/services/event.client');
-jest.mock('../../../src/events');
-jest.mock('@tickettoken/shared', () => ({
-  withLock: jest.fn((key, timeout, fn) => fn()),
-  LockKeys: {
-    orderConfirmation: jest.fn((id) => `order:confirmation:${id}`),
-    orderCancellation: jest.fn((id) => `order:cancellation:${id}`),
-    order: jest.fn((id) => `order:${id}`)
-  }
+// Mock dependencies at the top
+const mockPool = {
+  query: jest.fn(),
+};
+
+const mockOrderModel = {
+  create: jest.fn(),
+  findById: jest.fn(),
+  update: jest.fn(),
+  findByUserId: jest.fn(),
+  findExpiredReservations: jest.fn(),
+  findExpiringReservations: jest.fn(),
+  findByEvent: jest.fn(),
+  getTenantsWithReservedOrders: jest.fn(),
+};
+
+const mockOrderItemModel = {
+  createBulk: jest.fn(),
+  findByOrderId: jest.fn(),
+};
+
+const mockOrderEventModel = {
+  create: jest.fn(),
+  findByOrderId: jest.fn(),
+};
+
+const mockOrderRefundModel = {
+  create: jest.fn(),
+};
+
+const mockTicketClient = {
+  getEvent: jest.fn(),
+  checkAvailability: jest.fn(),
+  getPrices: jest.fn(),
+  reserveTickets: jest.fn(),
+  confirmAllocation: jest.fn(),
+  releaseTickets: jest.fn(),
+};
+
+const mockPaymentClient = {
+  createPaymentIntent: jest.fn(),
+  confirmPayment: jest.fn(),
+  initiateRefund: jest.fn(),
+  cancelPaymentIntent: jest.fn(),
+};
+
+const mockEventClient = {
+  getEvent: jest.fn(),
+};
+
+const mockEventPublisher = {
+  publishOrderCreated: jest.fn(),
+  publishOrderReserved: jest.fn(),
+  publishOrderConfirmed: jest.fn(),
+  publishOrderCancelled: jest.fn(),
+  publishOrderExpired: jest.fn(),
+  publishOrderRefunded: jest.fn(),
+};
+
+const mockLogger = {
+  info: jest.fn(),
+  warn: jest.fn(),
+  error: jest.fn(),
+};
+
+const mockOrderMetrics = {
+  orderCreationDuration: { startTimer: jest.fn().mockReturnValue(jest.fn()) },
+  ordersCreated: { inc: jest.fn() },
+  orderAmount: { observe: jest.fn() },
+  orderStateTransitions: { inc: jest.fn() },
+  activeReservations: { inc: jest.fn(), dec: jest.fn() },
+  ordersCancelled: { inc: jest.fn() },
+  ordersRefunded: { inc: jest.fn() },
+};
+
+const mockWithLock = jest.fn(async (_key, _timeout, fn) => await fn());
+
+const mockCircuitBreaker = {
+  execute: jest.fn(async (fn) => await fn()),
+};
+
+const mockRetry = jest.fn(async (fn) => await fn());
+
+// Mock modules
+jest.mock('../../../src/models/order.model', () => ({
+  OrderModel: jest.fn().mockImplementation(() => mockOrderModel),
 }));
 
-import { TicketClient } from '../../../src/services/ticket.client';
-import { PaymentClient } from '../../../src/services/payment.client';
-import { EventClient } from '../../../src/services/event.client';
+jest.mock('../../../src/models/order-item.model', () => ({
+  OrderItemModel: jest.fn().mockImplementation(() => mockOrderItemModel),
+}));
+
+jest.mock('../../../src/models/order-event.model', () => ({
+  OrderEventModel: jest.fn().mockImplementation(() => mockOrderEventModel),
+}));
+
+jest.mock('../../../src/models/order-refund.model', () => ({
+  OrderRefundModel: jest.fn().mockImplementation(() => mockOrderRefundModel),
+}));
+
+jest.mock('../../../src/services/ticket.client', () => ({
+  TicketClient: jest.fn().mockImplementation(() => mockTicketClient),
+}));
+
+jest.mock('../../../src/services/payment.client', () => ({
+  PaymentClient: jest.fn().mockImplementation(() => mockPaymentClient),
+}));
+
+jest.mock('../../../src/services/event.client', () => ({
+  EventClient: jest.fn().mockImplementation(() => mockEventClient),
+}));
+
+jest.mock('../../../src/events', () => ({
+  eventPublisher: mockEventPublisher,
+}));
+
+jest.mock('../../../src/utils/logger', () => ({
+  logger: mockLogger,
+}));
+
+jest.mock('../../../src/utils/metrics', () => ({
+  orderMetrics: mockOrderMetrics,
+}));
+
+jest.mock('@tickettoken/shared', () => ({
+  withLock: mockWithLock,
+  LockKeys: {
+    orderConfirmation: (id: string) => `order:confirmation:${id}`,
+    orderCancellation: (id: string) => `order:cancellation:${id}`,
+    order: (id: string) => `order:${id}`,
+  },
+}));
+
+jest.mock('../../../src/utils/circuit-breaker', () => ({
+  CircuitBreaker: jest.fn().mockImplementation(() => mockCircuitBreaker),
+}));
+
+jest.mock('../../../src/utils/retry', () => ({
+  retry: mockRetry,
+}));
+
+import { OrderService } from '../../../src/services/order.service';
+import { OrderStatus, RefundStatus, OrderEventType } from '../../../src/types/order.types';
 
 describe('OrderService', () => {
-  let orderService: OrderService;
-  let mockPool: jest.Mocked<Pool>;
-  let mockTicketClient: jest.Mocked<TicketClient>;
-  let mockPaymentClient: jest.Mocked<PaymentClient>;
-  let mockEventClient: jest.Mocked<EventClient>;
+  let service: OrderService;
+  const tenantId = 'tenant-123';
+  const userId = 'user-456';
+  const orderId = 'order-789';
+  const eventId = 'event-999';
 
   beforeEach(() => {
-    // Create mock pool
-    mockPool = {
-      query: jest.fn(),
-      connect: jest.fn(),
-      end: jest.fn(),
-      on: jest.fn(),
-    } as any;
-
-    // Create service
-    orderService = new OrderService(mockPool);
-
-    // Get mocked clients
-    mockTicketClient = (orderService as any).ticketClient;
-    mockPaymentClient = (orderService as any).paymentClient;
-    mockEventClient = (orderService as any).eventClient;
-  });
-
-  afterEach(() => {
     jest.clearAllMocks();
+    service = new OrderService(mockPool as any);
   });
 
   describe('createOrder', () => {
-    it('should create an order successfully with valid data', async () => {
-      // Arrange
-      const request = {
-        userId: 'user-123',
-        eventId: 'event-456',
-        currency: 'USD',
-        idempotencyKey: 'idem-789',
-        items: [
-          {
-            ticketTypeId: 'ticket-type-1',
-            quantity: 2,
-            unitPriceCents: 5000 // $50
-          }
-        ]
-      };
+    const mockEvent = { id: eventId, name: 'Test Event' };
+    const ticketTypeId1 = 'ticket-type-1';
+    const ticketTypeId2 = 'ticket-type-2';
 
-      mockEventClient.getEvent = jest.fn().mockResolvedValue({ id: 'event-456' });
-      mockTicketClient.checkAvailability = jest.fn().mockResolvedValue({
-        'ticket-type-1': 10
-      });
-      mockTicketClient.getPrices = jest.fn().mockResolvedValue({
-        'ticket-type-1': 5000
-      });
+    const createOrderRequest = {
+      userId,
+      eventId,
+      items: [
+        { ticketTypeId: ticketTypeId1, quantity: 2, unitPriceCents: 5000 },
+        { ticketTypeId: ticketTypeId2, quantity: 1, unitPriceCents: 10000 },
+      ],
+      currency: 'USD',
+      idempotencyKey: 'idemp-123',
+      metadata: { source: 'web' },
+    };
 
-      mockPool.query = jest.fn()
-        .mockResolvedValueOnce({ // INSERT order
-          rows: [{
-            id: 'order-123',
-            user_id: 'user-123',
-            event_id: 'event-456',
-            order_number: 'ORD-123',
-            status: 'PENDING',
-            subtotal_cents: 10000,
-            platform_fee_cents: 500,
-            processing_fee_cents: 320,
-            tax_cents: 865,
-            discount_cents: 0,
-            total_cents: 11685,
-            currency: 'USD',
-            idempotency_key: 'idem-789',
-            metadata: {},
-            created_at: new Date(),
-            updated_at: new Date()
-          }]
-        })
-        .mockResolvedValueOnce({ // INSERT order_items
-          rows: [{
-            id: 'item-1',
-            order_id: 'order-123',
-            ticket_type_id: 'ticket-type-1',
-            quantity: 2,
-            unit_price_cents: 5000,
-            total_price_cents: 10000
-          }]
-        })
-        .mockResolvedValueOnce({ // INSERT order_event - FIX: return proper structure
-          rows: [{
-            id: 'event-1',
-            order_id: 'order-123',
-            event_type: 'ORDER_CREATED',
-            user_id: 'user-123',
-            metadata: {},
-            created_at: new Date()
-          }]
-        });
+    const mockOrder = {
+      id: orderId,
+      tenantId,
+      userId,
+      eventId,
+      orderNumber: 'ORD-123',
+      status: OrderStatus.PENDING,
+      subtotalCents: 20000,
+      platformFeeCents: 1000,
+      processingFeeCents: 610,
+      taxCents: 1728,
+      totalCents: 23338,
+      currency: 'USD',
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-      // Act
-      const result = await orderService.createOrder(request);
+    const mockItems = [
+      { id: 'item-1', orderId, ticketTypeId: ticketTypeId1, quantity: 2, unitPriceCents: 5000, totalPriceCents: 10000 },
+      { id: 'item-2', orderId, ticketTypeId: ticketTypeId2, quantity: 1, unitPriceCents: 10000, totalPriceCents: 10000 },
+    ];
 
-      // Assert
-      expect(result.order).toBeDefined();
-      expect(result.order.id).toBe('order-123');
-      expect(result.order.status).toBe(OrderStatus.PENDING);
-      expect(result.order.totalCents).toBe(11685);
-      expect(result.items).toHaveLength(1);
-      expect(mockEventClient.getEvent).toHaveBeenCalledWith('event-456');
+    beforeEach(() => {
+      mockEventClient.getEvent.mockResolvedValue(mockEvent);
+      mockTicketClient.checkAvailability.mockResolvedValue({ [ticketTypeId1]: 10, [ticketTypeId2]: 5 });
+      mockTicketClient.getPrices.mockResolvedValue({ [ticketTypeId1]: 5000, [ticketTypeId2]: 10000 });
+      mockOrderModel.create.mockResolvedValue(mockOrder);
+      mockOrderItemModel.createBulk.mockResolvedValue(mockItems);
+      mockOrderEventModel.create.mockResolvedValue({});
+    });
+
+    it('should create order successfully', async () => {
+      const result = await service.createOrder(tenantId, createOrderRequest);
+
+      expect(result.order).toEqual(mockOrder);
+      expect(result.items).toEqual(mockItems);
+      expect(mockEventClient.getEvent).toHaveBeenCalledWith(eventId);
       expect(mockTicketClient.checkAvailability).toHaveBeenCalled();
       expect(mockTicketClient.getPrices).toHaveBeenCalled();
     });
 
-    it('should reject order with invalid price (price manipulation)', async () => {
-      // Arrange
-      const request = {
-        userId: 'user-123',
-        eventId: 'event-456',
-        currency: 'USD',
-        idempotencyKey: 'idem-789',
-        items: [
-          {
-            ticketTypeId: 'ticket-type-1',
-            quantity: 2,
-            unitPriceCents: 1 // Trying to pay $0.01 instead of $50
-          }
-        ]
-      };
+    it('should calculate fees correctly', async () => {
+      await service.createOrder(tenantId, createOrderRequest);
 
-      mockEventClient.getEvent = jest.fn().mockResolvedValue({ id: 'event-456' });
-      mockTicketClient.checkAvailability = jest.fn().mockResolvedValue({
-        'ticket-type-1': 10
-      });
-      mockTicketClient.getPrices = jest.fn().mockResolvedValue({
-        'ticket-type-1': 5000 // Actual price is $50
-      });
-
-      // Act & Assert
-      await expect(orderService.createOrder(request))
-        .rejects
-        .toThrow(/Invalid price for ticket type/);
-
-      expect(mockTicketClient.getPrices).toHaveBeenCalled();
+      const createCall = mockOrderModel.create.mock.calls[0][0];
+      expect(createCall.subtotalCents).toBe(20000); // 2*5000 + 1*10000
+      expect(createCall.platformFeeCents).toBe(1000); // 5% of 20000
+      expect(createCall.processingFeeCents).toBe(610); // 2.9% of 20000 + 30 cents
+      expect(createCall.taxCents).toBe(1728); // 8% of (20000 + 1000 + 610)
+      expect(createCall.totalCents).toBe(23338); // sum of all
     });
 
-    it('should reject order when tickets are not available', async () => {
-      // Arrange
-      const request = {
-        userId: 'user-123',
-        eventId: 'event-456',
-        currency: 'USD',
-        idempotencyKey: 'idem-789',
-        items: [
-          {
-            ticketTypeId: 'ticket-type-1',
-            quantity: 5,
-            unitPriceCents: 5000
-          }
-        ]
-      };
+    it('should throw error if event not found', async () => {
+      mockEventClient.getEvent.mockResolvedValue(null);
 
-      mockEventClient.getEvent = jest.fn().mockResolvedValue({ id: 'event-456' });
-      mockTicketClient.checkAvailability = jest.fn().mockResolvedValue({
-        'ticket-type-1': 2 // Only 2 available, but requesting 5
-      });
-
-      // Act & Assert
-      await expect(orderService.createOrder(request))
-        .rejects
-        .toThrow(/Insufficient tickets/);
-
-      expect(mockTicketClient.checkAvailability).toHaveBeenCalled();
+      await expect(service.createOrder(tenantId, createOrderRequest)).rejects.toThrow('Event not found');
     });
 
-    it('should reject order when event does not exist', async () => {
-      // Arrange
-      const request = {
-        userId: 'user-123',
-        eventId: 'non-existent-event',
-        currency: 'USD',
-        idempotencyKey: 'idem-789',
-        items: [
-          {
-            ticketTypeId: 'ticket-type-1',
-            quantity: 2,
-            unitPriceCents: 5000
-          }
-        ]
-      };
+    it('should throw error if insufficient tickets', async () => {
+      mockTicketClient.checkAvailability.mockResolvedValue({ [ticketTypeId1]: 1, [ticketTypeId2]: 5 });
 
-      mockEventClient.getEvent = jest.fn().mockResolvedValue(null);
+      await expect(service.createOrder(tenantId, createOrderRequest)).rejects.toThrow('Insufficient tickets');
+    });
 
-      // Act & Assert
-      await expect(orderService.createOrder(request))
-        .rejects
-        .toThrow('Event not found');
+    it('should detect price manipulation', async () => {
+      mockTicketClient.getPrices.mockResolvedValue({ [ticketTypeId1]: 6000, [ticketTypeId2]: 10000 });
 
-      expect(mockEventClient.getEvent).toHaveBeenCalledWith('non-existent-event');
+      await expect(service.createOrder(tenantId, createOrderRequest)).rejects.toThrow('Invalid price');
+      expect(mockLogger.warn).toHaveBeenCalledWith('Price manipulation attempt detected', expect.any(Object));
+    });
+
+    it('should create order event', async () => {
+      await service.createOrder(tenantId, createOrderRequest);
+
+      expect(mockOrderEventModel.create).toHaveBeenCalledWith({
+        orderId,
+        tenantId,
+        eventType: OrderEventType.ORDER_CREATED,
+        userId,
+        metadata: { items: createOrderRequest.items },
+      });
+    });
+
+    it('should publish event', async () => {
+      await service.createOrder(tenantId, createOrderRequest);
+
+      expect(mockEventPublisher.publishOrderCreated).toHaveBeenCalled();
+    });
+
+    it('should record metrics', async () => {
+      await service.createOrder(tenantId, createOrderRequest);
+
+      expect(mockOrderMetrics.ordersCreated.inc).toHaveBeenCalledWith({ status: OrderStatus.PENDING });
+      expect(mockOrderMetrics.orderAmount.observe).toHaveBeenCalled();
     });
   });
 
   describe('reserveOrder', () => {
-    it('should reserve an order and create payment intent', async () => {
-      // Arrange
-      const request = {
-        orderId: 'order-123',
-        userId: 'user-123'
-      };
+    const mockOrder = {
+      id: orderId,
+      tenantId,
+      userId,
+      status: OrderStatus.PENDING,
+      totalCents: 10000,
+      currency: 'USD',
+    };
 
-      const mockOrder = {
-        id: 'order-123',
-        user_id: 'user-123',
-        status: 'PENDING',
-        total_cents: 10000,
-        currency: 'USD'
-      };
+    const mockItems = [{ id: 'item-1', orderId, ticketTypeId: 'ticket-1', quantity: 2 }];
+    const mockPaymentIntent = { paymentIntentId: 'pi_123', clientSecret: 'secret_123' };
+    const mockUpdatedOrder = { ...mockOrder, status: OrderStatus.RESERVED, paymentIntentId: 'pi_123' };
 
-      const mockItems = [{
-        id: 'item-1',
-        ticket_type_id: 'ticket-type-1',
-        quantity: 2
-      }];
-
-      mockPool.query = jest.fn()
-        .mockResolvedValueOnce({ rows: [mockOrder] }) // findById
-        .mockResolvedValueOnce({ rows: mockItems }) // findByOrderId
-        .mockResolvedValueOnce({ // update order
-          rows: [{
-            ...mockOrder,
-            status: 'RESERVED',
-            payment_intent_id: 'pi_123',
-            expires_at: new Date(Date.now() + 30 * 60 * 1000)
-          }]
-        })
-        .mockResolvedValueOnce({ // insert order_event - FIX
-          rows: [{
-            id: 'event-1',
-            order_id: 'order-123',
-            event_type: 'TICKETS_RESERVED',
-            metadata: {},
-            created_at: new Date()
-          }]
-        });
-
-      mockTicketClient.reserveTickets = jest.fn().mockResolvedValue(true);
-      mockPaymentClient.createPaymentIntent = jest.fn().mockResolvedValue({
-        paymentIntentId: 'pi_123',
-        clientSecret: 'cs_123'
-      });
-
-      // Act
-      const result = await orderService.reserveOrder(request);
-
-      // Assert
-      expect(result.order.status).toBe(OrderStatus.RESERVED);
-      expect(result.paymentIntent.paymentIntentId).toBe('pi_123');
-      expect(mockTicketClient.reserveTickets).toHaveBeenCalled();
-      expect(mockPaymentClient.createPaymentIntent).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orderId: 'order-123',
-          amountCents: 10000,
-          currency: 'USD'
-        })
-      );
+    beforeEach(() => {
+      mockOrderModel.findById.mockResolvedValue(mockOrder);
+      mockOrderItemModel.findByOrderId.mockResolvedValue(mockItems);
+      mockTicketClient.reserveTickets.mockResolvedValue({ success: true });
+      mockPaymentClient.createPaymentIntent.mockResolvedValue(mockPaymentIntent);
+      mockOrderModel.update.mockResolvedValue(mockUpdatedOrder);
+      mockOrderEventModel.create.mockResolvedValue({});
     });
 
-    it('should not reserve an order that is not in PENDING status', async () => {
-      // Arrange
-      const request = {
-        orderId: 'order-123',
-        userId: 'user-123'
-      };
+    it('should reserve order successfully', async () => {
+      const result = await service.reserveOrder(tenantId, { orderId, userId });
 
-      const mockOrder = {
-        id: 'order-123',
-        status: 'COMPLETED' // Already completed
-      };
+      expect(result.order.status).toBe(OrderStatus.RESERVED);
+      expect(result.paymentIntent).toEqual(mockPaymentIntent);
+    });
 
-      mockPool.query = jest.fn()
-        .mockResolvedValueOnce({ rows: [mockOrder] });
+    it('should throw error if order not found', async () => {
+      mockOrderModel.findById.mockResolvedValue(null);
 
-      // Act & Assert
-      await expect(orderService.reserveOrder(request))
-        .rejects
-        .toThrow(/Cannot reserve order in COMPLETED status/);
+      await expect(service.reserveOrder(tenantId, { orderId, userId })).rejects.toThrow('Order not found');
+    });
+
+    it('should throw error if not PENDING', async () => {
+      mockOrderModel.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
+
+      await expect(service.reserveOrder(tenantId, { orderId, userId })).rejects.toThrow('Cannot reserve order');
+    });
+
+    it('should increment metrics', async () => {
+      await service.reserveOrder(tenantId, { orderId, userId });
+
+      expect(mockOrderMetrics.activeReservations.inc).toHaveBeenCalled();
     });
   });
 
   describe('confirmOrder', () => {
-    it('should confirm an order after successful payment', async () => {
-      // Arrange
-      const request = {
-        orderId: 'order-123',
-        paymentIntentId: 'pi_123'
-      };
+    const paymentIntentId = 'pi_123';
+    const mockOrder = { id: orderId, tenantId, status: OrderStatus.RESERVED, paymentIntentId };
+    const mockUpdatedOrder = { ...mockOrder, status: OrderStatus.CONFIRMED };
 
-      const mockOrder = {
-        id: 'order-123',
-        status: 'RESERVED',
-        payment_intent_id: 'pi_123'
-      };
-
-      const mockItems = [{
-        id: 'item-1',
-        ticket_type_id: 'ticket-type-1',
-        quantity: 2
-      }];
-
-      mockPool.query = jest.fn()
-        .mockResolvedValueOnce({ rows: [mockOrder] }) // findById
-        .mockResolvedValueOnce({ // update order
-          rows: [{
-            ...mockOrder,
-            status: 'CONFIRMED',
-            confirmed_at: new Date()
-          }]
-        })
-        .mockResolvedValueOnce({ // insert order_event - FIX
-          rows: [{
-            id: 'event-1',
-            order_id: 'order-123',
-            event_type: 'PAYMENT_CONFIRMED',
-            metadata: {},
-            created_at: new Date()
-          }]
-        })
-        .mockResolvedValueOnce({ rows: mockItems }); // findByOrderId
-
-      mockPaymentClient.confirmPayment = jest.fn().mockResolvedValue(true);
-      mockTicketClient.confirmAllocation = jest.fn().mockResolvedValue(true);
-
-      // Act
-      const result = await orderService.confirmOrder(request);
-
-      // Assert
-      expect(result.status).toBe(OrderStatus.CONFIRMED);
-      expect(mockPaymentClient.confirmPayment).toHaveBeenCalledWith('pi_123');
-      expect(mockTicketClient.confirmAllocation).toHaveBeenCalledWith('order-123');
+    beforeEach(() => {
+      mockOrderModel.findById.mockResolvedValue(mockOrder);
+      mockPaymentClient.confirmPayment.mockResolvedValue({ success: true });
+      mockTicketClient.confirmAllocation.mockResolvedValue({ success: true });
+      mockOrderModel.update.mockResolvedValue(mockUpdatedOrder);
+      mockOrderItemModel.findByOrderId.mockResolvedValue([]);
+      mockOrderEventModel.create.mockResolvedValue({});
     });
 
-    it('should use distributed lock during confirmation', async () => {
-      // Arrange
-      const request = {
-        orderId: 'order-123',
-        paymentIntentId: 'pi_123'
-      };
+    it('should use distributed lock', async () => {
+      await service.confirmOrder(tenantId, { orderId, paymentIntentId });
 
-      const mockOrder = {
-        id: 'order-123',
-        status: 'RESERVED'
-      };
+      expect(mockWithLock).toHaveBeenCalled();
+    });
 
-      mockPool.query = jest.fn().mockResolvedValue({ rows: [mockOrder] });
+    it('should confirm order successfully', async () => {
+      const result = await service.confirmOrder(tenantId, { orderId, paymentIntentId });
 
-      // Act
-      try {
-        await orderService.confirmOrder(request);
-      } catch (e) {
-        // Expected to fail due to incomplete mocking
-      }
+      expect(result.status).toBe(OrderStatus.CONFIRMED);
+      expect(mockPaymentClient.confirmPayment).toHaveBeenCalledWith(paymentIntentId);
+      expect(mockTicketClient.confirmAllocation).toHaveBeenCalledWith(orderId);
+    });
 
-      // Assert
-      const { withLock } = require('@tickettoken/shared');
-      expect(withLock).toHaveBeenCalled();
+    it('should throw error if not RESERVED', async () => {
+      mockOrderModel.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.PENDING });
+
+      await expect(service.confirmOrder(tenantId, { orderId, paymentIntentId })).rejects.toThrow('Cannot confirm order');
+    });
+
+    it('should decrement active reservations', async () => {
+      await service.confirmOrder(tenantId, { orderId, paymentIntentId });
+
+      expect(mockOrderMetrics.activeReservations.dec).toHaveBeenCalled();
     });
   });
 
   describe('cancelOrder', () => {
-    it('should cancel a PENDING order and release tickets', async () => {
-      // Arrange
-      const request = {
-        orderId: 'order-123',
-        userId: 'user-123',
-        reason: 'Customer request'
-      };
-
-      const mockOrder = {
-        id: 'order-123',
-        status: 'PENDING'
-      };
-
-      const mockItems = [{
-        id: 'item-1',
-        ticket_type_id: 'ticket-type-1',
-        quantity: 2
-      }];
-
-      mockPool.query = jest.fn()
-        .mockResolvedValueOnce({ rows: [mockOrder] }) // findById
-        .mockResolvedValueOnce({ // update order
-          rows: [{
-            ...mockOrder,
-            status: 'CANCELLED',
-            cancelled_at: new Date()
-          }]
-        })
-        .mockResolvedValueOnce({ // insert order_event - FIX
-          rows: [{
-            id: 'event-1',
-            order_id: 'order-123',
-            event_type: 'ORDER_CANCELLED',
-            metadata: {},
-            created_at: new Date()
-          }]
-        })
-        .mockResolvedValueOnce({ rows: mockItems }); // findByOrderId
-
-      mockTicketClient.releaseTickets = jest.fn().mockResolvedValue(true);
-
-      // Act
-      const result = await orderService.cancelOrder(request);
-
-      // Assert
-      expect(result.order.status).toBe(OrderStatus.CANCELLED);
-      expect(mockTicketClient.releaseTickets).toHaveBeenCalledWith('order-123');
+    beforeEach(() => {
+      mockOrderItemModel.findByOrderId.mockResolvedValue([]);
+      mockTicketClient.releaseTickets.mockResolvedValue({ success: true });
+      mockOrderEventModel.create.mockResolvedValue({});
     });
 
-    it('should cancel a CONFIRMED order and initiate refund', async () => {
-      // Arrange
-      const request = {
-        orderId: 'order-123',
-        userId: 'user-123',
-        reason: 'Customer request'
-      };
+    it('should use distributed lock', async () => {
+      mockOrderModel.findById.mockResolvedValue({ id: orderId, tenantId, status: OrderStatus.PENDING });
+      mockOrderModel.update.mockResolvedValue({ id: orderId, status: OrderStatus.CANCELLED });
 
-      const mockOrder = {
-        id: 'order-123',
-        status: 'CONFIRMED',
-        payment_intent_id: 'pi_123',
-        total_cents: 10000
-      };
+      await service.cancelOrder(tenantId, { orderId, userId, reason: 'Customer request' });
 
-      const mockItems = [];
+      expect(mockWithLock).toHaveBeenCalled();
+    });
 
-      mockPool.query = jest.fn()
-        .mockResolvedValueOnce({ rows: [mockOrder] }) // findById
-        .mockResolvedValueOnce({ // insert refund
-          rows: [{
-            id: 'refund-123',
-            refund_id: 'ref_123'
-          }]
-        })
-        .mockResolvedValueOnce({ // update order
-          rows: [{
-            ...mockOrder,
-            status: 'CANCELLED'
-          }]
-        })
-        .mockResolvedValueOnce({ // insert order_event - FIX
-          rows: [{
-            id: 'event-1',
-            order_id: 'order-123',
-            event_type: 'ORDER_CANCELLED',
-            metadata: {},
-            created_at: new Date()
-          }]
-        })
-        .mockResolvedValueOnce({ rows: mockItems }); // findByOrderId
+    it('should cancel PENDING order without refund', async () => {
+      mockOrderModel.findById.mockResolvedValue({ id: orderId, tenantId, status: OrderStatus.PENDING });
+      mockOrderModel.update.mockResolvedValue({ id: orderId, status: OrderStatus.CANCELLED });
 
-      mockTicketClient.releaseTickets = jest.fn().mockResolvedValue(true);
-      mockPaymentClient.initiateRefund = jest.fn().mockResolvedValue({
-        refundId: 'ref_123'
-      });
+      const result = await service.cancelOrder(tenantId, { orderId, userId, reason: 'Test' });
 
-      // Act
-      const result = await orderService.cancelOrder(request);
-
-      // Assert
       expect(result.order.status).toBe(OrderStatus.CANCELLED);
-      expect(result.refund).toBeDefined();
-      expect(mockPaymentClient.initiateRefund).toHaveBeenCalledWith(
-        expect.objectContaining({
-          orderId: 'order-123',
-          paymentIntentId: 'pi_123',
-          amountCents: 10000
-        })
-      );
+      expect(result.refund).toBeUndefined();
+    });
+
+    it('should cancel CONFIRMED order with refund', async () => {
+      const mockRefund = { id: 'refund-1', orderId, refundAmountCents: 10000 };
+      mockOrderModel.findById.mockResolvedValue({
+        id: orderId,
+        tenantId,
+        status: OrderStatus.CONFIRMED,
+        paymentIntentId: 'pi_123',
+        totalCents: 10000,
+      });
+      mockOrderModel.update.mockResolvedValue({ id: orderId, status: OrderStatus.CANCELLED });
+      mockPaymentClient.initiateRefund.mockResolvedValue({ refundId: 'ref_123' });
+      mockOrderRefundModel.create.mockResolvedValue(mockRefund);
+
+      const result = await service.cancelOrder(tenantId, { orderId, userId, reason: 'Test' });
+
+      expect(result.refund).toEqual(mockRefund);
+      expect(mockPaymentClient.initiateRefund).toHaveBeenCalled();
+    });
+
+    it('should throw error if invalid status', async () => {
+      mockOrderModel.findById.mockResolvedValue({ id: orderId, status: OrderStatus.REFUNDED });
+
+      await expect(service.cancelOrder(tenantId, { orderId, userId, reason: 'Test' })).rejects.toThrow('Cannot cancel order');
+    });
+  });
+
+  describe('expireReservation', () => {
+    const mockOrder = { id: orderId, tenantId, status: OrderStatus.RESERVED, paymentIntentId: 'pi_123' };
+    const mockUpdatedOrder = { ...mockOrder, status: OrderStatus.EXPIRED };
+
+    beforeEach(() => {
+      mockOrderModel.findById.mockResolvedValue(mockOrder);
+      mockTicketClient.releaseTickets.mockResolvedValue({ success: true });
+      mockPaymentClient.cancelPaymentIntent.mockResolvedValue({ success: true });
+      mockOrderModel.update.mockResolvedValue(mockUpdatedOrder);
+      mockOrderItemModel.findByOrderId.mockResolvedValue([]);
+      mockOrderEventModel.create.mockResolvedValue({});
+    });
+
+    it('should expire reservation successfully', async () => {
+      const result = await service.expireReservation(orderId, tenantId, 'Timeout');
+
+      expect(result.status).toBe(OrderStatus.EXPIRED);
+    });
+
+    it('should continue if ticket release fails', async () => {
+      mockTicketClient.releaseTickets.mockRejectedValue(new Error('Failed'));
+
+      const result = await service.expireReservation(orderId, tenantId, 'Timeout');
+
+      expect(result.status).toBe(OrderStatus.EXPIRED);
+      expect(mockLogger.error).toHaveBeenCalled();
+    });
+
+    it('should throw error if not RESERVED', async () => {
+      mockOrderModel.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.CONFIRMED });
+
+      await expect(service.expireReservation(orderId, tenantId, 'Timeout')).rejects.toThrow('Order not in RESERVED status');
+    });
+  });
+
+  describe('refundOrder', () => {
+    const mockOrder = { id: orderId, tenantId, status: OrderStatus.CONFIRMED, paymentIntentId: 'pi_123' };
+    const mockRefund = { refundId: 'ref-123', orderId, refundAmountCents: 10000 };
+    const mockUpdatedOrder = { ...mockOrder, status: OrderStatus.REFUNDED };
+
+    beforeEach(() => {
+      mockOrderModel.findById.mockResolvedValue(mockOrder);
+      mockPaymentClient.initiateRefund.mockResolvedValue({ refundId: 'stripe_ref_123' });
+      mockOrderRefundModel.create.mockResolvedValue(mockRefund);
+      mockOrderModel.update.mockResolvedValue(mockUpdatedOrder);
+      mockOrderItemModel.findByOrderId.mockResolvedValue([]);
+      mockOrderEventModel.create.mockResolvedValue({});
+    });
+
+    it('should use distributed lock', async () => {
+      await service.refundOrder(tenantId, { orderId, userId, amountCents: 10000, reason: 'Test' });
+
+      expect(mockWithLock).toHaveBeenCalled();
+    });
+
+    it('should refund order successfully', async () => {
+      const result = await service.refundOrder(tenantId, { orderId, userId, amountCents: 10000, reason: 'Test' });
+
+      expect(result.order.status).toBe(OrderStatus.REFUNDED);
+      expect(result.refund).toEqual(mockRefund);
+    });
+
+    it('should throw error if not CONFIRMED', async () => {
+      mockOrderModel.findById.mockResolvedValue({ ...mockOrder, status: OrderStatus.PENDING });
+
+      await expect(
+        service.refundOrder(tenantId, { orderId, userId, amountCents: 10000, reason: 'Test' })
+      ).rejects.toThrow('Cannot refund order');
+    });
+
+    it('should throw error if no payment intent', async () => {
+      mockOrderModel.findById.mockResolvedValue({ ...mockOrder, paymentIntentId: null });
+
+      await expect(
+        service.refundOrder(tenantId, { orderId, userId, amountCents: 10000, reason: 'Test' })
+      ).rejects.toThrow('No payment intent found');
+    });
+  });
+
+  describe('getOrder', () => {
+    it('should return order with items', async () => {
+      const mockOrder = { id: orderId, tenantId, status: OrderStatus.CONFIRMED };
+      const mockItems = [{ id: 'item-1', orderId }];
+      mockOrderModel.findById.mockResolvedValue(mockOrder);
+      mockOrderItemModel.findByOrderId.mockResolvedValue(mockItems);
+
+      const result = await service.getOrder(orderId, tenantId);
+
+      expect(result?.order).toEqual(mockOrder);
+      expect(result?.items).toEqual(mockItems);
+    });
+
+    it('should return null if not found', async () => {
+      mockOrderModel.findById.mockResolvedValue(null);
+
+      const result = await service.getOrder(orderId, tenantId);
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('getUserOrders', () => {
+    it('should return user orders with default pagination', async () => {
+      const mockOrders = [{ id: 'order-1', userId }];
+      mockOrderModel.findByUserId.mockResolvedValue(mockOrders);
+
+      const result = await service.getUserOrders(userId, tenantId);
+
+      expect(result).toEqual(mockOrders);
+      expect(mockOrderModel.findByUserId).toHaveBeenCalledWith(userId, tenantId, 50, 0);
+    });
+
+    it('should respect custom pagination', async () => {
+      mockOrderModel.findByUserId.mockResolvedValue([]);
+
+      await service.getUserOrders(userId, tenantId, 20, 10);
+
+      expect(mockOrderModel.findByUserId).toHaveBeenCalledWith(userId, tenantId, 20, 10);
+    });
+  });
+
+  describe('getExpiredReservations', () => {
+    it('should return expired reservations', async () => {
+      const mockOrders = [{ id: 'order-1', status: OrderStatus.RESERVED }];
+      mockOrderModel.findExpiredReservations.mockResolvedValue(mockOrders);
+
+      const result = await service.getExpiredReservations(tenantId);
+
+      expect(result).toEqual(mockOrders);
+    });
+  });
+
+  describe('getExpiringReservations', () => {
+    it('should return expiring reservations', async () => {
+      const mockOrders = [{ id: 'order-1', status: OrderStatus.RESERVED }];
+      mockOrderModel.findExpiringReservations.mockResolvedValue(mockOrders);
+
+      const result = await service.getExpiringReservations(tenantId, 10, 50);
+
+      expect(result).toEqual(mockOrders);
+    });
+  });
+
+  describe('getOrderEvents', () => {
+    it('should return order events', async () => {
+      const mockEvents = [{ id: 'event-1', orderId, eventType: OrderEventType.ORDER_CREATED }];
+      mockOrderEventModel.findByOrderId.mockResolvedValue(mockEvents);
+
+      const result = await service.getOrderEvents(orderId, tenantId);
+
+      expect(result).toEqual(mockEvents);
+    });
+  });
+
+  describe('findOrdersByEvent', () => {
+    it('should return orders for event', async () => {
+      const mockOrders = [{ id: 'order-1', eventId }];
+      mockOrderModel.findByEvent.mockResolvedValue(mockOrders);
+
+      const result = await service.findOrdersByEvent(eventId, tenantId);
+
+      expect(result).toEqual(mockOrders);
+    });
+
+    it('should filter by status', async () => {
+      mockOrderModel.findByEvent.mockResolvedValue([]);
+
+      await service.findOrdersByEvent(eventId, tenantId, [OrderStatus.CONFIRMED]);
+
+      expect(mockOrderModel.findByEvent).toHaveBeenCalledWith(eventId, tenantId, [OrderStatus.CONFIRMED]);
+    });
+  });
+
+  describe('getTenantsWithReservedOrders', () => {
+    it('should return tenant IDs', async () => {
+      const mockTenants = ['tenant-1', 'tenant-2'];
+      mockOrderModel.getTenantsWithReservedOrders.mockResolvedValue(mockTenants);
+
+      const result = await service.getTenantsWithReservedOrders();
+
+      expect(result).toEqual(mockTenants);
     });
   });
 });

@@ -138,3 +138,132 @@ export function updateUptimeMetric(): void {
 
 // Update uptime every 60 seconds
 setInterval(updateUptimeMetric, 60000);
+
+// =============================================================================
+// JOB METRICS
+// AUDIT FIX: BG-6 - Add job metrics beyond basic counts
+// =============================================================================
+
+export const jobsStarted = new Counter({
+  name: 'blockchain_indexer_jobs_started_total',
+  help: 'Total number of jobs started',
+  labelNames: ['job_type'],
+  registers: [register]
+});
+
+export const jobsCompleted = new Counter({
+  name: 'blockchain_indexer_jobs_completed_total',
+  help: 'Total number of jobs completed',
+  labelNames: ['job_type', 'status'],
+  registers: [register]
+});
+
+export const jobDuration = new Histogram({
+  name: 'blockchain_indexer_job_duration_seconds',
+  help: 'Duration of jobs in seconds',
+  labelNames: ['job_type'],
+  buckets: [0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300],
+  registers: [register]
+});
+
+export const activeJobs = new Gauge({
+  name: 'blockchain_indexer_active_jobs',
+  help: 'Number of currently active jobs',
+  labelNames: ['job_type'],
+  registers: [register]
+});
+
+export const jobRetries = new Counter({
+  name: 'blockchain_indexer_job_retries_total',
+  help: 'Total number of job retries',
+  labelNames: ['job_type'],
+  registers: [register]
+});
+
+export const jobQueueSize = new Gauge({
+  name: 'blockchain_indexer_job_queue_size',
+  help: 'Number of jobs waiting in queue',
+  labelNames: ['job_type'],
+  registers: [register]
+});
+
+export const jobDeadLetterQueue = new Counter({
+  name: 'blockchain_indexer_job_dlq_total',
+  help: 'Total number of jobs sent to dead letter queue',
+  labelNames: ['job_type', 'error_type'],
+  registers: [register]
+});
+
+export const jobProcessingLag = new Gauge({
+  name: 'blockchain_indexer_job_processing_lag_seconds',
+  help: 'Time between job creation and processing start',
+  labelNames: ['job_type'],
+  registers: [register]
+});
+
+/**
+ * Helper functions for job metrics
+ * AUDIT FIX: BG-6 - Convenience functions for job instrumentation
+ */
+export const JobMetrics = {
+  /**
+   * Record job start
+   */
+  recordJobStart(jobType: string): void {
+    jobsStarted.inc({ job_type: jobType });
+    activeJobs.inc({ job_type: jobType });
+  },
+
+  /**
+   * Record job completion
+   */
+  recordJobComplete(jobType: string, success: boolean, durationMs: number): void {
+    activeJobs.dec({ job_type: jobType });
+    jobsCompleted.inc({ job_type: jobType, status: success ? 'success' : 'failure' });
+    jobDuration.observe({ job_type: jobType }, durationMs / 1000);
+  },
+
+  /**
+   * Record job retry
+   */
+  recordJobRetry(jobType: string): void {
+    jobRetries.inc({ job_type: jobType });
+  },
+
+  /**
+   * Record job sent to DLQ
+   */
+  recordJobDLQ(jobType: string, errorType: string): void {
+    jobDeadLetterQueue.inc({ job_type: jobType, error_type: errorType });
+  },
+
+  /**
+   * Update queue size
+   */
+  updateQueueSize(jobType: string, size: number): void {
+    jobQueueSize.set({ job_type: jobType }, size);
+  },
+
+  /**
+   * Record processing lag
+   */
+  recordProcessingLag(jobType: string, lagMs: number): void {
+    jobProcessingLag.set({ job_type: jobType }, lagMs / 1000);
+  },
+
+  /**
+   * Create a job timer that returns a function to call on completion
+   */
+  startJobTimer(jobType: string): () => void {
+    const startTime = Date.now();
+    jobsStarted.inc({ job_type: jobType });
+    activeJobs.inc({ job_type: jobType });
+    
+    return (success: boolean = true) => {
+      const duration = Date.now() - startTime;
+      activeJobs.dec({ job_type: jobType });
+      jobsCompleted.inc({ job_type: jobType, status: success ? 'success' : 'failure' });
+      jobDuration.observe({ job_type: jobType }, duration / 1000);
+    };
+  }
+};

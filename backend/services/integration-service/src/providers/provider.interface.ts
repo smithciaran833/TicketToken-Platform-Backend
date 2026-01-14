@@ -1,3 +1,52 @@
+// =============================================================================
+// PROVIDER CREDENTIAL TYPES
+// =============================================================================
+
+export interface StripeCredentials {
+  secretKey: string;
+  publishableKey?: string;
+  webhookSecret?: string;
+}
+
+export interface SquareCredentials {
+  accessToken: string;
+  applicationId?: string;
+  locationId?: string;
+  webhookSignatureKey?: string;
+}
+
+export interface MailchimpCredentials {
+  apiKey: string;
+  serverPrefix?: string;
+  listId?: string;
+  webhookSecret?: string;
+}
+
+export interface QuickBooksCredentials {
+  clientId: string;
+  clientSecret: string;
+  accessToken: string;
+  refreshToken: string;
+  realmId: string;
+  tokenExpiresAt?: Date;
+  webhookToken?: string;
+}
+
+export interface EventbriteCredentials {
+  accessToken: string;
+  organizationId?: string;
+  webhookSecret?: string;
+}
+
+export interface TicketmasterCredentials {
+  apiKey: string;
+  apiSecret?: string;
+}
+
+// =============================================================================
+// PROVIDER INTERFACES
+// =============================================================================
+
 export interface IntegrationProvider {
   name: string;
   initialize(credentials: any): Promise<void>;

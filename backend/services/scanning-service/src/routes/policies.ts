@@ -2,6 +2,25 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getPool } from '../config/database';
 import logger from '../utils/logger';
 
+/**
+ * SCAN POLICIES ROUTES
+ * 
+ * Manages scan policies for events (re-entry, duplicate detection, zones).
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This route queries events and venues tables for policy management.
+ * This is intentional because:
+ * 
+ * 1. scan_policies is scanning-service owned table
+ * 2. The JOINs with events/venues are for display purposes (names)
+ * 3. The venue_id lookup in custom policy endpoint is minimal
+ * 4. Policy management is not latency-critical (admin operations)
+ * 5. These are infrequent operations (policies set once per event)
+ * 
+ * Future: Consider adding eventServiceClient.getEventVenue() method
+ * for the minimal lookup required.
+ */
+
 interface EventParams {
   eventId: string;
 }

@@ -1,244 +1,237 @@
-// =============================================================================
-// TEST SUITE - QRCode Model
-// =============================================================================
+/**
+ * Unit Tests for src/models/QRCode.ts
+ */
 
-import { Pool, QueryResult } from 'pg';
-import { QRCodeModel, IQRCode } from '../../../src/models/QRCode';
+import { QRCodeModel, IQRCodeResult } from '../../../src/models/QRCode';
 
-describe('QRCodeModel', () => {
-  let model: QRCodeModel;
-  let mockPool: jest.Mocked<Partial<Pool>>;
+describe('models/QRCode', () => {
+  let mockPool: any;
+  let qrCodeModel: QRCodeModel;
+
+  const mockQRCodeRow = {
+    id: 'ticket-123',
+    ticket_id: 'ticket-123',
+    qr_code: 'QR-ABC123',
+    ticket_number: 'TKT-XYZ',
+    status: 'active',
+    is_validated: false,
+    validated_at: null,
+    validated_by: null,
+    event_id: 'event-456',
+    user_id: 'user-789',
+  };
 
   beforeEach(() => {
     mockPool = {
       query: jest.fn(),
     };
-
-    model = new QRCodeModel(mockPool as Pool);
-  });
-
-  describe('create()', () => {
-    it('should create a QR code', async () => {
-      const qrData: IQRCode = {
-        ticket_id: 'ticket-123',
-        code: 'QR123456',
-        expires_at: new Date('2024-12-31'),
-      };
-
-      const mockResult = {
-        rows: [{ id: 'qr-1', ...qrData, scanned: false, created_at: new Date() }],
-      };
-
-      (mockPool.query as jest.Mock).mockResolvedValue(mockResult);
-
-      const result = await model.create(qrData);
-
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('INSERT INTO qr_codes'),
-        ['ticket-123', 'QR123456', qrData.expires_at]
-      );
-      expect(result.id).toBe('qr-1');
-    });
-
-    it('should return created QR code with all fields', async () => {
-      const qrData: IQRCode = {
-        ticket_id: 'ticket-123',
-        code: 'QR123456',
-        expires_at: new Date('2024-12-31'),
-      };
-
-      const mockQRCode = {
-        id: 'qr-1',
-        ticket_id: 'ticket-123',
-        code: 'QR123456',
-        scanned: false,
-        created_at: new Date(),
-        expires_at: new Date('2024-12-31'),
-      };
-
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [mockQRCode] });
-
-      const result = await model.create(qrData);
-
-      expect(result).toEqual(mockQRCode);
-    });
-
-    it('should insert with correct field order', async () => {
-      const qrData: IQRCode = {
-        ticket_id: 'ticket-123',
-        code: 'QR123456',
-        expires_at: new Date('2024-12-31'),
-      };
-
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
-
-      await model.create(qrData);
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0];
-      expect(call[1]).toEqual([
-        qrData.ticket_id,
-        qrData.code,
-        qrData.expires_at,
-      ]);
-    });
+    qrCodeModel = new QRCodeModel(mockPool);
   });
 
   describe('findByCode()', () => {
-    it('should find QR code by code', async () => {
-      const mockQRCode = {
-        id: 'qr-1',
-        ticket_id: 'ticket-123',
-        code: 'QR123456',
-        scanned: false,
-      };
+    it('returns null for empty code', async () => {
+      const result = await qrCodeModel.findByCode('');
 
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [mockQRCode] });
-
-      const result = await model.findByCode('QR123456');
-
-      expect(mockPool.query).toHaveBeenCalledWith(
-        'SELECT * FROM qr_codes WHERE code = $1',
-        ['QR123456']
-      );
-      expect(result).toEqual(mockQRCode);
+      expect(result).toBeNull();
+      expect(mockPool.query).not.toHaveBeenCalled();
     });
 
-    it('should return null if not found', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns QR code result when found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockQRCodeRow] });
 
-      const result = await model.findByCode('NOTFOUND');
+      const result = await qrCodeModel.findByCode('QR-ABC123');
+
+      expect(result?.qr_code).toBe('QR-ABC123');
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.stringContaining('WHERE qr_code = $1'),
+        ['QR-ABC123']
+      );
+    });
+
+    it('returns null when not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await qrCodeModel.findByCode('INVALID');
 
       expect(result).toBeNull();
     });
+  });
 
-    it('should handle different codes', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{ code: 'QR999' }] });
+  describe('findByTicketId()', () => {
+    it('returns QR code result when found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [mockQRCodeRow] });
 
-      await model.findByCode('QR999');
+      const result = await qrCodeModel.findByTicketId('ticket-123');
+
+      expect(result?.ticket_id).toBe('ticket-123');
+    });
+
+    it('returns null when not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await qrCodeModel.findByTicketId('nonexistent');
+
+      expect(result).toBeNull();
+    });
+  });
+
+  describe('regenerate()', () => {
+    it('generates new QR code for ticket', async () => {
+      const regeneratedRow = { ...mockQRCodeRow, qr_code: 'QR-NEWCODE' };
+      mockPool.query.mockResolvedValueOnce({ rows: [regeneratedRow] });
+
+      const result = await qrCodeModel.regenerate('ticket-123');
 
       expect(mockPool.query).toHaveBeenCalledWith(
-        expect.any(String),
-        ['QR999']
+        expect.stringContaining('UPDATE tickets'),
+        ['ticket-123', expect.stringMatching(/^QR-/)]
       );
+      expect(result?.qr_code).toBe('QR-NEWCODE');
+    });
+
+    it('returns null when ticket not found', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await qrCodeModel.regenerate('nonexistent');
+
+      expect(result).toBeNull();
     });
   });
 
   describe('markAsScanned()', () => {
-    it('should mark QR code as scanned', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 1 });
+    it('marks QR code as scanned', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-      const result = await model.markAsScanned('qr-1');
+      const result = await qrCodeModel.markAsScanned('QR-ABC123', 'staff-001');
 
       expect(mockPool.query).toHaveBeenCalledWith(
-        expect.stringContaining('UPDATE qr_codes'),
-        ['qr-1']
+        expect.stringContaining('is_validated = true'),
+        ['QR-ABC123', 'staff-001']
       );
       expect(result).toBe(true);
     });
 
-    it('should only mark unscanned codes', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 1 });
+    it('returns false when already scanned', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 0 });
 
-      await model.markAsScanned('qr-1');
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('scanned = false');
-    });
-
-    it('should set scanned_at timestamp', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 1 });
-
-      await model.markAsScanned('qr-1');
-
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('scanned_at = NOW()');
-    });
-
-    it('should return false if no rows updated', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: 0 });
-
-      const result = await model.markAsScanned('qr-1');
+      const result = await qrCodeModel.markAsScanned('QR-ABC123');
 
       expect(result).toBe(false);
     });
 
-    it('should handle null rowCount', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rowCount: null });
+    it('handles null validatedBy', async () => {
+      mockPool.query.mockResolvedValueOnce({ rowCount: 1 });
 
-      const result = await model.markAsScanned('qr-1');
+      await qrCodeModel.markAsScanned('QR-ABC123');
+
+      expect(mockPool.query).toHaveBeenCalledWith(
+        expect.any(String),
+        ['QR-ABC123', null]
+      );
+    });
+  });
+
+  describe('isValid()', () => {
+    it('returns false for empty code', async () => {
+      const result = await qrCodeModel.isValid('');
+
+      expect(result).toBe(false);
+      expect(mockPool.query).not.toHaveBeenCalled();
+    });
+
+    it('returns true for valid unscanned ticket', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [{ id: 'ticket-123' }] });
+
+      const result = await qrCodeModel.isValid('QR-ABC123');
+
+      expect(result).toBe(true);
+    });
+
+    it('returns false for invalid/scanned ticket', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
+
+      const result = await qrCodeModel.isValid('QR-INVALID');
 
       expect(result).toBe(false);
     });
   });
 
-  describe('isValid()', () => {
-    it('should return true for valid QR code', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{ code: 'QR123' }] });
+  describe('getValidationStatus()', () => {
+    it('returns not found for empty code', async () => {
+      const result = await qrCodeModel.getValidationStatus('');
 
-      const result = await model.isValid('QR123');
-
-      expect(result).toBe(true);
+      expect(result).toEqual({
+        exists: false,
+        isValid: false,
+        reason: 'No QR code provided',
+      });
     });
 
-    it('should return false for invalid QR code', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns not found when ticket missing', async () => {
+      mockPool.query.mockResolvedValueOnce({ rows: [] });
 
-      const result = await model.isValid('INVALID');
+      const result = await qrCodeModel.getValidationStatus('QR-UNKNOWN');
 
-      expect(result).toBe(false);
+      expect(result).toEqual({
+        exists: false,
+        isValid: false,
+        reason: 'QR code not found',
+      });
     });
 
-    it('should check code is not scanned', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns deleted reason', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ status: 'active', is_validated: false, deleted_at: new Date() }],
+      });
 
-      await model.isValid('QR123');
+      const result = await qrCodeModel.getValidationStatus('QR-ABC123');
 
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('scanned = false');
+      expect(result).toEqual({
+        exists: true,
+        isValid: false,
+        reason: 'Ticket has been deleted',
+      });
     });
 
-    it('should check expiry', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns already scanned reason', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ status: 'active', is_validated: true, deleted_at: null }],
+      });
 
-      await model.isValid('QR123');
+      const result = await qrCodeModel.getValidationStatus('QR-ABC123');
 
-      const call = (mockPool.query as jest.Mock).mock.calls[0][0];
-      expect(call).toContain('expires_at IS NULL OR expires_at > NOW()');
+      expect(result).toEqual({
+        exists: true,
+        isValid: false,
+        reason: 'Ticket already scanned',
+      });
     });
 
-    it('should pass code as parameter', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
+    it('returns status reason for non-active', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ status: 'cancelled', is_validated: false, deleted_at: null }],
+      });
 
-      await model.isValid('QR123');
+      const result = await qrCodeModel.getValidationStatus('QR-ABC123');
 
-      expect(mockPool.query).toHaveBeenCalledWith(
-        expect.any(String),
-        ['QR123']
-      );
+      expect(result).toEqual({
+        exists: true,
+        isValid: false,
+        reason: 'Ticket status is cancelled',
+      });
     });
 
-    it('should return true if code found and valid', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [{}] });
+    it('returns valid for active unscanned ticket', async () => {
+      mockPool.query.mockResolvedValueOnce({
+        rows: [{ status: 'active', is_validated: false, deleted_at: null }],
+      });
 
-      const result = await model.isValid('QR123');
+      const result = await qrCodeModel.getValidationStatus('QR-ABC123');
 
-      expect(result).toBe(true);
-    });
-
-    it('should return false for expired code', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
-
-      const result = await model.isValid('EXPIRED');
-
-      expect(result).toBe(false);
-    });
-
-    it('should return false for scanned code', async () => {
-      (mockPool.query as jest.Mock).mockResolvedValue({ rows: [] });
-
-      const result = await model.isValid('SCANNED');
-
-      expect(result).toBe(false);
+      expect(result).toEqual({
+        exists: true,
+        isValid: true,
+      });
     });
   });
 });

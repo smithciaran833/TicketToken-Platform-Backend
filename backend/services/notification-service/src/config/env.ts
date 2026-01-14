@@ -17,12 +17,16 @@ export interface EnvConfig {
   DB_PASSWORD: string;
   DB_POOL_MIN: number;
   DB_POOL_MAX: number;
+  /** Optional DATABASE_URL for validation - alternative to individual DB_* vars */
+  DATABASE_URL?: string;
 
   // Redis
   REDIS_HOST: string;
   REDIS_PORT: number;
   REDIS_PASSWORD?: string;
   REDIS_DB: number;
+  /** Enable TLS for Redis in production */
+  REDIS_TLS?: boolean;
 
   // RabbitMQ
   RABBITMQ_URL: string;
@@ -33,6 +37,11 @@ export interface EnvConfig {
   SENDGRID_API_KEY: string;
   SENDGRID_FROM_EMAIL: string;
   SENDGRID_FROM_NAME: string;
+
+  // AWS SES (alternative email provider)
+  AWS_ACCESS_KEY_ID?: string;
+  AWS_SECRET_ACCESS_KEY?: string;
+  AWS_REGION?: string;
 
   // Twilio
   TWILIO_ACCOUNT_SID: string;
@@ -49,6 +58,10 @@ export interface EnvConfig {
   EVENT_SERVICE_URL: string;
   TICKET_SERVICE_URL: string;
   PAYMENT_SERVICE_URL: string;
+  /** Application URL for links in notifications */
+  APP_URL?: string;
+  /** Frontend URL for links in notifications */
+  FRONTEND_URL?: string;
 
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: number;
@@ -60,6 +73,8 @@ export interface EnvConfig {
   DEFAULT_TIMEZONE: string;
   MAX_RETRY_ATTEMPTS: number;
   RETRY_DELAY_MS: number;
+  /** Default from email address */
+  DEFAULT_FROM_EMAIL?: string;
 
   // Template Settings
   TEMPLATE_CACHE_TTL: number;
@@ -76,6 +91,14 @@ export interface EnvConfig {
   ENABLE_EMAIL: boolean;
   ENABLE_PUSH: boolean;
   ENABLE_WEBHOOK_DELIVERY: boolean;
+
+  // Queue Settings
+  /** Queue processing concurrency */
+  QUEUE_CONCURRENCY?: number;
+
+  // Logging
+  /** Log level: error, warn, info, http, verbose, debug, silly */
+  LOG_LEVEL?: string;
 }
 
 function getEnvVar(key: string, defaultValue?: string): string {
@@ -130,15 +153,25 @@ export const env: EnvConfig = {
   RABBITMQ_EXCHANGE: getEnvVar('RABBITMQ_EXCHANGE', 'tickettoken_events'),
   RABBITMQ_QUEUE: getEnvVar('RABBITMQ_QUEUE', 'notifications'),
 
+  // AUDIT FIX CFG-1: Remove empty defaults for API keys - require in production
   // SendGrid
-  SENDGRID_API_KEY: getEnvVar('SENDGRID_API_KEY', ''),
+  SENDGRID_API_KEY: process.env.NODE_ENV === 'production' 
+    ? getEnvVar('SENDGRID_API_KEY') 
+    : getEnvVar('SENDGRID_API_KEY', 'dev-sendgrid-key'),
   SENDGRID_FROM_EMAIL: getEnvVar('SENDGRID_FROM_EMAIL', 'noreply@tickettoken.com'),
   SENDGRID_FROM_NAME: getEnvVar('SENDGRID_FROM_NAME', 'TicketToken'),
 
+  // AUDIT FIX CFG-1: Remove empty defaults for API keys - require in production
   // Twilio
-  TWILIO_ACCOUNT_SID: getEnvVar('TWILIO_ACCOUNT_SID', ''),
-  TWILIO_AUTH_TOKEN: getEnvVar('TWILIO_AUTH_TOKEN', ''),
-  TWILIO_FROM_NUMBER: getEnvVar('TWILIO_FROM_NUMBER', ''),
+  TWILIO_ACCOUNT_SID: process.env.NODE_ENV === 'production'
+    ? getEnvVar('TWILIO_ACCOUNT_SID')
+    : getEnvVar('TWILIO_ACCOUNT_SID', 'dev-twilio-sid'),
+  TWILIO_AUTH_TOKEN: process.env.NODE_ENV === 'production'
+    ? getEnvVar('TWILIO_AUTH_TOKEN')
+    : getEnvVar('TWILIO_AUTH_TOKEN', 'dev-twilio-token'),
+  TWILIO_FROM_NUMBER: process.env.NODE_ENV === 'production'
+    ? getEnvVar('TWILIO_FROM_NUMBER')
+    : getEnvVar('TWILIO_FROM_NUMBER', '+15551234567'),
   TWILIO_MESSAGING_SERVICE_SID: process.env.TWILIO_MESSAGING_SERVICE_SID,
 
   // JWT - REMOVED DANGEROUS DEFAULT

@@ -4,9 +4,11 @@ declare module '@fastify/jwt' {
   interface FastifyJWT {
     user: {
       id: string;
-      role: string;
-      tenantId?: string;
+      tenantId: string;
       tenantName?: string;
+      email: string;
+      role: string;
+      permissions: string[];
     };
   }
 }

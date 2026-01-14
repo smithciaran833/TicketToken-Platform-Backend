@@ -40,7 +40,7 @@ export function createRateLimiter(options: RateLimitConfig) {
         return reply.code(429).send({ error: message });
       }
     } catch (error) {
-      log.error('Rate limiter error', { error });
+      log.error({ error }, 'Rate limiter error');
       // Allow request to proceed on rate limiter error
     }
   };

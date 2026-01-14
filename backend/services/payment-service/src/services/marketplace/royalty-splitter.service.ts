@@ -1,5 +1,29 @@
 import { query } from '../../config/database';
 
+/**
+ * ROYALTY SPLITTER SERVICE
+ * 
+ * Calculates and distributes royalties from NFT ticket resales.
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service queries venue_royalty_settings and event_royalty_settings tables,
+ * and JOINs with events for royalty reporting. Direct DB access is retained because:
+ * 
+ * 1. FINANCIAL PRECISION: Royalty calculations must be exact and auditable
+ * 2. ATOMIC DISTRIBUTIONS: Royalty records must be consistent
+ * 3. REPORTING: Analytics queries require efficient JOINs
+ * 
+ * Tables accessed:
+ * - venue_royalty_settings: Venue royalty config (venue-service owned)
+ * - event_royalty_settings: Event-specific royalties (event-service owned)
+ * - royalty_distributions: Payment records (payment-service owned)
+ * - payment_transactions: Transaction data (payment-service owned)
+ * - events: Event names for reporting (event-service owned)
+ * 
+ * Future: Consider venueServiceClient.getRoyaltySettings() and
+ * eventServiceClient.getRoyaltySettings() methods.
+ */
+
 export class RoyaltySplitterService {
   async calculateRoyalties(
     salePrice: number,

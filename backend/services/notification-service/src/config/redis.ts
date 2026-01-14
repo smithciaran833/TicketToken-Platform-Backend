@@ -58,6 +58,12 @@ const redisConfig: RedisOptions = {
 export const redis = new Redis(redisConfig);
 
 /**
+ * Alias for redis client - maintains backward compatibility
+ * with code that imports 'redisClient'
+ */
+export const redisClient = redis;
+
+/**
  * Redis pub/sub client (separate connection)
  */
 export const redisPubSub = new Redis(redisConfig);

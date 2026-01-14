@@ -1,7 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { serviceCache } from '../services/cache-integration';
 import { s3Storage } from '../services/storage.s3';
-import { antivirusService } from '../services/antivirus.service';
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
 
@@ -80,7 +79,7 @@ export class UploadController {
         expiresAt: signedUrl.expiresAt
       });
     } catch (error: any) {
-      logger.error('Failed to generate upload URL:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to generate upload URL');
       return reply.status(500).send({
         error: 'Failed to generate upload URL'
       });
@@ -120,7 +119,7 @@ export class UploadController {
         fileId: upload.id
       });
     } catch (error: any) {
-      logger.error('Failed to confirm upload:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to confirm upload');
       return reply.status(500).send({
         error: 'Failed to confirm upload'
       });
@@ -130,7 +129,7 @@ export class UploadController {
   /**
    * Process uploaded file
    */
-  private async processFile(fileId: string, fileKey: string) {
+  private async processFile(fileId: string, _fileKey: string) {
     try {
       // Note: S3StorageService doesn't have a download/getObject method
       // We'll need to add it or use the AWS SDK directly
@@ -147,7 +146,7 @@ export class UploadController {
       // Clear cache
       await serviceCache.delete(`file:${fileId}`);
     } catch (error: any) {
-      logger.error('File processing failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'File processing failed');
       await db('file_uploads')
         .where({ id: fileId })
         .update({
@@ -188,7 +187,7 @@ export class UploadController {
 
       return reply.send({ message: 'File deleted successfully' });
     } catch (error: any) {
-      logger.error('Failed to delete file:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Failed to delete file');
       return reply.status(500).send({
         error: 'Failed to delete file'
       });

@@ -4,7 +4,6 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'PaymentReconciliation' });
 
-// Map to internal status values
 type PaymentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
 
 export class PaymentReconciliation {
@@ -19,7 +18,6 @@ export class PaymentReconciliation {
   async run(): Promise<void> {
     log.info('Starting payment reconciliation');
 
-    // Get payments in processing state for more than 10 minutes
     const stuckPayments = await this.db.query(
       `SELECT * FROM payment_transactions
        WHERE status = $1
@@ -31,7 +29,6 @@ export class PaymentReconciliation {
       await this.reconcilePayment(payment);
     }
 
-    // Check for missing webhooks
     await this.checkMissingWebhooks();
   }
 
@@ -42,18 +39,17 @@ export class PaymentReconciliation {
           payment.stripe_payment_intent_id
         );
 
-        // Update local state based on Stripe's truth
         const newStatus = this.mapStripeStatus(intent.status);
         if (newStatus !== payment.status) {
           await this.db.query(
             'UPDATE payment_transactions SET status = $1, updated_at = NOW() WHERE id = $2',
             [newStatus, payment.id]
           );
-          log.info('Reconciled payment', { paymentId: payment.id, oldStatus: payment.status, newStatus });
+          log.info({ paymentId: payment.id, oldStatus: payment.status, newStatus }, 'Reconciled payment');
         }
       }
     } catch (error) {
-      log.error('Failed to reconcile payment', { paymentId: payment.id, error });
+      log.error({ paymentId: payment.id, error }, 'Failed to reconcile payment');
     }
   }
 
@@ -71,9 +67,8 @@ export class PaymentReconciliation {
   }
 
   private async checkMissingWebhooks(): Promise<void> {
-    // Query Stripe for recent events and check if we have them
     const events = await this.stripe.events.list({
-      created: { gte: Math.floor(Date.now() / 1000) - 3600 }, // Last hour
+      created: { gte: Math.floor(Date.now() / 1000) - 3600 },
       limit: 100
     });
 
@@ -84,8 +79,7 @@ export class PaymentReconciliation {
       );
 
       if (exists.rows.length === 0) {
-        log.warn('Missing webhook event detected', { eventId: event.id, eventType: event.type });
-        // Queue it for processing
+        log.warn({ eventId: event.id, eventType: event.type }, 'Missing webhook event detected');
         await this.db.query(
           `INSERT INTO webhook_inbox (webhook_id, event_id, provider, event_type, payload, status)
            VALUES ($1, $2, $3, $4, $5, 'pending')

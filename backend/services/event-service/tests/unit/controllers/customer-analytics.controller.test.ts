@@ -1,194 +1,83 @@
-// Mock dependencies BEFORE imports
-jest.mock('pino', () => ({
-  pino: jest.fn(() => ({
-    info: jest.fn(),
-    warn: jest.fn(),
-    debug: jest.fn(),
-    error: jest.fn(),
-  })),
-}));
+/**
+ * Customer Analytics Controller Unit Tests
+ * 
+ * Tests the customer analytics controller handlers for:
+ * - getCustomerProfile: Get customer profile with purchase history
+ */
 
-// Mock EventScheduleModel
-jest.mock('../../../src/models', () => ({
-  EventScheduleModel: jest.fn(),
-}));
-
-import { FastifyRequest, FastifyReply } from 'fastify';
-import * as customerAnalyticsController from '../../../src/controllers/customer-analytics.controller';
-import { EventScheduleModel } from '../../../src/models';
+import { getCustomerProfile } from '../../../src/controllers/customer-analytics.controller';
 
 describe('Customer Analytics Controller', () => {
-  let mockRequest: Partial<FastifyRequest>;
-  let mockReply: Partial<FastifyReply>;
-  let mockDb: any;
-  let mockScheduleModel: any;
+  let mockRequest: any;
+  let mockReply: any;
 
   beforeEach(() => {
-    jest.clearAllMocks();
-
-    mockScheduleModel = {
-      findByEventId: jest.fn(),
-    };
-
-    (EventScheduleModel as jest.MockedClass<typeof EventScheduleModel>).mockImplementation(() => mockScheduleModel);
-
-    // Mock db with knex-like query builder
-    const mockJoin = jest.fn().mockReturnThis();
-    const mockSelect = jest.fn().mockReturnThis();
-    const mockWhere = jest.fn().mockReturnThis();
-    const mockLimit = jest.fn();
-
-    mockDb = jest.fn(() => ({
-      join: mockJoin,
-      select: mockSelect,
-      where: mockWhere,
-      limit: mockLimit,
-    }));
-
-    mockDb.join = mockJoin;
-    mockDb.select = mockSelect;
-    mockDb.where = mockWhere;
-    mockDb.limit = mockLimit;
-
     mockRequest = {
-      params: {},
-      body: {},
-      headers: {},
-      log: {
-        info: jest.fn(),
-        error: jest.fn(),
-        warn: jest.fn(),
-        debug: jest.fn(),
-      } as any,
-      container: {
-        cradle: {
-          db: mockDb,
-        },
-      } as any,
+      params: { customerId: 'customer-123' }
     };
 
     mockReply = {
       status: jest.fn().mockReturnThis(),
-      send: jest.fn().mockReturnThis(),
+      send: jest.fn().mockReturnThis()
     };
   });
 
   describe('getCustomerProfile', () => {
-    it('should return customer profile with purchases', async () => {
-      const mockPurchases = [
-        {
-          event_name: 'Concert 2024',
-          event_id: 'event-1',
-          tier_name: 'VIP',
-          base_price: 100,
-        },
-        {
-          event_name: 'Festival 2024',
-          event_id: 'event-2',
-          tier_name: 'General',
-          base_price: 50,
-        },
-      ];
-
-      const mockSchedules = [
-        { id: 'schedule-1', starts_at: new Date('2024-12-01') },
-      ];
-
-      mockRequest.params = { customerId: 'customer-1' };
-      mockDb().limit.mockResolvedValue(mockPurchases);
-      mockScheduleModel.findByEventId.mockResolvedValue(mockSchedules);
-
-      await customerAnalyticsController.getCustomerProfile(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(mockDb).toHaveBeenCalledWith('event_pricing');
-      expect(mockDb().join).toHaveBeenCalledWith('events', 'event_pricing.event_id', 'events.id');
-      expect(mockDb().where).toHaveBeenCalledWith('event_pricing.is_active', true);
-      expect(mockDb().limit).toHaveBeenCalledWith(10);
+    it('should return customer profile', async () => {
+      await getCustomerProfile(mockRequest, mockReply);
 
       expect(mockReply.send).toHaveBeenCalledWith({
         success: true,
-        customerId: 'customer-1',
-        profile: {
-          total_purchases: 2,
-          recent_purchases: expect.arrayContaining([
-            expect.objectContaining({
-              event_name: 'Concert 2024',
-              tier_name: 'VIP',
-              price: 100,
-            }),
-          ]),
-          note: 'This is mock data - real purchase history comes from ticket-service',
-        },
+        data: expect.objectContaining({
+          id: 'customer-123',
+          profile: expect.any(Object),
+          purchaseHistory: expect.any(Array),
+          preferences: expect.any(Object)
+        })
       });
     });
 
-    it('should handle empty purchase history', async () => {
-      mockRequest.params = { customerId: 'customer-2' };
-      mockDb().limit.mockResolvedValue([]);
+    it('should include profile data', async () => {
+      await getCustomerProfile(mockRequest, mockReply);
 
-      await customerAnalyticsController.getCustomerProfile(
-        mockRequest as any,
-        mockReply as any
+      const response = mockReply.send.mock.calls[0][0];
+      expect(response.data.profile).toEqual(
+        expect.objectContaining({
+          total_purchases: expect.any(Number),
+          total_spent: expect.any(Number),
+          average_ticket_price: expect.any(Number),
+          member_since: expect.any(String)
+        })
       );
-
-      expect(mockReply.send).toHaveBeenCalledWith({
-        success: true,
-        customerId: 'customer-2',
-        profile: {
-          total_purchases: 0,
-          recent_purchases: [],
-          note: 'This is mock data - real purchase history comes from ticket-service',
-        },
-      });
     });
 
-    it('should handle database errors', async () => {
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
+    it('should include purchase history', async () => {
+      await getCustomerProfile(mockRequest, mockReply);
 
-      mockRequest.params = { customerId: 'customer-1' };
-      mockDb().limit.mockRejectedValue(new Error('Database error'));
-
-      await customerAnalyticsController.getCustomerProfile(
-        mockRequest as any,
-        mockReply as any
-      );
-
-      expect(consoleSpy).toHaveBeenCalledWith('Customer profile error:', expect.any(Error));
-      expect(mockReply.status).toHaveBeenCalledWith(500);
-      expect(mockReply.send).toHaveBeenCalledWith({
-        success: false,
-        error: 'Failed to get customer profile',
-      });
-
-      consoleSpy.mockRestore();
+      const response = mockReply.send.mock.calls[0][0];
+      expect(Array.isArray(response.data.purchaseHistory)).toBe(true);
     });
 
-    it('should handle schedule lookup errors gracefully', async () => {
-      const mockPurchases = [
-        {
-          event_name: 'Concert 2024',
-          event_id: 'event-1',
-          tier_name: 'VIP',
-          base_price: 100,
-        },
-      ];
+    it('should include preferences', async () => {
+      await getCustomerProfile(mockRequest, mockReply);
 
-      mockRequest.params = { customerId: 'customer-1' };
-      mockDb().limit.mockResolvedValue(mockPurchases);
-      mockScheduleModel.findByEventId.mockRejectedValue(new Error('Schedule error'));
-
-      const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
-
-      await customerAnalyticsController.getCustomerProfile(
-        mockRequest as any,
-        mockReply as any
+      const response = mockReply.send.mock.calls[0][0];
+      expect(response.data.preferences).toEqual(
+        expect.objectContaining({
+          favorite_venues: expect.any(Array),
+          favorite_categories: expect.any(Array),
+          notification_preferences: expect.any(Object)
+        })
       );
+    });
 
-      expect(mockReply.status).toHaveBeenCalledWith(500);
-      consoleSpy.mockRestore();
+    it('should handle different customer IDs', async () => {
+      mockRequest.params.customerId = 'different-customer-456';
+
+      await getCustomerProfile(mockRequest, mockReply);
+
+      const response = mockReply.send.mock.calls[0][0];
+      expect(response.data.id).toBe('different-customer-456');
     });
   });
 });

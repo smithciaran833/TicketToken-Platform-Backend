@@ -1,11 +1,11 @@
 import { Pool, PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
+import crypto from 'crypto';
 import logger from '../utils/logger';
+import { ticketServiceClient, authServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
 import {
   Transfer,
-  Ticket,
-  TicketType,
-  User,
   CreateGiftTransferRequest,
   CreateGiftTransferResponse,
   AcceptTransferRequest,
@@ -17,47 +17,69 @@ import {
 } from '../models/transfer.model';
 
 /**
+ * Helper to create request context for service calls
+ */
+function createRequestContext(tenantId: string): RequestContext {
+  return {
+    tenantId,
+    traceId: `transfer-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  };
+}
+
+/**
  * TRANSFER SERVICE
- * 
+ *
  * Business logic for ticket transfers
  * Phase 2: Service Layer Separation
+ * 
+ * PHASE 5c REFACTORED:
+ * - Replaced direct tickets table query with ticketServiceClient
+ * - Replaced direct ticket_types table query with ticketServiceClient
+ * - Replaced direct users table query with authServiceClient
  */
 export class TransferService {
   constructor(private readonly pool: Pool) {}
 
   /**
    * Create a gift transfer
+   * 
+   * REFACTORED: Uses ticketServiceClient for ticket/ticketType and authServiceClient for user
    */
   async createGiftTransfer(
     fromUserId: string,
-    request: CreateGiftTransferRequest
+    request: CreateGiftTransferRequest,
+    tenantId: string
   ): Promise<CreateGiftTransferResponse> {
     const { ticketId, toEmail, message } = request;
+    const ctx = createRequestContext(tenantId);
     const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      // Verify ticket ownership and lock for update
-      const ticket = await this.getTicketForUpdate(client, ticketId, fromUserId);
+      // REFACTORED: Verify ticket ownership and transferability via ticketServiceClient
+      const ticketResult = await ticketServiceClient.getTicketForTransfer(ticketId, fromUserId, ctx);
       
-      // Verify ticket is transferable
-      const ticketType = await this.getTicketType(client, ticket.ticket_type_id);
-      if (!ticketType.is_transferable) {
-        throw new TicketNotTransferableError();
+      if (!ticketResult.ticket) {
+        throw new TicketNotFoundError();
+      }
+      
+      if (!ticketResult.transferable) {
+        throw new TicketNotTransferableError(ticketResult.reason);
       }
 
-      // Get or create recipient user
-      const toUserId = await this.getOrCreateUser(client, toEmail);
+      // REFACTORED: Get or create recipient user via authServiceClient
+      const userResult = await authServiceClient.getOrCreateUser(toEmail, ctx, 'gift_transfer');
+      const toUserId = userResult.userId;
 
       // Generate acceptance code
       const acceptanceCode = this.generateAcceptanceCode();
-      
+
       // Calculate expiry time (48 hours by default)
       const expiryHours = parseInt(process.env.TRANSFER_EXPIRY_HOURS || '48');
       const expiresAt = new Date(Date.now() + expiryHours * 60 * 60 * 1000);
 
-      // Create transfer record
+      // Create transfer record - transfer_service owned table
       const transferId = uuidv4();
       await client.query(`
         INSERT INTO ticket_transfers (
@@ -106,18 +128,22 @@ export class TransferService {
 
   /**
    * Accept a transfer
+   * 
+   * REFACTORED: Uses ticketServiceClient to transfer ticket ownership
    */
   async acceptTransfer(
     transferId: string,
-    request: AcceptTransferRequest
+    request: AcceptTransferRequest,
+    tenantId: string
   ): Promise<AcceptTransferResponse> {
-    const { acceptanceCode, userId } = request;
+    const { acceptanceCode } = request;
+    const ctx = createRequestContext(tenantId);
     const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      // Get transfer and lock for update
+      // Get transfer and lock for update - transfer_service owned table
       const transfer = await this.getTransferForUpdate(
         client,
         transferId,
@@ -130,13 +156,15 @@ export class TransferService {
         throw new TransferExpiredError();
       }
 
-      // Transfer ticket ownership
-      await client.query(
-        'UPDATE tickets SET user_id = $1, updated_at = NOW() WHERE id = $2',
-        [transfer.to_user_id, transfer.ticket_id]
+      // REFACTORED: Transfer ticket ownership via ticketServiceClient
+      await ticketServiceClient.transferTicket(
+        transfer.ticket_id,
+        transfer.to_user_id,
+        ctx,
+        `Gift transfer from ${transfer.from_user_id}`
       );
 
-      // Mark transfer as completed
+      // Mark transfer as completed - transfer_service owned table
       await client.query(
         `UPDATE ticket_transfers
          SET status = 'COMPLETED', accepted_at = NOW(), updated_at = NOW()
@@ -144,7 +172,7 @@ export class TransferService {
         [transferId]
       );
 
-      // Create transaction record
+      // Create transaction record - transfer_service owned table
       await this.createTransferTransaction(
         client,
         transfer.ticket_id,
@@ -177,73 +205,7 @@ export class TransferService {
   }
 
   /**
-   * Get ticket with lock for update
-   */
-  private async getTicketForUpdate(
-    client: PoolClient,
-    ticketId: string,
-    userId: string
-  ): Promise<Ticket> {
-    const result = await client.query<Ticket>(
-      'SELECT * FROM tickets WHERE id = $1 AND user_id = $2 FOR UPDATE',
-      [ticketId, userId]
-    );
-
-    if (result.rows.length === 0) {
-      throw new TicketNotFoundError();
-    }
-
-    return result.rows[0];
-  }
-
-  /**
-   * Get ticket type information
-   */
-  private async getTicketType(
-    client: PoolClient,
-    ticketTypeId: string
-  ): Promise<TicketType> {
-    const result = await client.query<TicketType>(
-      'SELECT * FROM ticket_types WHERE id = $1',
-      [ticketTypeId]
-    );
-
-    if (result.rows.length === 0) {
-      throw new Error('Ticket type not found');
-    }
-
-    return result.rows[0];
-  }
-
-  /**
-   * Get or create user by email
-   */
-  private async getOrCreateUser(
-    client: PoolClient,
-    email: string
-  ): Promise<string> {
-    // Try to find existing user
-    let result = await client.query<User>(
-      'SELECT id FROM users WHERE email = $1',
-      [email]
-    );
-
-    if (result.rows.length > 0) {
-      return result.rows[0].id;
-    }
-
-    // Create new user
-    const newUserId = uuidv4();
-    await client.query(
-      'INSERT INTO users (id, email, status) VALUES ($1, $2, $3)',
-      [newUserId, email, 'pending']
-    );
-
-    return newUserId;
-  }
-
-  /**
-   * Get transfer with lock for update
+   * Get transfer with lock for update - transfer_service owned table
    */
   private async getTransferForUpdate(
     client: PoolClient,
@@ -261,11 +223,11 @@ export class TransferService {
       throw new TransferNotFoundError('Invalid transfer or acceptance code');
     }
 
-    return result.rows[0];
+    return result.rows[0]!;
   }
 
   /**
-   * Mark transfer as expired
+   * Mark transfer as expired - transfer_service owned table
    */
   private async expireTransfer(
     client: PoolClient,
@@ -278,7 +240,7 @@ export class TransferService {
   }
 
   /**
-   * Create transfer transaction record
+   * Create transfer transaction record - transfer_service owned table
    */
   private async createTransferTransaction(
     client: PoolClient,
@@ -304,13 +266,26 @@ export class TransferService {
   }
 
   /**
-   * Generate random acceptance code
+   * Generate cryptographically secure acceptance code
+   *
+   * AUDIT FIX SEC-1: Replaced Math.random() with crypto.randomBytes()
+   * - Math.random() is not cryptographically secure and can be predicted
+   * - crypto.randomBytes() uses OS-level entropy for true randomness
    */
   private generateAcceptanceCode(): string {
     const length = parseInt(process.env.ACCEPTANCE_CODE_LENGTH || '8');
-    return Math.random()
-      .toString(36)
-      .substring(2, 2 + length)
-      .toUpperCase();
+    // Use only alphanumeric characters (excluding ambiguous chars like 0, O, l, 1)
+    const charset = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const randomBytes = crypto.randomBytes(length);
+    let code = '';
+
+    for (let i = 0; i < length; i++) {
+      const byte = randomBytes[i];
+      if (byte !== undefined) {
+        code += charset[byte % charset.length];
+      }
+    }
+
+    return code;
   }
 }

@@ -1,0 +1,55 @@
+%% C4 Container Diagram - Event Service Internal Architecture
+
+graph TB
+    subgraph "Event Service Container"
+        subgraph "API Layer"
+            FR[Fastify Router<br/>HTTP request handling]
+            MW[Middleware Stack<br/>Auth, Rate Limit, Validation]
+            RT[Route Handlers<br/>events, pricing, capacity]
+        end
+
+        subgraph "Business Logic"
+            EVS[Event Service<br/>Core event operations]
+            ESM[Event State Machine<br/>State transitions]
+            CXS[Cancellation Service<br/>Refunds and notifications]
+            VCS[Venue Client<br/>External venue calls]
+        end
+
+        subgraph "Data Access"
+            EM[Event Model<br/>PostgreSQL queries]
+            PM[Pricing Model<br/>Price tiers]
+            CM[Capacity Model<br/>Inventory management]
+            SM[Schedule Model<br/>Event schedules]
+        end
+
+        subgraph "Background Jobs"
+            BQ[Bull Queue<br/>Job processing]
+            ETJ[Event Transitions Job<br/>Automatic state changes]
+            RCJ[Reservation Cleanup<br/>Expired reservations]
+        end
+
+        subgraph "Infrastructure"
+            DB[Database Config<br/>Connection pooling, RLS]
+            RDC[Redis Config<br/>Caching, rate limits]
+            MGC[MongoDB Config<br/>Rich content storage]
+            TRC[Tracing<br/>OpenTelemetry]
+            MET[Metrics<br/>Prometheus]
+        end
+    end
+
+    FR --> MW --> RT
+    RT --> EVS
+    RT --> CXS
+    EVS --> ESM
+    EVS --> VCS
+    EVS --> EM
+    EVS --> PM
+    EVS --> CM
+    EVS --> SM
+    BQ --> ETJ
+    BQ --> RCJ
+    ETJ --> ESM
+    EM --> DB
+    PM --> DB
+    CM --> DB
+    VCS --> RDC

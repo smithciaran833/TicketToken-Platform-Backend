@@ -102,16 +102,17 @@ export class OrderModel {
     return result.rows.map((row) => this.mapToOrder(row));
   }
 
+  // MEDIUM: Fixed SQL injection - use parameterized interval instead of string interpolation
   async findExpiringReservations(tenantId: string, minutesFromNow: number, limit = 100): Promise<Order[]> {
     const query = `
       SELECT * FROM orders
       WHERE tenant_id = $1
       AND status = $2
       AND expires_at > NOW()
-      AND expires_at <= NOW() + INTERVAL '${minutesFromNow} minutes'
-      LIMIT $3
+      AND expires_at <= NOW() + ($3 || ' minutes')::INTERVAL
+      LIMIT $4
     `;
-    const result = await this.pool.query(query, [tenantId, OrderStatus.RESERVED, limit]);
+    const result = await this.pool.query(query, [tenantId, OrderStatus.RESERVED, minutesFromNow.toString(), limit]);
     return result.rows.map((row) => this.mapToOrder(row));
   }
 
@@ -120,16 +121,16 @@ export class OrderModel {
       SELECT * FROM orders
       WHERE event_id = $1 AND tenant_id = $2
     `;
-    
+
     const values: any[] = [eventId, tenantId];
-    
+
     if (statuses && statuses.length > 0) {
       query += ` AND status = ANY($3)`;
       values.push(statuses);
     }
-    
+
     query += ` ORDER BY created_at DESC`;
-    
+
     const result = await this.pool.query(query, values);
     return result.rows.map((row) => this.mapToOrder(row));
   }
@@ -141,7 +142,7 @@ export class OrderModel {
       WHERE status = $1
       LIMIT $2
     `;
-    
+
     try {
       const result = await this.pool.query(query, [OrderStatus.RESERVED, limit]);
       return result.rows.map((row) => row.tenant_id);
@@ -218,9 +219,15 @@ export class OrderModel {
     }
   }
 
-  async delete(id: string): Promise<boolean> {
-    const query = 'DELETE FROM orders WHERE id = $1';
-    const result = await this.pool.query(query, [id]);
+  // LOW: Added tenant check to delete operation for proper multi-tenancy
+  async delete(id: string, tenantId: string): Promise<boolean> {
+    const query = 'DELETE FROM orders WHERE id = $1 AND tenant_id = $2';
+    const result = await this.pool.query(query, [id, tenantId]);
+    
+    if ((result.rowCount ?? 0) === 0) {
+      logger.warn('Order not found or tenant mismatch on delete', { id, tenantId });
+    }
+    
     return (result.rowCount ?? 0) > 0;
   }
 

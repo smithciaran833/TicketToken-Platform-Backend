@@ -1,5 +1,4 @@
 import { AlertInstance } from '../types';
-import { QUEUES } from "@tickettoken/shared/src/mq/queues";
 import { logger } from '../utils/logger';
 import { getChannel } from '../config/rabbitmq';
 

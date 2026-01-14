@@ -11,6 +11,7 @@ export class UploadService {
     buffer: Buffer,
     filename: string,
     mimeType: string,
+    tenantId: string,
     userId?: string,
     options?: UploadOptions
   ): Promise<FileRecord> {
@@ -37,7 +38,7 @@ export class UploadService {
       
       logger.info(`Creating file - ID: ${fileId}, Storage Path: ${storageKey}`);
       
-      // Create database record
+      // Create database record with tenantId
       const fileRecord = await fileModel.create({
         id: fileId,
         filename: sanitizedFilename,
@@ -54,17 +55,17 @@ export class UploadService {
         tags: options?.tags,
         status: FileStatus.UPLOADING,
         storagePath: storageKey
-      });
+      }, tenantId);
       
       // Upload to storage
       const storageResult = await storageService.upload(buffer, storageKey);
       logger.info(`File uploaded to storage: ${storageKey}`);
       
       // Update file record with CDN URL
-      await fileModel.updateCdnUrl(fileId, storageResult.publicUrl || '');
+      await fileModel.updateCdnUrl(fileId, tenantId, storageResult.publicUrl || '');
       
       // Get the updated record
-      const updatedRecord = await fileModel.findById(fileId);
+      const updatedRecord = await fileModel.findById(fileId, tenantId);
       
       if (!updatedRecord) {
         logger.warn(`Could not retrieve updated record for ${fileId}`);
@@ -76,14 +77,15 @@ export class UploadService {
       logger.info(`File upload completed: ${fileId}`);
       return updatedRecord;
       
-    } catch (error: any) {
-      logger.error('File upload failed:', error);
+    } catch (error: unknown) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'File upload failed');
       
       if (fileId) {
         try {
-          await fileModel.updateStatus(fileId, FileStatus.FAILED, error.message);
+          await fileModel.updateStatus(fileId, tenantId, FileStatus.FAILED, errorMessage);
         } catch (updateError) {
-          logger.error('Failed to update file status:', updateError);
+          logger.error({ err: updateError instanceof Error ? updateError : new Error(String(updateError)), fileId }, 'Failed to update file status');
         }
       }
       
@@ -91,12 +93,12 @@ export class UploadService {
     }
   }
   
-  async getFile(fileId: string): Promise<FileRecord | null> {
-    return fileModel.findById(fileId);
+  async getFile(fileId: string, tenantId: string): Promise<FileRecord | null> {
+    return fileModel.findById(fileId, tenantId);
   }
   
-  async getFilesByEntity(entityType: string, entityId: string): Promise<FileRecord[]> {
-    return fileModel.findByEntity(entityType, entityId);
+  async getFilesByEntity(entityType: string, entityId: string, tenantId: string): Promise<FileRecord[]> {
+    return fileModel.findByEntity(entityType, entityId, tenantId);
   }
 }
 

@@ -46,7 +46,7 @@ export class ThumbnailGenerator {
       return await pipeline.toBuffer();
       
     } catch (error) {
-      logger.error('Thumbnail generation failed:', error);
+      logger.error({ err: error instanceof Error ? error : new Error(String(error)) }, 'Thumbnail generation failed');
       throw error;
     }
   }

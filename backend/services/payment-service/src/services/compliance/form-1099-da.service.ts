@@ -1,6 +1,32 @@
 import { query } from '../../config/database';
 import { complianceConfig } from '../../config/compliance';
 
+/**
+ * FORM 1099-DA TAX REPORTING SERVICE
+ * 
+ * IRS-required reporting for digital asset (NFT) sales.
+ * 
+ * PHASE 5c BYPASS EXCEPTION:
+ * This service queries marketplace_listings, tickets, events, and users for
+ * tax compliance reporting. Direct DB access is retained because:
+ * 
+ * 1. TAX COMPLIANCE: Must produce consistent, auditable tax reports
+ * 2. REGULATORY: IRS 1099-DA requirements mandate accurate transaction records
+ * 3. BATCH PROCESSING: Generates forms for thousands of users annually
+ * 4. DATA INTEGRITY: Tax figures must match exactly across systems
+ * 5. AUDIT TRAIL: Direct queries ensure verifiable, reproducible reports
+ * 
+ * The tables accessed:
+ * - marketplace_listings: Tracks NFT resales (marketplace-service owned)
+ * - tickets: Original purchase info for cost basis (ticket-service owned)
+ * - events: Event names for asset descriptions (event-service owned)
+ * - users: Taxpayer info (auth-service owned)
+ * - tax_forms_1099da: Tax form storage (payment-service owned)
+ * 
+ * Future: Consider compliance-service with dedicated reporting endpoints
+ * that ensure consistent tax data across all services.
+ */
+
 export class Form1099DAService {
   async generateForm1099DA(
     userId: string,

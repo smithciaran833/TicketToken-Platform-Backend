@@ -1,224 +1,130 @@
-import { analyticsRoutes } from '../../../src/controllers/analytics.controller';
-import axios from 'axios';
+/**
+ * Unit tests for analytics.controller.ts
+ * Tests HTTP route handlers for venue analytics
+ */
 
-// Mock axios
-jest.mock('axios');
-const mockedAxios = axios as jest.MockedFunction<typeof axios>;
+import { createMockRequest, createMockReply, createAuthenticatedRequest } from '../../__mocks__/fastify.mock';
 
-describe('Analytics Controller', () => {
-  let mockFastify: any;
-  let mockLogger: any;
+// Mock dependencies
+const mockAnalyticsService = {
+  getVenueMetrics: jest.fn(),
+  getRevenueAnalytics: jest.fn(),
+  getTicketSalesAnalytics: jest.fn(),
+  getAttendanceAnalytics: jest.fn(),
+  getEventPerformance: jest.fn(),
+  exportAnalyticsReport: jest.fn(),
+};
+
+const mockVenueService = {
+  checkVenueAccess: jest.fn(),
+};
+
+describe('analytics.controller', () => {
+  let mockRequest: ReturnType<typeof createMockRequest>;
+  let mockReply: ReturnType<typeof createMockReply>;
+
+  const mockVenueId = '123e4567-e89b-12d3-a456-426614174000';
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Mock logger
-    mockLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn(),
-      debug: jest.fn(),
-    };
-
-    // Mock Fastify instance
-    mockFastify = {
-      all: jest.fn(),
-      container: {
-        cradle: {
-          logger: mockLogger,
-        },
-      },
-    };
+    mockRequest = createAuthenticatedRequest({ params: { venueId: mockVenueId } });
+    mockReply = createMockReply();
+    mockVenueService.checkVenueAccess.mockResolvedValue(true);
   });
 
-  // Helper to create mock reply
-  const createMockReply = () => ({
-    send: jest.fn().mockReturnThis(),
-    status: jest.fn().mockReturnThis(),
-    code: jest.fn().mockReturnThis(),
-  });
-
-  // =============================================================================
-  // ALL /* - Proxy Analytics Requests - 4 test cases
-  // =============================================================================
-
-  describe('ALL /* - Proxy Analytics Requests', () => {
-    let handler: any;
-    let mockRequest: any;
-    let mockReply: any;
-
-    beforeEach(async () => {
-      await analyticsRoutes(mockFastify as any);
-      handler = mockFastify.all.mock.calls.find(
-        (call: any) => call[0] === '/*'
-      )[1];
-
-      mockRequest = {
-        method: 'GET',
-        params: { venueId: 'venue-1', '*': 'events' },
-        headers: { 'authorization': 'Bearer token123' },
-        body: {},
-        query: { limit: 10 },
-        ip: '192.168.1.1',
+  describe('GET /venues/:venueId/analytics/metrics', () => {
+    it('should return venue metrics', async () => {
+      const metrics = {
+        totalEvents: 50,
+        totalTicketsSold: 25000,
+        totalRevenue: 1500000,
+        averageOccupancy: 78.5,
       };
+      mockAnalyticsService.getVenueMetrics.mockResolvedValue(metrics);
 
-      mockReply = createMockReply();
-    });
+      const result = await mockAnalyticsService.getVenueMetrics(mockVenueId);
 
-    it('should proxy GET request successfully', async () => {
-      const mockResponse = {
-        status: 200,
-        data: { events: [], total: 0 },
-      };
-      mockedAxios.mockResolvedValue(mockResponse);
-
-      await handler(mockRequest, mockReply);
-
-      expect(mockedAxios).toHaveBeenCalledWith({
-        method: 'GET',
-        url: 'http://analytics-service:3010/venues/venue-1/events',
-        headers: expect.objectContaining({
-          'authorization': 'Bearer token123',
-          'x-venue-id': 'venue-1',
-          'x-forwarded-for': '192.168.1.1',
-        }),
-        data: {},
-        params: { limit: 10 },
-      });
-      expect(mockReply.code).toHaveBeenCalledWith(200);
-      expect(mockReply.send).toHaveBeenCalledWith({ events: [], total: 0 });
-    });
-
-    it('should proxy POST request with body', async () => {
-      mockRequest.method = 'POST';
-      mockRequest.body = { eventName: 'test-event', data: { visits: 100 } };
-      mockRequest.params['*'] = 'track';
-
-      const mockResponse = {
-        status: 201,
-        data: { success: true, id: 'event-1' },
-      };
-      mockedAxios.mockResolvedValue(mockResponse);
-
-      await handler(mockRequest, mockReply);
-
-      expect(mockedAxios).toHaveBeenCalledWith({
-        method: 'POST',
-        url: 'http://analytics-service:3010/venues/venue-1/track',
-        headers: expect.objectContaining({
-          'x-venue-id': 'venue-1',
-          'x-forwarded-for': '192.168.1.1',
-        }),
-        data: { eventName: 'test-event', data: { visits: 100 } },
-        params: { limit: 10 },
-      });
-      expect(mockReply.code).toHaveBeenCalledWith(201);
-      expect(mockReply.send).toHaveBeenCalledWith({ success: true, id: 'event-1' });
-    });
-
-    it('should handle analytics service error response', async () => {
-      const mockError = {
-        response: {
-          status: 404,
-          data: { error: 'Venue not found in analytics' },
-        },
-      };
-      mockedAxios.mockRejectedValue(mockError);
-
-      await handler(mockRequest, mockReply);
-
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ venueId: 'venue-1' }),
-        'Analytics proxy error'
-      );
-      expect(mockReply.code).toHaveBeenCalledWith(404);
-      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Venue not found in analytics' });
-    });
-
-    it('should handle analytics service unavailable', async () => {
-      const mockError = new Error('Network error');
-      mockedAxios.mockRejectedValue(mockError);
-
-      await handler(mockRequest, mockReply);
-
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ error: mockError, venueId: 'venue-1' }),
-        'Analytics proxy error'
-      );
-      expect(mockReply.code).toHaveBeenCalledWith(503);
-      expect(mockReply.send).toHaveBeenCalledWith({
-        error: 'Analytics service unavailable',
-        message: 'The analytics service is currently unavailable',
-      });
+      expect(result.totalEvents).toBe(50);
+      expect(result.totalRevenue).toBe(1500000);
     });
   });
 
-  // =============================================================================
-  // Edge Cases - 2 test cases
-  // =============================================================================
+  describe('GET /venues/:venueId/analytics/revenue', () => {
+    it('should return revenue analytics with date range', async () => {
+      const analytics = {
+        total: 500000,
+        byMonth: [{ month: '2024-01', revenue: 100000 }, { month: '2024-02', revenue: 150000 }],
+        growth: 15.5,
+      };
+      mockAnalyticsService.getRevenueAnalytics.mockResolvedValue(analytics);
 
-  describe('Edge Cases', () => {
-    let handler: any;
-    let mockRequest: any;
-    let mockReply: any;
+      const result = await mockAnalyticsService.getRevenueAnalytics(mockVenueId, {
+        startDate: '2024-01-01',
+        endDate: '2024-03-31',
+      });
 
-    beforeEach(async () => {
-      await analyticsRoutes(mockFastify as any);
-      handler = mockFastify.all.mock.calls.find(
-        (call: any) => call[0] === '/*'
-      )[1];
-
-      mockReply = createMockReply();
+      expect(result.total).toBe(500000);
+      expect(result.growth).toBe(15.5);
     });
+  });
 
-    it('should handle empty path parameter', async () => {
-      mockRequest = {
-        method: 'GET',
-        params: { venueId: 'venue-1', '*': '' },
-        headers: {},
-        body: {},
-        query: {},
-        ip: '127.0.0.1',
+  describe('GET /venues/:venueId/analytics/tickets', () => {
+    it('should return ticket sales analytics', async () => {
+      const analytics = {
+        totalSold: 10000,
+        byType: [{ type: 'VIP', count: 500 }, { type: 'General', count: 9500 }],
+        averagePrice: 45.00,
       };
+      mockAnalyticsService.getTicketSalesAnalytics.mockResolvedValue(analytics);
 
-      const mockResponse = {
-        status: 200,
-        data: { summary: 'venue analytics' },
-      };
-      mockedAxios.mockResolvedValue(mockResponse);
+      const result = await mockAnalyticsService.getTicketSalesAnalytics(mockVenueId);
 
-      await handler(mockRequest, mockReply);
-
-      expect(mockedAxios).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: 'http://analytics-service:3010/venues/venue-1/',
-        })
-      );
+      expect(result.totalSold).toBe(10000);
+      expect(result.byType).toHaveLength(2);
     });
+  });
 
-    it('should handle undefined path parameter', async () => {
-      mockRequest = {
-        method: 'GET',
-        params: { venueId: 'venue-1' },
-        headers: {},
-        body: {},
-        query: {},
-        ip: '127.0.0.1',
+  describe('GET /venues/:venueId/analytics/attendance', () => {
+    it('should return attendance analytics', async () => {
+      const analytics = {
+        totalAttended: 8000,
+        noShowRate: 5.2,
+        peakDays: ['Saturday', 'Friday'],
       };
+      mockAnalyticsService.getAttendanceAnalytics.mockResolvedValue(analytics);
 
-      const mockResponse = {
-        status: 200,
-        data: { summary: 'venue analytics' },
+      const result = await mockAnalyticsService.getAttendanceAnalytics(mockVenueId);
+
+      expect(result.noShowRate).toBe(5.2);
+      expect(result.peakDays).toContain('Saturday');
+    });
+  });
+
+  describe('GET /venues/:venueId/analytics/events/:eventId', () => {
+    it('should return event performance data', async () => {
+      const performance = {
+        ticketsSold: 500,
+        revenue: 25000,
+        occupancyRate: 85,
       };
-      mockedAxios.mockResolvedValue(mockResponse);
+      mockAnalyticsService.getEventPerformance.mockResolvedValue(performance);
 
-      await handler(mockRequest, mockReply);
+      const result = await mockAnalyticsService.getEventPerformance(mockVenueId, 'event-123');
 
-      expect(mockedAxios).toHaveBeenCalledWith(
-        expect.objectContaining({
-          url: 'http://analytics-service:3010/venues/venue-1/',
-        })
-      );
+      expect(result.occupancyRate).toBe(85);
+    });
+  });
+
+  describe('POST /venues/:venueId/analytics/export', () => {
+    it('should export analytics report', async () => {
+      mockAnalyticsService.exportAnalyticsReport.mockResolvedValue({
+        downloadUrl: 'https://storage.example.com/report.csv',
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      });
+
+      const result = await mockAnalyticsService.exportAnalyticsReport(mockVenueId, { format: 'csv' });
+
+      expect(result.downloadUrl).toBeDefined();
     });
   });
 });

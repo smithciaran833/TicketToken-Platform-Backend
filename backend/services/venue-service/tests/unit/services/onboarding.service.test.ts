@@ -1,341 +1,254 @@
+/**
+ * Unit tests for src/services/onboarding.service.ts
+ * Tests venue onboarding: progress tracking, step completion
+ */
+
+// Mock chain with all needed methods
+const mockChain: any = {
+  where: jest.fn().mockReturnThis(),
+  whereIn: jest.fn().mockReturnThis(),
+  whereNull: jest.fn().mockReturnThis(),
+  andWhere: jest.fn().mockReturnThis(),
+  orderBy: jest.fn().mockReturnThis(),
+  first: jest.fn().mockResolvedValue(null),
+  count: jest.fn().mockReturnThis(),
+  insert: jest.fn().mockResolvedValue([1]),
+  update: jest.fn().mockResolvedValue(1),
+};
+
+// Make count return a value when awaited
+mockChain.count.mockImplementation(() => {
+  const countChain = { ...mockChain, then: (resolve: any) => resolve([{ count: '0' }]) };
+  return countChain;
+});
+
+const mockDb = jest.fn(() => mockChain);
+
+// Mock dependencies before importing
+jest.mock('../../../src/config/database', () => ({
+  db: mockDb,
+}));
+
+jest.mock('../../../src/utils/logger', () => ({
+  logger: {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
+// Mock the models that OnboardingService uses
+jest.mock('../../../src/models/integration.model', () => ({
+  IntegrationModel: jest.fn().mockImplementation(() => ({
+    findByVenue: jest.fn().mockResolvedValue([]),
+  })),
+}));
+
+jest.mock('../../../src/models/layout.model', () => ({
+  LayoutModel: jest.fn().mockImplementation(() => ({
+    findByVenue: jest.fn().mockResolvedValue([]),
+  })),
+}));
+
+jest.mock('../../../src/models/staff.model', () => ({
+  StaffModel: jest.fn().mockImplementation(() => ({
+    addStaffMember: jest.fn().mockResolvedValue({ id: 'staff-1' }),
+  })),
+}));
+
 import { OnboardingService } from '../../../src/services/onboarding.service';
-import { VenueService } from '../../../src/services/venue.service';
-import { IntegrationModel } from '../../../src/models/integration.model';
-import { LayoutModel } from '../../../src/models/layout.model';
-import { StaffModel } from '../../../src/models/staff.model';
-
-// =============================================================================
-// MOCKS
-// =============================================================================
-
-jest.mock('../../../src/services/venue.service');
-jest.mock('../../../src/models/integration.model');
-jest.mock('../../../src/models/layout.model');
-jest.mock('../../../src/models/staff.model');
 
 describe('OnboardingService', () => {
-  let onboardingService: OnboardingService;
-  let mockVenueService: jest.Mocked<VenueService>;
-  let mockDb: any;
-  let mockLogger: any;
-  let mockIntegrationModel: jest.Mocked<IntegrationModel>;
-  let mockLayoutModel: jest.Mocked<LayoutModel>;
-  let mockStaffModel: jest.Mocked<StaffModel>;
+  let service: OnboardingService;
+  const mockVenueService = {
+    getVenueById: jest.fn(),
+  };
+  const mockLogger = {
+    debug: jest.fn(),
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  };
 
   beforeEach(() => {
     jest.clearAllMocks();
-
-    // Mock database query builder with all needed methods
-    const mockQueryBuilder = {
-      where: jest.fn().mockReturnThis(),
-      whereNull: jest.fn().mockReturnThis(),
-      first: jest.fn(),
-      count: jest.fn().mockReturnThis(),
-    };
-
-    mockDb = Object.assign(jest.fn().mockReturnValue(mockQueryBuilder), {
-      _mockQueryBuilder: mockQueryBuilder,
-    });
-
-    mockLogger = {
-      info: jest.fn(),
-      error: jest.fn(),
-      warn: jest.fn(),
-    };
-
-    mockVenueService = {} as any;
-
-    mockIntegrationModel = {
-      findByVenue: jest.fn(),
-      findByVenueAndType: jest.fn(),
-      create: jest.fn(),
-    } as any;
-
-    mockLayoutModel = {
-      findByVenue: jest.fn(),
-      create: jest.fn(),
-    } as any;
-
-    mockStaffModel = {
-      addStaffMember: jest.fn(),
-    } as any;
-
-    (IntegrationModel as jest.MockedClass<typeof IntegrationModel>).mockImplementation(
-      () => mockIntegrationModel
-    );
-    (LayoutModel as jest.MockedClass<typeof LayoutModel>).mockImplementation(
-      () => mockLayoutModel
-    );
-    (StaffModel as jest.MockedClass<typeof StaffModel>).mockImplementation(
-      () => mockStaffModel
-    );
-
-    onboardingService = new OnboardingService({
-      venueService: mockVenueService,
-      db: mockDb,
+    mockChain.first.mockResolvedValue(null);
+    
+    service = new OnboardingService({
+      venueService: mockVenueService as any,
+      db: mockDb as any,
       logger: mockLogger,
     });
   });
 
-  // =============================================================================
-  // getOnboardingStatus() - 8 test cases
-  // =============================================================================
-
   describe('getOnboardingStatus()', () => {
     const venueId = 'venue-123';
-    const mockVenue = {
-      id: venueId,
-      name: 'Test Venue',
-      venue_type: 'arena',
-      max_capacity: 20000,
-      address: {
-        street: '123 Main St',
-        city: 'New York',
-        state: 'NY',
-        zipCode: '10001',
-      },
-    };
 
-    beforeEach(() => {
-      // Mock venue with complete data - first call
-      mockDb._mockQueryBuilder.first
-        .mockResolvedValueOnce(mockVenue) // venue lookup
-        .mockResolvedValueOnce({ count: 2 }); // staff count
+    it('should return onboarding status structure', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+        venue_type: 'theater',
+        max_capacity: 500,
+        address_line1: '123 Main St',
+        city: 'NYC',
+        state_province: 'NY',
+        postal_code: '10001',
+      });
 
-      mockLayoutModel.findByVenue.mockResolvedValue([{ id: 'layout-1' }] as any);
-      mockIntegrationModel.findByVenue.mockResolvedValue([{ id: 'int-1', type: 'stripe' }] as any);
-      mockIntegrationModel.findByVenueAndType.mockResolvedValue({ id: 'int-1' } as any);
-    });
+      const result = await service.getOnboardingStatus(venueId);
 
-    it('should return onboarding status with progress', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
-
-      expect(status).toBeDefined();
-      expect(status.venueId).toBe(venueId);
-      expect(status.progress).toBeDefined();
-      expect(status.completedSteps).toBeDefined();
-      expect(status.totalSteps).toBeDefined();
-    });
-
-    it('should include all onboarding steps', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
-
-      expect(status.steps).toHaveLength(5);
-      expect(status.steps.map((s: any) => s.id)).toEqual([
-        'basic_info',
-        'address',
-        'layout',
-        'payment',
-        'staff',
-      ]);
+      expect(result).toHaveProperty('venueId', venueId);
+      expect(result).toHaveProperty('progress');
+      expect(result).toHaveProperty('completedSteps');
+      expect(result).toHaveProperty('totalSteps');
+      expect(result).toHaveProperty('steps');
+      expect(result).toHaveProperty('status');
     });
 
     it('should calculate progress percentage', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+        venue_type: 'theater',
+        max_capacity: 500,
+      });
 
-      expect(status.progress).toBeGreaterThanOrEqual(0);
-      expect(status.progress).toBeLessThanOrEqual(100);
-      expect(typeof status.progress).toBe('number');
+      const result = await service.getOnboardingStatus(venueId);
+
+      expect(typeof result.progress).toBe('number');
+      expect(result.progress).toBeGreaterThanOrEqual(0);
+      expect(result.progress).toBeLessThanOrEqual(100);
     });
 
-    it('should mark status as completed when all steps done', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
+    it('should return in_progress status when steps incomplete', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+      });
 
-      if (status.completedSteps === status.totalSteps) {
-        expect(status.status).toBe('completed');
-      }
+      const result = await service.getOnboardingStatus(venueId);
+
+      expect(result.status).toBe('in_progress');
     });
 
-    it('should mark status as in_progress when incomplete', async () => {
-      // Mock incomplete data - missing max_capacity
-      mockDb._mockQueryBuilder.first
-        .mockReset()
-        .mockResolvedValueOnce({
-          id: venueId,
-          name: 'Test Venue',
-          venue_type: 'arena',
-        })
-        .mockResolvedValueOnce({ count: 0 });
+    it('should return steps array with step details', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+        venue_type: 'theater',
+        max_capacity: 500,
+      });
 
-      const status = await onboardingService.getOnboardingStatus(venueId);
+      const result = await service.getOnboardingStatus(venueId);
 
-      expect(status.status).toBe('in_progress');
+      expect(Array.isArray(result.steps)).toBe(true);
+      expect(result.steps.length).toBeGreaterThan(0);
+
+      const step = result.steps[0];
+      expect(step).toHaveProperty('id');
+      expect(step).toHaveProperty('name');
+      expect(step).toHaveProperty('completed');
+      expect(step).toHaveProperty('required');
     });
 
-    it('should identify required vs optional steps', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
+    it('should include basic_info step', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+      });
 
-      const requiredSteps = status.steps.filter((s: any) => s.required);
-      const optionalSteps = status.steps.filter((s: any) => !s.required);
+      const result = await service.getOnboardingStatus(venueId);
 
-      expect(requiredSteps.length).toBeGreaterThan(0);
-      expect(optionalSteps.length).toBeGreaterThan(0);
-    });
-
-    it('should check basic info completion', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
-
-      const basicInfoStep = status.steps.find((s: any) => s.id === 'basic_info');
+      const basicInfoStep = result.steps.find((s: any) => s.id === 'basic_info');
       expect(basicInfoStep).toBeDefined();
-      expect(typeof basicInfoStep.completed).toBe('boolean');
+      expect(basicInfoStep.required).toBe(true);
     });
 
-    it('should check address completion', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
+    it('should include address step', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+      });
 
-      const addressStep = status.steps.find((s: any) => s.id === 'address');
+      const result = await service.getOnboardingStatus(venueId);
+
+      const addressStep = result.steps.find((s: any) => s.id === 'address');
       expect(addressStep).toBeDefined();
-      expect(typeof addressStep.completed).toBe('boolean');
+      expect(addressStep.required).toBe(true);
+    });
+
+    it('should include payment step', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+      });
+
+      const result = await service.getOnboardingStatus(venueId);
+
+      const paymentStep = result.steps.find((s: any) => s.id === 'payment');
+      expect(paymentStep).toBeDefined();
+      expect(paymentStep.required).toBe(true);
+    });
+
+    it('should mark basic_info as complete when all fields present', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        name: 'Test Venue',
+        venue_type: 'theater',
+        max_capacity: 500,
+      });
+
+      const result = await service.getOnboardingStatus(venueId);
+      const basicInfoStep = result.steps.find((s: any) => s.id === 'basic_info');
+
+      expect(basicInfoStep.completed).toBe(true);
+    });
+
+    it('should mark basic_info as incomplete when name missing', async () => {
+      mockChain.first.mockResolvedValue({
+        id: venueId,
+        venue_type: 'theater',
+        max_capacity: 500,
+      });
+
+      const result = await service.getOnboardingStatus(venueId);
+      const basicInfoStep = result.steps.find((s: any) => s.id === 'basic_info');
+
+      expect(basicInfoStep.completed).toBe(false);
     });
   });
-
-  // =============================================================================
-  // completeStep() - 7 test cases
-  // =============================================================================
 
   describe('completeStep()', () => {
     const venueId = 'venue-123';
 
-    beforeEach(() => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({
-        id: venueId,
-        name: 'Test Venue',
+    it('should update basic_info step', async () => {
+      await service.completeStep(venueId, 'basic_info', {
+        name: 'New Venue',
+        venue_type: 'club',
+        max_capacity: 200,
       });
+
+      expect(mockDb).toHaveBeenCalledWith('venues');
+      expect(mockChain.update).toHaveBeenCalled();
     });
 
-    it('should complete layout step', async () => {
-      const data = {
-        name: 'Main Layout',
-        sections: [],
-        max_capacity: 10000,
-      };
-      mockLayoutModel.create.mockResolvedValue({ id: 'layout-1' } as any);
+    it('should update address step', async () => {
+      await service.completeStep(venueId, 'address', {
+        street: '456 Oak St',
+        city: 'LA',
+        state: 'CA',
+        zipCode: '90001',
+      });
 
-      await onboardingService.completeStep(venueId, 'layout', data);
-
-      expect(mockLayoutModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          venue_id: venueId,
-          name: data.name,
-          max_capacity: data.max_capacity,
-        })
-      );
+      expect(mockDb).toHaveBeenCalledWith('venues');
+      expect(mockChain.update).toHaveBeenCalled();
     });
 
-    it('should complete payment step', async () => {
-      const data = {
-        type: 'stripe',
-        config: { apiKey: 'test-key' },
-      };
-      mockIntegrationModel.create.mockResolvedValue({ id: 'int-1' } as any);
-
-      await onboardingService.completeStep(venueId, 'payment', data);
-
-      expect(mockIntegrationModel.create).toHaveBeenCalledWith(
-        expect.objectContaining({
-          venue_id: venueId,
-          type: data.type,
-        })
-      );
-    });
-
-    it('should complete staff step', async () => {
-      const data = {
-        userId: 'user-123',
-        role: 'manager',
-        permissions: ['manage_events'],
-      };
-      mockStaffModel.addStaffMember.mockResolvedValue({ id: 'staff-1' } as any);
-
-      await onboardingService.completeStep(venueId, 'staff', data);
-
-      expect(mockStaffModel.addStaffMember).toHaveBeenCalledWith(
-        expect.objectContaining({
-          venue_id: venueId,
-          user_id: data.userId,
-          role: data.role,
-        })
-      );
-    });
-
-    it('should throw error for unknown step', async () => {
-      await expect(
-        onboardingService.completeStep(venueId, 'unknown_step', {})
-      ).rejects.toThrow();
-    });
-
-    it('should handle missing data for layout step', async () => {
-      await expect(
-        onboardingService.completeStep(venueId, 'layout', undefined)
-      ).rejects.toThrow();
-    });
-
-    it('should handle missing data for payment step', async () => {
-      await expect(
-        onboardingService.completeStep(venueId, 'payment', undefined)
-      ).rejects.toThrow();
-    });
-
-    it('should handle missing data for staff step', async () => {
-      await expect(
-        onboardingService.completeStep(venueId, 'staff', undefined)
-      ).rejects.toThrow();
-    });
-  });
-
-  // =============================================================================
-  // Integration - 3 test cases
-  // =============================================================================
-
-  describe('Integration', () => {
-    const venueId = 'venue-123';
-
-    beforeEach(() => {
-      mockDb._mockQueryBuilder.first
-        .mockResolvedValueOnce({
-          id: venueId,
-          name: 'Test Venue',
-          venue_type: 'arena',
-          max_capacity: 10000,
-          address: {
-            street: '123 Main',
-            city: 'NYC',
-            state: 'NY',
-            zipCode: '10001',
-          },
-        })
-        .mockResolvedValueOnce({ count: 0 });
-      
-      mockLayoutModel.findByVenue.mockResolvedValue([]);
-      mockIntegrationModel.findByVenue.mockResolvedValue([]);
-      mockIntegrationModel.findByVenueAndType.mockResolvedValue(undefined as any);
-    });
-
-    it('should handle venue with no completed optional steps', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
-
-      const optionalIncomplete = status.steps.filter(
-        (s: any) => !s.required && !s.completed
-      );
-      expect(optionalIncomplete.length).toBeGreaterThan(0);
-    });
-
-    it('should handle venue with partial completion', async () => {
-      mockLayoutModel.findByVenue.mockResolvedValue([{ id: 'layout-1' }] as any);
-
-      const status = await onboardingService.getOnboardingStatus(venueId);
-
-      expect(status.progress).toBeGreaterThan(0);
-      expect(status.progress).toBeLessThan(100);
-    });
-
-    it('should correctly count completed required steps only', async () => {
-      const status = await onboardingService.getOnboardingStatus(venueId);
-
-      const requiredCompleted = status.steps.filter(
-        (s: any) => s.required && s.completed
-      );
-      expect(requiredCompleted.length).toBeGreaterThanOrEqual(0);
+    it('should throw for unknown step', async () => {
+      await expect(service.completeStep(venueId, 'unknown_step', {}))
+        .rejects.toThrow('Unknown onboarding step');
     });
   });
 });

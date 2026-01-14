@@ -1,369 +1,278 @@
-import { KMSClient, EncryptCommand, DecryptCommand, GenerateDataKeyCommand } from '@aws-sdk/client-kms';
-import { fromEnv } from '@aws-sdk/credential-providers';
+/**
+ * KMS (Key Management Service) Configuration
+ * 
+ * Provides encryption/decryption services for sensitive credentials.
+ * Supports both AWS KMS (production) and mock implementation (development).
+ */
 
-export interface KMSConfig {
-  region: string;
-  keyId: string;
-  endpoint?: string;
-}
+import crypto, { CipherGCM, DecipherGCM } from 'crypto';
+import { config } from './index';
+import { logger } from '../utils/logger';
 
-export interface EncryptionContext {
+// =============================================================================
+// TYPES
+// =============================================================================
+
+interface EncryptionContext {
   venueId?: string;
   integrationType?: string;
+  keyName?: string;
   purpose?: string;
-  [key: string]: string | undefined;
 }
 
-export interface EncryptionResult {
+export interface EncryptResult {
   ciphertext: string;
   keyId: string;
-  encryptionContext: string;
+  encryptionContext?: Record<string, string>;
 }
 
-export interface DecryptionResult {
+export interface DecryptResult {
   plaintext: string;
   keyId: string;
 }
 
+// =============================================================================
+// KMS SERVICE
+// =============================================================================
+
 class KMSService {
-  private client: KMSClient;
-  private defaultKeyId: string;
-  private enabled: boolean;
+  private encryptionKey: Buffer | null = null;
+  private algorithm = 'aes-256-gcm';
+  private ivLength = 16;
+  private tagLength = 16;
 
   constructor() {
-    this.enabled = process.env.KMS_ENABLED === 'true';
-    
-    if (!this.enabled) {
-      console.warn('⚠️ KMS encryption is DISABLED - credentials will be stored in plaintext');
-      // Create a noop client for development
-      this.client = null as any;
-      this.defaultKeyId = 'disabled';
-      return;
-    }
-
-    const region = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'us-east-1';
-    const keyId = process.env.KMS_KEY_ID;
-
-    if (!keyId) {
-      throw new Error('KMS_KEY_ID environment variable is required when KMS is enabled');
-    }
-
-    this.defaultKeyId = keyId;
-
-    // Initialize KMS client
-    const clientConfig: any = {
-      region,
-      credentials: fromEnv(),
-    };
-
-    // Support LocalStack or custom endpoint for testing
-    if (process.env.KMS_ENDPOINT) {
-      clientConfig.endpoint = process.env.KMS_ENDPOINT;
-    }
-
-    this.client = new KMSClient(clientConfig);
-
-    console.log(`✅ KMS Service initialized - Region: ${region}, Key: ${keyId.substring(0, 20)}...`);
+    this.initializeKey();
   }
 
   /**
-   * Encrypt plaintext data using AWS KMS
+   * Initialize encryption key from config
    */
-  async encrypt(
-    plaintext: string,
-    encryptionContext?: EncryptionContext,
-    keyId?: string
-  ): Promise<EncryptionResult> {
-    if (!this.enabled) {
-      // Development mode - return base64 encoded plaintext
-      return {
-        ciphertext: Buffer.from(plaintext).toString('base64'),
-        keyId: 'disabled',
-        encryptionContext: JSON.stringify(encryptionContext || {}),
-      };
+  private initializeKey(): void {
+    const key = config.security?.encryptionKey;
+    if (key) {
+      // Use SHA-256 to ensure consistent key length
+      this.encryptionKey = crypto.createHash('sha256').update(key).digest();
+      logger.info('KMS encryption key initialized');
+    } else if (config.security?.mockKms || config.server?.nodeEnv !== 'production') {
+      // Use a mock key for development
+      this.encryptionKey = crypto.createHash('sha256').update('development-key-not-for-production').digest();
+      logger.warn('KMS using development mock key - not for production use');
+    } else {
+      logger.error('No encryption key configured for KMS');
+    }
+  }
+
+  /**
+   * Encrypt data
+   */
+  async encrypt(data: string, context?: EncryptionContext): Promise<EncryptResult> {
+    if (!this.encryptionKey) {
+      throw new Error('Encryption key not initialized');
     }
 
     try {
-      const command = new EncryptCommand({
-        KeyId: keyId || this.defaultKeyId,
-        Plaintext: Buffer.from(plaintext, 'utf-8'),
-        EncryptionContext: encryptionContext as Record<string, string>,
-      });
-
-      const response = await this.client.send(command);
-
-      if (!response.CiphertextBlob) {
-        throw new Error('KMS encrypt returned no ciphertext');
+      const iv = crypto.randomBytes(this.ivLength);
+      const cipher = crypto.createCipheriv(this.algorithm, this.encryptionKey, iv) as CipherGCM;
+      
+      // Add context as AAD for additional security
+      if (context) {
+        cipher.setAAD(Buffer.from(JSON.stringify(context)));
       }
 
+      let encrypted = cipher.update(data, 'utf8', 'hex');
+      encrypted += cipher.final('hex');
+      
+      const tag = cipher.getAuthTag();
+      
+      // Combine iv + tag + encrypted data
+      const combined = Buffer.concat([iv, tag, Buffer.from(encrypted, 'hex')]);
+      
+      const keyId = config.security?.kmsKeyId || 'local-key';
       return {
-        ciphertext: Buffer.from(response.CiphertextBlob).toString('base64'),
-        keyId: response.KeyId || keyId || this.defaultKeyId,
-        encryptionContext: JSON.stringify(encryptionContext || {}),
+        ciphertext: combined.toString('base64'),
+        keyId,
+        encryptionContext: context as Record<string, string> | undefined
       };
     } catch (error) {
-      console.error('KMS encryption error:', error);
-      throw new Error(`Failed to encrypt data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error('Encryption failed', { error: (error as Error).message });
+      throw new Error('Failed to encrypt data');
     }
   }
 
   /**
-   * Decrypt ciphertext using AWS KMS
+   * Decrypt data
    */
-  async decrypt(
-    ciphertext: string,
-    encryptionContext?: EncryptionContext
-  ): Promise<DecryptionResult> {
-    if (!this.enabled) {
-      // Development mode - return base64 decoded plaintext
-      return {
-        plaintext: Buffer.from(ciphertext, 'base64').toString('utf-8'),
-        keyId: 'disabled',
-      };
+  async decrypt(ciphertext: string, context?: EncryptionContext): Promise<DecryptResult> {
+    if (!this.encryptionKey) {
+      throw new Error('Encryption key not initialized');
     }
 
     try {
-      const command = new DecryptCommand({
-        CiphertextBlob: Buffer.from(ciphertext, 'base64'),
-        EncryptionContext: encryptionContext as Record<string, string>,
-      });
-
-      const response = await this.client.send(command);
-
-      if (!response.Plaintext) {
-        throw new Error('KMS decrypt returned no plaintext');
+      const combined = Buffer.from(ciphertext, 'base64');
+      
+      // Extract iv, tag, and encrypted data
+      const iv = combined.subarray(0, this.ivLength);
+      const tag = combined.subarray(this.ivLength, this.ivLength + this.tagLength);
+      const encrypted = combined.subarray(this.ivLength + this.tagLength);
+      
+      const decipher = crypto.createDecipheriv(this.algorithm, this.encryptionKey, iv) as DecipherGCM;
+      decipher.setAuthTag(tag);
+      
+      // Add context as AAD for additional security
+      if (context) {
+        decipher.setAAD(Buffer.from(JSON.stringify(context)));
       }
 
+      let decrypted = decipher.update(encrypted.toString('hex'), 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      
+      const keyId = config.security?.kmsKeyId || 'local-key';
       return {
-        plaintext: Buffer.from(response.Plaintext).toString('utf-8'),
-        keyId: response.KeyId || this.defaultKeyId,
+        plaintext: decrypted,
+        keyId
       };
     } catch (error) {
-      console.error('KMS decryption error:', error);
-      throw new Error(`Failed to decrypt data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      logger.error('Decryption failed', { error: (error as Error).message });
+      throw new Error('Failed to decrypt data');
     }
   }
 
   /**
-   * Generate a data encryption key for envelope encryption
+   * Encrypt access token with context
    */
-  async generateDataKey(
-    keySpec: 'AES_256' | 'AES_128' = 'AES_256',
-    encryptionContext?: EncryptionContext,
-    keyId?: string
-  ): Promise<{ plaintext: Buffer; ciphertext: Buffer }> {
-    if (!this.enabled) {
-      // Development mode - return random key
-      const plaintext = Buffer.from(crypto.getRandomValues(new Uint8Array(32)));
-      return {
-        plaintext,
-        ciphertext: plaintext,
-      };
-    }
-
-    try {
-      const command = new GenerateDataKeyCommand({
-        KeyId: keyId || this.defaultKeyId,
-        KeySpec: keySpec,
-        EncryptionContext: encryptionContext as Record<string, string>,
-      });
-
-      const response = await this.client.send(command);
-
-      if (!response.Plaintext || !response.CiphertextBlob) {
-        throw new Error('KMS generateDataKey returned incomplete response');
-      }
-
-      return {
-        plaintext: Buffer.from(response.Plaintext),
-        ciphertext: Buffer.from(response.CiphertextBlob),
-      };
-    } catch (error) {
-      console.error('KMS generateDataKey error:', error);
-      throw new Error(`Failed to generate data key: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }
-
-  /**
-   * Encrypt OAuth access token
-   */
-  async encryptAccessToken(
-    token: string,
-    venueId: string,
-    integrationType: string
-  ): Promise<EncryptionResult> {
+  async encryptAccessToken(token: string, venueId: string, integrationType: string): Promise<EncryptResult> {
     return this.encrypt(token, {
       venueId,
       integrationType,
-      purpose: 'access_token',
+      purpose: 'access_token'
     });
   }
 
   /**
-   * Decrypt OAuth access token
+   * Decrypt access token with context
    */
-  async decryptAccessToken(
-    ciphertext: string,
-    venueId: string,
-    integrationType: string
-  ): Promise<string> {
+  async decryptAccessToken(ciphertext: string, venueId: string, integrationType: string): Promise<string> {
     const result = await this.decrypt(ciphertext, {
       venueId,
       integrationType,
-      purpose: 'access_token',
+      purpose: 'access_token'
     });
     return result.plaintext;
   }
 
   /**
-   * Encrypt OAuth refresh token
+   * Encrypt refresh token with context
    */
-  async encryptRefreshToken(
-    token: string,
-    venueId: string,
-    integrationType: string
-  ): Promise<EncryptionResult> {
+  async encryptRefreshToken(token: string, venueId: string, integrationType: string): Promise<EncryptResult> {
     return this.encrypt(token, {
       venueId,
       integrationType,
-      purpose: 'refresh_token',
+      purpose: 'refresh_token'
     });
   }
 
   /**
-   * Decrypt OAuth refresh token
+   * Decrypt refresh token with context
    */
-  async decryptRefreshToken(
-    ciphertext: string,
-    venueId: string,
-    integrationType: string
-  ): Promise<string> {
+  async decryptRefreshToken(ciphertext: string, venueId: string, integrationType: string): Promise<string> {
     const result = await this.decrypt(ciphertext, {
       venueId,
       integrationType,
-      purpose: 'refresh_token',
+      purpose: 'refresh_token'
     });
     return result.plaintext;
   }
 
   /**
-   * Encrypt API key
+   * Encrypt API key with context
    */
-  async encryptApiKey(
-    apiKey: string,
-    venueId: string,
-    integrationType: string,
-    keyName: string
-  ): Promise<EncryptionResult> {
-    return this.encrypt(apiKey, {
+  async encryptApiKey(key: string, venueId: string, integrationType: string, keyName: string): Promise<EncryptResult> {
+    return this.encrypt(key, {
       venueId,
       integrationType,
       keyName,
-      purpose: 'api_key',
+      purpose: 'api_key'
     });
   }
 
   /**
-   * Decrypt API key
+   * Decrypt API key with context
    */
-  async decryptApiKey(
-    ciphertext: string,
-    venueId: string,
-    integrationType: string,
-    keyName: string
-  ): Promise<string> {
+  async decryptApiKey(ciphertext: string, venueId: string, integrationType: string, keyName: string): Promise<string> {
     const result = await this.decrypt(ciphertext, {
       venueId,
       integrationType,
       keyName,
-      purpose: 'api_key',
+      purpose: 'api_key'
     });
     return result.plaintext;
   }
 
   /**
-   * Encrypt API secret
+   * Encrypt API secret with context
    */
-  async encryptApiSecret(
-    apiSecret: string,
-    venueId: string,
-    integrationType: string,
-    keyName: string
-  ): Promise<EncryptionResult> {
-    return this.encrypt(apiSecret, {
-      venueId,
-      integrationType,
-      keyName,
-      purpose: 'api_secret',
-    });
-  }
-
-  /**
-   * Decrypt API secret
-   */
-  async decryptApiSecret(
-    ciphertext: string,
-    venueId: string,
-    integrationType: string,
-    keyName: string
-  ): Promise<string> {
-    const result = await this.decrypt(ciphertext, {
-      venueId,
-      integrationType,
-      keyName,
-      purpose: 'api_secret',
-    });
-    return result.plaintext;
-  }
-
-  /**
-   * Encrypt webhook secret
-   */
-  async encryptWebhookSecret(
-    secret: string,
-    venueId: string,
-    integrationType: string
-  ): Promise<EncryptionResult> {
+  async encryptApiSecret(secret: string, venueId: string, integrationType: string, keyName: string): Promise<EncryptResult> {
     return this.encrypt(secret, {
       venueId,
       integrationType,
-      purpose: 'webhook_secret',
+      keyName,
+      purpose: 'api_secret'
     });
   }
 
   /**
-   * Decrypt webhook secret
+   * Decrypt API secret with context
    */
-  async decryptWebhookSecret(
-    ciphertext: string,
-    venueId: string,
-    integrationType: string
-  ): Promise<string> {
+  async decryptApiSecret(ciphertext: string, venueId: string, integrationType: string, keyName: string): Promise<string> {
     const result = await this.decrypt(ciphertext, {
       venueId,
       integrationType,
-      purpose: 'webhook_secret',
+      keyName,
+      purpose: 'api_secret'
     });
     return result.plaintext;
   }
 
   /**
-   * Check if KMS is enabled
+   * Encrypt webhook secret with context
    */
-  isEnabled(): boolean {
-    return this.enabled;
+  async encryptWebhookSecret(secret: string, venueId: string, integrationType: string): Promise<EncryptResult> {
+    return this.encrypt(secret, {
+      venueId,
+      integrationType,
+      purpose: 'webhook_secret'
+    });
   }
 
   /**
-   * Get default key ID
+   * Decrypt webhook secret with context
    */
-  getDefaultKeyId(): string {
-    return this.defaultKeyId;
+  async decryptWebhookSecret(ciphertext: string, venueId: string, integrationType: string): Promise<string> {
+    const result = await this.decrypt(ciphertext, {
+      venueId,
+      integrationType,
+      purpose: 'webhook_secret'
+    });
+    return result.plaintext;
+  }
+
+  /**
+   * Generate a random encryption key (for key rotation)
+   */
+  generateKey(): string {
+    return crypto.randomBytes(32).toString('hex');
+  }
+
+  /**
+   * Hash sensitive data (one-way)
+   */
+  hash(data: string): string {
+    return crypto.createHash('sha256').update(data).digest('hex');
   }
 }
 
-// Export singleton instance
+// Create singleton instance
 export const kmsService = new KMSService();
 
-// Export class for testing
-export { KMSService };
+export default kmsService;

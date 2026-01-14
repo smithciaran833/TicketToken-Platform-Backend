@@ -1,11 +1,13 @@
 import axios, { AxiosInstance } from 'axios';
 import FormData from 'form-data';
+import { Counter, Histogram } from 'prom-client';
 import logger from '../utils/logger';
 
 export interface IPFSUploadResult {
   ipfsHash: string;
   ipfsUrl: string;
   pinataUrl?: string;
+  provider: string;
 }
 
 export interface IPFSMetadata {
@@ -26,6 +28,33 @@ export interface IPFSMetadata {
   };
 }
 
+// =============================================================================
+// METRICS
+// =============================================================================
+
+const ipfsUploadCounter = new Counter({
+  name: 'minting_ipfs_uploads_total',
+  help: 'Total IPFS uploads',
+  labelNames: ['provider', 'type', 'status']
+});
+
+const ipfsUploadDuration = new Histogram({
+  name: 'minting_ipfs_upload_duration_seconds',
+  help: 'IPFS upload duration in seconds',
+  labelNames: ['provider', 'type'],
+  buckets: [0.5, 1, 2, 5, 10, 30, 60]
+});
+
+const ipfsFailoverCounter = new Counter({
+  name: 'minting_ipfs_failover_total',
+  help: 'Total IPFS failovers to backup provider',
+  labelNames: ['from_provider', 'to_provider', 'reason']
+});
+
+// =============================================================================
+// IPFS SERVICE INTERFACE
+// =============================================================================
+
 /**
  * IPFS Service Interface
  */
@@ -33,7 +62,12 @@ export interface IPFSService {
   uploadJSON(metadata: IPFSMetadata): Promise<IPFSUploadResult>;
   uploadFile(file: Buffer, filename: string): Promise<IPFSUploadResult>;
   getGatewayUrl(ipfsHash: string): string;
+  getName(): string;
 }
+
+// =============================================================================
+// PINATA SERVICE
+// =============================================================================
 
 /**
  * Pinata IPFS Service Implementation
@@ -44,16 +78,19 @@ class PinataService implements IPFSService {
   private jwt: string | null;
   private client: AxiosInstance;
   private gateway: string;
+  private timeout: number;
 
   constructor() {
     this.apiKey = process.env.PINATA_API_KEY || '';
     this.secretApiKey = process.env.PINATA_SECRET_API_KEY || '';
     this.jwt = process.env.PINATA_JWT || null;
     this.gateway = process.env.IPFS_GATEWAY || 'https://gateway.pinata.cloud';
+    this.timeout = parseInt(process.env.IPFS_UPLOAD_TIMEOUT_MS || '30000', 10);
 
     // Configure axios client
     this.client = axios.create({
       baseURL: 'https://api.pinata.cloud',
+      timeout: this.timeout,
       headers: this.jwt
         ? {
             Authorization: `Bearer ${this.jwt}`
@@ -66,11 +103,18 @@ class PinataService implements IPFSService {
 
     logger.info('Pinata IPFS service initialized', {
       gateway: this.gateway,
-      authMethod: this.jwt ? 'JWT' : 'API Keys'
+      authMethod: this.jwt ? 'JWT' : 'API Keys',
+      timeout: this.timeout
     });
   }
 
+  getName(): string {
+    return 'pinata';
+  }
+
   async uploadJSON(metadata: IPFSMetadata): Promise<IPFSUploadResult> {
+    const end = ipfsUploadDuration.startTimer({ provider: 'pinata', type: 'json' });
+
     try {
       logger.info('Uploading JSON metadata to Pinata', {
         name: metadata.name
@@ -91,6 +135,9 @@ class PinataService implements IPFSService {
       const ipfsUrl = `ipfs://${ipfsHash}`;
       const pinataUrl = `${this.gateway}/ipfs/${ipfsHash}`;
 
+      ipfsUploadCounter.inc({ provider: 'pinata', type: 'json', status: 'success' });
+      end();
+
       logger.info('Successfully uploaded JSON to Pinata', {
         ipfsHash,
         ipfsUrl,
@@ -100,9 +147,13 @@ class PinataService implements IPFSService {
       return {
         ipfsHash,
         ipfsUrl,
-        pinataUrl
+        pinataUrl,
+        provider: 'pinata'
       };
     } catch (error) {
+      ipfsUploadCounter.inc({ provider: 'pinata', type: 'json', status: 'error' });
+      end();
+
       logger.error('Failed to upload JSON to Pinata', {
         error: (error as Error).message,
         metadata: metadata.name
@@ -112,6 +163,8 @@ class PinataService implements IPFSService {
   }
 
   async uploadFile(file: Buffer, filename: string): Promise<IPFSUploadResult> {
+    const end = ipfsUploadDuration.startTimer({ provider: 'pinata', type: 'file' });
+
     try {
       logger.info('Uploading file to Pinata', { filename });
 
@@ -134,6 +187,9 @@ class PinataService implements IPFSService {
       const ipfsUrl = `ipfs://${ipfsHash}`;
       const pinataUrl = `${this.gateway}/ipfs/${ipfsHash}`;
 
+      ipfsUploadCounter.inc({ provider: 'pinata', type: 'file', status: 'success' });
+      end();
+
       logger.info('Successfully uploaded file to Pinata', {
         ipfsHash,
         ipfsUrl,
@@ -143,9 +199,13 @@ class PinataService implements IPFSService {
       return {
         ipfsHash,
         ipfsUrl,
-        pinataUrl
+        pinataUrl,
+        provider: 'pinata'
       };
     } catch (error) {
+      ipfsUploadCounter.inc({ provider: 'pinata', type: 'file', status: 'error' });
+      end();
+
       logger.error('Failed to upload file to Pinata', {
         error: (error as Error).message,
         filename
@@ -161,6 +221,10 @@ class PinataService implements IPFSService {
   }
 }
 
+// =============================================================================
+// NFT.STORAGE SERVICE
+// =============================================================================
+
 /**
  * NFT.Storage IPFS Service Implementation
  */
@@ -168,22 +232,33 @@ class NFTStorageService implements IPFSService {
   private apiKey: string;
   private client: AxiosInstance;
   private gateway: string;
+  private timeout: number;
 
   constructor() {
     this.apiKey = process.env.NFT_STORAGE_API_KEY || '';
     this.gateway = 'https://nftstorage.link';
+    this.timeout = parseInt(process.env.IPFS_UPLOAD_TIMEOUT_MS || '30000', 10);
 
     this.client = axios.create({
       baseURL: 'https://api.nft.storage',
+      timeout: this.timeout,
       headers: {
         Authorization: `Bearer ${this.apiKey}`
       }
     });
 
-    logger.info('NFT.Storage IPFS service initialized');
+    logger.info('NFT.Storage IPFS service initialized', {
+      timeout: this.timeout
+    });
+  }
+
+  getName(): string {
+    return 'nft.storage';
   }
 
   async uploadJSON(metadata: IPFSMetadata): Promise<IPFSUploadResult> {
+    const end = ipfsUploadDuration.startTimer({ provider: 'nft.storage', type: 'json' });
+
     try {
       logger.info('Uploading JSON metadata to NFT.Storage', {
         name: metadata.name
@@ -202,6 +277,9 @@ class NFTStorageService implements IPFSService {
       const ipfsHash = response.data.value.cid;
       const ipfsUrl = `ipfs://${ipfsHash}`;
 
+      ipfsUploadCounter.inc({ provider: 'nft.storage', type: 'json', status: 'success' });
+      end();
+
       logger.info('Successfully uploaded JSON to NFT.Storage', {
         ipfsHash,
         ipfsUrl
@@ -210,9 +288,13 @@ class NFTStorageService implements IPFSService {
       return {
         ipfsHash,
         ipfsUrl,
-        pinataUrl: this.getGatewayUrl(ipfsHash)
+        pinataUrl: this.getGatewayUrl(ipfsHash),
+        provider: 'nft.storage'
       };
     } catch (error) {
+      ipfsUploadCounter.inc({ provider: 'nft.storage', type: 'json', status: 'error' });
+      end();
+
       logger.error('Failed to upload JSON to NFT.Storage', {
         error: (error as Error).message
       });
@@ -221,6 +303,8 @@ class NFTStorageService implements IPFSService {
   }
 
   async uploadFile(file: Buffer, filename: string): Promise<IPFSUploadResult> {
+    const end = ipfsUploadDuration.startTimer({ provider: 'nft.storage', type: 'file' });
+
     try {
       logger.info('Uploading file to NFT.Storage', { filename });
 
@@ -232,6 +316,9 @@ class NFTStorageService implements IPFSService {
       const ipfsHash = response.data.value.cid;
       const ipfsUrl = `ipfs://${ipfsHash}`;
 
+      ipfsUploadCounter.inc({ provider: 'nft.storage', type: 'file', status: 'success' });
+      end();
+
       logger.info('Successfully uploaded file to NFT.Storage', {
         ipfsHash,
         filename
@@ -240,9 +327,13 @@ class NFTStorageService implements IPFSService {
       return {
         ipfsHash,
         ipfsUrl,
-        pinataUrl: this.getGatewayUrl(ipfsHash)
+        pinataUrl: this.getGatewayUrl(ipfsHash),
+        provider: 'nft.storage'
       };
     } catch (error) {
+      ipfsUploadCounter.inc({ provider: 'nft.storage', type: 'file', status: 'error' });
+      end();
+
       logger.error('Failed to upload file to NFT.Storage', {
         error: (error as Error).message,
         filename
@@ -257,20 +348,222 @@ class NFTStorageService implements IPFSService {
   }
 }
 
+// =============================================================================
+// IPFS SERVICE WITH FAILOVER
+// =============================================================================
+
 /**
- * Get configured IPFS service instance
+ * IPFS Service with automatic failover between providers
+ * Tries primary provider first, falls back to secondary on failure
+ */
+class IPFSServiceWithFailover implements IPFSService {
+  private primary: IPFSService;
+  private fallback: IPFSService | null;
+  private maxRetries: number;
+
+  constructor(primary: IPFSService, fallback: IPFSService | null = null) {
+    this.primary = primary;
+    this.fallback = fallback;
+    this.maxRetries = parseInt(process.env.IPFS_MAX_RETRIES || '2', 10);
+
+    logger.info('IPFS service with failover initialized', {
+      primary: primary.getName(),
+      fallback: fallback?.getName() || 'none',
+      maxRetries: this.maxRetries
+    });
+  }
+
+  getName(): string {
+    return `${this.primary.getName()}+failover`;
+  }
+
+  async uploadJSON(metadata: IPFSMetadata): Promise<IPFSUploadResult> {
+    // Try primary provider with retries
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await this.primary.uploadJSON(metadata);
+      } catch (error) {
+        lastError = error as Error;
+        logger.warn(`Primary IPFS upload attempt ${attempt} failed`, {
+          provider: this.primary.getName(),
+          attempt,
+          maxRetries: this.maxRetries,
+          error: lastError.message,
+          metadata: metadata.name
+        });
+        
+        // Wait before retry (exponential backoff)
+        if (attempt < this.maxRetries) {
+          await this.sleep(1000 * Math.pow(2, attempt - 1));
+        }
+      }
+    }
+
+    // Try fallback provider if available
+    if (this.fallback) {
+      logger.info('Failing over to backup IPFS provider', {
+        from: this.primary.getName(),
+        to: this.fallback.getName(),
+        reason: lastError?.message || 'unknown'
+      });
+
+      ipfsFailoverCounter.inc({
+        from_provider: this.primary.getName(),
+        to_provider: this.fallback.getName(),
+        reason: this.categorizeError(lastError)
+      });
+
+      try {
+        return await this.fallback.uploadJSON(metadata);
+      } catch (fallbackError) {
+        logger.error('Fallback IPFS upload also failed', {
+          provider: this.fallback.getName(),
+          error: (fallbackError as Error).message
+        });
+        throw new Error(`All IPFS providers failed. Primary: ${lastError?.message}, Fallback: ${(fallbackError as Error).message}`);
+      }
+    }
+
+    // No fallback available
+    throw lastError || new Error('IPFS upload failed');
+  }
+
+  async uploadFile(file: Buffer, filename: string): Promise<IPFSUploadResult> {
+    // Try primary provider with retries
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
+      try {
+        return await this.primary.uploadFile(file, filename);
+      } catch (error) {
+        lastError = error as Error;
+        logger.warn(`Primary IPFS file upload attempt ${attempt} failed`, {
+          provider: this.primary.getName(),
+          attempt,
+          maxRetries: this.maxRetries,
+          error: lastError.message,
+          filename
+        });
+        
+        if (attempt < this.maxRetries) {
+          await this.sleep(1000 * Math.pow(2, attempt - 1));
+        }
+      }
+    }
+
+    // Try fallback provider if available
+    if (this.fallback) {
+      logger.info('Failing over to backup IPFS provider for file upload', {
+        from: this.primary.getName(),
+        to: this.fallback.getName(),
+        reason: lastError?.message || 'unknown'
+      });
+
+      ipfsFailoverCounter.inc({
+        from_provider: this.primary.getName(),
+        to_provider: this.fallback.getName(),
+        reason: this.categorizeError(lastError)
+      });
+
+      try {
+        return await this.fallback.uploadFile(file, filename);
+      } catch (fallbackError) {
+        logger.error('Fallback IPFS file upload also failed', {
+          provider: this.fallback.getName(),
+          error: (fallbackError as Error).message
+        });
+        throw new Error(`All IPFS providers failed. Primary: ${lastError?.message}, Fallback: ${(fallbackError as Error).message}`);
+      }
+    }
+
+    throw lastError || new Error('IPFS file upload failed');
+  }
+
+  getGatewayUrl(ipfsHash: string): string {
+    return this.primary.getGatewayUrl(ipfsHash);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private categorizeError(error: Error | null): string {
+    if (!error) return 'unknown';
+    const msg = error.message.toLowerCase();
+    if (msg.includes('timeout')) return 'timeout';
+    if (msg.includes('rate limit') || msg.includes('429')) return 'rate_limit';
+    if (msg.includes('unauthorized') || msg.includes('401')) return 'auth_error';
+    if (msg.includes('network') || msg.includes('econnrefused')) return 'network_error';
+    return 'unknown';
+  }
+}
+
+// =============================================================================
+// FACTORY FUNCTIONS
+// =============================================================================
+
+// Cached service instance
+let ipfsServiceInstance: IPFSService | null = null;
+
+/**
+ * Get configured IPFS service instance with failover support
  */
 export function getIPFSService(): IPFSService {
-  const provider = process.env.IPFS_PROVIDER || 'pinata';
+  if (ipfsServiceInstance) {
+    return ipfsServiceInstance;
+  }
 
+  const provider = process.env.IPFS_PROVIDER || 'pinata';
+  const enableFailover = process.env.IPFS_ENABLE_FAILOVER !== 'false';
+
+  let primary: IPFSService;
+  let fallback: IPFSService | null = null;
+
+  // Create primary service
   switch (provider.toLowerCase()) {
+    case 'pinata':
+      primary = new PinataService();
+      // Use NFT.Storage as fallback if API key is configured
+      if (enableFailover && process.env.NFT_STORAGE_API_KEY) {
+        fallback = new NFTStorageService();
+      }
+      break;
+    case 'nft.storage':
+      primary = new NFTStorageService();
+      // Use Pinata as fallback if API keys are configured
+      if (enableFailover && (process.env.PINATA_JWT || process.env.PINATA_API_KEY)) {
+        fallback = new PinataService();
+      }
+      break;
+    default:
+      logger.warn(`Unknown IPFS provider: ${provider}, defaulting to Pinata`);
+      primary = new PinataService();
+  }
+
+  // Wrap with failover if fallback is available
+  if (fallback) {
+    ipfsServiceInstance = new IPFSServiceWithFailover(primary, fallback);
+  } else {
+    // Still wrap for retry logic even without fallback
+    ipfsServiceInstance = new IPFSServiceWithFailover(primary, null);
+  }
+
+  return ipfsServiceInstance;
+}
+
+/**
+ * Get raw service without failover (for testing or specific use cases)
+ */
+export function getIPFSServiceDirect(provider: 'pinata' | 'nft.storage'): IPFSService {
+  switch (provider) {
     case 'pinata':
       return new PinataService();
     case 'nft.storage':
       return new NFTStorageService();
     default:
-      logger.warn(`Unknown IPFS provider: ${provider}, defaulting to Pinata`);
-      return new PinataService();
+      throw new Error(`Unknown IPFS provider: ${provider}`);
   }
 }
 
@@ -292,14 +585,17 @@ export function validateIPFSConfig(): void {
     }
 
     logger.info('Pinata IPFS configuration validated', {
-      authMethod: hasJWT ? 'JWT' : 'API Keys'
+      authMethod: hasJWT ? 'JWT' : 'API Keys',
+      hasFailover: !!process.env.NFT_STORAGE_API_KEY
     });
   } else if (provider === 'nft.storage') {
     if (!process.env.NFT_STORAGE_API_KEY) {
       throw new Error('NFT.Storage configuration incomplete. Provide NFT_STORAGE_API_KEY');
     }
 
-    logger.info('NFT.Storage IPFS configuration validated');
+    logger.info('NFT.Storage IPFS configuration validated', {
+      hasFailover: !!(process.env.PINATA_JWT || process.env.PINATA_API_KEY)
+    });
   }
 }
 
@@ -324,7 +620,8 @@ export async function testIPFSConnection(): Promise<boolean> {
     const result = await service.uploadJSON(testMetadata);
     
     logger.info('IPFS connection test successful', {
-      ipfsHash: result.ipfsHash
+      ipfsHash: result.ipfsHash,
+      provider: result.provider
     });
 
     return true;
@@ -334,4 +631,39 @@ export async function testIPFSConnection(): Promise<boolean> {
     });
     return false;
   }
+}
+
+/**
+ * Get IPFS service health status
+ */
+export function getIPFSServiceStatus(): {
+  provider: string;
+  hasFailover: boolean;
+  failoverProvider: string | null;
+  timeout: number;
+  maxRetries: number;
+} {
+  const provider = process.env.IPFS_PROVIDER || 'pinata';
+  const enableFailover = process.env.IPFS_ENABLE_FAILOVER !== 'false';
+  
+  let hasFailover = false;
+  let failoverProvider: string | null = null;
+
+  if (enableFailover) {
+    if (provider === 'pinata' && process.env.NFT_STORAGE_API_KEY) {
+      hasFailover = true;
+      failoverProvider = 'nft.storage';
+    } else if (provider === 'nft.storage' && (process.env.PINATA_JWT || process.env.PINATA_API_KEY)) {
+      hasFailover = true;
+      failoverProvider = 'pinata';
+    }
+  }
+
+  return {
+    provider,
+    hasFailover,
+    failoverProvider,
+    timeout: parseInt(process.env.IPFS_UPLOAD_TIMEOUT_MS || '30000', 10),
+    maxRetries: parseInt(process.env.IPFS_MAX_RETRIES || '2', 10)
+  };
 }

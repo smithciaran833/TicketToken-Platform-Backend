@@ -1,5 +1,4 @@
 require('dotenv').config();
-
 import { buildApp } from './app';
 import { DatabaseService } from './services/databaseService';
 import { RedisService } from './services/redisService';
@@ -32,14 +31,14 @@ async function start() {
     // Start webhook consumer
     startWebhookConsumer()
       .then(() => log.info("Webhook consumer started"))
-      .catch((err: any) => log.error("Failed to start webhook consumer", { error: err.message }));
+      .catch((err: any) => log.error({ error: err.message }, "Failed to start webhook consumer"));
 
     // Build and start Fastify app
     app = await buildApp();
     await app.listen({ port: PORT as number, host: HOST });
-    log.info('Payment Service running', { port: PORT, host: HOST });
+    log.info({ port: PORT, host: HOST }, 'Payment Service running');
   } catch (error) {
-    log.error("Failed to start server", { error: error instanceof Error ? error.message : error });
+    log.error({ error: error instanceof Error ? error.message : error }, "Failed to start server");
     process.exit(1);
   }
 }
@@ -51,7 +50,7 @@ async function gracefulShutdown(signal: string) {
   }
 
   isShuttingDown = true;
-  log.info(`${signal} received, starting graceful shutdown`);
+  log.info({ signal }, 'Received signal, starting graceful shutdown');
 
   const forceShutdownTimeout = setTimeout(() => {
     log.error('Graceful shutdown timeout, forcing exit');
@@ -77,7 +76,7 @@ async function gracefulShutdown(signal: string) {
     log.info('Graceful shutdown completed successfully');
     process.exit(0);
   } catch (error) {
-    log.error('Error during graceful shutdown', { error });
+    log.error({ error }, 'Error during graceful shutdown');
     clearTimeout(forceShutdownTimeout);
     process.exit(1);
   }
@@ -87,12 +86,12 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 process.on('uncaughtException', (error) => {
-  log.error('Uncaught exception', { error });
+  log.error({ error }, 'Uncaught exception');
   gracefulShutdown('uncaughtException');
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-  log.error('Unhandled promise rejection', { reason, promise });
+  log.error({ reason, promise }, 'Unhandled promise rejection');
   gracefulShutdown('unhandledRejection');
 });
 

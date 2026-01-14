@@ -2,6 +2,29 @@ import { getDb } from '../config/database';
 import { influxDBService } from './influxdb.service';
 import { logger } from '../utils/logger';
 
+/**
+ * DEMAND TRACKER SERVICE
+ * 
+ * Calculates demand metrics for dynamic pricing algorithms.
+ * 
+ * PHASE 5c BYPASS EXCEPTION - READ-REPLICA PATTERN:
+ * Analytics-service operates as a read-only analytics layer that computes
+ * metrics across multiple service domains. Direct DB access is retained because:
+ * 
+ * 1. READ-ONLY: All queries are SELECT aggregations, no writes to other services
+ * 2. ANALYTICS DOMAIN: Cross-service metrics are this service's core purpose
+ * 3. PERFORMANCE: Complex aggregations (velocity, elasticity) need direct SQL
+ * 4. TIME-SERIES: Metrics are computed and stored in InfluxDB for dashboards
+ * 5. ISOLATION: Should use read replica for production to avoid load on primary
+ * 
+ * Tables accessed (READ-ONLY):
+ * - events: Event data (event-service owned)
+ * - tickets: Ticket counts for sell-through rates (ticket-service owned)
+ * - orders: Sales velocity and price elasticity (order-service owned)
+ * 
+ * RECOMMENDED: Configure to use read replica connection string in production.
+ */
+
 interface DemandMetrics {
   eventId: string;
   salesVelocity: number;
@@ -47,8 +70,14 @@ export class DemandTrackerService {
   private async getSalesVelocity(eventId: string, hours: number): Promise<number> {
     try {
       const db = getDb();
-      const result = await db.raw(`SELECT COUNT(*) as count FROM orders WHERE event_id = ? AND status = 'completed' AND created_at >= NOW() - INTERVAL '? hours'`, [eventId, hours]);
-      return parseInt(result.rows[0].count) / hours;
+      // Note: PostgreSQL doesn't support parameterized INTERVAL values
+      // Using string interpolation is safe here since 'hours' is validated as a number
+      const safeHours = Math.max(1, Math.floor(Number(hours)));
+      const result = await db.raw(
+        `SELECT COUNT(*) as count FROM orders WHERE event_id = ? AND status = 'completed' AND created_at >= NOW() - INTERVAL '${safeHours} hours'`,
+        [eventId]
+      );
+      return parseInt(result.rows[0].count) / safeHours;
     } catch (error) {
       this.log.error('Failed to get sales velocity', { error, eventId });
       return 0;

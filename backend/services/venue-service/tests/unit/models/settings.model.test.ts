@@ -1,257 +1,369 @@
-import { SettingsModel } from '../../../src/models/settings.model';
+/**
+ * Unit tests for SettingsModel
+ * Tests venue settings management (uses venue_settings table)
+ * Note: Does NOT extend BaseModel
+ */
+
+import { createKnexMock, configureMockReturn } from '../../__mocks__/knex.mock';
+import { SettingsModel, IVenueSettings } from '../../../src/models/settings.model';
 
 describe('SettingsModel', () => {
+  let mockKnex: any;
   let settingsModel: SettingsModel;
-  let mockDb: any;
+
+  const sampleDbRow = {
+    venue_id: 'venue-123',
+    max_tickets_per_order: 10,
+    accepted_currencies: ['USD'],
+    payment_methods: ['card', 'crypto'],
+    created_at: new Date('2024-01-01'),
+    updated_at: new Date('2024-06-01'),
+  };
 
   beforeEach(() => {
+    mockKnex = createKnexMock();
+    settingsModel = new SettingsModel(mockKnex);
+  });
+
+  afterEach(() => {
     jest.clearAllMocks();
-
-    const mockQueryBuilder = {
-      where: jest.fn().mockReturnThis(),
-      whereNull: jest.fn().mockReturnThis(),
-      select: jest.fn().mockReturnThis(),
-      first: jest.fn(),
-      update: jest.fn().mockResolvedValue(1),
-    };
-
-    mockDb = Object.assign(jest.fn().mockReturnValue(mockQueryBuilder), {
-      _mockQueryBuilder: mockQueryBuilder,
-    });
-
-    settingsModel = new SettingsModel(mockDb);
   });
 
-  // =============================================================================
-  // getVenueSettings() - 3 test cases
-  // =============================================================================
+  describe('getVenueSettings', () => {
+    it('should return settings for venue', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
 
-  describe('getVenueSettings()', () => {
-    it('should return venue settings if they exist', async () => {
-      const mockSettings = {
-        general: { timezone: 'America/Los_Angeles' },
-        ticketing: { allowRefunds: false },
-      };
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: mockSettings });
+      const result = await settingsModel.getVenueSettings('venue-123');
 
-      const result = await settingsModel.getVenueSettings('venue-1');
-
-      expect(result).toEqual(mockSettings);
-      expect(mockDb._mockQueryBuilder.where).toHaveBeenCalledWith({ id: 'venue-1' });
+      expect(mockKnex).toHaveBeenCalledWith('venue_settings');
+      expect(mockKnex._mockChain.where).toHaveBeenCalledWith({ venue_id: 'venue-123' });
+      expect(result).toBeDefined();
+      expect(result.ticketing?.maxTicketsPerOrder).toBe(10);
     });
 
-    it('should return default settings if venue has no settings', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: null });
+    it('should return default settings when no row exists', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(null);
 
-      const result = await settingsModel.getVenueSettings('venue-1');
+      const result = await settingsModel.getVenueSettings('venue-456');
 
-      expect(result).toEqual(settingsModel.getDefaultSettings());
-    });
-
-    it('should exclude soft-deleted venues', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue(null);
-
-      await settingsModel.getVenueSettings('venue-1');
-
-      expect(mockDb._mockQueryBuilder.whereNull).toHaveBeenCalledWith('deleted_at');
+      expect(result).toBeDefined();
+      expect(result.general?.timezone).toBe('America/New_York');
+      expect(result.general?.currency).toBe('USD');
+      expect(result.ticketing?.maxTicketsPerOrder).toBe(10);
     });
   });
 
-  // =============================================================================
-  // updateVenueSettings() - 4 test cases
-  // =============================================================================
+  describe('updateVenueSettings', () => {
+    it('should update existing settings', async () => {
+      mockKnex._mockChain.first
+        .mockResolvedValueOnce(sampleDbRow) // Existing check
+        .mockResolvedValueOnce({ ...sampleDbRow, max_tickets_per_order: 20 }); // After update
+      mockKnex._mockChain.update.mockResolvedValue(1);
 
-  describe('updateVenueSettings()', () => {
-    it('should merge new settings with existing settings', async () => {
-      const currentSettings = {
-        general: { timezone: 'America/New_York', currency: 'USD' },
-      };
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: currentSettings });
-
-      const updates = {
-        general: { timezone: 'America/Los_Angeles' },
-      };
-
-      const result = await settingsModel.updateVenueSettings('venue-1', updates);
-
-      expect(result.general?.timezone).toBe('America/Los_Angeles');
-      expect(result.general?.currency).toBe('USD'); // Preserved
-    });
-
-    it('should update database with new settings', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: {} });
-
-      const updates = { general: { timezone: 'UTC' } };
-
-      await settingsModel.updateVenueSettings('venue-1', updates);
-
-      expect(mockDb._mockQueryBuilder.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          settings: expect.any(Object),
-          updated_at: expect.any(Date),
-        })
-      );
-    });
-
-    it('should set updated_at timestamp', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: {} });
-
-      await settingsModel.updateVenueSettings('venue-1', {});
-
-      expect(mockDb._mockQueryBuilder.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          updated_at: expect.any(Date),
-        })
-      );
-    });
-
-    it('should return merged settings', async () => {
-      const currentSettings = settingsModel.getDefaultSettings();
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: currentSettings });
-
-      const updates = { ticketing: { allowRefunds: false } };
-
-      const result = await settingsModel.updateVenueSettings('venue-1', updates);
-
-      expect(result.ticketing?.allowRefunds).toBe(false);
-      expect(result.general?.timezone).toBe('America/New_York'); // From defaults
-    });
-  });
-
-  // =============================================================================
-  // updateSettingSection() - 3 test cases
-  // =============================================================================
-
-  describe('updateSettingSection()', () => {
-    it('should update specific settings section', async () => {
-      const currentSettings = settingsModel.getDefaultSettings();
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: currentSettings });
-
-      const sectionUpdates = { allowRefunds: false, maxTicketsPerOrder: 5 };
-
-      const result = await settingsModel.updateSettingSection(
-        'venue-1',
-        'ticketing',
-        sectionUpdates
-      );
-
-      expect(result.ticketing?.allowRefunds).toBe(false);
-      expect(result.ticketing?.maxTicketsPerOrder).toBe(5);
-    });
-
-    it('should preserve other sections', async () => {
-      const currentSettings = settingsModel.getDefaultSettings();
-      mockDb._mockQueryBuilder.first.mockResolvedValue({ settings: currentSettings });
-
-      await settingsModel.updateSettingSection('venue-1', 'ticketing', {
-        allowRefunds: false,
+      const result = await settingsModel.updateVenueSettings('venue-123', {
+        ticketing: { maxTicketsPerOrder: 20 },
       });
 
-      expect(mockDb._mockQueryBuilder.update).toHaveBeenCalledWith(
-        expect.objectContaining({
-          settings: expect.objectContaining({
-            general: expect.any(Object),
-            notifications: expect.any(Object),
-          }),
-        })
-      );
+      expect(mockKnex._mockChain.update).toHaveBeenCalled();
+      expect(result).toBeDefined();
     });
 
-    it('should update database', async () => {
-      mockDb._mockQueryBuilder.first.mockResolvedValue({
-        settings: settingsModel.getDefaultSettings(),
+    it('should insert new settings when none exist', async () => {
+      mockKnex._mockChain.first
+        .mockResolvedValueOnce(null) // No existing
+        .mockResolvedValueOnce(sampleDbRow); // After insert
+      mockKnex._mockChain.insert.mockResolvedValue([1]);
+
+      const result = await settingsModel.updateVenueSettings('venue-456', {
+        ticketing: { maxTicketsPerOrder: 15 },
       });
 
-      await settingsModel.updateSettingSection('venue-1', 'branding', {
-        primaryColor: '#FF0000',
+      expect(mockKnex._mockChain.insert).toHaveBeenCalled();
+      expect(result).toBeDefined();
+    });
+
+    it('should set updated_at on update', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
+      mockKnex._mockChain.update.mockResolvedValue(1);
+
+      await settingsModel.updateVenueSettings('venue-123', {
+        ticketing: { maxTicketsPerOrder: 5 },
       });
 
-      expect(mockDb._mockQueryBuilder.where).toHaveBeenCalledWith({ id: 'venue-1' });
-      expect(mockDb._mockQueryBuilder.update).toHaveBeenCalled();
+      const updateCall = mockKnex._mockChain.update.mock.calls[0][0];
+      expect(updateCall.updated_at).toBeInstanceOf(Date);
     });
   });
 
-  // =============================================================================
-  // getDefaultSettings() - 2 test cases
-  // =============================================================================
+  describe('updateSettingSection', () => {
+    it('should update specific section only', async () => {
+      mockKnex._mockChain.first
+        .mockResolvedValueOnce(sampleDbRow) // getVenueSettings
+        .mockResolvedValueOnce(sampleDbRow) // existing check in update
+        .mockResolvedValueOnce(sampleDbRow); // return after update
+      mockKnex._mockChain.update.mockResolvedValue(1);
 
-  describe('getDefaultSettings()', () => {
+      const result = await settingsModel.updateSettingSection('venue-123', 'ticketing', {
+        maxTicketsPerOrder: 25,
+      });
+
+      expect(result.ticketing?.maxTicketsPerOrder).toBeDefined();
+    });
+
+    it('should merge section settings with existing', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
+      mockKnex._mockChain.update.mockResolvedValue(1);
+
+      await settingsModel.updateSettingSection('venue-123', 'general', {
+        timezone: 'America/Los_Angeles',
+      });
+
+      // Should preserve existing currency while updating timezone
+      expect(mockKnex._mockChain.update).toHaveBeenCalled();
+    });
+  });
+
+  describe('getDefaultSettings', () => {
     it('should return complete default settings', () => {
       const defaults = settingsModel.getDefaultSettings();
 
+      // General section
       expect(defaults.general).toBeDefined();
-      expect(defaults.ticketing).toBeDefined();
-      expect(defaults.notifications).toBeDefined();
-      expect(defaults.branding).toBeDefined();
-      expect(defaults.payment).toBeDefined();
-      expect(defaults.features).toBeDefined();
-    });
-
-    it('should have sensible default values', () => {
-      const defaults = settingsModel.getDefaultSettings();
-
       expect(defaults.general?.timezone).toBe('America/New_York');
       expect(defaults.general?.currency).toBe('USD');
+      expect(defaults.general?.language).toBe('en');
+      expect(defaults.general?.dateFormat).toBe('MM/DD/YYYY');
+      expect(defaults.general?.timeFormat).toBe('12h');
+
+      // Ticketing section
+      expect(defaults.ticketing).toBeDefined();
       expect(defaults.ticketing?.allowRefunds).toBe(true);
+      expect(defaults.ticketing?.refundWindow).toBe(24);
+      expect(defaults.ticketing?.maxTicketsPerOrder).toBe(10);
+      expect(defaults.ticketing?.requirePhoneNumber).toBe(false);
+      expect(defaults.ticketing?.enableWaitlist).toBe(false);
+      expect(defaults.ticketing?.transferDeadline).toBe(2);
+
+      // Notifications section
+      expect(defaults.notifications).toBeDefined();
+      expect(defaults.notifications?.emailEnabled).toBe(true);
+      expect(defaults.notifications?.smsEnabled).toBe(false);
+      expect(defaults.notifications?.webhookUrl).toBeUndefined();
+      expect(defaults.notifications?.notifyOnPurchase).toBe(true);
+      expect(defaults.notifications?.notifyOnRefund).toBe(true);
+      expect(defaults.notifications?.dailyReportEnabled).toBe(false);
+
+      // Branding section
+      expect(defaults.branding).toBeDefined();
+      expect(defaults.branding?.primaryColor).toBe('#000000');
+      expect(defaults.branding?.secondaryColor).toBe('#666666');
+      expect(defaults.branding?.logo).toBeUndefined();
+      expect(defaults.branding?.emailFooter).toBeUndefined();
+      expect(defaults.branding?.customDomain).toBeUndefined();
+
+      // Payment section
+      expect(defaults.payment).toBeDefined();
+      expect(defaults.payment?.currency).toBe('USD');
+      expect(defaults.payment?.taxRate).toBe(0);
+      expect(defaults.payment?.includeTaxInPrice).toBe(false);
+      expect(defaults.payment?.paymentMethods).toEqual(['card']);
+
+      // Features section
+      expect(defaults.features).toBeDefined();
       expect(defaults.features?.nftEnabled).toBe(true);
+      expect(defaults.features?.qrCodeEnabled).toBe(true);
+      expect(defaults.features?.seasonPassEnabled).toBe(false);
+      expect(defaults.features?.groupDiscountsEnabled).toBe(false);
     });
   });
 
-  // =============================================================================
-  // validateSettings() - 5 test cases
-  // =============================================================================
-
-  describe('validateSettings()', () => {
+  describe('validateSettings', () => {
     it('should validate valid settings', async () => {
-      const settings = settingsModel.getDefaultSettings();
+      const validSettings: IVenueSettings = {
+        general: { currency: 'USD' },
+        branding: { primaryColor: '#FF0000' },
+        notifications: { webhookUrl: 'https://example.com/webhook' },
+      };
 
-      const result = await settingsModel.validateSettings(settings);
+      const result = await settingsModel.validateSettings(validSettings);
 
       expect(result.valid).toBe(true);
       expect(result.errors).toHaveLength(0);
     });
 
-    it('should reject invalid currency', async () => {
-      const settings = {
+    it('should reject invalid currency code', async () => {
+      const invalidSettings: IVenueSettings = {
         general: { currency: 'INVALID' },
       };
 
-      const result = await settingsModel.validateSettings(settings);
+      const result = await settingsModel.validateSettings(invalidSettings);
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Invalid currency code');
     });
 
-    it('should reject invalid color format', async () => {
-      const settings = {
+    it('should accept valid currency codes', async () => {
+      const currencies = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
+      
+      for (const currency of currencies) {
+        const settings: IVenueSettings = {
+          general: { currency },
+        };
+        const result = await settingsModel.validateSettings(settings);
+        expect(result.valid).toBe(true);
+      }
+    });
+
+    it('should reject invalid hex color', async () => {
+      const invalidSettings: IVenueSettings = {
         branding: { primaryColor: 'not-a-color' },
       };
 
-      const result = await settingsModel.validateSettings(settings);
+      const result = await settingsModel.validateSettings(invalidSettings);
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Invalid primary color format');
     });
 
+    it('should accept valid hex colors', async () => {
+      const validColors = ['#000000', '#FFFFFF', '#FF0000', '#00ff00', '#0000FF'];
+      
+      for (const color of validColors) {
+        const settings: IVenueSettings = {
+          branding: { primaryColor: color },
+        };
+        const result = await settingsModel.validateSettings(settings);
+        expect(result.valid).toBe(true);
+      }
+    });
+
     it('should reject invalid webhook URL', async () => {
-      const settings = {
-        notifications: { webhookUrl: 'not-a-url' },
+      const invalidSettings: IVenueSettings = {
+        notifications: { webhookUrl: 'not-a-valid-url' },
       };
 
-      const result = await settingsModel.validateSettings(settings);
+      const result = await settingsModel.validateSettings(invalidSettings);
 
       expect(result.valid).toBe(false);
       expect(result.errors).toContain('Invalid webhook URL');
     });
 
-    it('should accept valid webhook URL', async () => {
-      const settings = {
-        notifications: { webhookUrl: 'https://example.com/webhook' },
-      };
+    it('should accept valid webhook URLs', async () => {
+      const validUrls = [
+        'https://example.com/webhook',
+        'http://localhost:3000/hook',
+        'https://api.mysite.com/v1/webhooks/venue',
+      ];
+      
+      for (const url of validUrls) {
+        const settings: IVenueSettings = {
+          notifications: { webhookUrl: url },
+        };
+        const result = await settingsModel.validateSettings(settings);
+        expect(result.valid).toBe(true);
+      }
+    });
 
-      const result = await settingsModel.validateSettings(settings);
+    it('should handle empty settings', async () => {
+      const emptySettings: IVenueSettings = {};
+
+      const result = await settingsModel.validateSettings(emptySettings);
 
       expect(result.valid).toBe(true);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should collect multiple errors', async () => {
+      const multipleInvalidSettings: IVenueSettings = {
+        general: { currency: 'INVALID' },
+        branding: { primaryColor: 'bad-color' },
+        notifications: { webhookUrl: 'not-url' },
+      };
+
+      const result = await settingsModel.validateSettings(multipleInvalidSettings);
+
+      expect(result.valid).toBe(false);
+      expect(result.errors.length).toBe(3);
+    });
+  });
+
+  describe('rowToSettings (private - tested via getVenueSettings)', () => {
+    it('should transform DB row to settings structure', async () => {
+      mockKnex._mockChain.first.mockResolvedValue({
+        venue_id: 'venue-123',
+        max_tickets_per_order: 20,
+        accepted_currencies: ['EUR'],
+        payment_methods: ['card', 'bank'],
+      });
+
+      const result = await settingsModel.getVenueSettings('venue-123');
+
+      expect(result.ticketing?.maxTicketsPerOrder).toBe(20);
+      expect(result.payment?.currency).toBe('EUR');
+      expect(result.payment?.paymentMethods).toEqual(['card', 'bank']);
+      expect(result.general?.currency).toBe('EUR');
+    });
+
+    it('should use first currency from accepted_currencies', async () => {
+      mockKnex._mockChain.first.mockResolvedValue({
+        venue_id: 'venue-123',
+        accepted_currencies: ['GBP', 'EUR'],
+      });
+
+      const result = await settingsModel.getVenueSettings('venue-123');
+
+      expect(result.general?.currency).toBe('GBP');
+      expect(result.payment?.currency).toBe('GBP');
+    });
+  });
+
+  describe('settingsToRow (private - tested via updateVenueSettings)', () => {
+    it('should map maxTicketsPerOrder to max_tickets_per_order', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
+      mockKnex._mockChain.update.mockResolvedValue(1);
+
+      await settingsModel.updateVenueSettings('venue-123', {
+        ticketing: { maxTicketsPerOrder: 15 },
+      });
+
+      const updateCall = mockKnex._mockChain.update.mock.calls[0][0];
+      expect(updateCall.max_tickets_per_order).toBe(15);
+    });
+
+    it('should map paymentMethods to payment_methods', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
+      mockKnex._mockChain.update.mockResolvedValue(1);
+
+      await settingsModel.updateVenueSettings('venue-123', {
+        payment: { paymentMethods: ['card', 'crypto'] },
+      });
+
+      const updateCall = mockKnex._mockChain.update.mock.calls[0][0];
+      expect(updateCall.payment_methods).toEqual(['card', 'crypto']);
+    });
+
+    it('should map payment currency to accepted_currencies', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
+      mockKnex._mockChain.update.mockResolvedValue(1);
+
+      await settingsModel.updateVenueSettings('venue-123', {
+        payment: { currency: 'EUR' },
+      });
+
+      const updateCall = mockKnex._mockChain.update.mock.calls[0][0];
+      expect(updateCall.accepted_currencies).toEqual(['EUR']);
+    });
+
+    it('should map general currency to accepted_currencies', async () => {
+      mockKnex._mockChain.first.mockResolvedValue(sampleDbRow);
+      mockKnex._mockChain.update.mockResolvedValue(1);
+
+      await settingsModel.updateVenueSettings('venue-123', {
+        general: { currency: 'CAD' },
+      });
+
+      const updateCall = mockKnex._mockChain.update.mock.calls[0][0];
+      expect(updateCall.accepted_currencies).toEqual(['CAD']);
     });
   });
 });

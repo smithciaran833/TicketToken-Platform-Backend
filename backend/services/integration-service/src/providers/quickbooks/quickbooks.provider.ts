@@ -1,6 +1,8 @@
 import { IntegrationProvider, SyncResult } from '../provider.interface';
 import { logger } from '../../utils/logger';
+import { config } from '../../config';
 import axios from 'axios';
+import crypto from 'crypto';
 
 export class QuickBooksProvider implements IntegrationProvider {
   name = 'quickbooks';
@@ -9,7 +11,7 @@ export class QuickBooksProvider implements IntegrationProvider {
   private baseUrl: string;
 
   constructor() {
-    this.baseUrl = process.env.QUICKBOOKS_SANDBOX === 'true'
+    this.baseUrl = config.providers.quickbooks.sandbox
       ? 'https://sandbox-quickbooks.api.intuit.com/v3'
       : 'https://quickbooks.api.intuit.com/v3';
   }
@@ -224,7 +226,8 @@ export class QuickBooksProvider implements IntegrationProvider {
         }
       );
 
-      return response.data.QueryResponse?.Invoice || [];
+      const responseData = response.data as { QueryResponse?: { Invoice?: any[] } };
+      return responseData.QueryResponse?.Invoice || [];
     } catch (error) {
       logger.error('Failed to fetch QuickBooks transactions', error);
       return [];
@@ -232,25 +235,32 @@ export class QuickBooksProvider implements IntegrationProvider {
   }
 
   getOAuthUrl(state: string): string {
-    const clientId = process.env.QUICKBOOKS_CLIENT_ID;
-    const redirectUri = `${process.env.API_URL}/api/v1/integrations/oauth/callback/quickbooks`;
+    const clientId = config.providers.quickbooks.clientId;
+    const redirectUri = `${config.server.apiUrl}/api/v1/integrations/oauth/callback/quickbooks`;
     const scope = 'com.intuit.quickbooks.accounting';
 
     return `https://appcenter.intuit.com/connect/oauth2?client_id=${clientId}&scope=${scope}&redirect_uri=${redirectUri}&response_type=code&state=${state}`;
   }
 
   async exchangeCodeForToken(code: string): Promise<any> {
+    const clientId = config.providers.quickbooks.clientId;
+    const clientSecret = config.providers.quickbooks.clientSecret;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('QuickBooks OAuth credentials not configured');
+    }
+    
     const response = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
       new URLSearchParams({
         grant_type: 'authorization_code',
         code,
-        redirect_uri: `${process.env.API_URL}/api/v1/integrations/oauth/callback/quickbooks`
+        redirect_uri: `${config.server.apiUrl}/api/v1/integrations/oauth/callback/quickbooks`
       }),
       {
         auth: {
-          username: process.env.QUICKBOOKS_CLIENT_ID || '',
-          password: process.env.QUICKBOOKS_CLIENT_SECRET || ''
+          username: clientId,
+          password: clientSecret
         }
       }
     );
@@ -259,6 +269,13 @@ export class QuickBooksProvider implements IntegrationProvider {
   }
 
   async refreshToken(refreshToken: string): Promise<any> {
+    const clientId = config.providers.quickbooks.clientId;
+    const clientSecret = config.providers.quickbooks.clientSecret;
+    
+    if (!clientId || !clientSecret) {
+      throw new Error('QuickBooks OAuth credentials not configured');
+    }
+    
     const response = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
       new URLSearchParams({
@@ -267,8 +284,8 @@ export class QuickBooksProvider implements IntegrationProvider {
       }),
       {
         auth: {
-          username: process.env.QUICKBOOKS_CLIENT_ID || '',
-          password: process.env.QUICKBOOKS_CLIENT_SECRET || ''
+          username: clientId,
+          password: clientSecret
         }
       }
     );
@@ -277,15 +294,24 @@ export class QuickBooksProvider implements IntegrationProvider {
   }
 
   validateWebhookSignature(payload: string, signature: string): boolean {
-    const crypto = require('crypto');
-    const webhookToken = process.env.QUICKBOOKS_WEBHOOK_TOKEN || '';
+    const webhookToken = config.providers.quickbooks.webhookToken;
+
+    if (!webhookToken) {
+      logger.warn('QuickBooks webhook token not configured, skipping verification');
+      return false;
+    }
 
     const hash = crypto
       .createHmac('sha256', webhookToken)
       .update(payload)
       .digest('base64');
 
-    return hash === signature;
+    // Use timing-safe comparison
+    try {
+      return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature));
+    } catch {
+      return false;
+    }
   }
 
   async handleWebhook(event: any): Promise<void> {

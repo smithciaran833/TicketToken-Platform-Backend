@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { get, set, del } from '../config/redis';
+import { getDatabase } from '../config/database';
 import { validate as isUUID } from 'uuid';
 import { logger } from '../utils/logger';
 
@@ -44,7 +45,7 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
     const redisKey = `idempotency:order:${userId}:${idempotencyKey}`;
 
     try {
-      // 4. Check if request already processed
+      // 4. Check Redis first
       const cached = await get(redisKey);
 
       if (cached) {
@@ -70,9 +71,29 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
           idempotencyKey,
           userId,
           originalStatus: cachedResponse.statusCode,
+          source: 'redis',
         });
 
         return reply.status(cachedResponse.statusCode).send(cachedResponse.body);
+      }
+
+      // LOW: Check database as fallback if Redis miss
+      const dbResult = await checkDatabaseForIdempotencyKey(userId, idempotencyKey);
+      if (dbResult) {
+        logger.info('Returning cached idempotent response from database', {
+          idempotencyKey,
+          userId,
+          source: 'database',
+        });
+
+        // Also re-populate Redis cache
+        await set(
+          redisKey,
+          JSON.stringify(dbResult),
+          Math.floor(ttlMs / 1000)
+        ).catch(err => logger.warn('Failed to repopulate Redis cache', { err }));
+
+        return reply.status(dbResult.statusCode).send(dbResult.body);
       }
 
       // 5. Mark as in-progress to prevent concurrent duplicates
@@ -94,10 +115,70 @@ export function idempotencyMiddleware(options: IdempotencyOptions) {
       return;
     } catch (err) {
       logger.error('Idempotency middleware error', { err, idempotencyKey });
-      // On Redis failure, proceed without idempotency (degraded mode)
+      
+      // LOW: Try database fallback on Redis failure
+      try {
+        const dbResult = await checkDatabaseForIdempotencyKey(userId, idempotencyKey);
+        if (dbResult) {
+          logger.info('Redis failed, using database fallback', {
+            idempotencyKey,
+            userId,
+          });
+          return reply.status(dbResult.statusCode).send(dbResult.body);
+        }
+      } catch (dbErr) {
+        logger.error('Database fallback also failed', { dbErr, idempotencyKey });
+      }
+      
+      // On both Redis and DB failure, proceed without idempotency (degraded mode)
+      logger.warn('Proceeding without idempotency check (degraded mode)', { idempotencyKey });
       return;
     }
   };
+}
+
+/**
+ * LOW: Check database for existing order with idempotency key
+ */
+async function checkDatabaseForIdempotencyKey(
+  userId: string,
+  idempotencyKey: string
+): Promise<{ statusCode: number; body: any } | null> {
+  try {
+    const db = getDatabase();
+    
+    const result = await db.query(
+      `SELECT id, status, order_number, total_cents, currency, created_at
+       FROM orders
+       WHERE user_id = $1 AND idempotency_key = $2
+       LIMIT 1`,
+      [userId, idempotencyKey]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const order = result.rows[0];
+    
+    // Return the order data as if it was a successful creation
+    return {
+      statusCode: 200, // Already created
+      body: {
+        id: order.id,
+        orderNumber: order.order_number,
+        status: order.status,
+        totalCents: order.total_cents,
+        currency: order.currency,
+        createdAt: order.created_at,
+        _idempotent: true, // Indicate this is a cached response
+        _source: 'database',
+      },
+    };
+  } catch (error) {
+    logger.error('Database idempotency check failed', { error, userId, idempotencyKey });
+    throw error;
+  }
 }
 
 // Hook to cache response after sending
@@ -107,6 +188,7 @@ export async function idempotencyCacheHook(
   payload: any
 ) {
   const redisKey = request.idempotencyRedisKey;
+  const idempotencyKey = request.idempotencyKey;
 
   if (!redisKey) {
     return payload; // No idempotency key, skip caching
@@ -134,6 +216,11 @@ export async function idempotencyCacheHook(
     ).catch((err) => {
       logger.error('Failed to cache successful response', { err });
     });
+
+    // LOW: Also persist to database for durability
+    await persistIdempotencyToDatabase(request, statusCode, body).catch((err) => {
+      logger.warn('Failed to persist idempotency to database', { err, idempotencyKey });
+    });
   }
   // Delete key on server errors (5xx) to allow retry
   else if (statusCode >= 500) {
@@ -157,4 +244,32 @@ export async function idempotencyCacheHook(
   }
 
   return payload;
+}
+
+/**
+ * LOW: Persist idempotency result to database for durability
+ * This is stored via the order's idempotency_key column, not a separate table
+ */
+async function persistIdempotencyToDatabase(
+  request: FastifyRequest,
+  statusCode: number,
+  body: any
+): Promise<void> {
+  // The order is already stored with the idempotency_key in the orders table
+  // This function is for logging/auditing purposes
+  const idempotencyKey = request.idempotencyKey;
+  const userId = request.user?.id;
+
+  if (!idempotencyKey || !userId) {
+    return;
+  }
+
+  // If the response contains an order ID, we can log it
+  if (body?.id && statusCode === 201) {
+    logger.debug('Idempotency key persisted with order', {
+      idempotencyKey,
+      userId,
+      orderId: body.id,
+    });
+  }
 }

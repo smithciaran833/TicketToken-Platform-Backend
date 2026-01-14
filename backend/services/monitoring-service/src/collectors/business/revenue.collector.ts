@@ -1,6 +1,20 @@
-import { pgPool } from '../../utils/database';
 import { metricsService } from '../../services/metrics.service';
 import { logger } from '../../utils/logger';
+import { venueServiceClient } from '@tickettoken/shared/clients';
+import { eventServiceClient } from '@tickettoken/shared/clients';
+import { ticketServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+
+/**
+ * Helper to create request context for service calls
+ * Monitoring service operates as a system service
+ */
+function createSystemContext(): RequestContext {
+  return {
+    tenantId: 'system',
+    traceId: `metrics-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+  };
+}
 
 export class BusinessMetricsCollector {
   private interval: NodeJS.Timeout | null = null;
@@ -26,24 +40,37 @@ export class BusinessMetricsCollector {
   }
 
   private async collect(): Promise<void> {
-    if (!pgPool) {
-      logger.debug('PostgreSQL not available for business metrics');
-      return;
-    }
+    const ctx = createSystemContext();
 
     try {
-      // Collect venue metrics
-      const venueResult = await pgPool.query(`
-        SELECT COUNT(*) as total_venues,
-               COUNT(CASE WHEN status = 'active' THEN 1 END) as active_venues
-        FROM venues
-      `).catch(() => ({ rows: [{ total_venues: 0, active_venues: 0 }] }));
+      // REFACTORED: Collect venue metrics via venueServiceClient
+      await this.collectVenueMetrics(ctx);
+
+      // REFACTORED: Collect event metrics via eventServiceClient  
+      await this.collectEventMetrics(ctx);
+
+      // REFACTORED: Collect ticket metrics via ticketServiceClient
+      await this.collectTicketMetrics(ctx);
+
+      logger.debug('Business metrics collected successfully');
+    } catch (error) {
+      logger.error('Error collecting business metrics:', error);
+    }
+  }
+
+  /**
+   * REFACTORED: Collect venue metrics via venue-service client
+   * Previously did direct DB query: SELECT COUNT(*) FROM venues WHERE status = ...
+   */
+  private async collectVenueMetrics(ctx: RequestContext): Promise<void> {
+    try {
+      const venueMetrics = await venueServiceClient.getVenueMetrics(ctx);
 
       await metricsService.pushMetrics({
         name: 'business_total_venues',
         type: 'gauge',
         service: 'monitoring-service',
-        value: parseInt(venueResult.rows[0].total_venues),
+        value: venueMetrics.totalVenues,
         labels: { type: 'total' },
       });
 
@@ -51,45 +78,86 @@ export class BusinessMetricsCollector {
         name: 'business_active_venues',
         type: 'gauge',
         service: 'monitoring-service',
-        value: parseInt(venueResult.rows[0].active_venues),
+        value: venueMetrics.activeVenues,
         labels: { type: 'active' },
       });
 
-      // Collect event metrics
-      const eventResult = await pgPool.query(`
-        SELECT COUNT(*) as total_events,
-               COUNT(CASE WHEN status = 'published' THEN 1 END) as published_events
-        FROM events
-        WHERE created_at > NOW() - INTERVAL '30 days'
-      `).catch(() => ({ rows: [{ total_events: 0, published_events: 0 }] }));
+      logger.debug({ metrics: venueMetrics }, 'Venue metrics collected via venue-service');
+    } catch (error) {
+      logger.warn({ error }, 'Failed to collect venue metrics, using default values');
+      // Push default metrics if service is unavailable
+      await metricsService.pushMetrics({
+        name: 'business_total_venues',
+        type: 'gauge',
+        service: 'monitoring-service',
+        value: 0,
+        labels: { type: 'total' },
+      });
+      await metricsService.pushMetrics({
+        name: 'business_active_venues',
+        type: 'gauge',
+        service: 'monitoring-service',
+        value: 0,
+        labels: { type: 'active' },
+      });
+    }
+  }
+
+  /**
+   * REFACTORED: Collect event metrics via event-service client
+   * Previously did direct DB query: SELECT COUNT(*) FROM events WHERE created_at > NOW() - INTERVAL '30 days'
+   */
+  private async collectEventMetrics(ctx: RequestContext): Promise<void> {
+    try {
+      const eventMetrics = await eventServiceClient.getEventMetrics(ctx, 30);
 
       await metricsService.pushMetrics({
         name: 'business_events_last_30_days',
         type: 'gauge',
         service: 'monitoring-service',
-        value: parseInt(eventResult.rows[0].total_events),
+        value: eventMetrics.totalEvents,
         labels: { period: '30d' },
       });
 
-      // Collect ticket metrics
-      const ticketResult = await pgPool.query(`
-        SELECT COUNT(*) as tickets_sold
-        FROM tickets
-        WHERE status = 'sold'
-          AND created_at > NOW() - INTERVAL '24 hours'
-      `).catch(() => ({ rows: [{ tickets_sold: 0 }] }));
+      logger.debug({ metrics: eventMetrics }, 'Event metrics collected via event-service');
+    } catch (error) {
+      logger.warn({ error }, 'Failed to collect event metrics, using default values');
+      await metricsService.pushMetrics({
+        name: 'business_events_last_30_days',
+        type: 'gauge',
+        service: 'monitoring-service',
+        value: 0,
+        labels: { period: '30d' },
+      });
+    }
+  }
+
+  /**
+   * REFACTORED: Collect ticket metrics via ticket-service client
+   * Previously did direct DB query: SELECT COUNT(*) FROM tickets WHERE status = 'sold' AND created_at > NOW() - INTERVAL '24 hours'
+   */
+  private async collectTicketMetrics(ctx: RequestContext): Promise<void> {
+    try {
+      const ticketMetrics = await ticketServiceClient.getTicketMetrics(ctx, 24);
 
       await metricsService.pushMetrics({
         name: 'business_tickets_sold_24h',
         type: 'gauge',
         service: 'monitoring-service',
-        value: parseInt(ticketResult.rows[0].tickets_sold),
+        value: ticketMetrics.ticketsSold,
         labels: { period: '24h' },
       });
 
-      logger.debug('Business metrics collected successfully');
+      logger.debug({ metrics: ticketMetrics }, 'Ticket metrics collected via ticket-service');
     } catch (error) {
-      logger.error('Error collecting business metrics:', error);
+      logger.warn({ error }, 'Failed to collect ticket metrics, using default values');
+      await metricsService.pushMetrics({
+        name: 'business_tickets_sold_24h',
+        type: 'gauge',
+        service: 'monitoring-service',
+        value: 0,
+        labels: { period: '24h' },
+      });
     }
   }
 }

@@ -48,11 +48,11 @@ export class GasFeeEstimatorService {
 
     // Initialize price cache
     this.priceFeeds = new Map();
-    
-    logger.info('Gas fee estimator initialized', {
+
+    logger.info({
       solanaNetwork,
       hasPolygonRpc: !!process.env.POLYGON_RPC_URL,
-    });
+    }, 'Gas fee estimator initialized');
   }
 
   /**
@@ -81,12 +81,12 @@ export class GasFeeEstimatorService {
               throw new Error(`Unsupported network: ${network}`);
           }
         } catch (error) {
-          logger.error('Gas fee estimation failed, using fallback', {
+          logger.error({
             network,
             ticketCount,
             error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          
+          }, 'Gas fee estimation failed, using fallback');
+
           // Fallback to conservative estimates
           return this.getFallbackEstimate(ticketCount, network);
         }
@@ -102,14 +102,14 @@ export class GasFeeEstimatorService {
     try {
       // Get recent blockhash and fee calculator
       const { feeCalculator } = await this.solanaConnection.getRecentBlockhash();
-      
+
       // Solana fees are per signature, not per computation
       // Each ticket mint requires 1 transaction with 1 signature
       const lamportsPerSignature = feeCalculator.lamportsPerSignature;
-      
+
       // Get SOL price in USD
       const solPriceUsd = await this.getCryptoPrice('SOL');
-      
+
       // Calculate cost
       const lamportsPerTicket = lamportsPerSignature;
       const totalLamports = lamportsPerTicket * ticketCount;
@@ -117,14 +117,14 @@ export class GasFeeEstimatorService {
       const usdCost = solCost * solPriceUsd;
       const costCents = Math.round(usdCost * 100);
 
-      logger.info('Solana gas fee estimated', {
+      logger.info({
         ticketCount,
         lamportsPerSignature,
         totalLamports,
         solCost: solCost.toFixed(6),
         usdCost: usdCost.toFixed(2),
         costCents,
-      });
+      }, 'Solana gas fee estimated');
 
       return {
         network: BlockchainNetwork.SOLANA,
@@ -134,9 +134,9 @@ export class GasFeeEstimatorService {
         gasPrice: `${lamportsPerSignature} lamports`,
       };
     } catch (error) {
-      logger.error('Solana fee estimation failed', {
+      logger.error({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Solana fee estimation failed');
       throw error;
     }
   }
@@ -167,10 +167,10 @@ export class GasFeeEstimatorService {
       // Estimate gas units needed per ticket mint
       // NFT minting on Polygon typically costs ~100k-200k gas
       const gasUnitsPerMint = 150000;
-      
+
       // Get MATIC price in USD
       const maticPriceUsd = await this.getCryptoPrice('MATIC');
-      
+
       // Calculate cost
       const totalGasUnits = gasUnitsPerMint * ticketCount;
       const maticCostPerTicket = (gasPriceGwei * gasUnitsPerMint) / 1_000_000_000;
@@ -178,7 +178,7 @@ export class GasFeeEstimatorService {
       const usdCost = totalMaticCost * maticPriceUsd;
       const costCents = Math.round(usdCost * 100);
 
-      logger.info('Polygon gas fee estimated', {
+      logger.info({
         ticketCount,
         gasPriceGwei: gasPriceGwei.toFixed(2),
         gasUnitsPerMint,
@@ -186,7 +186,7 @@ export class GasFeeEstimatorService {
         maticCost: totalMaticCost.toFixed(6),
         usdCost: usdCost.toFixed(2),
         costCents,
-      });
+      }, 'Polygon gas fee estimated');
 
       return {
         network: BlockchainNetwork.POLYGON,
@@ -196,9 +196,9 @@ export class GasFeeEstimatorService {
         gasPrice: `${gasPriceGwei.toFixed(2)} Gwei`,
       };
     } catch (error) {
-      logger.error('Polygon fee estimation failed', {
+      logger.error({
         error: error instanceof Error ? error.message : 'Unknown error',
-      });
+      }, 'Polygon fee estimation failed');
       throw error;
     }
   }
@@ -219,7 +219,7 @@ export class GasFeeEstimatorService {
    */
   private async getCryptoPrice(symbol: string): Promise<number> {
     const cacheKey = `crypto:price:${symbol}`;
-    
+
     return cacheService.getOrCompute(
       cacheKey,
       async () => {
@@ -251,21 +251,21 @@ export class GasFeeEstimatorService {
             throw new Error(`Price not found for ${symbol}`);
           }
 
-          logger.info('Crypto price fetched', { symbol, price });
+          logger.info({ symbol, price }, 'Crypto price fetched');
           return price;
         } catch (error) {
-          logger.error('Failed to fetch crypto price, using fallback', {
+          logger.error({
             symbol,
             error: error instanceof Error ? error.message : 'Unknown error',
-          });
-          
+          }, 'Failed to fetch crypto price, using fallback');
+
           // Fallback prices (conservative estimates)
           const fallbackPrices: Record<string, number> = {
             'SOL': 100,    // $100 per SOL
             'MATIC': 1,    // $1 per MATIC
             'ETH': 3000,   // $3000 per ETH
           };
-          
+
           return fallbackPrices[symbol] || 1;
         }
       },
@@ -290,12 +290,12 @@ export class GasFeeEstimatorService {
     const feePerTransaction = fallbackRates[network];
     const totalFee = feePerTransaction * ticketCount;
 
-    logger.warn('Using fallback gas fee estimate', {
+    logger.warn({
       network,
       ticketCount,
       feePerTransaction,
       totalFee,
-    });
+    }, 'Using fallback gas fee estimate');
 
     return {
       network,

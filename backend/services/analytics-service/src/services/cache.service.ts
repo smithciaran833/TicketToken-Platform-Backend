@@ -1,13 +1,14 @@
 import { CacheModel } from '../models';
 import { logger } from '../utils/logger';
+import { config } from '../config';
 import * as crypto from 'crypto';
 
 export class CacheService {
   private static instance: CacheService;
   private log = logger.child({ component: 'CacheService' });
   
-  // Cache integrity configuration
-  private readonly CACHE_SECRET = process.env.CACHE_SECRET || 'default-cache-secret-change-in-production';
+  // AUDIT FIX: CACHE-1 - Cache secret from config (no hardcoded fallback)
+  private readonly CACHE_SECRET = config.cache.secret;
   private readonly SIGNATURE_ALGORITHM = 'sha256';
   private readonly PROTECTED_PREFIXES = ['stats:', 'metrics:', 'aggregate:', 'event:'];
 

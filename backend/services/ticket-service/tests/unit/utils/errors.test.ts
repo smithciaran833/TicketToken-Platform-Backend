@@ -1,7 +1,6 @@
-// =============================================================================
-// TEST SUITE - errors.ts
-// =============================================================================
-
+/**
+ * Unit Tests for src/utils/errors.ts
+ */
 import {
   AppError,
   ValidationError,
@@ -10,356 +9,244 @@ import {
   UnauthorizedError,
   ForbiddenError,
   TooManyRequestsError,
+  StateTransitionError,
 } from '../../../src/utils/errors';
 
-describe('Error classes', () => {
-  // =============================================================================
-  // AppError - 10 test cases
-  // =============================================================================
-
+describe('utils/errors', () => {
   describe('AppError', () => {
-    it('should create error with message', () => {
-      const error = new AppError('Test error');
+    it('sets message, statusCode, code, details', () => {
+      const details = { field: 'email' };
+      const error = new AppError('Something went wrong', 500, 'INTERNAL_ERROR', details);
 
-      expect(error.message).toBe('Test error');
-    });
-
-    it('should have default status code 500', () => {
-      const error = new AppError('Test error');
-
+      expect(error.message).toBe('Something went wrong');
       expect(error.statusCode).toBe(500);
+      expect(error.code).toBe('INTERNAL_ERROR');
+      expect(error.details).toEqual(details);
     });
 
-    it('should accept custom status code', () => {
-      const error = new AppError('Test error', 400);
-
-      expect(error.statusCode).toBe(400);
-    });
-
-    it('should accept error code', () => {
-      const error = new AppError('Test error', 400, 'CUSTOM_ERROR');
-
-      expect(error.code).toBe('CUSTOM_ERROR');
-    });
-
-    it('should extend Error class', () => {
+    it('captures stack trace', () => {
       const error = new AppError('Test error');
-
-      expect(error).toBeInstanceOf(Error);
-    });
-
-    it('should have correct name', () => {
-      const error = new AppError('Test error');
-
-      expect(error.name).toBe('AppError');
-    });
-
-    it('should capture stack trace', () => {
-      const error = new AppError('Test error');
-
       expect(error.stack).toBeDefined();
       expect(error.stack).toContain('AppError');
     });
 
-    it('should be throwable', () => {
-      expect(() => {
-        throw new AppError('Test error');
-      }).toThrow('Test error');
-    });
-
-    it('should be catchable', () => {
-      try {
-        throw new AppError('Test error', 400, 'TEST');
-      } catch (error: any) {
-        expect(error.message).toBe('Test error');
-        expect(error.statusCode).toBe(400);
-        expect(error.code).toBe('TEST');
-      }
-    });
-
-    it('should preserve instanceof check', () => {
+    it('defaults statusCode to 500', () => {
       const error = new AppError('Test error');
+      expect(error.statusCode).toBe(500);
+    });
 
-      expect(error instanceof AppError).toBe(true);
-      expect(error instanceof Error).toBe(true);
+    it('sets name to constructor name', () => {
+      const error = new AppError('Test error');
+      expect(error.name).toBe('AppError');
+    });
+
+    describe('toJSON()', () => {
+      it('returns error, code, statusCode, details', () => {
+        const error = new AppError('Test', 400, 'TEST_CODE', { foo: 'bar' });
+        const json = error.toJSON();
+
+        expect(json).toEqual({
+          error: 'Test',
+          code: 'TEST_CODE',
+          statusCode: 400,
+          details: { foo: 'bar' },
+        });
+      });
+
+      it('omits details when not provided', () => {
+        const error = new AppError('Test', 400, 'TEST_CODE');
+        const json = error.toJSON();
+
+        expect(json).toEqual({
+          error: 'Test',
+          code: 'TEST_CODE',
+          statusCode: 400,
+        });
+        expect(json).not.toHaveProperty('details');
+      });
     });
   });
 
-  // =============================================================================
-  // ValidationError - 5 test cases
-  // =============================================================================
-
   describe('ValidationError', () => {
-    it('should create validation error', () => {
-      const error = new ValidationError('Invalid input');
-
-      expect(error.message).toBe('Invalid input');
-    });
-
-    it('should have status code 400', () => {
+    it('sets statusCode=400, code=VALIDATION_ERROR', () => {
       const error = new ValidationError('Invalid input');
 
       expect(error.statusCode).toBe(400);
-    });
-
-    it('should have VALIDATION_ERROR code', () => {
-      const error = new ValidationError('Invalid input');
-
       expect(error.code).toBe('VALIDATION_ERROR');
+      expect(error.message).toBe('Invalid input');
     });
 
-    it('should extend AppError', () => {
-      const error = new ValidationError('Invalid input');
+    it('accepts details', () => {
+      const error = new ValidationError('Invalid input', { field: 'email' });
+      expect(error.details).toEqual({ field: 'email' });
+    });
 
+    it('extends AppError', () => {
+      const error = new ValidationError('Invalid input');
       expect(error).toBeInstanceOf(AppError);
-    });
-
-    it('should have correct name', () => {
-      const error = new ValidationError('Invalid input');
-
-      expect(error.name).toBe('ValidationError');
+      expect(error).toBeInstanceOf(Error);
     });
   });
 
-  // =============================================================================
-  // NotFoundError - 5 test cases
-  // =============================================================================
-
   describe('NotFoundError', () => {
-    it('should create not found error', () => {
-      const error = new NotFoundError('User');
-
-      expect(error.message).toBe('User not found');
-    });
-
-    it('should have status code 404', () => {
-      const error = new NotFoundError('User');
+    it('sets statusCode=404, code=NOT_FOUND', () => {
+      const error = new NotFoundError('Ticket');
 
       expect(error.statusCode).toBe(404);
-    });
-
-    it('should have NOT_FOUND code', () => {
-      const error = new NotFoundError('User');
-
       expect(error.code).toBe('NOT_FOUND');
     });
 
-    it('should extend AppError', () => {
-      const error = new NotFoundError('Resource');
-
-      expect(error).toBeInstanceOf(AppError);
+    it('formats message as "{resource} not found"', () => {
+      const error = new NotFoundError('Ticket');
+      expect(error.message).toBe('Ticket not found');
     });
 
-    it('should accept different resource names', () => {
-      const error1 = new NotFoundError('Ticket');
-      const error2 = new NotFoundError('Event');
-
-      expect(error1.message).toBe('Ticket not found');
-      expect(error2.message).toBe('Event not found');
+    it('accepts details', () => {
+      const error = new NotFoundError('Ticket', { id: '123' });
+      expect(error.details).toEqual({ id: '123' });
     });
   });
 
-  // =============================================================================
-  // ConflictError - 5 test cases
-  // =============================================================================
-
   describe('ConflictError', () => {
-    it('should create conflict error', () => {
+    it('sets statusCode=409, code=CONFLICT', () => {
       const error = new ConflictError('Resource already exists');
 
+      expect(error.statusCode).toBe(409);
+      expect(error.code).toBe('CONFLICT');
       expect(error.message).toBe('Resource already exists');
     });
 
-    it('should have status code 409', () => {
-      const error = new ConflictError('Duplicate entry');
-
-      expect(error.statusCode).toBe(409);
-    });
-
-    it('should have CONFLICT code', () => {
-      const error = new ConflictError('Duplicate');
-
-      expect(error.code).toBe('CONFLICT');
-    });
-
-    it('should extend AppError', () => {
-      const error = new ConflictError('Conflict');
-
-      expect(error).toBeInstanceOf(AppError);
-    });
-
-    it('should accept custom messages', () => {
-      const error = new ConflictError('Email already registered');
-
-      expect(error.message).toBe('Email already registered');
+    it('accepts details', () => {
+      const error = new ConflictError('Conflict', { reason: 'duplicate' });
+      expect(error.details).toEqual({ reason: 'duplicate' });
     });
   });
 
-  // =============================================================================
-  // UnauthorizedError - 5 test cases
-  // =============================================================================
-
   describe('UnauthorizedError', () => {
-    it('should create unauthorized error with default message', () => {
-      const error = new UnauthorizedError();
-
-      expect(error.message).toBe('Unauthorized');
-    });
-
-    it('should accept custom message', () => {
-      const error = new UnauthorizedError('Invalid token');
-
-      expect(error.message).toBe('Invalid token');
-    });
-
-    it('should have status code 401', () => {
+    it('sets statusCode=401, code=UNAUTHORIZED', () => {
       const error = new UnauthorizedError();
 
       expect(error.statusCode).toBe(401);
-    });
-
-    it('should have UNAUTHORIZED code', () => {
-      const error = new UnauthorizedError();
-
       expect(error.code).toBe('UNAUTHORIZED');
     });
 
-    it('should extend AppError', () => {
+    it('uses default message "Unauthorized"', () => {
       const error = new UnauthorizedError();
+      expect(error.message).toBe('Unauthorized');
+    });
 
-      expect(error).toBeInstanceOf(AppError);
+    it('accepts custom message', () => {
+      const error = new UnauthorizedError('Token expired');
+      expect(error.message).toBe('Token expired');
+    });
+
+    it('accepts details', () => {
+      const error = new UnauthorizedError('Unauthorized', { reason: 'expired' });
+      expect(error.details).toEqual({ reason: 'expired' });
     });
   });
 
-  // =============================================================================
-  // ForbiddenError - 5 test cases
-  // =============================================================================
-
   describe('ForbiddenError', () => {
-    it('should create forbidden error with default message', () => {
-      const error = new ForbiddenError();
-
-      expect(error.message).toBe('Forbidden');
-    });
-
-    it('should accept custom message', () => {
-      const error = new ForbiddenError('Access denied');
-
-      expect(error.message).toBe('Access denied');
-    });
-
-    it('should have status code 403', () => {
+    it('sets statusCode=403, code=FORBIDDEN', () => {
       const error = new ForbiddenError();
 
       expect(error.statusCode).toBe(403);
-    });
-
-    it('should have FORBIDDEN code', () => {
-      const error = new ForbiddenError();
-
       expect(error.code).toBe('FORBIDDEN');
     });
 
-    it('should extend AppError', () => {
+    it('uses default message "Forbidden"', () => {
       const error = new ForbiddenError();
+      expect(error.message).toBe('Forbidden');
+    });
 
-      expect(error).toBeInstanceOf(AppError);
+    it('accepts custom message', () => {
+      const error = new ForbiddenError('Access denied');
+      expect(error.message).toBe('Access denied');
+    });
+
+    it('accepts details', () => {
+      const error = new ForbiddenError('Forbidden', { resource: 'admin' });
+      expect(error.details).toEqual({ resource: 'admin' });
     });
   });
 
-  // =============================================================================
-  // TooManyRequestsError - 5 test cases
-  // =============================================================================
-
   describe('TooManyRequestsError', () => {
-    it('should create rate limit error with default message', () => {
-      const error = new TooManyRequestsError();
-
-      expect(error.message).toBe('Too many requests');
-    });
-
-    it('should accept custom message', () => {
-      const error = new TooManyRequestsError('Rate limit exceeded');
-
-      expect(error.message).toBe('Rate limit exceeded');
-    });
-
-    it('should have status code 429', () => {
+    it('sets statusCode=429, code=TOO_MANY_REQUESTS', () => {
       const error = new TooManyRequestsError();
 
       expect(error.statusCode).toBe(429);
-    });
-
-    it('should have TOO_MANY_REQUESTS code', () => {
-      const error = new TooManyRequestsError();
-
       expect(error.code).toBe('TOO_MANY_REQUESTS');
     });
 
-    it('should extend AppError', () => {
+    it('uses default message "Too many requests"', () => {
       const error = new TooManyRequestsError();
+      expect(error.message).toBe('Too many requests');
+    });
 
-      expect(error).toBeInstanceOf(AppError);
+    it('accepts custom message', () => {
+      const error = new TooManyRequestsError('Rate limit exceeded');
+      expect(error.message).toBe('Rate limit exceeded');
+    });
+
+    it('accepts details', () => {
+      const error = new TooManyRequestsError('Too many requests', { retryAfter: 60 });
+      expect(error.details).toEqual({ retryAfter: 60 });
     });
   });
 
-  // =============================================================================
-  // Integration tests - 5 test cases
-  // =============================================================================
+  describe('StateTransitionError', () => {
+    it('extends ValidationError', () => {
+      const error = new StateTransitionError('active', 'sold', ['reserved']);
 
-  describe('Error integration', () => {
-    it('should differentiate between error types', () => {
-      const validation = new ValidationError('Invalid');
-      const notFound = new NotFoundError('User');
-      const unauthorized = new UnauthorizedError();
-
-      expect(validation.statusCode).toBe(400);
-      expect(notFound.statusCode).toBe(404);
-      expect(unauthorized.statusCode).toBe(401);
+      expect(error).toBeInstanceOf(ValidationError);
+      expect(error).toBeInstanceOf(AppError);
+      expect(error.statusCode).toBe(400);
+      expect(error.code).toBe('VALIDATION_ERROR');
     });
 
-    it('should be catchable by type', () => {
-      try {
-        throw new ValidationError('Test');
-      } catch (error) {
-        expect(error).toBeInstanceOf(ValidationError);
-        expect(error).toBeInstanceOf(AppError);
-      }
+    it('formats message with from, to, allowed transitions', () => {
+      const error = new StateTransitionError('active', 'sold', ['reserved', 'cancelled']);
+
+      expect(error.message).toBe(
+        "Invalid status transition from 'active' to 'sold'. Allowed transitions: [reserved, cancelled]"
+      );
     });
 
-    it('should preserve all properties', () => {
-      const error = new ConflictError('Duplicate');
+    it('handles terminal state message when no allowed transitions', () => {
+      const error = new StateTransitionError('used', 'active', []);
 
-      expect(error.message).toBe('Duplicate');
-      expect(error.statusCode).toBe(409);
-      expect(error.code).toBe('CONFLICT');
-      expect(error.name).toBe('ConflictError');
-      expect(error.stack).toBeDefined();
+      expect(error.message).toBe(
+        "Invalid status transition from 'used' to 'active'. No transitions allowed (terminal state)"
+      );
     });
 
-    it('should work in error middleware', () => {
-      const errors = [
-        new ValidationError('Invalid'),
-        new NotFoundError('User'),
-        new UnauthorizedError(),
-        new ForbiddenError(),
-        new ConflictError('Duplicate'),
-        new TooManyRequestsError(),
-      ];
+    it('handles undefined allowed transitions', () => {
+      const error = new StateTransitionError('used', 'active');
 
-      errors.forEach(error => {
-        expect(error).toBeInstanceOf(AppError);
-        expect(error.statusCode).toBeGreaterThanOrEqual(400);
-        expect(error.statusCode).toBeLessThan(500);
+      expect(error.message).toBe(
+        "Invalid status transition from 'used' to 'active'. No transitions allowed (terminal state)"
+      );
+    });
+
+    it('includes from, to, allowed in details', () => {
+      const error = new StateTransitionError('active', 'sold', ['reserved']);
+
+      expect(error.details).toMatchObject({
+        from: 'active',
+        to: 'sold',
+        allowed: ['reserved'],
       });
     });
 
-    it('should support error chaining', () => {
-      const cause = new Error('Root cause');
-      const error = new AppError('Wrapper error', 500);
-      (error as any).cause = cause;
+    it('merges additional details', () => {
+      const error = new StateTransitionError('active', 'sold', ['reserved'], { ticketId: '123' });
 
-      expect((error as any).cause).toBe(cause);
+      expect(error.details).toMatchObject({
+        from: 'active',
+        to: 'sold',
+        allowed: ['reserved'],
+        ticketId: '123',
+      });
     });
   });
 });

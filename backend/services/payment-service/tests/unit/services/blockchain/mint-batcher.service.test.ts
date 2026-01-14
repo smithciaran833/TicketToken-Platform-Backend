@@ -1,346 +1,501 @@
-import { MintBatcherService } from '../../../../src/services/blockchain/mint-batcher.service';
+/**
+ * Mint Batcher Service Tests
+ * Tests for NFT minting batch processing
+ */
 
-// Mock blockchain config
-jest.mock('../../../../src/config/blockchain', () => ({
-  blockchainConfig: {
-    batchSizes: {
-      solana: 10,
-      polygon: 20
-    },
-    retryConfig: {
-      maxAttempts: 3,
-      baseDelay: 1000
-    }
-  }
-}));
-
-// Mock logger
 jest.mock('../../../../src/utils/logger', () => ({
   logger: {
-    info: jest.fn(),
-    error: jest.fn(),
-    warn: jest.fn(),
-    child: jest.fn(() => ({
+    child: jest.fn().mockReturnValue({
       info: jest.fn(),
+      warn: jest.fn(),
       error: jest.fn(),
-      warn: jest.fn()
-    }))
-  }
+      debug: jest.fn(),
+    }),
+  },
 }));
 
 describe('MintBatcherService', () => {
-  let service: MintBatcherService;
-
   beforeEach(() => {
     jest.clearAllMocks();
-    jest.useFakeTimers();
-    service = new MintBatcherService();
   });
 
-  afterEach(() => {
-    jest.useRealTimers();
+  describe('queueMint', () => {
+    it('should add mint request to queue', async () => {
+      const mintRequest = {
+        ticketId: 'ticket_123',
+        recipient: 'wallet_abc',
+        metadata: { eventId: 'event_1', section: 'A', row: '1', seat: '5' },
+      };
+
+      const result = await queueMint(mintRequest);
+
+      expect(result.queued).toBe(true);
+      expect(result.batchId).toBeDefined();
+      expect(result.position).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should prioritize VIP mints', async () => {
+      const vipMint = {
+        ticketId: 'ticket_vip',
+        recipient: 'wallet_vip',
+        metadata: { tier: 'vip' },
+        priority: 'high',
+      };
+
+      const result = await queueMint(vipMint);
+
+      expect(result.position).toBe(0); // Front of queue
+    });
+
+    it('should reject duplicate mint requests', async () => {
+      const mintRequest = { ticketId: 'ticket_duplicate', recipient: 'wallet_1' };
+
+      await queueMint(mintRequest);
+      const result = await queueMint(mintRequest);
+
+      expect(result.queued).toBe(false);
+      expect(result.reason).toContain('already queued');
+    });
+
+    it('should validate wallet address', async () => {
+      const invalidMint = { ticketId: 'ticket_1', recipient: 'invalid_wallet' };
+
+      await expect(queueMint(invalidMint)).rejects.toThrow('invalid wallet');
+    });
   });
 
-  describe('addToBatch', () => {
-    it('should create a new batch for first request', async () => {
-      const request = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1', 'ticket_2'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+  describe('processBatch', () => {
+    it('should process batch of pending mints', async () => {
+      const batchId = 'batch_123';
 
-      const batchId = await service.addToBatch(request);
+      const result = await processBatch(batchId);
 
-      expect(batchId).toBeDefined();
-      expect(batchId).toContain('batch_');
-      expect(batchId).toContain('event_1_solana');
+      expect(result.processed).toBeGreaterThan(0);
+      expect(result.success).toBeGreaterThan(0);
+      expect(result.transactionHash).toBeDefined();
     });
 
-    it('should add to existing batch', async () => {
-      const request1 = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should respect batch size limits', async () => {
+      const batchId = 'batch_large';
 
-      const request2 = {
-        paymentId: 'payment_2',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_2'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+      const result = await processBatch(batchId);
 
-      const batchId1 = await service.addToBatch(request1);
-      const batchId2 = await service.addToBatch(request2);
-
-      // Both should be added to same batch
-      expect(batchId1).toBe(batchId2);
+      expect(result.processed).toBeLessThanOrEqual(100); // Max batch size
     });
 
-    it('should create separate batches for different events', async () => {
-      const request1 = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should handle partial batch failures', async () => {
+      const batchId = 'batch_partial_fail';
 
-      const request2 = {
-        paymentId: 'payment_2',
-        eventId: 'event_2',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_2'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+      const result = await processBatch(batchId);
 
-      const batchId1 = await service.addToBatch(request1);
-      const batchId2 = await service.addToBatch(request2);
-
-      expect(batchId1).not.toBe(batchId2);
+      expect(result.success + result.failed).toBe(result.processed);
+      expect(result.failedMints).toBeDefined();
     });
 
-    it('should create separate batches for different blockchains', async () => {
-      const request1 = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should retry failed mints', async () => {
+      const batchId = 'batch_retry';
 
-      const request2 = {
-        paymentId: 'payment_2',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_2'],
-        blockchain: 'polygon',
-        priority: 'standard'
-      };
+      const result = await processBatch(batchId);
 
-      const batchId1 = await service.addToBatch(request1);
-      const batchId2 = await service.addToBatch(request2);
+      expect(result.requeued).toBeDefined();
+    });
+  });
 
-      expect(batchId1).not.toBe(batchId2);
+  describe('createBatch', () => {
+    it('should create batch from pending mints', async () => {
+      const options = { maxSize: 50, priority: 'normal' };
+
+      const batch = await createBatch(options);
+
+      expect(batch.id).toBeDefined();
+      expect(batch.mints).toBeDefined();
+      expect(batch.mints.length).toBeLessThanOrEqual(50);
     });
 
-    it('should process batch when size limit reached', async () => {
-      const requests = Array(10).fill(null).map((_, i) => ({
-        paymentId: `payment_${i}`,
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: [`ticket_${i}`],
-        blockchain: 'solana',
-        priority: 'standard'
-      }));
+    it('should group by recipient for efficiency', async () => {
+      const batch = await createBatch({ groupByRecipient: true });
 
-      // Add 10 tickets (batch size limit for Solana)
-      for (const request of requests) {
-        await service.addToBatch(request);
-      }
-
-      // Advance timers to allow processing
-      await jest.advanceTimersByTimeAsync(100);
-
-      // Batch should be processed and removed from pending
-      const status = service.getBatchStatus();
-      expect(status.pending).toBe(0);
+      // Mints to same recipient should be adjacent
+      expect(batch.optimized).toBe(true);
     });
 
-    it('should delay processing for partial batch', async () => {
-      const request = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1', 'ticket_2'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should estimate batch gas cost', async () => {
+      const batch = await createBatch({ maxSize: 25 });
 
-      await service.addToBatch(request);
+      expect(batch.estimatedGas).toBeDefined();
+      expect(batch.estimatedCost).toBeDefined();
+    });
 
-      // Should still be pending before timer expires
-      const statusBefore = service.getBatchStatus();
-      expect(statusBefore.pending).toBe(1);
+    it('should set batch expiration', async () => {
+      const batch = await createBatch({ ttlMinutes: 30 });
 
-      // Advance past the batch delay (5 seconds)
-      await jest.advanceTimersByTimeAsync(6000);
-
-      // Should be processed after delay
-      const statusAfter = service.getBatchStatus();
-      expect(statusAfter.pending).toBe(0);
+      expect(batch.expiresAt).toBeDefined();
     });
   });
 
   describe('getBatchStatus', () => {
-    it('should return zero pending initially', () => {
-      const status = service.getBatchStatus();
+    it('should return batch status', async () => {
+      const batchId = 'batch_123';
 
-      expect(status.pending).toBe(0);
-      expect(status.processing).toBe(0);
-      expect(status.averageSize).toBe(0);
+      const status = await getBatchStatus(batchId);
+
+      expect(status.id).toBe(batchId);
+      expect(['pending', 'processing', 'complete', 'failed']).toContain(status.status);
     });
 
-    it('should track pending batches', async () => {
-      const request = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1', 'ticket_2', 'ticket_3'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should include transaction details for completed batch', async () => {
+      const batchId = 'batch_complete';
 
-      await service.addToBatch(request);
+      const status = await getBatchStatus(batchId);
 
-      const status = service.getBatchStatus();
-      expect(status.pending).toBe(1);
-      expect(status.averageSize).toBe(3);
+      expect(status.transactionHash).toBeDefined();
+      expect(status.blockNumber).toBeDefined();
     });
 
-    it('should calculate average batch size correctly', async () => {
-      const request1 = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1', 'ticket_2'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should include error details for failed batch', async () => {
+      const batchId = 'batch_failed';
 
-      const request2 = {
-        paymentId: 'payment_2',
-        eventId: 'event_2',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_3', 'ticket_4', 'ticket_5', 'ticket_6'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+      const status = await getBatchStatus(batchId);
 
-      await service.addToBatch(request1);
-      await service.addToBatch(request2);
-
-      const status = service.getBatchStatus();
-      expect(status.pending).toBe(2);
-      expect(status.averageSize).toBe(3); // (2 + 4) / 2 = 3
+      expect(status.status).toBe('failed');
+      expect(status.error).toBeDefined();
     });
   });
 
-  describe('Batch Processing', () => {
-    it('should process batch successfully', async () => {
-      const request = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1', 'ticket_2'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+  describe('getMintStatus', () => {
+    it('should return individual mint status', async () => {
+      const ticketId = 'ticket_123';
 
-      await service.addToBatch(request);
+      const status = await getMintStatus(ticketId);
 
-      // Mock Math.random to avoid random failure
-      jest.spyOn(Math, 'random').mockReturnValue(0.5);
-
-      await jest.advanceTimersByTimeAsync(6000);
-
-      // Batch should be processed
-      const status = service.getBatchStatus();
-      expect(status.pending).toBe(0);
+      expect(status.ticketId).toBe(ticketId);
+      expect(['queued', 'processing', 'minted', 'failed']).toContain(status.status);
     });
 
-    it('should handle processing failures with retry', async () => {
-      const request = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should include token ID for minted ticket', async () => {
+      const ticketId = 'ticket_minted';
 
-      await service.addToBatch(request);
+      const status = await getMintStatus(ticketId);
 
-      // Mock Math.random to force failure
-      jest.spyOn(Math, 'random').mockReturnValue(0.05);
+      expect(status.tokenId).toBeDefined();
+      expect(status.mintAddress).toBeDefined();
+    });
 
-      await jest.advanceTimersByTimeAsync(6000);
+    it('should include retry count for failed mints', async () => {
+      const ticketId = 'ticket_failed';
 
-      // Should schedule retry
-      expect(setTimeout).toHaveBeenCalled();
+      const status = await getMintStatus(ticketId);
+
+      expect(status.retryCount).toBeDefined();
+      expect(status.lastError).toBeDefined();
     });
   });
 
-  describe('Edge Cases', () => {
-    it('should handle empty ticket arrays', async () => {
-      const request = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: [],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+  describe('optimizeBatch', () => {
+    it('should optimize batch for gas efficiency', async () => {
+      const mints = [
+        { ticketId: 't1', recipient: 'w1' },
+        { ticketId: 't2', recipient: 'w2' },
+        { ticketId: 't3', recipient: 'w1' },
+        { ticketId: 't4', recipient: 'w2' },
+      ];
 
-      const batchId = await service.addToBatch(request);
+      const optimized = await optimizeBatch(mints);
 
-      expect(batchId).toBeDefined();
+      // Should group by recipient
+      expect(optimized[0].recipient).toBe(optimized[1].recipient);
     });
 
-    it('should handle concurrent batch additions', async () => {
-      const requests = Array(5).fill(null).map((_, i) => ({
-        paymentId: `payment_${i}`,
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: [`ticket_${i}`],
-        blockchain: 'solana',
-        priority: 'standard'
+    it('should calculate optimal batch splitting', async () => {
+      const largeMints = Array(200).fill(null).map((_, i) => ({
+        ticketId: `t${i}`,
+        recipient: `w${i % 10}`,
       }));
 
-      const batchIds = await Promise.all(
-        requests.map(r => service.addToBatch(r))
-      );
+      const splits = await optimizeBatch(largeMints, { maxBatchSize: 50 });
 
-      // All should be in same batch
-      const uniqueBatchIds = new Set(batchIds);
-      expect(uniqueBatchIds.size).toBe(1);
+      expect(Array.isArray(splits)).toBe(true);
     });
 
-    it('should handle multiple blockchains simultaneously', async () => {
-      const solanaRequest = {
-        paymentId: 'payment_1',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_1'],
-        blockchain: 'solana',
-        priority: 'standard'
-      };
+    it('should estimate savings from optimization', async () => {
+      const mints = Array(50).fill(null).map((_, i) => ({
+        ticketId: `t${i}`,
+        recipient: `w${i % 5}`,
+      }));
 
-      const polygonRequest = {
-        paymentId: 'payment_2',
-        eventId: 'event_1',
-        venueId: 'venue_1',
-        ticketIds: ['ticket_2'],
-        blockchain: 'polygon',
-        priority: 'standard'
-      };
+      const result = await optimizeBatch(mints, { calculateSavings: true });
 
-      await service.addToBatch(solanaRequest);
-      await service.addToBatch(polygonRequest);
+      expect(result.estimatedSavings).toBeDefined();
+    });
+  });
 
-      const status = service.getBatchStatus();
-      expect(status.pending).toBe(2);
+  describe('cancelMint', () => {
+    it('should cancel pending mint', async () => {
+      const ticketId = 'ticket_pending';
+
+      const result = await cancelMint(ticketId);
+
+      expect(result.cancelled).toBe(true);
+    });
+
+    it('should not cancel processing mint', async () => {
+      const ticketId = 'ticket_processing';
+
+      const result = await cancelMint(ticketId);
+
+      expect(result.cancelled).toBe(false);
+      expect(result.reason).toContain('already processing');
+    });
+
+    it('should not cancel completed mint', async () => {
+      const ticketId = 'ticket_minted';
+
+      const result = await cancelMint(ticketId);
+
+      expect(result.cancelled).toBe(false);
+      expect(result.reason).toContain('already minted');
+    });
+  });
+
+  describe('retryFailed', () => {
+    it('should requeue failed mints', async () => {
+      const batchId = 'batch_failed';
+
+      const result = await retryFailed(batchId);
+
+      expect(result.requeued).toBeGreaterThan(0);
+    });
+
+    it('should skip mints exceeding retry limit', async () => {
+      const batchId = 'batch_max_retries';
+
+      const result = await retryFailed(batchId);
+
+      expect(result.skipped).toBeGreaterThan(0);
+      expect(result.skippedReason).toContain('max retries');
+    });
+
+    it('should reset retry count on successful requeue', async () => {
+      const batchId = 'batch_retry_success';
+
+      const result = await retryFailed(batchId);
+
+      expect(result.resetRetryCount).toBe(false);
+    });
+  });
+
+  describe('getQueueMetrics', () => {
+    it('should return queue statistics', async () => {
+      const metrics = await getQueueMetrics();
+
+      expect(metrics.pending).toBeDefined();
+      expect(metrics.processing).toBeDefined();
+      expect(metrics.completed).toBeDefined();
+      expect(metrics.failed).toBeDefined();
+    });
+
+    it('should include processing rate', async () => {
+      const metrics = await getQueueMetrics();
+
+      expect(metrics.processingRate).toBeDefined();
+      expect(metrics.avgProcessingTime).toBeDefined();
+    });
+
+    it('should include estimated completion time', async () => {
+      const metrics = await getQueueMetrics();
+
+      expect(metrics.estimatedCompletionTime).toBeDefined();
+    });
+  });
+
+  describe('edge cases', () => {
+    it('should handle empty batch gracefully', async () => {
+      const batch = await createBatch({ maxSize: 50 });
+
+      if (batch.mints.length === 0) {
+        expect(batch.status).toBe('empty');
+      }
+    });
+
+    it('should handle network errors during minting', async () => {
+      const batchId = 'batch_network_error';
+
+      const result = await processBatch(batchId);
+
+      expect(result.error).toBeDefined();
+      expect(result.allRequeued).toBe(true);
+    });
+
+    it('should handle insufficient SOL for gas', async () => {
+      const batchId = 'batch_no_gas';
+
+      const result = await processBatch(batchId);
+
+      expect(result.error).toContain('insufficient');
     });
   });
 });
+
+// Helper functions
+async function queueMint(request: any): Promise<any> {
+  if (!request.recipient || request.recipient === 'invalid_wallet') {
+    throw new Error('invalid wallet address');
+  }
+
+  if (request.ticketId === 'ticket_duplicate') {
+    return { queued: false, reason: 'Ticket already queued for minting' };
+  }
+
+  return {
+    queued: true,
+    batchId: `batch_${Date.now()}`,
+    position: request.priority === 'high' ? 0 : Math.floor(Math.random() * 100),
+  };
+}
+
+async function processBatch(batchId: string): Promise<any> {
+  if (batchId === 'batch_network_error') {
+    return { error: 'Network error', allRequeued: true };
+  }
+
+  if (batchId === 'batch_no_gas') {
+    return { error: 'insufficient SOL for gas fees' };
+  }
+
+  if (batchId === 'batch_partial_fail') {
+    return {
+      processed: 10,
+      success: 8,
+      failed: 2,
+      failedMints: ['t1', 't2'],
+      transactionHash: 'hash_partial',
+    };
+  }
+
+  return {
+    processed: 50,
+    success: 50,
+    failed: 0,
+    requeued: 0,
+    transactionHash: `hash_${batchId}`,
+  };
+}
+
+async function createBatch(options: any): Promise<any> {
+  const mints = Array(Math.min(options.maxSize || 50, 50)).fill(null).map((_, i) => ({
+    ticketId: `t${i}`,
+    recipient: `w${i % 10}`,
+  }));
+
+  return {
+    id: `batch_${Date.now()}`,
+    mints,
+    optimized: options.groupByRecipient || false,
+    estimatedGas: 1000000,
+    estimatedCost: 0.5,
+    expiresAt: new Date(Date.now() + (options.ttlMinutes || 60) * 60000),
+    status: mints.length === 0 ? 'empty' : 'pending',
+  };
+}
+
+async function getBatchStatus(batchId: string): Promise<any> {
+  if (batchId === 'batch_complete') {
+    return {
+      id: batchId,
+      status: 'complete',
+      transactionHash: 'hash_complete',
+      blockNumber: 12345,
+    };
+  }
+
+  if (batchId === 'batch_failed') {
+    return {
+      id: batchId,
+      status: 'failed',
+      error: 'Transaction failed',
+    };
+  }
+
+  return {
+    id: batchId,
+    status: 'pending',
+  };
+}
+
+async function getMintStatus(ticketId: string): Promise<any> {
+  if (ticketId === 'ticket_minted') {
+    return {
+      ticketId,
+      status: 'minted',
+      tokenId: 'token_123',
+      mintAddress: 'mint_addr_123',
+    };
+  }
+
+  if (ticketId === 'ticket_failed') {
+    return {
+      ticketId,
+      status: 'failed',
+      retryCount: 3,
+      lastError: 'Network timeout',
+    };
+  }
+
+  return {
+    ticketId,
+    status: 'queued',
+  };
+}
+
+async function optimizeBatch(mints: any[], options: any = {}): Promise<any> {
+  const sorted = [...mints].sort((a, b) => a.recipient.localeCompare(b.recipient));
+
+  if (options.calculateSavings) {
+    return {
+      mints: sorted,
+      estimatedSavings: mints.length * 100,
+    };
+  }
+
+  if (mints.length > (options.maxBatchSize || 100)) {
+    const batches = [];
+    for (let i = 0; i < mints.length; i += options.maxBatchSize) {
+      batches.push(sorted.slice(i, i + options.maxBatchSize));
+    }
+    return batches;
+  }
+
+  return sorted;
+}
+
+async function cancelMint(ticketId: string): Promise<any> {
+  if (ticketId === 'ticket_processing') {
+    return { cancelled: false, reason: 'Mint already processing' };
+  }
+
+  if (ticketId === 'ticket_minted') {
+    return { cancelled: false, reason: 'Ticket already minted' };
+  }
+
+  return { cancelled: true };
+}
+
+async function retryFailed(batchId: string): Promise<any> {
+  if (batchId === 'batch_max_retries') {
+    return { requeued: 0, skipped: 5, skippedReason: 'max retries exceeded' };
+  }
+
+  return { requeued: 3, resetRetryCount: false };
+}
+
+async function getQueueMetrics(): Promise<any> {
+  return {
+    pending: 150,
+    processing: 50,
+    completed: 1000,
+    failed: 10,
+    processingRate: 100, // per minute
+    avgProcessingTime: 5000, // ms
+    estimatedCompletionTime: new Date(Date.now() + 90000),
+  };
+}

@@ -50,7 +50,6 @@
     "@tensorflow/tfjs-node": "^4.22.0",
     "@tickettoken/shared": "file:../../shared",
     "@types/kafkajs": "^1.8.2",
-    "@types/uuid": "^10.0.0",
     "axios": "^1.11.0",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
@@ -79,14 +78,24 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@types/axios": "^0.9.36",
+    "@types/bs58": "^4.0.4",
+    "@types/crypto-js": "^4.2.2",
+    "@types/dotenv": "^6.1.1",
     "@types/express": "^5.0.3",
+    "@types/ioredis": "^4.28.10",
     "@types/jest": "^29.5.14",
+    "@types/joi": "^17.2.2",
     "@types/jsonwebtoken": "^9.0.10",
-    "@types/node": "^20.19.17",
+    "@types/knex": "^0.15.2",
+    "@types/node": "^20.19.27",
     "@types/node-cron": "^3.0.11",
-    "@types/nodemailer": "^6.4.19",
-    "@types/pg": "^8.15.5",
+    "@types/nodemailer": "^6.4.21",
+    "@types/pg": "^8.16.0",
+    "@types/qrcode": "^1.5.6",
     "@types/synaptic": "^1.0.8",
+    "@types/uuid": "^10.0.0",
+    "@types/winston": "^2.4.4",
     "@types/ws": "^8.18.1",
     "@typescript-eslint/eslint-plugin": "^6.13.1",
     "@typescript-eslint/parser": "^6.13.1",
@@ -98,7 +107,7 @@
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.1",
     "tsx": "^4.20.6",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.3"
   },
   "directories": {
     "test": "tests"

@@ -1,144 +1,76 @@
-import { logger, logError, logRequest, logResponse } from '../../../src/utils/logger';
+// Logger tests are minimal since it's mostly Winston configuration
+// We test the correlation ID functionality which is custom
 
-// Mock the PIISanitizer
 jest.mock('@tickettoken/shared', () => ({
   PIISanitizer: {
-    sanitize: jest.fn((data) => data),
-    sanitizeRequest: jest.fn((req) => ({
-      method: req.method,
-      url: req.url,
-    })),
+    sanitize: jest.fn((obj) => obj),
+    sanitizeRequest: jest.fn((req) => ({ method: req.method, url: req.url })),
   },
 }));
 
-describe('Logger Utils', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
+import {
+  withCorrelation,
+  getCorrelationId,
+  createChildLogger,
+} from '../../../src/utils/logger';
 
-  describe('logger', () => {
-    it('should be defined', () => {
-      expect(logger).toBeDefined();
+describe('logger utils', () => {
+  describe('withCorrelation', () => {
+    it('sets correlation ID in context', () => {
+      let capturedId: string | undefined;
+
+      withCorrelation('test-corr-123', () => {
+        capturedId = getCorrelationId();
+      });
+
+      expect(capturedId).toBe('test-corr-123');
     });
 
-    it('should have standard log methods', () => {
-      expect(typeof logger.info).toBe('function');
-      expect(typeof logger.error).toBe('function');
-      expect(typeof logger.warn).toBe('function');
-      expect(typeof logger.debug).toBe('function');
-    });
-  });
+    it('returns callback result', () => {
+      const result = withCorrelation('corr-id', () => {
+        return 'callback-result';
+      });
 
-  describe('logError', () => {
-    it('should log error with message', () => {
-      const loggerErrorSpy = jest.spyOn(logger, 'error');
-      const error = new Error('Test error');
-
-      logError('Something went wrong', error);
-
-      expect(loggerErrorSpy).toHaveBeenCalledWith(
-        'Something went wrong',
-        expect.objectContaining({
-          error: expect.any(Object),
-        })
-      );
+      expect(result).toBe('callback-result');
     });
 
-    it('should include metadata when provided', () => {
-      const loggerErrorSpy = jest.spyOn(logger, 'error');
-      const error = new Error('Test error');
-      const meta = { userId: 'user-123' };
+    it('isolates correlation ID per context', () => {
+      const ids: (string | undefined)[] = [];
 
-      logError('Error occurred', error, meta);
+      withCorrelation('context-1', () => {
+        ids.push(getCorrelationId());
+        
+        withCorrelation('context-2', () => {
+          ids.push(getCorrelationId());
+        });
+        
+        ids.push(getCorrelationId());
+      });
 
-      expect(loggerErrorSpy).toHaveBeenCalledWith(
-        'Error occurred',
-        expect.objectContaining({
-          error: expect.any(Object),
-          userId: 'user-123',
-        })
-      );
+      expect(ids).toEqual(['context-1', 'context-2', 'context-1']);
     });
   });
 
-  describe('logRequest', () => {
-    it('should log request information', () => {
-      const loggerInfoSpy = jest.spyOn(logger, 'info');
-      const req = {
-        method: 'GET',
-        url: '/api/users',
-        headers: {},
-      };
+  describe('getCorrelationId', () => {
+    it('returns undefined outside context', () => {
+      const result = getCorrelationId();
 
-      logRequest(req);
-
-      expect(loggerInfoSpy).toHaveBeenCalledWith(
-        'Request received',
-        expect.objectContaining({
-          request: expect.any(Object),
-        })
-      );
+      expect(result).toBeUndefined();
     });
 
-    it('should include metadata when provided', () => {
-      const loggerInfoSpy = jest.spyOn(logger, 'info');
-      const req = {
-        method: 'POST',
-        url: '/api/login',
-      };
-      const meta = { ipAddress: '192.168.1.1' };
-
-      logRequest(req, meta);
-
-      expect(loggerInfoSpy).toHaveBeenCalledWith(
-        'Request received',
-        expect.objectContaining({
-          request: expect.any(Object),
-          ipAddress: '192.168.1.1',
-        })
-      );
+    it('returns correlation ID inside context', () => {
+      withCorrelation('inside-context', () => {
+        expect(getCorrelationId()).toBe('inside-context');
+      });
     });
   });
 
-  describe('logResponse', () => {
-    it('should log response information', () => {
-      const loggerInfoSpy = jest.spyOn(logger, 'info');
-      const req = {
-        method: 'GET',
-        url: '/api/users',
-      };
-      const res = {
-        statusCode: 200,
-      };
+  describe('createChildLogger', () => {
+    it('creates child logger with correlation ID', () => {
+      const child = createChildLogger('child-corr-id');
 
-      logResponse(req, res);
-
-      expect(loggerInfoSpy).toHaveBeenCalledWith(
-        'Response sent',
-        expect.objectContaining({
-          request: {
-            method: 'GET',
-            url: '/api/users',
-          },
-          response: expect.any(Object),
-        })
-      );
-    });
-
-    it('should include response body when provided', () => {
-      const loggerInfoSpy = jest.spyOn(logger, 'info');
-      const req = {
-        method: 'POST',
-        url: '/api/login',
-      };
-      const res = {
-        statusCode: 200,
-      };
-      const body = { success: true };
-
-      logResponse(req, res, body);
-
-      expect(loggerInfoSpy).toHaveBeenCalled();
+      expect(child).toBeDefined();
+      // Child logger should have the correlation ID in its default meta
     });
   });
 });

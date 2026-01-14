@@ -10,105 +10,61 @@ export class VelocityCheckerService {
     eventId: string,
     ipAddress: string,
     paymentMethodToken: string
-  ): Promise<{
-    allowed: boolean;
-    reason?: string;
-    limits: {
-      perUser: number;
-      perIp: number;
-      perPaymentMethod: number;
-    };
-  }> {
-    const limits = {
-      perUser: 5,
-      perIp: 10,
-      perPaymentMethod: 5
-    };
+  ): Promise<{ allowed: boolean; reason?: string; limits: { perUser: number; perIp: number; perPaymentMethod: number } }> {
+    const limits = { perUser: 5, perIp: 10, perPaymentMethod: 5 };
 
     try {
       const redis = RedisService.getClient();
 
-      // Check user velocity
       const userKey = `velocity:user:${userId}:${eventId}`;
       const userCount = await redis.incr(userKey);
       await redis.expire(userKey, 300);
 
       if (userCount > limits.perUser) {
-        return {
-          allowed: false,
-          reason: `Maximum ${limits.perUser} purchase attempts per 5 minutes`,
-          limits
-        };
+        return { allowed: false, reason: `Maximum ${limits.perUser} purchase attempts per 5 minutes`, limits };
       }
 
-      // Check IP velocity
       const ipKey = `velocity:ip:${ipAddress}:${eventId}`;
       const ipCount = await redis.incr(ipKey);
       await redis.expire(ipKey, 300);
 
       if (ipCount > limits.perIp) {
-        return {
-          allowed: false,
-          reason: `Maximum ${limits.perIp} purchase attempts from this IP per 5 minutes`,
-          limits
-        };
+        return { allowed: false, reason: `Maximum ${limits.perIp} purchase attempts from this IP per 5 minutes`, limits };
       }
 
-      // Check payment method velocity
       const pmKey = `velocity:pm:${paymentMethodToken}:${eventId}`;
       const pmCount = await redis.incr(pmKey);
       await redis.expire(pmKey, 300);
 
       if (pmCount > limits.perPaymentMethod) {
-        return {
-          allowed: false,
-          reason: `Maximum ${limits.perPaymentMethod} purchase attempts with this payment method per 5 minutes`,
-          limits
-        };
+        return { allowed: false, reason: `Maximum ${limits.perPaymentMethod} purchase attempts with this payment method per 5 minutes`, limits };
       }
 
       return { allowed: true, limits };
     } catch (error) {
-      log.error('Redis error in velocity check', { error });
-      // Allow request on error (degraded mode)
+      log.error({ error }, 'Redis error in velocity check');
       return { allowed: true, limits };
     }
   }
 
-  async recordPurchase(
-    userId: string,
-    eventId: string,
-    ipAddress: string,
-    paymentMethodToken: string
-  ): Promise<void> {
+  async recordPurchase(userId: string, eventId: string, ipAddress: string, paymentMethodToken: string): Promise<void> {
     try {
-      // Record in database for long-term tracking
       await query(
-        `INSERT INTO velocity_records (user_id, event_id, ip_address, payment_method_token, created_at)
-         VALUES ($1, $2, $3, $4, NOW())`,
+        `INSERT INTO velocity_records (user_id, event_id, ip_address, payment_method_token, created_at) VALUES ($1, $2, $3, $4, NOW())`,
         [userId, eventId, ipAddress, paymentMethodToken]
       );
     } catch (error) {
-      log.error('Error recording purchase velocity', { error });
+      log.error({ error }, 'Error recording purchase velocity');
     }
   }
 
-  async getVelocityStats(userId: string): Promise<{
-    recentAttempts: number;
-    successfulPurchases: number;
-    failedAttempts: number;
-  }> {
+  async getVelocityStats(userId: string): Promise<{ recentAttempts: number; successfulPurchases: number; failedAttempts: number }> {
     const result = await query(
-      `SELECT
-        COUNT(*) as recent_attempts,
-        COUNT(*) FILTER (WHERE status = 'completed') as successful,
-        COUNT(*) FILTER (WHERE status = 'failed') as failed
-       FROM payment_transactions
-       WHERE user_id = $1
-         AND created_at > NOW() - INTERVAL '1 hour'`,
+      `SELECT COUNT(*) as recent_attempts, COUNT(*) FILTER (WHERE status = 'completed') as successful,
+              COUNT(*) FILTER (WHERE status = 'failed') as failed
+       FROM payment_transactions WHERE user_id = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
       [userId]
     );
-
     return {
       recentAttempts: parseInt(result.rows[0].recent_attempts) || 0,
       successfulPurchases: parseInt(result.rows[0].successful) || 0,

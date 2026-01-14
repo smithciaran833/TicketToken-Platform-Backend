@@ -3,24 +3,31 @@ import { BatchMintingService } from '../services/BatchMintingService';
 import { ReconciliationService } from '../services/ReconciliationService';
 import { metadataCache } from '../services/MetadataCache';
 import { getBalanceMonitor } from '../services/BalanceMonitor';
+import { authMiddleware, requireAdmin } from '../middleware/admin-auth';
+import { getTenantIdFromRequest, isPlatformAdmin } from '../middleware/tenant-context';
 import db from '../config/database';
 import logger from '../utils/logger';
 
 /**
  * Admin routes for managing the minting service
  * 
- * Authentication should be added in production
+ * All routes require JWT authentication and admin role
  */
 export default async function adminRoutes(
   fastify: FastifyInstance,
   options: any
 ): Promise<void> {
+  // Apply authentication and admin authorization to ALL admin routes
+  fastify.addHook('preHandler', authMiddleware);
+  fastify.addHook('preHandler', requireAdmin);
   
   // ===== Dashboard Overview =====
   
   fastify.get('/admin/dashboard', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const stats = await getDashboardStats();
+      // Get tenant context - platform admins can query all, others only their tenant
+      const tenantId = getTenantIdFromRequest(request);
+      const stats = await getDashboardStats(tenantId);
       return reply.send(stats);
     } catch (error) {
       logger.error('Dashboard stats error', { error: (error as Error).message });
@@ -188,10 +195,27 @@ export default async function adminRoutes(
   
   fastify.get('/admin/mints', async (request, reply) => {
     try {
-      const mints = await db('ticket_mints')
+      // Get tenant context - platform admins can query all, others only their tenant
+      const tenantId = getTenantIdFromRequest(request);
+      
+      let query = db('ticket_mints')
         .orderBy('created_at', 'desc')
         .limit(100)
         .select('*');
+
+      // Filter by tenant unless platform admin querying all
+      if (tenantId !== null) {
+        query = query.where('tenant_id', tenantId);
+      }
+
+      const mints = await query;
+
+      logger.info('Fetched mints', {
+        userId: request.user?.id,
+        tenantId: tenantId || 'all',
+        count: mints.length,
+        isPlatformAdmin: isPlatformAdmin(request)
+      });
 
       return reply.send(mints);
     } catch (error) {
@@ -205,10 +229,17 @@ export default async function adminRoutes(
     async (request, reply) => {
       try {
         const { ticketId } = request.params;
+        const tenantId = getTenantIdFromRequest(request);
 
-        const mint = await db('ticket_mints')
-          .where({ ticket_id: ticketId })
-          .first();
+        let query = db('ticket_mints')
+          .where({ ticket_id: ticketId });
+
+        // Filter by tenant unless platform admin
+        if (tenantId !== null) {
+          query = query.where('tenant_id', tenantId);
+        }
+
+        const mint = await query.first();
 
         if (!mint) {
           return reply.code(404).send({ error: 'Mint not found' });
@@ -272,24 +303,35 @@ export default async function adminRoutes(
 
 /**
  * Get dashboard overview statistics
+ * @param tenantId - Filter by tenant ID, null for all tenants (platform admin)
  */
-async function getDashboardStats() {
+async function getDashboardStats(tenantId: string | null) {
+  // Build base queries with optional tenant filter
+  const baseQuery = () => {
+    const query = db('ticket_mints');
+    if (tenantId !== null) {
+      return query.where('tenant_id', tenantId);
+    }
+    return query;
+  };
+
   const [
     totalMints,
     pendingMints,
     failedMints,
     recentMints
   ] = await Promise.all([
-    db('ticket_mints').count('* as count').first(),
-    db('ticket_mints').where({ status: 'pending' }).count('* as count').first(),
-    db('ticket_mints').where({ status: 'failed' }).count('* as count').first(),
-    db('ticket_mints')
+    baseQuery().count('* as count').first(),
+    baseQuery().where({ status: 'pending' }).count('* as count').first(),
+    baseQuery().where({ status: 'failed' }).count('* as count').first(),
+    baseQuery()
       .orderBy('created_at', 'desc')
       .limit(10)
-      .select('ticket_id', 'status', 'venue_id', 'created_at')
+      .select('ticket_id', 'status', 'venue_id', 'tenant_id', 'created_at')
   ]);
 
   return {
+    tenantId: tenantId || 'all',
     totalMints: parseInt(totalMints?.count as string || '0'),
     pendingMints: parseInt(pendingMints?.count as string || '0'),
     failedMints: parseInt(failedMints?.count as string || '0'),
@@ -299,28 +341,38 @@ async function getDashboardStats() {
 
 /**
  * Get venue-specific statistics
+ * @param venueId - The venue ID
+ * @param tenantId - Filter by tenant ID, null for all tenants (platform admin)
  */
-async function getVenueStats(venueId: string) {
+async function getVenueStats(venueId: string, tenantId?: string | null) {
+  // Build base queries with venue and optional tenant filter
+  const baseQuery = () => {
+    const query = db('ticket_mints').where({ venue_id: venueId });
+    if (tenantId !== null && tenantId !== undefined) {
+      return query.where('tenant_id', tenantId);
+    }
+    return query;
+  };
+
   const [
     totalMints,
     successfulMints,
     failedMints,
     avgMintTime
   ] = await Promise.all([
-    db('ticket_mints')
-      .where({ venue_id: venueId })
+    baseQuery()
       .count('* as count')
       .first(),
-    db('ticket_mints')
-      .where({ venue_id: venueId, status: 'minted' })
+    baseQuery()
+      .where({ status: 'minted' })
       .count('* as count')
       .first(),
-    db('ticket_mints')
-      .where({ venue_id: venueId, status: 'failed' })
+    baseQuery()
+      .where({ status: 'failed' })
       .count('* as count')
       .first(),
-    db('ticket_mints')
-      .where({ venue_id: venueId, status: 'minted' })
+    baseQuery()
+      .where({ status: 'minted' })
       .avg('mint_duration as duration')
       .first()
   ]);
@@ -331,6 +383,7 @@ async function getVenueStats(venueId: string) {
 
   return {
     venueId,
+    tenantId: tenantId || 'all',
     totalMints: total,
     successfulMints: successful,
     failedMints: failed,

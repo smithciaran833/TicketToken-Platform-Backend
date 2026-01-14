@@ -2,9 +2,17 @@ import { dbConfig } from '../config/database';
 import { logger } from '../utils/logger';
 import * as fs from 'fs';
 import * as path from 'path';
-import archiver from 'archiver';
 import crypto from 'crypto';
 import Knex from 'knex';
+
+// Dynamically import archiver to handle missing types
+let archiver: any;
+try {
+  archiver = require('archiver');
+} catch {
+  // archiver not installed - will use fallback
+  archiver = null;
+}
 
 // Create Knex instance using the exported config
 const db = Knex({
@@ -20,27 +28,74 @@ interface UserDataExport {
   downloadUrl?: string;
   expiresAt?: Date;
   status: 'pending' | 'processing' | 'completed' | 'failed';
+  estimatedCompletionTime?: Date;
 }
+
+interface ExportStatus {
+  requestId: string;
+  userId: string;
+  tenantId: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  createdAt: Date;
+  completedAt?: Date;
+  downloadUrl?: string;
+  expiresAt?: Date;
+}
+
+interface DeletionStatus {
+  requestId: string;
+  userId: string;
+  tenantId: string;
+  status: 'pending' | 'processing' | 'completed' | 'failed';
+  createdAt: Date;
+  scheduledDeletionDate?: Date;
+  completedAt?: Date;
+}
+
+// Tenant context storage using AsyncLocalStorage for request-scoped tenant ID
+import { AsyncLocalStorage } from 'async_hooks';
+
+interface TenantContext {
+  tenantId: string;
+  requestId?: string;
+}
+
+const tenantContextStorage = new AsyncLocalStorage<TenantContext>();
 
 export class PrivacyExportService {
   private exportPath = process.env.EXPORT_PATH || '/tmp/exports';
 
   /**
+   * Run a function within a tenant context
+   * This allows the service to access tenant ID from anywhere within the call stack
+   */
+  static runWithTenantContext<T>(tenantId: string, requestId: string | undefined, fn: () => T): T {
+    return tenantContextStorage.run({ tenantId, requestId }, fn);
+  }
+
+  /**
    * Get current tenant ID from request context
+   * Uses AsyncLocalStorage to properly retrieve tenant context from the request
    */
   private getTenantId(): string {
-    // TODO: Implement proper tenant context retrieval
-    // For now, return a default - this should be properly implemented with tenant middleware
-    return process.env.TENANT_ID || '00000000-0000-0000-0000-000000000001';
+    const context = tenantContextStorage.getStore();
+    if (context?.tenantId) {
+      return context.tenantId;
+    }
+    // Fallback for backward compatibility, but log a warning
+    logger.warn('No tenant context found - using default tenant ID. Ensure tenant middleware is properly configured.');
+    return process.env.DEFAULT_TENANT_ID || '00000000-0000-0000-0000-000000000001';
   }
 
   /**
    * Request full data export for GDPR/CCPA compliance
+   * @param tenantId - The tenant identifier for multi-tenant isolation
+   * @param userId - The user requesting the export
+   * @param reason - The reason for the export request
    */
-  async requestDataExport(userId: string, reason: string): Promise<UserDataExport> {
+  async requestDataExport(tenantId: string, userId: string, reason: string): Promise<UserDataExport> {
     try {
       const requestId = crypto.randomUUID();
-      const tenantId = this.getTenantId();
       
       // Store export request
       await db('privacy_export_requests').insert({
@@ -304,6 +359,71 @@ For questions, contact: privacy@tickettoken.com`;
   private async sendDeletionConfirmation(userId: string, requestId: string): Promise<void> {
     // Would send email with cancellation link
     logger.info(`Deletion requested for user ${userId}: ${requestId}`);
+  }
+
+  /**
+   * Get export request status
+   * @param tenantId - The tenant identifier for multi-tenant isolation
+   * @param requestId - The export request ID
+   */
+  async getExportStatus(tenantId: string, requestId: string): Promise<ExportStatus | null> {
+    try {
+      const request = await db('privacy_export_requests')
+        .where({ id: requestId, tenant_id: tenantId })
+        .first();
+      
+      if (!request) {
+        return null;
+      }
+
+      return {
+        requestId: request.id,
+        userId: request.user_id,
+        tenantId: request.tenant_id,
+        status: request.status,
+        createdAt: request.requested_at,
+        completedAt: request.completed_at,
+        downloadUrl: request.download_url,
+        expiresAt: request.expires_at
+      };
+    } catch (error) {
+      logger.error({ error, requestId, tenantId }, 'Failed to get export status');
+      throw error;
+    }
+  }
+
+  /**
+   * Get deletion request status
+   * @param tenantId - The tenant identifier for multi-tenant isolation
+   * @param requestId - The deletion request ID or customer ID
+   */
+  async getDeletionStatus(tenantId: string, requestId: string): Promise<DeletionStatus | null> {
+    try {
+      const request = await db('gdpr_deletion_requests')
+        .where({ tenant_id: tenantId })
+        .andWhere(function() {
+          this.where({ id: requestId }).orWhere({ customer_id: requestId });
+        })
+        .first();
+      
+      if (!request) {
+        return null;
+      }
+
+      return {
+        requestId: request.id || requestId,
+        userId: request.customer_id,
+        tenantId: request.tenant_id || tenantId,
+        status: request.status,
+        createdAt: request.requested_at,
+        scheduledDeletionDate: request.scheduled_deletion_date || 
+          new Date(new Date(request.requested_at).getTime() + 30 * 24 * 60 * 60 * 1000),
+        completedAt: request.completed_at
+      };
+    } catch (error) {
+      logger.error({ error, requestId, tenantId }, 'Failed to get deletion status');
+      throw error;
+    }
   }
 }
 

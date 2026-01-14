@@ -1,7 +1,21 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
+import { logger } from '../utils/logger';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'this-is-a-very-long-secret-key-that-is-at-least-32-characters';
+/**
+ * Auth Middleware for Marketplace Service
+ * 
+ * Issues Fixed:
+ * - SEC-1: Remove hardcoded JWT secret fallback - MUST be configured
+ * - SEC-H1: Add JWT algorithm whitelist - only allow HS256/RS256
+ */
+
+// AUDIT FIX SEC-1: JWT_SECRET is REQUIRED - no fallback
+// The service MUST fail if JWT_SECRET is not configured
+const JWT_SECRET = process.env.JWT_SECRET;
+
+// AUDIT FIX SEC-H1: Only allow specific algorithms
+const ALLOWED_ALGORITHMS: jwt.Algorithm[] = ['HS256', 'RS256'];
 
 export interface AuthRequest extends FastifyRequest {
   venueRole?: string;
@@ -9,20 +23,94 @@ export interface AuthRequest extends FastifyRequest {
   tenantId?: string;
 }
 
+// Validate JWT_SECRET at startup
+export function validateAuthConfig(): void {
+  if (!JWT_SECRET) {
+    logger.error('CRITICAL: JWT_SECRET environment variable is not set');
+    throw new Error('JWT_SECRET environment variable is required');
+  }
+  
+  if (JWT_SECRET.length < 32) {
+    logger.error('CRITICAL: JWT_SECRET must be at least 32 characters');
+    throw new Error('JWT_SECRET must be at least 32 characters');
+  }
+  
+  logger.info('Auth configuration validated');
+}
+
 // Standard authentication middleware
 export async function authMiddleware(request: AuthRequest, reply: FastifyReply) {
-  const token = request.headers.authorization?.replace('Bearer ', '');
+  // AUDIT FIX SEC-1: Fail if JWT_SECRET not configured
+  if (!JWT_SECRET) {
+    logger.error('JWT_SECRET not configured - rejecting request');
+    return reply.status(500).send({ 
+      error: 'Authentication service misconfigured',
+      code: 'AUTH_CONFIG_ERROR'
+    });
+  }
+
+  const authHeader = request.headers.authorization;
+  
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return reply.status(401).send({ 
+      error: 'Authentication required',
+      code: 'NO_TOKEN'
+    });
+  }
+
+  const token = authHeader.slice(7); // Remove 'Bearer '
 
   if (!token) {
-    return reply.status(401).send({ error: 'Authentication required' });
+    return reply.status(401).send({ 
+      error: 'Authentication required',
+      code: 'EMPTY_TOKEN'
+    });
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    // AUDIT FIX SEC-H1: Specify allowed algorithms to prevent algorithm confusion attacks
+    const decoded = jwt.verify(token, JWT_SECRET, {
+      algorithms: ALLOWED_ALGORITHMS
+    }) as any;
+    
     request.user = decoded;
-    request.tenantId = decoded.tenant_id || '00000000-0000-0000-0000-000000000001';
-  } catch (error) {
-    return reply.status(401).send({ error: 'Invalid token' });
+    
+    // AUDIT FIX: Require tenant_id from token, don't use hardcoded fallback
+    if (!decoded.tenant_id && !decoded.tenantId) {
+      logger.warn('Token missing tenant_id', { 
+        userId: decoded.id || decoded.sub,
+        requestId: request.id
+      });
+      // Allow request but log warning - RLS will enforce isolation
+    }
+    
+    request.tenantId = decoded.tenant_id || decoded.tenantId;
+    
+  } catch (error: any) {
+    logger.warn('JWT verification failed', {
+      error: error.message,
+      requestId: request.id,
+      ip: request.ip
+    });
+    
+    if (error.name === 'TokenExpiredError') {
+      return reply.status(401).send({ 
+        error: 'Token expired',
+        code: 'TOKEN_EXPIRED'
+      });
+    }
+    
+    if (error.name === 'JsonWebTokenError') {
+      return reply.status(401).send({ 
+        error: 'Invalid token',
+        code: 'INVALID_TOKEN'
+      });
+    }
+    
+    return reply.status(401).send({ 
+      error: 'Authentication failed',
+      code: 'AUTH_FAILED'
+    });
   }
 }
 

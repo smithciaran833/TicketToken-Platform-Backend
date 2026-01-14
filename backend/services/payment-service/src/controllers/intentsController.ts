@@ -31,7 +31,7 @@ export class IntentsController {
         intentId: intent.id 
       });
     } catch (error) {
-      log.error('Payment intent creation error', { error });
+      log.error({ error }, 'Payment intent creation error');
       return reply.code(500).send({ error: 'Failed to create payment intent' });
     }
   }

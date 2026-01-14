@@ -1,3 +1,4 @@
+import { env } from '../config/env';
 import bcrypt from 'bcrypt';
 import { pool } from '../config/database';
 import { JWTService } from './jwt.service';
@@ -46,7 +47,7 @@ export class AuthService {
         throw error;
       }
 
-      const tenantId = data.tenant_id || process.env.DEFAULT_TENANT_ID || '00000000-0000-0000-0000-000000000001';
+      const tenantId = data.tenant_id || env.DEFAULT_TENANT_ID;
 
       const tenantResult = await pool.query(
         'SELECT id FROM tenants WHERE id = $1',
@@ -93,10 +94,10 @@ export class AuthService {
         tokens = await this.jwtService.generateTokenPair(user);
 
         const sessionResult = await client.query(
-          `INSERT INTO user_sessions (user_id, ip_address, user_agent, started_at)
-           VALUES ($1, $2, $3, NOW())
+          `INSERT INTO user_sessions (user_id, tenant_id, ip_address, user_agent, started_at)
+           VALUES ($1, $2, $3, $4, NOW())
            RETURNING id`,
-          [user.id, data.ipAddress || null, data.userAgent || null]
+          [user.id, user.tenant_id, data.ipAddress || null, data.userAgent || null]
         );
         sessionId = sessionResult.rows[0].id;
 
@@ -242,10 +243,10 @@ export class AuthService {
         tokens = await this.jwtService.generateTokenPair(user);
 
         const sessionResult = await client.query(
-          `INSERT INTO user_sessions (user_id, ip_address, user_agent, started_at)
-           VALUES ($1, $2, $3, NOW())
+          `INSERT INTO user_sessions (user_id, tenant_id, ip_address, user_agent, started_at)
+           VALUES ($1, $2, $3, $4, NOW())
            RETURNING id`,
-          [user.id, data.ipAddress || null, data.userAgent || null]
+          [user.id, user.tenant_id, data.ipAddress || null, data.userAgent || null]
         );
         sessionId = sessionResult.rows[0].id;
 
@@ -342,23 +343,35 @@ export class AuthService {
     }
   }
 
-  async logout(userId: string, refreshToken?: string) {
+  async logout(userId: string, refreshToken?: string, tenantId?: string) {
     this.log.info('Logout attempt', { userId });
 
     try {
-      if (refreshToken) {
+      // Get tenant_id if not provided
+      let userTenantId = tenantId;
+      if (!userTenantId) {
+        const userResult = await pool.query(
+          'SELECT tenant_id FROM users WHERE id = $1',
+          [userId]
+        );
+        if (userResult.rows.length > 0) {
+          userTenantId = userResult.rows[0].tenant_id;
+        }
+      }
+
+      if (refreshToken && userTenantId) {
         const expiryTime = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
         await pool.query(
-          `INSERT INTO invalidated_tokens (token, user_id, invalidated_at, expires_at)
-           VALUES ($1, $2, NOW(), $3)
+          `INSERT INTO invalidated_tokens (token, user_id, tenant_id, invalidated_at, expires_at)
+           VALUES ($1, $2, $3, NOW(), $4)
            ON CONFLICT (token) DO NOTHING`,
-          [refreshToken, userId, expiryTime]
+          [refreshToken, userId, userTenantId, expiryTime]
         );
       }
 
       await pool.query(
-        'SET search_path TO public; UPDATE user_sessions SET ended_at = NOW() WHERE user_id = $1 AND ended_at IS NULL',
+        'UPDATE user_sessions SET ended_at = NOW() WHERE user_id = $1 AND ended_at IS NULL',
         [userId]
       );
 
@@ -403,7 +416,7 @@ export class AuthService {
 
     try {
       const result = await pool.query(
-        `SELECT id, email, password_reset_token, password_reset_expires 
+        `SELECT id, email, password_reset_token, password_reset_expires
          FROM users WHERE email = $1 AND deleted_at IS NULL`,
         [normalizeEmail(email)]
       );
@@ -412,11 +425,11 @@ export class AuthService {
         const user = result.rows[0];
 
         // Idempotency check: if a valid token exists and was created recently, don't send another email
-        const hasValidToken = user.password_reset_token && 
-          user.password_reset_expires && 
+        const hasValidToken = user.password_reset_token &&
+          user.password_reset_expires &&
           new Date(user.password_reset_expires) > new Date();
 
-        const tokenAge = user.password_reset_expires 
+        const tokenAge = user.password_reset_expires
           ? (new Date(user.password_reset_expires).getTime() - Date.now() - 3600000 + PASSWORD_RESET_IDEMPOTENCY_WINDOW)
           : Infinity;
 
@@ -464,61 +477,116 @@ export class AuthService {
     }
   }
 
+  /**
+   * Reset password using token
+   * Uses FOR UPDATE to prevent race conditions
+   */
   async resetPassword(token: string, newPassword: string) {
     this.log.info('Password reset attempt');
 
-    const result = await pool.query(
-      'SELECT id FROM users WHERE password_reset_token = $1 AND password_reset_expires > NOW() AND deleted_at IS NULL',
-      [token]
-    );
+    const client = await pool.connect();
 
-    if (result.rows.length === 0) {
-      throw new Error('Invalid or expired reset token');
+    try {
+      await client.query('BEGIN');
+
+      // FOR UPDATE prevents concurrent password resets with the same token
+      const result = await client.query(
+        `SELECT id FROM users
+         WHERE password_reset_token = $1
+         AND password_reset_expires > NOW()
+         AND deleted_at IS NULL
+         FOR UPDATE`,
+        [token]
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new Error('Invalid or expired reset token');
+      }
+
+      const user = result.rows[0];
+      const passwordHash = await bcrypt.hash(newPassword, 10);
+
+      await client.query(
+        `UPDATE users
+         SET password_hash = $1,
+             password_reset_token = NULL,
+             password_reset_expires = NULL,
+             password_changed_at = NOW()
+         WHERE id = $2`,
+        [passwordHash, user.id]
+      );
+
+      await client.query('COMMIT');
+
+      this.log.info('Password reset successful', { userId: user.id });
+
+      return { success: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const user = result.rows[0];
-    const passwordHash = await bcrypt.hash(newPassword, 10);
-
-    await pool.query(
-      'UPDATE users SET password_hash = $1, password_reset_token = NULL, password_reset_expires = NULL, password_changed_at = NOW() WHERE id = $2',
-      [passwordHash, user.id]
-    );
-
-    return { success: true };
   }
 
+  /**
+   * Change password for authenticated user
+   * Uses FOR UPDATE to prevent race conditions
+   */
   async changePassword(userId: string, oldPassword: string, newPassword: string) {
     this.log.info('Password change attempt', { userId });
 
-    const result = await pool.query(
-      'SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL',
-      [userId]
-    );
+    const client = await pool.connect();
 
-    if (result.rows.length === 0) {
-      throw new Error('User not found');
+    try {
+      await client.query('BEGIN');
+
+      // FOR UPDATE prevents concurrent password changes
+      const result = await client.query(
+        `SELECT password_hash FROM users
+         WHERE id = $1 AND deleted_at IS NULL
+         FOR UPDATE`,
+        [userId]
+      );
+
+      if (result.rows.length === 0) {
+        await client.query('ROLLBACK');
+        throw new Error('User not found');
+      }
+
+      const user = result.rows[0];
+      const valid = await bcrypt.compare(oldPassword, user.password_hash);
+
+      if (!valid) {
+        await client.query('ROLLBACK');
+        throw new Error('Invalid current password');
+      }
+
+      // SL5: Ensure new password is different from current
+      if (oldPassword === newPassword) {
+        await client.query('ROLLBACK');
+        throw new Error('New password must be different from current password');
+      }
+
+      const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+      await client.query(
+        'UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2',
+        [newPasswordHash, userId]
+      );
+
+      await client.query('COMMIT');
+
+      this.log.info('Password change successful', { userId });
+
+      return { success: true };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const user = result.rows[0];
-    const valid = await bcrypt.compare(oldPassword, user.password_hash);
-
-    if (!valid) {
-      throw new Error('Invalid current password');
-    }
-
-    // SL5: Ensure new password is different from current
-    if (oldPassword === newPassword) {
-      throw new Error('New password must be different from current password');
-    }
-
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
-
-    await pool.query(
-      'UPDATE users SET password_hash = $1, password_changed_at = NOW() WHERE id = $2',
-      [newPasswordHash, userId]
-    );
-
-    return { success: true };
   }
 
   async getUserById(userId: string) {

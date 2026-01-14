@@ -9,12 +9,14 @@ import crypto from 'crypto';
 import { JWTService } from './jwt.service';
 import { auditService } from './audit.service';
 import { redisKeys } from '../utils/redisKeys';
+import { logger } from '../utils/logger';
 
 export class WalletService {
   private jwtService: JWTService;
+  private log = logger.child({ component: 'WalletService' });
 
-  constructor() {
-    this.jwtService = new JWTService();
+  constructor(jwtService?: JWTService) {
+    this.jwtService = jwtService || new JWTService();
   }
 
   async generateNonce(publicKey: string, chain: string, tenantId?: string): Promise<{ nonce: string; message: string }> {
@@ -53,7 +55,10 @@ export class WalletService {
         publicKeyObj.toBytes()
       );
     } catch (error) {
-      console.error('Solana signature verification failed:', error);
+      this.log.warn('Solana signature verification failed', {
+        publicKey: publicKey.substring(0, 8) + '...',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
       return false;
     }
   }
@@ -67,7 +72,10 @@ export class WalletService {
       const recoveredAddress = ethers.verifyMessage(message, signature);
       return recoveredAddress.toLowerCase() === address.toLowerCase();
     } catch (error) {
-      console.error('Ethereum signature verification failed:', error);
+      this.log.warn('Ethereum signature verification failed', {
+        address: address.substring(0, 8) + '...',
+        error: error instanceof Error ? error.message : 'Unknown error'
+      });
       return false;
     }
   }
@@ -75,7 +83,6 @@ export class WalletService {
   private async getNonceData(nonce: string, tenantId?: string): Promise<{ data: any; key: string } | null> {
     const redis = getRedis();
 
-    // Try tenant-prefixed key first
     if (tenantId) {
       const data = await redis.get(redisKeys.walletNonce(nonce, tenantId));
       if (data) {
@@ -83,7 +90,6 @@ export class WalletService {
       }
     }
 
-    // Fall back to non-prefixed key
     const data = await redis.get(`wallet-nonce:${nonce}`);
     if (data) {
       return { data: JSON.parse(data), key: `wallet-nonce:${nonce}` };
@@ -150,16 +156,16 @@ export class WalletService {
 
       const network = chain;
       await client.query(
-        `INSERT INTO wallet_connections (user_id, wallet_address, network, verified, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [user.id, publicKey, network, true, new Date()]
+        `INSERT INTO wallet_connections (user_id, tenant_id, wallet_address, network, verified, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [user.id, tenantId, publicKey, network, true, new Date()]
       );
 
       const sessionResult = await client.query(
-        `INSERT INTO user_sessions (user_id, started_at)
-         VALUES ($1, NOW())
+        `INSERT INTO user_sessions (user_id, tenant_id, started_at)
+         VALUES ($1, $2, NOW())
          RETURNING id`,
-        [user.id]
+        [user.id, tenantId]
       );
       sessionId = sessionResult.rows[0].id;
 
@@ -171,7 +177,6 @@ export class WalletService {
       client.release();
     }
 
-    // Audit session creation
     await auditService.logSessionCreated(user.id, sessionId, undefined, undefined, tenantId);
 
     await this.deleteNonce(nonce, tenantId);
@@ -183,6 +188,12 @@ export class WalletService {
       permissions: user.permissions,
       role: user.role,
       wallet: publicKey
+    });
+
+    this.log.info('Wallet registration successful', {
+      userId: user.id,
+      chain,
+      walletPrefix: publicKey.substring(0, 8)
     });
 
     return {
@@ -266,10 +277,10 @@ export class WalletService {
       await client.query('BEGIN');
 
       const sessionResult = await client.query(
-        `INSERT INTO user_sessions (user_id, started_at)
-         VALUES ($1, NOW())
+        `INSERT INTO user_sessions (user_id, tenant_id, started_at)
+         VALUES ($1, $2, NOW())
          RETURNING id`,
-        [user.id]
+        [user.id, user.tenant_id]
       );
       sessionId = sessionResult.rows[0].id;
 
@@ -286,7 +297,6 @@ export class WalletService {
       client.release();
     }
 
-    // Audit session creation
     await auditService.logSessionCreated(user.id, sessionId, undefined, undefined, user.tenant_id);
 
     await this.deleteNonce(nonce, user.tenant_id);
@@ -298,6 +308,12 @@ export class WalletService {
       permissions: user.permissions,
       role: user.role,
       wallet: publicKey
+    });
+
+    this.log.info('Wallet login successful', {
+      userId: user.id,
+      chain,
+      walletPrefix: publicKey.substring(0, 8)
     });
 
     return {
@@ -374,13 +390,19 @@ export class WalletService {
 
     if (existingResult.rows.length === 0) {
       await pool.query(
-        `INSERT INTO wallet_connections (user_id, wallet_address, network, verified, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [userId, publicKey, network, true, new Date()]
+        `INSERT INTO wallet_connections (user_id, tenant_id, wallet_address, network, verified, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [userId, userTenantId, publicKey, network, true, new Date()]
       );
     }
 
     await this.deleteNonce(nonce, userTenantId);
+
+    this.log.info('Wallet linked successfully', {
+      userId,
+      chain,
+      walletPrefix: publicKey.substring(0, 8)
+    });
 
     return {
       success: true,
@@ -404,6 +426,11 @@ export class WalletService {
     if (result.rowCount === 0) {
       throw new AuthenticationError('Wallet not found or not linked to your account');
     }
+
+    this.log.info('Wallet unlinked successfully', {
+      userId,
+      walletPrefix: publicKey.substring(0, 8)
+    });
 
     return { success: true };
   }

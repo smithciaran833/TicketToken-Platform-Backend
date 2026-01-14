@@ -3,19 +3,19 @@ import analyticsRoutes from './analytics.routes';
 
 export default async function routes(
   fastify: FastifyInstance,
-  opts: FastifyPluginOptions
+  _opts: FastifyPluginOptions
 ): Promise<void> {
   // Mount analytics routes
   await fastify.register(analyticsRoutes, { prefix: '/' });
 
   // Cache management endpoints
-  fastify.get('/cache/stats', async (req, reply) => {
+  fastify.get('/cache/stats', async (_req, reply) => {
     const { serviceCache } = require('../services/cache-integration');
     const stats = serviceCache.getStats();
     return reply.send(stats);
   });
 
-  fastify.delete('/cache/flush', async (req, reply) => {
+  fastify.delete('/cache/flush', async (_req, reply) => {
     const { serviceCache } = require('../services/cache-integration');
     await serviceCache.flush();
     return reply.send({ success: true, message: 'Cache flushed' });

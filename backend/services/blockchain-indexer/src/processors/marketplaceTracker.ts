@@ -1,6 +1,8 @@
 import { PublicKey, Connection, ConfirmedSignatureInfo } from '@solana/web3.js';
 import logger from '../utils/logger';
 import db from '../utils/database';
+import { ticketServiceClient } from '@tickettoken/shared/clients';
+import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
 
 interface Marketplace {
     name: string;
@@ -14,6 +16,17 @@ interface MarketplaceActivity {
     price: number | null;
     seller: string | null;
     buyer: string | null;
+}
+
+/**
+ * Helper to create request context for service calls
+ * Blockchain indexer operates as a system service
+ */
+function createSystemContext(): RequestContext {
+    return {
+        tenantId: 'system',
+        traceId: `mkt-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+    };
 }
 
 export default class MarketplaceTracker {
@@ -240,26 +253,41 @@ export default class MarketplaceTracker {
         return this.parseMagicEdenTransaction(tx, logs);
     }
 
+    /**
+     * REFACTORED: Check if token belongs to our platform using ticketServiceClient
+     * Previously did direct DB query: SELECT 1 FROM tickets WHERE token_id = $1
+     */
     async isOurNFT(tokenId: string): Promise<boolean> {
         if (!tokenId) return false;
 
-        const result = await db.query(
-            'SELECT 1 FROM tickets WHERE token_id = $1',
-            [tokenId]
-        );
+        const ctx = createSystemContext();
 
-        return result.rows.length > 0;
+        try {
+            const response = await ticketServiceClient.checkTokenExists(tokenId, ctx);
+            return response.exists;
+        } catch (error) {
+            logger.error({ error, tokenId }, 'Failed to check token existence via ticket-service');
+            return false;
+        }
     }
 
+    /**
+     * REFACTORED: Record marketplace activity
+     * The ticketId lookup now uses ticketServiceClient instead of direct DB query
+     */
     async recordActivity(marketplace: Marketplace, activity: MarketplaceActivity, sigInfo: ConfirmedSignatureInfo): Promise<void> {
+        const ctx = createSystemContext();
+
         try {
-            const ticketResult = await db.query(
-                'SELECT id FROM tickets WHERE token_id = $1',
-                [activity.tokenId]
-            );
+            // Get ticket ID via service client instead of direct DB query
+            let ticketId: string | null = null;
 
-            const ticketId = ticketResult.rows[0]?.id;
+            if (activity.tokenId) {
+                const ticket = await ticketServiceClient.getTicketByToken(activity.tokenId, ctx);
+                ticketId = ticket?.ticketId || null;
+            }
 
+            // Record activity (marketplace_activity is owned by blockchain-indexer)
             await db.query(`
                 INSERT INTO marketplace_activity
                 (token_id, ticket_id, marketplace, activity_type, price,
@@ -290,32 +318,62 @@ export default class MarketplaceTracker {
         }
     }
 
+    /**
+     * REFACTORED: Update ticket status using ticketServiceClient
+     * Previously did direct DB updates to tickets table
+     */
     async updateTicketStatus(activity: MarketplaceActivity): Promise<void> {
-        if (activity.type === 'SALE' && activity.buyer) {
-            await db.query(`
-                UPDATE tickets
-                SET
-                    wallet_address = $1,
-                    marketplace_listed = false,
-                    last_sale_price = $2,
-                    last_sale_at = NOW(),
-                    transfer_count = COALESCE(transfer_count, 0) + 1
-                WHERE token_id = $3
-            `, [activity.buyer, activity.price, activity.tokenId]);
+        const ctx = createSystemContext();
 
-        } else if (activity.type === 'LIST') {
-            await db.query(`
-                UPDATE tickets
-                SET marketplace_listed = true
-                WHERE token_id = $1
-            `, [activity.tokenId]);
+        if (!activity.tokenId) {
+            return;
+        }
 
-        } else if (activity.type === 'DELIST') {
-            await db.query(`
-                UPDATE tickets
-                SET marketplace_listed = false
-                WHERE token_id = $1
-            `, [activity.tokenId]);
+        try {
+            if (activity.type === 'SALE' && activity.buyer) {
+                // Use ticketServiceClient to update marketplace status after sale
+                await ticketServiceClient.updateMarketplaceStatus({
+                    tokenId: activity.tokenId,
+                    listed: false,
+                    price: activity.price || undefined,
+                    buyer: activity.buyer,
+                    saleCompleted: true,
+                }, ctx);
+
+                logger.info({
+                    tokenId: activity.tokenId,
+                    buyer: activity.buyer,
+                    price: activity.price
+                }, 'Ticket sale recorded via ticket-service');
+
+            } else if (activity.type === 'LIST') {
+                // Update listing status via service client
+                await ticketServiceClient.updateMarketplaceStatus({
+                    tokenId: activity.tokenId,
+                    listed: true,
+                }, ctx);
+
+                logger.info({
+                    tokenId: activity.tokenId
+                }, 'Ticket listed on marketplace via ticket-service');
+
+            } else if (activity.type === 'DELIST') {
+                // Update delisting status via service client
+                await ticketServiceClient.updateMarketplaceStatus({
+                    tokenId: activity.tokenId,
+                    listed: false,
+                }, ctx);
+
+                logger.info({
+                    tokenId: activity.tokenId
+                }, 'Ticket delisted from marketplace via ticket-service');
+            }
+        } catch (error) {
+            logger.error({
+                error,
+                tokenId: activity.tokenId,
+                type: activity.type
+            }, 'Failed to update ticket status via ticket-service');
         }
     }
 

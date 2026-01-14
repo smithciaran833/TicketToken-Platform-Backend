@@ -3,7 +3,7 @@ import { getAnalyticsDb } from '../../config/database';
 export class PredictiveAnalytics {
   private analyticsDb = getAnalyticsDb();
 
-  async predictTicketDemand(venueId: string, eventDate: Date, eventType: string) {
+  async predictTicketDemand(venueId: string, eventDate: Date, _eventType: string) {
     // Get historical data for similar events
     const historicalEvents = await this.analyticsDb.raw(`
       SELECT 
@@ -95,7 +95,7 @@ export class PredictiveAnalytics {
     }));
   }
 
-  async predictOptimalPricing(venueId: string, eventType: string) {
+  async predictOptimalPricing(venueId: string, _eventType: string) {
     // Price elasticity analysis
     const priceData = await this.analyticsDb.raw(`
       WITH price_bands AS (
@@ -167,7 +167,7 @@ export class PredictiveAnalytics {
     return 'Off Season';
   }
 
-  private generatePricingRecommendation(optimalBand: any, elasticity: any[]): string {
+  private generatePricingRecommendation(_optimalBand: any, elasticity: any[]): string {
     const avgElasticity = elasticity.reduce((sum, e) => sum + Math.abs(parseFloat(e.elasticity)), 0) / elasticity.length;
     
     if (avgElasticity > 1) {

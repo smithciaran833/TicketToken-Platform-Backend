@@ -171,7 +171,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error checking IP reputation:', error);
+      logger.error('Error checking IP reputation:', error instanceof Error ? error.message : String(error));
     }
 
     return null;
@@ -236,7 +236,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error checking velocity limits:', error);
+      logger.error('Error checking velocity limits:', error instanceof Error ? error.message : String(error));
     }
 
     return null;
@@ -308,7 +308,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error analyzing behavior:', error);
+      logger.error('Error analyzing behavior:', error instanceof Error ? error.message : String(error));
     }
 
     return null;
@@ -358,7 +358,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error getting ML fraud score:', error);
+      logger.error('Error getting ML fraud score:', error instanceof Error ? error.message : String(error));
     }
 
     return null;
@@ -408,7 +408,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error checking card reputation:', error);
+      logger.error('Error checking card reputation:', error instanceof Error ? error.message : String(error));
     }
 
     return null;
@@ -438,7 +438,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error checking account takeover:', error);
+      logger.error('Error checking account takeover:', error instanceof Error ? error.message : String(error));
     }
 
     return null;
@@ -484,7 +484,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error evaluating fraud rules:', error);
+      logger.error('Error evaluating fraud rules:', error instanceof Error ? error.message : String(error));
     }
 
     return signals;
@@ -531,7 +531,7 @@ export class AdvancedFraudDetectionService {
         timestamp: fraudCheck.timestamp
       });
     } catch (error) {
-      logger.error('Error storing fraud check:', error);
+      logger.error('Error storing fraud check:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -546,12 +546,12 @@ export class AdvancedFraudDetectionService {
         status: 'pending'
       });
 
-      logger.info('Queued transaction for manual review', {
+      logger.info({
         userId: fraudCheck.userId,
         score: fraudCheck.score
       });
     } catch (error) {
-      logger.error('Error queueing for review:', error);
+      logger.error('Error queueing for review:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -583,7 +583,7 @@ export class AdvancedFraudDetectionService {
       }
 
     } catch (error) {
-      logger.error('Error updating reputations:', error);
+      logger.error('Error updating reputations:', error instanceof Error ? error.message : String(error));
     }
   }
 
@@ -597,7 +597,7 @@ export class AdvancedFraudDetectionService {
         last_seen: new Date()
       }).onConflict('ip_address').ignore();
     } catch (error) {
-      logger.error('Error creating IP reputation:', error);
+      logger.error('Error creating IP reputation:', error instanceof Error ? error.message : String(error));
     }
   }
 

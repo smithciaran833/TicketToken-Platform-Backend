@@ -6,12 +6,7 @@ export function errorHandler(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
-  logger.error('Request error:', {
-    error: error.message,
-    stack: error.stack,
-    url: request.url,
-    method: request.method
-  });
+  logger.error({ err: error, url: request.url, method: request.method }, 'Request error');
   
   const statusCode = error.statusCode || 500;
   const message = error.message || 'Internal server error';

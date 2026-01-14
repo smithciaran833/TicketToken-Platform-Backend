@@ -32,7 +32,7 @@ export class AuditService {
         ip_address: event.ipAddress,
         user_agent: event.userAgent,
         metadata: event.metadata ? JSON.stringify({ ...event.metadata, correlationId }) : JSON.stringify({ correlationId }),
-        status: event.status,
+        success: event.status === 'success',
         error_message: event.errorMessage,
         created_at: new Date()
       });
@@ -71,11 +71,29 @@ export class AuditService {
     });
   }
 
-  async logTokenRefresh(userId: string, ipAddress: string, tenantId?: string): Promise<void> {
-    await this.log({
-      userId, tenantId, action: 'token.refreshed', actionType: 'authentication',
-      resourceType: 'token', ipAddress, status: 'success'
-    });
+  /**
+   * Log token refresh to dedicated token_refresh_log table
+   */
+  async logTokenRefresh(userId: string, ipAddress: string, tenantId: string, userAgent?: string): Promise<void> {
+    try {
+      await db('token_refresh_log').insert({
+        user_id: userId,
+        tenant_id: tenantId,
+        ip_address: ipAddress,
+        user_agent: userAgent,
+        refreshed_at: new Date(),
+        metadata: JSON.stringify({ correlationId: getCorrelationId() })
+      });
+
+      logger.info('Token refresh logged', {
+        userId,
+        tenantId,
+        ipAddress,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.error('Failed to log token refresh', { error, userId, tenantId });
+    }
   }
 
   async logSessionCreated(userId: string, sessionId: string, ipAddress?: string, userAgent?: string, tenantId?: string): Promise<void> {

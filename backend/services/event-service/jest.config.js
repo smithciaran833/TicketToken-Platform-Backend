@@ -1,8 +1,12 @@
+/**
+ * Jest configuration for event-service
+ * SECURITY FIX (JC3): Added coverage thresholds with 80% minimums
+ */
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  roots: ['<rootDir>/tests'],
-  testMatch: ['**/*.test.ts'],
+  roots: ['<rootDir>/tests', '<rootDir>/src'],
+  testMatch: ['**/*.test.ts', '**/*.spec.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
   
   // AUDIT FIX (TEST-SETUP): Run setup file before each test suite
@@ -10,7 +14,7 @@ module.exports = {
   
   // AUDIT FIX (TEST-WORKERS): Limit workers for CI stability
   // Use 50% of available CPUs to prevent CI resource exhaustion
-  maxWorkers: process.env.CI ? '50%' : undefined,
+  ...(process.env.CI ? { maxWorkers: '50%' } : {}),
   
   collectCoverageFrom: [
     'src/**/*.{ts,tsx}',
@@ -35,7 +39,32 @@ module.exports = {
   ],
   globals: {
     'ts-jest': {
+      tsconfig: 'tsconfig.test.json',
       isolatedModules: true,
     },
   },
+  
+  // Module name mapping for path aliases
+  moduleNameMapper: {
+    '^@/(.*)$': '<rootDir>/src/$1',
+    '^pino$': '<rootDir>/tests/__mocks__/pino.js',
+  },
+
+  // Coverage ignore patterns
+  coveragePathIgnorePatterns: [
+    '/node_modules/',
+    '/dist/',
+    '/coverage/',
+    '/__mocks__/',
+  ],
+
+  // Clear mocks between tests
+  clearMocks: true,
+  verbose: true,
+
+  // Force exit after tests complete (handle async cleanup)
+  forceExit: true,
+
+  // Detect open handles
+  detectOpenHandles: true,
 };

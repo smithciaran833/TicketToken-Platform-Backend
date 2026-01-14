@@ -63,8 +63,17 @@ RUN groupadd -g 1001 nodejs && \
     useradd -r -u 1001 -g nodejs nodejs && \
     chown -R nodejs:nodejs /app
 
+# Install curl for healthcheck
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 USER nodejs
 
 EXPOSE 3010
+
+# AUDIT FIX: HEALTH-1 - Add Docker HEALTHCHECK instruction
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:3010/health || exit 1
+
 ENTRYPOINT ["./entrypoint.sh", "dumb-init", "--"]
 CMD ["node", "dist/index.js"]
