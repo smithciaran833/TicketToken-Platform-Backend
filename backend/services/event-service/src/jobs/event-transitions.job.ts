@@ -1,12 +1,12 @@
 /**
  * Event Transitions Job
- * 
+ *
  * Scheduled jobs to handle automatic event state transitions:
  * - Sales start: PUBLISHED → ON_SALE
  * - Sales end: ON_SALE → SALES_PAUSED
  * - Event start: ON_SALE/SOLD_OUT → IN_PROGRESS
  * - Event end: IN_PROGRESS → COMPLETED
- * 
+ *
  * Uses distributed locking to prevent duplicate processing.
  */
 
@@ -16,6 +16,7 @@ import { getQueue, QUEUE_NAMES, scheduleRecurringJob, scheduleJobAt } from './in
 import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/databaseService';
 import { validateTransition, EventState, EventTransition } from '../services/event-state-machine';
+import { withSystemContext } from './system-job-utils';
 
 // Job types
 export const JOB_TYPES = {
@@ -70,8 +71,6 @@ async function performTransition(
   transition: EventTransition,
   targetState: EventState
 ): Promise<{ success: boolean; error?: string }> {
-  const db = DatabaseService.getPool();
-  
   // Validate transition
   const validation = validateTransition(currentState, transition);
   if (!validation.valid) {
@@ -80,22 +79,24 @@ async function performTransition(
 
   try {
     // Update event state in database
-    const result = await db.query(
-      `UPDATE events 
-       SET status = $1, 
-           updated_at = NOW(),
-           status_changed_at = NOW()
-       WHERE id = $2 
-         AND tenant_id = $3 
-         AND status = $4
-       RETURNING id, status`,
-      [targetState, eventId, tenantId, currentState]
-    );
+    const result = await withSystemContext(async (client) => {
+      return client.query(
+        `UPDATE events
+         SET status = $1,
+             updated_at = NOW(),
+             status_changed_at = NOW()
+         WHERE id = $2
+           AND tenant_id = $3
+           AND status = $4
+         RETURNING id, status`,
+        [targetState, eventId, tenantId, currentState]
+      );
+    });
 
     if (result.rowCount === 0) {
-      return { 
-        success: false, 
-        error: 'Event not found or state has changed' 
+      return {
+        success: false,
+        error: 'Event not found or state has changed'
       };
     }
 
@@ -124,12 +125,11 @@ async function performTransition(
  */
 async function processTransitionJob(job: Job<TransitionEventJobData>): Promise<void> {
   const { eventId, tenantId, transitionType, targetState } = job.data;
-  const db = DatabaseService.getPool();
-  
+
   // Try to acquire lock
   const redis = (await import('../config/redis')).getRedis();
   const lockAcquired = await acquireLock(redis, eventId);
-  
+
   if (!lockAcquired) {
     logger.warn({
       eventId,
@@ -141,10 +141,12 @@ async function processTransitionJob(job: Job<TransitionEventJobData>): Promise<v
 
   try {
     // Get current event state
-    const eventResult = await db.query(
-      `SELECT id, status, tenant_id FROM events WHERE id = $1 AND tenant_id = $2`,
-      [eventId, tenantId]
-    );
+    const eventResult = await withSystemContext(async (client) => {
+      return client.query(
+        `SELECT id, status, tenant_id FROM events WHERE id = $1 AND tenant_id = $2`,
+        [eventId, tenantId]
+      );
+    });
 
     if (eventResult.rowCount === 0) {
       logger.warn({ eventId, tenantId }, 'Event not found for transition');
@@ -198,21 +200,22 @@ async function processTransitionJob(job: Job<TransitionEventJobData>): Promise<v
  * Scan for events that need transitions
  */
 async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
-  const db = DatabaseService.getPool();
   const now = new Date();
 
   logger.info({ timestamp: job.data.timestamp }, 'Scanning for pending event transitions');
 
   try {
     // Find events where sales should start
-    const salesStartEvents = await db.query(
-      `SELECT id, tenant_id 
-       FROM events 
-       WHERE status = 'PUBLISHED' 
-         AND sales_start_date <= $1 
-         AND (sales_end_date IS NULL OR sales_end_date > $1)`,
-      [now]
-    );
+    const salesStartEvents = await withSystemContext(async (client) => {
+      return client.query(
+        `SELECT id, tenant_id
+         FROM events
+         WHERE status = 'PUBLISHED'
+           AND sales_start_date <= $1
+           AND (sales_end_date IS NULL OR sales_end_date > $1)`,
+        [now]
+      );
+    });
 
     for (const event of salesStartEvents.rows) {
       await scheduleEventTransition(
@@ -224,13 +227,15 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
     }
 
     // Find events where sales should end
-    const salesEndEvents = await db.query(
-      `SELECT id, tenant_id 
-       FROM events 
-       WHERE status = 'ON_SALE' 
-         AND sales_end_date <= $1`,
-      [now]
-    );
+    const salesEndEvents = await withSystemContext(async (client) => {
+      return client.query(
+        `SELECT id, tenant_id
+         FROM events
+         WHERE status = 'ON_SALE'
+           AND sales_end_date <= $1`,
+        [now]
+      );
+    });
 
     for (const event of salesEndEvents.rows) {
       await scheduleEventTransition(
@@ -242,13 +247,15 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
     }
 
     // Find events that should start
-    const eventStartEvents = await db.query(
-      `SELECT id, tenant_id 
-       FROM events 
-       WHERE status IN ('ON_SALE', 'SOLD_OUT', 'SALES_PAUSED') 
-         AND start_date <= $1`,
-      [now]
-    );
+    const eventStartEvents = await withSystemContext(async (client) => {
+      return client.query(
+        `SELECT id, tenant_id
+         FROM events
+         WHERE status IN ('ON_SALE', 'SOLD_OUT', 'SALES_PAUSED')
+           AND start_date <= $1`,
+        [now]
+      );
+    });
 
     for (const event of eventStartEvents.rows) {
       await scheduleEventTransition(
@@ -260,13 +267,15 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
     }
 
     // Find events that should end
-    const eventEndEvents = await db.query(
-      `SELECT id, tenant_id 
-       FROM events 
-       WHERE status = 'IN_PROGRESS' 
-         AND end_date <= $1`,
-      [now]
-    );
+    const eventEndEvents = await withSystemContext(async (client) => {
+      return client.query(
+        `SELECT id, tenant_id
+         FROM events
+         WHERE status = 'IN_PROGRESS'
+           AND end_date <= $1`,
+        [now]
+      );
+    });
 
     for (const event of eventEndEvents.rows) {
       await scheduleEventTransition(
@@ -299,10 +308,10 @@ export async function scheduleEventTransition(
   targetState: EventState
 ): Promise<void> {
   const queue = getQueue(QUEUE_NAMES.EVENT_TRANSITIONS);
-  
+
   // Use event-specific job ID to prevent duplicates
   const jobId = `${transitionType}:${eventId}`;
-  
+
   await queue.add(
     JOB_TYPES.TRANSITION_EVENT,
     {
@@ -374,7 +383,7 @@ export async function initializeEventTransitionsProcessor(): Promise<void> {
 
   // Process transition jobs
   queue.process(JOB_TYPES.TRANSITION_EVENT, 5, processTransitionJob);
-  
+
   // Process scan jobs
   queue.process(JOB_TYPES.SCAN_PENDING_TRANSITIONS, 1, scanPendingTransitions);
 
@@ -394,7 +403,7 @@ export async function initializeEventTransitionsProcessor(): Promise<void> {
  */
 export async function triggerTransitionScan(): Promise<void> {
   const queue = getQueue(QUEUE_NAMES.EVENT_TRANSITIONS);
-  
+
   await queue.add(
     JOB_TYPES.SCAN_PENDING_TRANSITIONS,
     { timestamp: new Date().toISOString() },

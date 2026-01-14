@@ -1,4 +1,5 @@
 import { getDatabase } from '../config/database';
+import { withSystemContext } from './system-job-utils';
 import { orderConfig } from '../config/order.config';
 import { logger, createContextLogger } from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
@@ -119,7 +120,7 @@ export class OrderArchivingJob {
       const thresholdDate = new Date();
       thresholdDate.setDate(thresholdDate.getDate() - orderConfig.archiving.retentionDays);
 
-      // Get list of tenants to process
+      // Get list of tenants to process (uses system context to bypass RLS)
       const tenants = await this.getTenants();
       this.jobLogger.info(`Found ${tenants.length} tenants to process`);
 
@@ -163,21 +164,23 @@ export class OrderArchivingJob {
     const startedAt = new Date();
 
     try {
-      // Find orders to archive
-      const ordersToArchive = await this.db.query(`
-        SELECT id, order_number, status, created_at
-        FROM orders
-        WHERE tenant_id = $1
-          AND created_at < $2
-          AND status = ANY($3::text[])
-        ORDER BY created_at ASC
-        LIMIT $4
-      `, [
-        tenantId,
-        thresholdDate,
-        orderConfig.archiving.archivableStatuses,
-        orderConfig.archiving.maxOrdersPerRun
-      ]);
+      // Find orders to archive (uses system context to bypass RLS)
+      const ordersToArchive = await withSystemContext(async (client) => {
+        return client.query(`
+          SELECT id, order_number, status, created_at
+          FROM orders
+          WHERE tenant_id = $1
+            AND created_at < $2
+            AND status = ANY($3::text[])
+          ORDER BY created_at ASC
+          LIMIT $4
+        `, [
+          tenantId,
+          thresholdDate,
+          orderConfig.archiving.archivableStatuses,
+          orderConfig.archiving.maxOrdersPerRun
+        ]);
+      });
 
       if (ordersToArchive.rows.length === 0) {
         this.jobLogger.debug(`No orders to archive for tenant ${tenantId}`);
@@ -264,111 +267,111 @@ export class OrderArchivingJob {
    * Archive a batch of orders
    */
   private async archiveBatch(tenantId: string, orderIds: string[], thresholdDate: Date): Promise<ArchiveStats> {
-    const stats: ArchiveStats = this.emptyStats();
+    return withSystemContext(async (client) => {
+      const stats: ArchiveStats = this.emptyStats();
 
-    const client = await this.db.connect();
+      try {
+        await client.query('BEGIN');
 
-    try {
-      await client.query('BEGIN');
+        // Archive orders
+        const ordersResult = await client.query(`
+          INSERT INTO archive.orders
+          SELECT *, NOW() as archived_at, 'age_threshold' as archive_reason, NULL as archive_notes
+          FROM orders
+          WHERE id = ANY($1)
+          ON CONFLICT (id) DO NOTHING
+        `, [orderIds]);
+        stats.ordersArchived = ordersResult.rowCount || 0;
 
-      // Archive orders
-      const ordersResult = await client.query(`
-        INSERT INTO archive.orders
-        SELECT *, NOW() as archived_at, 'age_threshold' as archive_reason, NULL as archive_notes
-        FROM orders
-        WHERE id = ANY($1)
-        ON CONFLICT (id) DO NOTHING
-      `, [orderIds]);
-      stats.ordersArchived = ordersResult.rowCount || 0;
+        // Archive order items
+        const itemsResult = await client.query(`
+          INSERT INTO archive.order_items
+          SELECT *, NOW() as archived_at
+          FROM order_items
+          WHERE order_id = ANY($1)
+          ON CONFLICT (id) DO NOTHING
+        `, [orderIds]);
+        stats.itemsArchived = itemsResult.rowCount || 0;
 
-      // Archive order items
-      const itemsResult = await client.query(`
-        INSERT INTO archive.order_items
-        SELECT *, NOW() as archived_at
-        FROM order_items
-        WHERE order_id = ANY($1)
-        ON CONFLICT (id) DO NOTHING
-      `, [orderIds]);
-      stats.itemsArchived = itemsResult.rowCount || 0;
+        // Archive order events
+        const eventsResult = await client.query(`
+          INSERT INTO archive.order_events
+          SELECT *, NOW() as archived_at
+          FROM order_events
+          WHERE order_id = ANY($1)
+          ON CONFLICT (id) DO NOTHING
+        `, [orderIds]);
+        stats.eventsArchived = eventsResult.rowCount || 0;
 
-      // Archive order events
-      const eventsResult = await client.query(`
-        INSERT INTO archive.order_events
-        SELECT *, NOW() as archived_at
-        FROM order_events
-        WHERE order_id = ANY($1)
-        ON CONFLICT (id) DO NOTHING
-      `, [orderIds]);
-      stats.eventsArchived = eventsResult.rowCount || 0;
+        // Archive order addresses
+        const addressesResult = await client.query(`
+          INSERT INTO archive.order_addresses
+          SELECT *, NOW() as archived_at
+          FROM order_addresses
+          WHERE order_id = ANY($1)
+          ON CONFLICT (id) DO NOTHING
+        `, [orderIds]);
+        stats.addressesArchived = addressesResult.rowCount || 0;
 
-      // Archive order addresses
-      const addressesResult = await client.query(`
-        INSERT INTO archive.order_addresses
-        SELECT *, NOW() as archived_at
-        FROM order_addresses
-        WHERE order_id = ANY($1)
-        ON CONFLICT (id) DO NOTHING
-      `, [orderIds]);
-      stats.addressesArchived = addressesResult.rowCount || 0;
+        // Archive order discounts
+        const discountsResult = await client.query(`
+          INSERT INTO archive.order_discounts
+          SELECT *, NOW() as archived_at
+          FROM order_discounts
+          WHERE order_id = ANY($1)
+          ON CONFLICT (id) DO NOTHING
+        `, [orderIds]);
+        stats.discountsArchived = discountsResult.rowCount || 0;
 
-      // Archive order discounts
-      const discountsResult = await client.query(`
-        INSERT INTO archive.order_discounts
-        SELECT *, NOW() as archived_at
-        FROM order_discounts
-        WHERE order_id = ANY($1)
-        ON CONFLICT (id) DO NOTHING
-      `, [orderIds]);
-      stats.discountsArchived = discountsResult.rowCount || 0;
+        // Archive order refunds
+        const refundsResult = await client.query(`
+          INSERT INTO archive.order_refunds
+          SELECT *, NOW() as archived_at
+          FROM order_refunds
+          WHERE order_id = ANY($1)
+          ON CONFLICT (id) DO NOTHING
+        `, [orderIds]);
+        stats.refundsArchived = refundsResult.rowCount || 0;
 
-      // Archive order refunds
-      const refundsResult = await client.query(`
-        INSERT INTO archive.order_refunds
-        SELECT *, NOW() as archived_at
-        FROM order_refunds
-        WHERE order_id = ANY($1)
-        ON CONFLICT (id) DO NOTHING
-      `, [orderIds]);
-      stats.refundsArchived = refundsResult.rowCount || 0;
+        // Delete from main tables if configured
+        if (orderConfig.archiving.deleteAfterDays > 0) {
+          const deleteThreshold = new Date();
+          deleteThreshold.setDate(deleteThreshold.getDate() - orderConfig.archiving.deleteAfterDays);
 
-      // Delete from main tables if configured
-      if (orderConfig.archiving.deleteAfterDays > 0) {
-        const deleteThreshold = new Date();
-        deleteThreshold.setDate(deleteThreshold.getDate() - orderConfig.archiving.deleteAfterDays);
-
-        if (thresholdDate < deleteThreshold) {
-          // Orders are old enough to delete
-          await client.query('DELETE FROM order_refunds WHERE order_id = ANY($1)', [orderIds]);
-          await client.query('DELETE FROM order_discounts WHERE order_id = ANY($1)', [orderIds]);
-          await client.query('DELETE FROM order_addresses WHERE order_id = ANY($1)', [orderIds]);
-          await client.query('DELETE FROM order_events WHERE order_id = ANY($1)', [orderIds]);
-          await client.query('DELETE FROM order_items WHERE order_id = ANY($1)', [orderIds]);
-          const deleteResult = await client.query('DELETE FROM orders WHERE id = ANY($1)', [orderIds]);
-          stats.ordersDeleted = deleteResult.rowCount || 0;
+          if (thresholdDate < deleteThreshold) {
+            // Orders are old enough to delete
+            await client.query('DELETE FROM order_refunds WHERE order_id = ANY($1)', [orderIds]);
+            await client.query('DELETE FROM order_discounts WHERE order_id = ANY($1)', [orderIds]);
+            await client.query('DELETE FROM order_addresses WHERE order_id = ANY($1)', [orderIds]);
+            await client.query('DELETE FROM order_events WHERE order_id = ANY($1)', [orderIds]);
+            await client.query('DELETE FROM order_items WHERE order_id = ANY($1)', [orderIds]);
+            const deleteResult = await client.query('DELETE FROM orders WHERE id = ANY($1)', [orderIds]);
+            stats.ordersDeleted = deleteResult.rowCount || 0;
+          }
         }
+
+        await client.query('COMMIT');
+
+        this.jobLogger.debug(`Archived batch of ${orderIds.length} orders`, { stats, tenantId });
+
+        return stats;
+
+      } catch (error) {
+        await client.query('ROLLBACK');
+        this.jobLogger.error('Failed to archive batch', { error, orderIds: orderIds.length, tenantId });
+        throw error;
       }
-
-      await client.query('COMMIT');
-
-      this.jobLogger.debug(`Archived batch of ${orderIds.length} orders`, { stats, tenantId });
-
-      return stats;
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      this.jobLogger.error('Failed to archive batch', { error, orderIds: orderIds.length, tenantId });
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   /**
    * Get list of tenant IDs
    */
   private async getTenants(): Promise<string[]> {
-    const result = await this.db.query('SELECT DISTINCT tenant_id FROM orders');
-    return result.rows.map(row => row.tenant_id);
+    return withSystemContext(async (client) => {
+      const result = await client.query('SELECT DISTINCT tenant_id FROM orders');
+      return result.rows.map(row => row.tenant_id);
+    });
   }
 
   /**
@@ -376,30 +379,32 @@ export class OrderArchivingJob {
    */
   private async logAuditRecord(record: ArchiveAuditLog): Promise<void> {
     try {
-      await this.db.query(`
-        INSERT INTO archive.archive_audit_log (
-          id, tenant_id, operation, orders_affected, items_affected, events_affected,
-          threshold_date, days_old, executed_by, notes, metadata,
-          started_at, completed_at, duration_ms, success, error_message
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-      `, [
-        record.id,
-        record.tenantId,
-        record.operation,
-        record.ordersAffected,
-        record.itemsAffected,
-        record.eventsAffected,
-        record.thresholdDate,
-        record.daysOld,
-        record.executedBy,
-        record.notes,
-        JSON.stringify(record.metadata),
-        record.startedAt,
-        record.completedAt,
-        record.durationMs,
-        record.success,
-        record.errorMessage
-      ]);
+      await withSystemContext(async (client) => {
+        await client.query(`
+          INSERT INTO archive.archive_audit_log (
+            id, tenant_id, operation, orders_affected, items_affected, events_affected,
+            threshold_date, days_old, executed_by, notes, metadata,
+            started_at, completed_at, duration_ms, success, error_message
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        `, [
+          record.id,
+          record.tenantId,
+          record.operation,
+          record.ordersAffected,
+          record.itemsAffected,
+          record.eventsAffected,
+          record.thresholdDate,
+          record.daysOld,
+          record.executedBy,
+          record.notes,
+          JSON.stringify(record.metadata),
+          record.startedAt,
+          record.completedAt,
+          record.durationMs,
+          record.success,
+          record.errorMessage
+        ]);
+      });
     } catch (error) {
       this.jobLogger.error('Failed to log audit record', { error, record });
       // Don't throw - we don't want to fail the job just because audit logging failed

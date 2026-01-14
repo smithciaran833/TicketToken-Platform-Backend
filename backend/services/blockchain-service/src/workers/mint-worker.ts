@@ -6,12 +6,13 @@ import MetaplexService from '../services/MetaplexService';
 import TransactionConfirmationService from '../services/TransactionConfirmationService';
 import { ticketServiceClient, venueServiceClient, orderServiceClient, eventServiceClient } from '@tickettoken/shared/clients';
 import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { withSystemContextPool } from './system-job-utils';
 
 /**
  * MINT WORKER
- * 
+ *
  * Background worker for NFT minting operations.
- * 
+ *
  * PHASE 5c REFACTORED:
  * - Replaced direct venues table query with venueServiceClient
  * - Replaced direct tickets/orders/events JOIN with service clients
@@ -64,7 +65,7 @@ export class MintWorker {
     this.mintWallet = this.initializeWallet();
     this.rabbitConnection = null;
     this.channel = null;
-    
+
     // Initialize blockchain services
     this.metaplexService = new MetaplexService(this.solanaConnection, this.mintWallet);
     this.confirmationService = new TransactionConfirmationService(this.solanaConnection);
@@ -90,8 +91,8 @@ export class MintWorker {
       await this.connectRabbitMQ();
       await this.consumeQueue();
     } catch (error: any) {
-      logger.info('RabbitMQ not available, using polling mode', { 
-        error: error.message 
+      logger.info('RabbitMQ not available, using polling mode', {
+        error: error.message
       });
     }
 
@@ -123,9 +124,9 @@ export class MintWorker {
 
         this.channel!.ack(msg);
       } catch (error: any) {
-        logger.error('Failed to process mint job', { 
-          error: error.message, 
-          stack: error.stack 
+        logger.error('Failed to process mint job', {
+          error: error.message,
+          stack: error.stack
         });
         this.channel!.nack(msg, false, true);
       }
@@ -138,26 +139,28 @@ export class MintWorker {
     setInterval(async () => {
       try {
         // mint_jobs is blockchain-service owned table
-        const result = await this.pool.query(`
-          SELECT * FROM mint_jobs
-          WHERE status = 'pending'
-          ORDER BY created_at ASC
-          LIMIT 1
-        `);
+        const result = await withSystemContextPool(this.pool, async (client) => {
+          return client.query(`
+            SELECT * FROM mint_jobs
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT 1
+          `);
+        });
 
         if (result.rows.length > 0) {
           const job: MintJob = result.rows[0];
           await this.processMintJob(job);
         }
       } catch (error: any) {
-        logger.error('Polling error', { 
-          error: error.message 
+        logger.error('Polling error', {
+          error: error.message
         });
       }
     }, 5000);
 
-    logger.info('Mint worker started in polling mode', { 
-      interval: '5000ms' 
+    logger.info('Mint worker started in polling mode', {
+      interval: '5000ms'
     });
   }
 
@@ -173,9 +176,9 @@ export class MintWorker {
       const venue = await venueServiceClient.getVenue(venueId, ctx);
 
       if (venue && venue.walletAddress) {
-        logger.info('Found venue wallet via service', { 
-          venueId, 
-          wallet: venue.walletAddress 
+        logger.info('Found venue wallet via service', {
+          venueId,
+          wallet: venue.walletAddress
         });
         return venue.walletAddress;
       }
@@ -184,9 +187,9 @@ export class MintWorker {
       return null;
 
     } catch (error: any) {
-      logger.error('Failed to fetch venue wallet via service', { 
-        venueId, 
-        error: error.message 
+      logger.error('Failed to fetch venue wallet via service', {
+        venueId,
+        error: error.message
       });
       return null;
     }
@@ -217,23 +220,23 @@ export class MintWorker {
           if (!orderItems || orderItems.items.length === 0) {
             throw new Error(`No items found for order ${job.orderId}`);
           }
-          
+
           // Get first ticket from order
           const firstItem = orderItems.items.find((item: any) => item.ticketId);
           if (!firstItem?.ticketId) {
             throw new Error(`No ticket found for order ${job.orderId}`);
           }
-          
+
           // Get full ticket info
           ticket = await ticketServiceClient.getTicketFull(firstItem.ticketId, ctx);
-          
+
           if (!ticket) {
             throw new Error(`Ticket not found: ${firstItem.ticketId}`);
           }
-          
+
           // Event info is included in ticket response
           eventInfo = ticket.event;
-          
+
           // Get venue info if available
           if (eventInfo?.venueId) {
             try {
@@ -246,19 +249,21 @@ export class MintWorker {
           logger.warn('Service client calls failed, falling back to direct query', {
             error: serviceError.message
           });
-          
+
           // Fallback to direct query for backward compatibility
-          const ticketResult = await this.pool.query(`
-            SELECT t.*, e.name as event_name, e.description as event_description,
-                   v.name as venue_name
-            FROM tickets t
-            JOIN order_items oi ON t.id = oi.ticket_id
-            JOIN orders o ON oi.order_id = o.id
-            JOIN events e ON t.event_id = e.id
-            LEFT JOIN venues v ON e.venue_id = v.id
-            WHERE o.id = $1
-            LIMIT 1
-          `, [job.orderId]);
+          const ticketResult = await withSystemContextPool(this.pool, async (client) => {
+            return client.query(`
+              SELECT t.*, e.name as event_name, e.description as event_description,
+                     v.name as venue_name
+              FROM tickets t
+              JOIN order_items oi ON t.id = oi.ticket_id
+              JOIN orders o ON oi.order_id = o.id
+              JOIN events e ON t.event_id = e.id
+              LEFT JOIN venues v ON e.venue_id = v.id
+              WHERE o.id = $1
+              LIMIT 1
+            `, [job.orderId]);
+          });
 
           if (ticketResult.rows.length === 0) {
             throw new Error(`No ticket found for order ${job.orderId}`);
@@ -360,32 +365,34 @@ export class MintWorker {
           mintedAt: new Date().toISOString(),
           isMinted: true,
         }, ctx);
-        
+
         logger.info('Updated ticket NFT via service', { ticketId: ticket.id });
       } catch (updateError: any) {
         logger.warn('Failed to update ticket via service client, using fallback', {
           error: updateError.message
         });
-        
+
         // Fallback to direct update
-        await this.pool.query(`
-          UPDATE tickets t
-          SET mint_address = $1, 
-              minted_at = NOW(),
-              metadata_uri = $2,
-              transaction_signature = $3
-          FROM order_items oi
-          WHERE t.id = oi.ticket_id
-            AND oi.order_id = $4
-        `, [
-          mintResult.mintAddress, 
-          mintResult.metadataUri,
-          mintResult.transactionSignature,
-          job.orderId
-        ]);
+        await withSystemContextPool(this.pool, async (client) => {
+          await client.query(`
+            UPDATE tickets t
+            SET mint_address = $1,
+                minted_at = NOW(),
+                metadata_uri = $2,
+                transaction_signature = $3
+            FROM order_items oi
+            WHERE t.id = oi.ticket_id
+              AND oi.order_id = $4
+          `, [
+            mintResult.mintAddress,
+            mintResult.metadataUri,
+            mintResult.transactionSignature,
+            job.orderId
+          ]);
+        });
       }
 
-      logger.info('NFT minted successfully', { 
+      logger.info('NFT minted successfully', {
         mintAddress: mintResult.mintAddress,
         signature: mintResult.transactionSignature,
         orderId: job.orderId,
@@ -394,20 +401,22 @@ export class MintWorker {
 
       // Update job status - blockchain-service owned table
       if (job.id) {
-        await this.pool.query(`
-          UPDATE mint_jobs
-          SET status = 'completed',
-              nft_address = $1,
-              transaction_signature = $2,
-              metadata_uri = $3,
-              updated_at = NOW()
-          WHERE id = $4
-        `, [
-          mintResult.mintAddress,
-          mintResult.transactionSignature,
-          mintResult.metadataUri,
-          job.id
-        ]);
+        await withSystemContextPool(this.pool, async (client) => {
+          await client.query(`
+            UPDATE mint_jobs
+            SET status = 'completed',
+                nft_address = $1,
+                transaction_signature = $2,
+                metadata_uri = $3,
+                updated_at = NOW()
+            WHERE id = $4
+          `, [
+            mintResult.mintAddress,
+            mintResult.transactionSignature,
+            mintResult.metadataUri,
+            job.id
+          ]);
+        });
       }
 
       // Publish success event
@@ -424,8 +433,8 @@ export class MintWorker {
       }
 
     } catch (error: any) {
-      logger.error('Minting failed', { 
-        error: error.message, 
+      logger.error('Minting failed', {
+        error: error.message,
         stack: error.stack,
         orderId: job.orderId,
         jobId: job.id
@@ -433,13 +442,15 @@ export class MintWorker {
 
       // Update job with failure status - blockchain-service owned table
       if (job.id) {
-        await this.pool.query(`
-          UPDATE mint_jobs
-          SET status = 'failed',
-              error = $1,
-              updated_at = NOW()
-          WHERE id = $2
-        `, [error.message, job.id]);
+        await withSystemContextPool(this.pool, async (client) => {
+          await client.query(`
+            UPDATE mint_jobs
+            SET status = 'failed',
+                error = $1,
+                updated_at = NOW()
+            WHERE id = $2
+          `, [error.message, job.id]);
+        });
       }
 
       throw error;

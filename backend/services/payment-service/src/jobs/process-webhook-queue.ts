@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { StripeWebhookHandler } from '../webhooks/stripe-handler';
 import Stripe from 'stripe';
 import { logger } from '../utils/logger';
+import { withSystemContextPool } from '../workers/system-job-utils';
 
 const log = logger.child({ component: 'ProcessWebhookQueue' });
 
@@ -15,24 +16,26 @@ export class ProcessWebhookQueueJob {
   }
 
   async execute(): Promise<void> {
-    // Get unprocessed webhooks
-    const webhooks = await this.db.query(
-      `SELECT * FROM webhook_inbox
-       WHERE status = 'pending'
-       AND retry_count < 5
-       ORDER BY created_at ASC
-       LIMIT 10`
-    );
+    await withSystemContextPool(this.db, async (client) => {
+      // Get unprocessed webhooks
+      const webhooks = await client.query(
+        `SELECT * FROM webhook_inbox
+         WHERE status = 'pending'
+         AND retry_count < 5
+         ORDER BY created_at ASC
+         LIMIT 10`
+      );
 
-    for (const webhook of webhooks.rows) {
-      await this.processWebhook(webhook);
-    }
+      for (const webhook of webhooks.rows) {
+        await this.processWebhook(client, webhook);
+      }
+    });
   }
 
-  private async processWebhook(webhook: any): Promise<void> {
+  private async processWebhook(client: any, webhook: any): Promise<void> {
     try {
-      const payload = typeof webhook.payload === 'string' 
-        ? JSON.parse(webhook.payload) 
+      const payload = typeof webhook.payload === 'string'
+        ? JSON.parse(webhook.payload)
         : webhook.payload;
 
       switch (webhook.provider) {
@@ -43,13 +46,13 @@ export class ProcessWebhookQueueJob {
       }
 
       // Mark as processed
-      await this.db.query(
+      await client.query(
         `UPDATE webhook_inbox SET status = 'processed', processed_at = NOW() WHERE id = $1`,
         [webhook.id]
       );
     } catch (error: any) {
       // Update retry count and error
-      await this.db.query(
+      await client.query(
         `UPDATE webhook_inbox
          SET retry_count = retry_count + 1,
              error_message = $1,

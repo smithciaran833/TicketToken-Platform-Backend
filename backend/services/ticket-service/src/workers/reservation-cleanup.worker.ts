@@ -3,6 +3,7 @@ import { config } from '../config';
 import { logger } from '../utils/logger';
 import { RedisService } from '../services/redisService';
 import { QueueService } from '../services/queueService';
+import { withSystemContextPool } from './system-job-utils';
 
 interface OrphanReservation {
   reservation_id: string;
@@ -42,10 +43,10 @@ export class ReservationCleanupWorker {
     }
 
     this.log.info('Starting reservation cleanup worker', { interval: intervalMs });
-    
+
     // Run immediately on start
     await this.runCleanup();
-    
+
     // Then run on interval
     this.intervalId = setInterval(() => {
       this.runCleanup().catch(error => {
@@ -74,16 +75,16 @@ export class ReservationCleanupWorker {
     try {
       // 1. Release expired reservations
       const expiredCount = await this.releaseExpiredReservations();
-      
+
       // 2. Find and fix orphan reservations
       const orphansFixed = await this.fixOrphanReservations();
-      
+
       // 3. Clean up stale Redis entries
       const redisCleanup = await this.cleanupRedisReservations();
-      
+
       // 4. Reconcile inventory discrepancies
       await this.reconcileInventory();
-      
+
       // 5. Notify about cleaned up reservations
       await this.notifyCleanups();
 
@@ -107,90 +108,87 @@ export class ReservationCleanupWorker {
   }
 
   private async releaseExpiredReservations(): Promise<number> {
-    const client = await this.pool.connect();
+    return withSystemContextPool(this.pool, async (client) => {
+      try {
+        await client.query('BEGIN');
 
-    try {
-      await client.query('BEGIN');
+        // Call the stored procedure
+        const result = await client.query('SELECT release_expired_reservations() as count');
+        const releasedCount = result.rows[0].count;
 
-      // Call the stored procedure
-      const result = await client.query('SELECT release_expired_reservations() as count');
-      const releasedCount = result.rows[0].count;
+        if (releasedCount > 0) {
+          // Get details of expired reservations for events
+          const expiredDetails = await client.query(`
+            SELECT
+              r.id,
+              r.order_id,
+              r.user_id,
+              r.quantity,
+              r.expires_at,
+              r.event_id,
+              COALESCE(r.tickets, '[]'::jsonb) as tickets
+            FROM reservations r
+            WHERE r.status = 'EXPIRED'
+              AND r.released_at >= NOW() - INTERVAL '2 minutes'
+          `);
 
-      if (releasedCount > 0) {
-        // Get details of expired reservations for events
-        const expiredDetails = await client.query(`
-          SELECT 
-            r.id,
-            r.order_id,
-            r.user_id,
-            r.quantity,
-            r.expires_at,
-            r.event_id,
-            COALESCE(r.tickets, '[]'::jsonb) as tickets
-          FROM reservations r
-          WHERE r.status = 'EXPIRED'
-            AND r.released_at >= NOW() - INTERVAL '2 minutes'
-        `);
+          // Write to outbox for each expired reservation
+          for (const reservation of expiredDetails.rows) {
+            await client.query(`
+              INSERT INTO outbox (
+                aggregate_id,
+                aggregate_type,
+                event_type,
+                payload,
+                created_at
+              ) VALUES ($1, $2, $3, $4, NOW())
+            `, [
+              reservation.order_id || reservation.id,
+              'reservation',
+              'reservation.expired',
+              JSON.stringify({
+                reservationId: reservation.id,
+                orderId: reservation.order_id,
+                userId: reservation.user_id,
+                eventId: reservation.event_id,
+                quantity: reservation.quantity,
+                tickets: reservation.tickets,
+                expiredAt: new Date()
+              })
+            ]);
 
-        // Write to outbox for each expired reservation
-        for (const reservation of expiredDetails.rows) {
-          await client.query(`
-            INSERT INTO outbox (
-              aggregate_id,
-              aggregate_type,
-              event_type,
-              payload,
-              created_at
-            ) VALUES ($1, $2, $3, $4, NOW())
-          `, [
-            reservation.order_id || reservation.id,
-            'reservation',
-            'reservation.expired',
-            JSON.stringify({
-              reservationId: reservation.id,
-              orderId: reservation.order_id,
+            // Clear from Redis
+            await RedisService.del(`reservation:${reservation.id}`);
+
+            // Send notification to user
+            await QueueService.publish('notifications', {
+              type: 'reservation.expired',
               userId: reservation.user_id,
-              eventId: reservation.event_id,
-              quantity: reservation.quantity,
-              tickets: reservation.tickets,
-              expiredAt: new Date()
-            })
-          ]);
+              data: {
+                reservationId: reservation.id,
+                eventId: reservation.event_id
+              }
+            });
+          }
 
-          // Clear from Redis
-          await RedisService.del(`reservation:${reservation.id}`);
-          
-          // Send notification to user
-          await QueueService.publish('notifications', {
-            type: 'reservation.expired',
-            userId: reservation.user_id,
-            data: {
-              reservationId: reservation.id,
-              eventId: reservation.event_id
-            }
-          });
+          this.log.info(`Released ${releasedCount} expired reservations`);
         }
 
-        this.log.info(`Released ${releasedCount} expired reservations`);
+        await client.query('COMMIT');
+        this.metrics.totalReleased += releasedCount;
+        return releasedCount;
+
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
       }
-
-      await client.query('COMMIT');
-      this.metrics.totalReleased += releasedCount;
-      return releasedCount;
-
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
+    });
   }
 
   private async fixOrphanReservations(): Promise<number> {
-    const client = await this.pool.connect();
     let fixed = 0;
 
-    try {
+    await withSystemContextPool(this.pool, async (client) => {
       // Find orphan reservations
       const orphans = await client.query<OrphanReservation>(
         'SELECT * FROM find_orphan_reservations()'
@@ -234,10 +232,7 @@ export class ReservationCleanupWorker {
         this.metrics.orphansFixed += fixed;
         this.log.info(`Fixed ${fixed} orphan reservations`);
       }
-
-    } finally {
-      client.release();
-    }
+    });
 
     return fixed;
   }
@@ -324,13 +319,15 @@ export class ReservationCleanupWorker {
 
       for (const key of keys) {
         const reservationId = key.split(':')[1];
-        
-        // Check if reservation still exists and is active
-        const result = await this.pool.query(`
-          SELECT status FROM reservations WHERE id = $1
-        `, [reservationId]);
 
-        if (result.rows.length === 0 || 
+        // Check if reservation still exists and is active
+        const result = await withSystemContextPool(this.pool, async (client) => {
+          return client.query(`
+            SELECT status FROM reservations WHERE id = $1
+          `, [reservationId]);
+        });
+
+        if (result.rows.length === 0 ||
             !['PENDING', 'ACTIVE'].includes(result.rows[0].status)) {
           await RedisService.del(key);
           cleaned++;
@@ -349,9 +346,7 @@ export class ReservationCleanupWorker {
   }
 
   private async reconcileInventory(): Promise<void> {
-    const client = await this.pool.connect();
-
-    try {
+    await withSystemContextPool(this.pool, async (client) => {
       // Find ticket types with negative inventory (should never happen)
       const negativeInventory = await client.query(`
         SELECT id, name, available_quantity, total_quantity
@@ -385,11 +380,11 @@ export class ReservationCleanupWorker {
       // Find discrepancies between reserved and available quantities
       const discrepancies = await client.query(`
         WITH reservation_counts AS (
-          SELECT 
+          SELECT
             tt.id as ticket_type_id,
             COALESCE(SUM(
               (SELECT SUM((value->>'quantity')::int)
-               FROM jsonb_array_elements(r.tickets) 
+               FROM jsonb_array_elements(r.tickets)
                WHERE value->>'ticketTypeId' = tt.id::text)
             ), 0) as reserved_quantity
           FROM ticket_types tt
@@ -398,7 +393,7 @@ export class ReservationCleanupWorker {
             AND r.tickets::text LIKE '%' || tt.id::text || '%'
           GROUP BY tt.id
         )
-        SELECT 
+        SELECT
           tt.id,
           tt.name,
           tt.total_quantity,
@@ -433,10 +428,7 @@ export class ReservationCleanupWorker {
           ]);
         }
       }
-
-    } finally {
-      client.release();
-    }
+    });
   }
 
   private async notifyCleanups(): Promise<void> {

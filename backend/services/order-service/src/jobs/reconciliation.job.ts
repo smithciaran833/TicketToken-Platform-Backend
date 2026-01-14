@@ -1,5 +1,6 @@
 import { OrderService } from '../services/order.service';
 import { getDatabase } from '../config/database';
+import { withSystemContext } from './system-job-utils';
 import { logger } from '../utils/logger';
 
 export class ReconciliationJob {
@@ -114,16 +115,18 @@ export class ReconciliationJob {
    * These may be stuck due to failed payment confirmation
    */
   private async findStaleReservedOrders(): Promise<any[]> {
-    const query = `
-      SELECT * FROM orders 
-      WHERE status = 'RESERVED' 
-      AND created_at < NOW() - INTERVAL '1 hour'
-      AND (expires_at IS NULL OR expires_at > NOW())
-      ORDER BY created_at ASC
-      LIMIT 100
-    `;
-    const result = await this.db.query(query);
-    return result.rows;
+    return withSystemContext(async (client) => {
+      const query = `
+        SELECT * FROM orders
+        WHERE status = 'RESERVED'
+        AND created_at < NOW() - INTERVAL '1 hour'
+        AND (expires_at IS NULL OR expires_at > NOW())
+        ORDER BY created_at ASC
+        LIMIT 100
+      `;
+      const result = await client.query(query);
+      return result.rows;
+    });
   }
 
   /**
@@ -131,16 +134,18 @@ export class ReconciliationJob {
    * Verify they have proper payment confirmation
    */
   private async findUnconfirmedPaymentOrders(): Promise<any[]> {
-    const query = `
-      SELECT * FROM orders 
-      WHERE status = 'CONFIRMED' 
-      AND confirmed_at > NOW() - INTERVAL '24 hours'
-      AND payment_intent_id IS NOT NULL
-      ORDER BY confirmed_at DESC
-      LIMIT 50
-    `;
-    const result = await this.db.query(query);
-    return result.rows;
+    return withSystemContext(async (client) => {
+      const query = `
+        SELECT * FROM orders
+        WHERE status = 'CONFIRMED'
+        AND confirmed_at > NOW() - INTERVAL '24 hours'
+        AND payment_intent_id IS NOT NULL
+        ORDER BY confirmed_at DESC
+        LIMIT 50
+      `;
+      const result = await client.query(query);
+      return result.rows;
+    });
   }
 
   /**
@@ -157,7 +162,7 @@ export class ReconciliationJob {
     // If not, either:
     // 1. Re-reserve the tickets (if still available)
     // 2. Expire the order (if tickets no longer available)
-    
+
     // For now, we'll log this for manual review
     // In a full implementation, you'd call ticket-service API here
     logger.warn('Order may need manual review', {
@@ -169,18 +174,20 @@ export class ReconciliationJob {
     });
 
     // Add order event for tracking
-    await this.db.query(
-      `INSERT INTO order_events (order_id, event_type, metadata)
-       VALUES ($1, $2, $3)`,
-      [
-        order.id,
-        'RECONCILIATION_CHECK',
-        JSON.stringify({
-          checkType: 'stale_reservation',
-          timestamp: new Date().toISOString()
-        })
-      ]
-    );
+    await withSystemContext(async (client) => {
+      await client.query(
+        `INSERT INTO order_events (order_id, event_type, metadata)
+         VALUES ($1, $2, $3)`,
+        [
+          order.id,
+          'RECONCILIATION_CHECK',
+          JSON.stringify({
+            checkType: 'stale_reservation',
+            timestamp: new Date().toISOString()
+          })
+        ]
+      );
+    });
   }
 
   /**
@@ -195,7 +202,7 @@ export class ReconciliationJob {
 
     // In a full implementation, you'd call payment-service API here
     // to verify the payment was actually processed
-    
+
     // For now, we'll just log for audit purposes
     logger.info('Payment verification logged', {
       orderId: order.id,
@@ -203,18 +210,20 @@ export class ReconciliationJob {
     });
 
     // Add order event for tracking
-    await this.db.query(
-      `INSERT INTO order_events (order_id, event_type, metadata)
-       VALUES ($1, $2, $3)`,
-      [
-        order.id,
-        'RECONCILIATION_CHECK',
-        JSON.stringify({
-          checkType: 'payment_verification',
-          paymentIntentId: order.payment_intent_id,
-          timestamp: new Date().toISOString()
-        })
-      ]
-    );
+    await withSystemContext(async (client) => {
+      await client.query(
+        `INSERT INTO order_events (order_id, event_type, metadata)
+         VALUES ($1, $2, $3)`,
+        [
+          order.id,
+          'RECONCILIATION_CHECK',
+          JSON.stringify({
+            checkType: 'payment_verification',
+            paymentIntentId: order.payment_intent_id,
+            timestamp: new Date().toISOString()
+          })
+        ]
+      );
+    });
   }
 }

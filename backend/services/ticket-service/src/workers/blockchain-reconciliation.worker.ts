@@ -1,6 +1,6 @@
 /**
  * Blockchain Reconciliation Worker
- * 
+ *
  * Periodically reconciles blockchain state with database records
  * Ensures data consistency between on-chain and off-chain data
  */
@@ -8,6 +8,7 @@
 import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/databaseService';
 import { SolanaService } from '../services/solanaService';
+import { withSystemContext } from './system-job-utils';
 
 const log = logger.child({ component: 'BlockchainReconciliationWorker' });
 
@@ -263,19 +264,23 @@ export class BlockchainReconciliationWorker {
     try {
       // Get pending transactions older than threshold
       const cutoffTime = new Date(Date.now() - this.config.pendingAgeThresholdMs);
-      const pendingResult = await DatabaseService.query<PendingTransaction>(
-        `SELECT tx_signature, tenant_id, ticket_id, tx_type, status, blockhash, 
-                last_valid_block_height, submitted_at, COALESCE(retry_count, 0) as retry_count
-         FROM pending_transactions 
-         WHERE status IN ('pending', 'confirming')
-         AND submitted_at < $1
-         LIMIT $2`,
-        [cutoffTime, this.config.batchSize]
-      );
+
+      const pendingRows = await withSystemContext(async (client) => {
+        const res = await client.query<PendingTransaction>(
+          `SELECT tx_signature, tenant_id, ticket_id, tx_type, status, blockhash,
+                  last_valid_block_height, submitted_at, COALESCE(retry_count, 0) as retry_count
+           FROM pending_transactions
+           WHERE status IN ('pending', 'confirming')
+           AND submitted_at < $1
+           LIMIT $2`,
+          [cutoffTime, this.config.batchSize]
+        );
+        return res.rows;
+      });
 
       const connection = SolanaService.getConnection();
 
-      for (const tx of pendingResult.rows) {
+      for (const tx of pendingRows) {
         result.totalProcessed++;
 
         try {
@@ -305,12 +310,14 @@ export class BlockchainReconciliationWorker {
               result.expired++;
             } else if (tx.retry_count < this.config.maxRetries) {
               // Mark for retry
-              await DatabaseService.query(
-                `UPDATE pending_transactions 
-                 SET retry_count = retry_count + 1, updated_at = NOW()
-                 WHERE tx_signature = $1`,
-                [tx.tx_signature]
-              );
+              await withSystemContext(async (client) => {
+                await client.query(
+                  `UPDATE pending_transactions
+                   SET retry_count = retry_count + 1, updated_at = NOW()
+                   WHERE tx_signature = $1`,
+                  [tx.tx_signature]
+                );
+              });
               result.retried++;
             }
           }
@@ -336,21 +343,24 @@ export class BlockchainReconciliationWorker {
 
     try {
       // Get recently transferred tickets
-      const ticketsResult = await DatabaseService.query<{
-        ticket_id: string;
-        owner_id: string;
-        nft_mint: string;
-        tenant_id: string;
-      }>(
-        `SELECT t.id as ticket_id, t.owner_id, t.nft_mint, t.tenant_id
-         FROM tickets t
-         WHERE t.nft_mint IS NOT NULL
-         AND t.updated_at > NOW() - INTERVAL '1 hour'
-         LIMIT $1`,
-        [this.config.batchSize]
-      );
+      const ticketsRows = await withSystemContext(async (client) => {
+        const res = await client.query<{
+          ticket_id: string;
+          owner_id: string;
+          nft_mint: string;
+          tenant_id: string;
+        }>(
+          `SELECT t.id as ticket_id, t.owner_id, t.nft_mint, t.tenant_id
+           FROM tickets t
+           WHERE t.nft_mint IS NOT NULL
+           AND t.updated_at > NOW() - INTERVAL '1 hour'
+           LIMIT $1`,
+          [this.config.batchSize]
+        );
+        return res.rows;
+      });
 
-      for (const ticket of ticketsResult.rows) {
+      for (const ticket of ticketsRows) {
         if (!ticket.nft_mint) continue;
 
         try {
@@ -407,22 +417,24 @@ export class BlockchainReconciliationWorker {
       const connection = SolanaService.getConnection();
       const currentBlockHeight = await connection.getBlockHeight();
 
-      const result = await DatabaseService.query<{ count: string }>(
-        `WITH updated AS (
-          UPDATE pending_transactions
-          SET status = 'failed',
-              error_code = 'BLOCKHASH_EXPIRED',
-              error_message = 'Blockhash expired before confirmation',
-              updated_at = NOW()
-          WHERE status IN ('pending', 'confirming')
-          AND last_valid_block_height < $1
-          RETURNING id
-        )
-        SELECT COUNT(*) as count FROM updated`,
-        [currentBlockHeight]
-      );
+      const count = await withSystemContext(async (client) => {
+        const result = await client.query<{ count: string }>(
+          `WITH updated AS (
+            UPDATE pending_transactions
+            SET status = 'failed',
+                error_code = 'BLOCKHASH_EXPIRED',
+                error_message = 'Blockhash expired before confirmation',
+                updated_at = NOW()
+            WHERE status IN ('pending', 'confirming')
+            AND last_valid_block_height < $1
+            RETURNING id
+          )
+          SELECT COUNT(*) as count FROM updated`,
+          [currentBlockHeight]
+        );
+        return parseInt(result.rows[0]?.count || '0', 10);
+      });
 
-      const count = parseInt(result.rows[0]?.count || '0', 10);
       if (count > 0) {
         log.info('Marked expired transactions', { count });
       }
@@ -437,24 +449,28 @@ export class BlockchainReconciliationWorker {
    * Helper: Confirm a transaction in the database
    */
   private async confirmTransaction(txSignature: string, slot: number): Promise<void> {
-    await DatabaseService.query(
-      `UPDATE pending_transactions
-       SET status = 'confirmed', slot = $2, confirmed_at = NOW(), updated_at = NOW()
-       WHERE tx_signature = $1`,
-      [txSignature, slot]
-    );
+    await withSystemContext(async (client) => {
+      await client.query(
+        `UPDATE pending_transactions
+         SET status = 'confirmed', slot = $2, confirmed_at = NOW(), updated_at = NOW()
+         WHERE tx_signature = $1`,
+        [txSignature, slot]
+      );
+    });
   }
 
   /**
    * Helper: Fail a transaction in the database
    */
   private async failTransaction(txSignature: string, errorCode: string, errorMessage: string): Promise<void> {
-    await DatabaseService.query(
-      `UPDATE pending_transactions
-       SET status = 'failed', error_code = $2, error_message = $3, updated_at = NOW()
-       WHERE tx_signature = $1`,
-      [txSignature, errorCode, errorMessage]
-    );
+    await withSystemContext(async (client) => {
+      await client.query(
+        `UPDATE pending_transactions
+         SET status = 'failed', error_code = $2, error_message = $3, updated_at = NOW()
+         WHERE tx_signature = $1`,
+        [txSignature, errorCode, errorMessage]
+      );
+    });
   }
 
   /**

@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import axios from 'axios';
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
+import { withSystemContextPool } from './system-job-utils';
 
 const WEBHOOK_SECRET = process.env.INTERNAL_WEBHOOK_SECRET || 'internal-webhook-secret-change-in-production';
 const MAX_RETRY_ATTEMPTS = 5;
@@ -55,34 +56,33 @@ export class OutboxProcessor {
     if (this.isProcessing) return;
     this.isProcessing = true;
 
-    const client = await this.pool.connect();
-
     try {
-      const result = await client.query(`
-        SELECT * FROM outbox
-        WHERE processed_at IS NULL
-          AND attempts < $1
-          AND (
-            last_attempt_at IS NULL
-            OR last_attempt_at < NOW() - INTERVAL '1 second' * $2
-          )
-        ORDER BY created_at ASC
-        LIMIT 10
-        FOR UPDATE SKIP LOCKED
-      `, [MAX_RETRY_ATTEMPTS, this.calculateRetryDelay(0) / 1000]);
+      await withSystemContextPool(this.pool, async (client) => {
+        const result = await client.query(`
+          SELECT * FROM outbox
+          WHERE processed_at IS NULL
+            AND attempts < $1
+            AND (
+              last_attempt_at IS NULL
+              OR last_attempt_at < NOW() - INTERVAL '1 second' * $2
+            )
+          ORDER BY created_at ASC
+          LIMIT 10
+          FOR UPDATE SKIP LOCKED
+        `, [MAX_RETRY_ATTEMPTS, this.calculateRetryDelay(0) / 1000]);
 
-      for (const event of result.rows) {
-        await this.processEvent(client, event);
-      }
+        for (const event of result.rows) {
+          await this.processEvent(client, event);
+        }
 
-      if (result.rows.length > 0) {
-        this.log.info({ count: result.rows.length }, 'Processed outbox events');
-      }
+        if (result.rows.length > 0) {
+          this.log.info({ count: result.rows.length }, 'Processed outbox events');
+        }
+      });
 
     } catch (error) {
       this.log.error({ error }, 'Error processing outbox events');
     } finally {
-      client.release();
       this.isProcessing = false;
     }
   }
