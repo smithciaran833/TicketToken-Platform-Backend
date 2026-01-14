@@ -91,7 +91,7 @@ function validateTenantIdFormat(tenantId: string): boolean {
  */
 async function setPostgresRlsContext(db: Pool, tenantId: string): Promise<void> {
   try {
-    await db.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+    await db.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
   } catch (error) {
     logger.error({ error, tenantId }, 'Failed to set PostgreSQL tenant context');
     throw error;

@@ -3,7 +3,7 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 /**
  * Tenant Context Middleware - Scanning Service
  * 
- * Sets the PostgreSQL session variable 'app.current_tenant' based on the
+ * Sets the PostgreSQL session variable 'app.current_tenant_id' based on the
  * authenticated user's tenant_id from the JWT token.
  * 
  * This session variable is used by Row Level Security (RLS) policies to
@@ -39,10 +39,10 @@ export async function setTenantContext(
       // Set PostgreSQL session variable for RLS policies
       if (db.raw) {
         // Knex
-        await db.raw('SET LOCAL app.current_tenant = ?', [tenantId]);
+        await db.raw('SET LOCAL app.current_tenant_id = ?', [tenantId]);
       } else if (db.query) {
         // pg Pool
-        await db.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+        await db.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
       }
     }
 

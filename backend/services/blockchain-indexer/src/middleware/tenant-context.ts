@@ -17,9 +17,9 @@ export async function setTenantContext(
 
     if (db) {
       if (db.raw) {
-        await db.raw('SET LOCAL app.current_tenant = ?', [tenantId]);
+        await db.raw('SET LOCAL app.current_tenant_id = ?', [tenantId]);
       } else if (db.query) {
-        await db.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+        await db.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
       }
     }
 

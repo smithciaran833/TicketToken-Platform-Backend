@@ -91,7 +91,7 @@ export async function connectDatabases() {
             
             // Since SET doesn't support parameters, we validate and escape
             const escapedTenantId = escapeTenantId(tenantId);
-            await db.raw(`SET app.current_tenant = ?`, [escapedTenantId]);
+            await db.raw(`SET app.current_tenant_id = ?`, [escapedTenantId]);
           });
         }
       });

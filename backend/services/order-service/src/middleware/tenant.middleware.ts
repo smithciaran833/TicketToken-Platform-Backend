@@ -26,7 +26,7 @@ export async function tenantMiddleware(
     };
     // Set PostgreSQL session variable for RLS
     const pool = getDatabase();
-    await pool.query('SET app.current_tenant = $1', [user.tenantId]);
+    await pool.query('SET app.current_tenant_id = $1', [user.tenantId]);
     logger.debug('Tenant context set', {
       tenantId: user.tenantId,
       userId: user.id,

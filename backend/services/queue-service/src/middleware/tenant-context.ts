@@ -16,7 +16,7 @@ export async function setTenantContext(
   try {
     // Get database pool and set tenant context
     const pool = getPool();
-    await pool.query('SET LOCAL app.current_tenant = $1', [tenantId]);
+    await pool.query('SET LOCAL app.current_tenant_id = $1', [tenantId]);
     request.tenantId = tenantId;
     (request.log as any)?.debug?.({ tenantId }, 'Tenant context set for queue service');
   } catch (error) {

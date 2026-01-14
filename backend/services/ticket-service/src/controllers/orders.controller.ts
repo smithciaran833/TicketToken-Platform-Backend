@@ -22,7 +22,7 @@ export class OrdersController {
     try {
       const result = await DatabaseService.transaction(async (client) => {
         if (tenantId) {
-          await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+          await client.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantId]);
         }
 
         const orderQuery = `
@@ -113,7 +113,7 @@ export class OrdersController {
     try {
       const orders = await DatabaseService.transaction(async (client) => {
         if (tenantId) {
-          await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+          await client.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantId]);
         }
 
         let query = `
@@ -185,7 +185,7 @@ export class OrdersController {
     try {
       const tickets = await DatabaseService.transaction(async (client) => {
         if (tenantId) {
-          await client.query(`SELECT set_config('app.current_tenant', $1, true)`, [tenantId]);
+          await client.query(`SELECT set_config('app.current_tenant_id', $1, true)`, [tenantId]);
         }
 
         let query = `
