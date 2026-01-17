@@ -34,6 +34,7 @@ export class EventSalesTracker extends EventEmitter {
   private influxClient: InfluxDB;
   private writeApi: any;
   private isInitialized = false;
+  private trackingInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     super();
@@ -43,7 +44,7 @@ export class EventSalesTracker extends EventEmitter {
     });
     this.writeApi = this.influxClient.getWriteApi('tickettoken', 'metrics');
     this.initializeModel().catch(err => {
-      logger.warn('Sales tracker initialization deferred - required tables may not exist yet:', err.message);
+      logger.warn('Sales tracker initialization deferred', err.message);
     });
   }
 
@@ -77,7 +78,8 @@ export class EventSalesTracker extends EventEmitter {
       this.startTracking();
       logger.info('📈 Sales prediction model initialized');
     } catch (error: any) {
-      logger.warn('Sales model initialization skipped:', error.message);
+      // Re-throw to be caught by constructor's catch
+      throw error;
     }
   }
 
@@ -87,60 +89,55 @@ export class EventSalesTracker extends EventEmitter {
    * A paymentServiceClient.getTransactionHistory() could be added for full refactoring.
    */
   private async trainModel() {
-    try {
-      const historicalData = await pgPool.query(`
-        SELECT
-          event_id,
-          DATE_TRUNC('minute', created_at) as minute,
-          SUM(quantity) as tickets_sold,
-          AVG(amount) as avg_price,
-          MAX(created_at) - MIN(created_at) as time_span
-        FROM ticket_transactions
-        WHERE created_at > NOW() - INTERVAL '30 days'
-          AND transaction_type = 'purchase'
-          AND status = 'completed'
-        GROUP BY event_id, minute
-        ORDER BY event_id, minute
-      `);
+    const historicalData = await pgPool.query(`
+      SELECT
+        event_id,
+        DATE_TRUNC('minute', created_at) as minute,
+        SUM(quantity) as tickets_sold,
+        AVG(amount) as avg_price,
+        MAX(created_at) - MIN(created_at) as time_span
+      FROM ticket_transactions
+      WHERE created_at > NOW() - INTERVAL '30 days'
+        AND transaction_type = 'purchase'
+        AND status = 'completed'
+      GROUP BY event_id, minute
+      ORDER BY event_id, minute
+    `);
 
-      if (historicalData.rows.length > 100) {
-        // Prepare training data
-        const features: number[][][] = [];
-        const labels: number[] = [];
+    if (historicalData.rows.length > 100) {
+      // Prepare training data
+      const features: number[][][] = [];
+      const labels: number[] = [];
 
-        // Process data into sequences
-        const eventGroups = this.groupByEvent(historicalData.rows);
+      // Process data into sequences
+      const eventGroups = this.groupByEvent(historicalData.rows);
 
-        for (const [eventId, sales] of Object.entries(eventGroups)) {
-          const sequences = this.createSequences(sales as any[]);
-          features.push(...sequences.features);
-          labels.push(...sequences.labels);
-        }
-
-        if (features.length > 0) {
-          const xs = tf.tensor3d(features);
-          const ys = tf.tensor1d(labels);
-
-          await this.salesModel!.fit(xs, ys, {
-            epochs: 50,
-            batchSize: 32,
-            validationSplit: 0.2,
-            callbacks: {
-              onEpochEnd: (epoch, logs) => {
-                if (epoch % 10 === 0) {
-                  logger.debug(`Sales model training - Epoch ${epoch}: loss = ${logs?.loss}`);
-                }
-              },
-            },
-          });
-
-          xs.dispose();
-          ys.dispose();
-        }
+      for (const [eventId, sales] of Object.entries(eventGroups)) {
+        const sequences = this.createSequences(sales as any[]);
+        features.push(...sequences.features);
+        labels.push(...sequences.labels);
       }
-    } catch (error: any) {
-      logger.warn('Sales model training skipped - tables may not exist yet:', error.message);
-      throw error; // Re-throw to prevent initialization
+
+      if (features.length > 0) {
+        const xs = tf.tensor3d(features);
+        const ys = tf.tensor1d(labels);
+
+        await this.salesModel!.fit(xs, ys, {
+          epochs: 50,
+          batchSize: 32,
+          validationSplit: 0.2,
+          callbacks: {
+            onEpochEnd: (epoch, logs) => {
+              if (epoch % 10 === 0) {
+                logger.debug(`Sales model training - Epoch ${epoch}: loss = ${logs?.loss}`);
+              }
+            },
+          },
+        });
+
+        xs.dispose();
+        ys.dispose();
+      }
     }
   }
 
@@ -370,7 +367,7 @@ export class EventSalesTracker extends EventEmitter {
    */
   private startTracking() {
     // Real-time tracking every 30 seconds
-    setInterval(async () => {
+    this.trackingInterval = setInterval(async () => {
       if (!this.isInitialized) return;
       const ctx = createSystemContext();
 
@@ -401,6 +398,13 @@ export class EventSalesTracker extends EventEmitter {
     }, 30000);
 
     logger.info('📊 Event sales tracking started');
+  }
+
+  stopTracking() {
+    if (this.trackingInterval) {
+      clearInterval(this.trackingInterval);
+      this.trackingInterval = null;
+    }
   }
 
   async getEventMetrics(eventId: string) {

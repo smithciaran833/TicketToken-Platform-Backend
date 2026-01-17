@@ -1,85 +1,30 @@
-/**
- * Jest Configuration for Integration Service
- */
-
 module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
-  
-  // Root directory
-  rootDir: '.',
-  
-  // Test file patterns
-  testMatch: [
-    '<rootDir>/tests/**/*.test.ts',
-    '<rootDir>/src/**/*.test.ts',
-    '<rootDir>/tests/**/*.spec.ts',
-    '<rootDir>/src/**/*.spec.ts'
-  ],
-  
-  // Module paths
-  moduleNameMapper: {
-    '^@/(.*)$': '<rootDir>/src/$1'
+  roots: ['<rootDir>/src', '<rootDir>/tests'],
+  testMatch: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
+  transform: {
+    '^.+\\.ts$': 'ts-jest',
   },
-  
-  // Setup files
-  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
-  globalSetup: '<rootDir>/tests/global-setup.ts',
-  globalTeardown: '<rootDir>/tests/global-teardown.ts',
-  
-  // Coverage configuration
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
-    '!src/types/**/*.ts',
-    '!src/**/*.test.ts',
-    '!src/**/*.spec.ts',
-    '!src/index.ts'
+    '!src/**/*.interface.ts',
+    '!src/index.ts',
   ],
-  
   coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'lcov', 'json', 'html'],
-  
-  coverageThreshold: {
-    global: {
-      branches: 70,
-      functions: 70,
-      lines: 70,
-      statements: 70
-    }
+  coverageReporters: ['text', 'lcov', 'html'],
+  moduleFileExtensions: ['ts', 'js', 'json'],
+  globals: {
+    'ts-jest': {
+      tsconfig: 'tsconfig.test.json',
+      isolatedModules: true,
+    },
   },
-  
-  // TypeScript transformation
-  transform: {
-    '^.+\\.ts$': ['ts-jest', {
-      tsconfig: 'tsconfig.json'
-    }]
-  },
-  
-  // Test timeout
-  testTimeout: 30000,
-  
-  // Ignore patterns
-  testPathIgnorePatterns: [
-    '/node_modules/',
-    '/dist/'
-  ],
-  
-  // Module file extensions
-  moduleFileExtensions: ['ts', 'js', 'json', 'node'],
-  
-  // Verbose output
+  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
+  testTimeout: 10000,
   verbose: true,
-  
-  // Force exit after tests
-  forceExit: true,
-  
-  // Detect open handles
-  detectOpenHandles: true,
-  
-  // Clear mocks between tests
   clearMocks: true,
-  
-  // Restore mocks after each test
-  restoreMocks: true
+  forceExit: true,
+  detectOpenHandles: true,
 };

@@ -20,8 +20,8 @@ export class VenueController {
 
       await db.query(
         `INSERT INTO compliance_audit_log (action, entity_type, entity_id, metadata, tenant_id)
-         VALUES ($1, $2, $3, $4, $5)`,
-        ['verification_started', 'venue', venueId, JSON.stringify({ ein, businessName }), tenantId]
+         VALUES ('verification_started', $1, $2, $3, $4)`,
+        ['venue', venueId, JSON.stringify({ ein, businessName }), tenantId]
       );
 
       logger.info(`Verification started for tenant ${tenantId}, venue ${venueId}`);
@@ -53,8 +53,8 @@ export class VenueController {
       const { venueId } = request.params as any;
 
       const result = await db.query(
-        `SELECT * FROM venue_verifications 
-         WHERE venue_id = $1 AND tenant_id = $2 
+        `SELECT * FROM venue_verifications
+         WHERE venue_id = $1 AND tenant_id = $2
          ORDER BY created_at DESC LIMIT 1`,
         [venueId, tenantId]
       );
@@ -95,8 +95,8 @@ export class VenueController {
       const tenantId = requireTenantId(request);
 
       const result = await db.query(
-        `SELECT * FROM venue_verifications 
-         WHERE tenant_id = $1 
+        `SELECT * FROM venue_verifications
+         WHERE tenant_id = $1
          ORDER BY created_at DESC LIMIT 10`,
         [tenantId]
       );

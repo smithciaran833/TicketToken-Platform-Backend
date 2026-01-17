@@ -9,33 +9,33 @@ export class TaxService {
     try {
       // Get current year totals
       const year = new Date().getFullYear();
-      
+
       const result = await db.query(
         `SELECT COALESCE(SUM(amount), 0) as total
          FROM tax_records
          WHERE venue_id = $1 AND year = $2 AND tenant_id = $3`,
         [venueId, year, tenantId]
       );
-      
+
       const currentTotal = parseFloat(result.rows[0]?.total || '0');
       const newTotal = currentTotal + amount;
-      
+
       // Check if threshold reached
       const thresholdReached = newTotal >= this.FORM_1099_THRESHOLD;
-      
+
       // Log the sale
       await db.query(
         `INSERT INTO tax_records (venue_id, year, amount, ticket_id, threshold_reached, tenant_id)
          VALUES ($1, $2, $3, $4, $5, $6)`,
         [venueId, year, amount, ticketId, thresholdReached, tenantId]
       );
-      
+
       // Alert if threshold just crossed
-      if (!thresholdReached && newTotal >= this.FORM_1099_THRESHOLD) {
+      if (currentTotal < this.FORM_1099_THRESHOLD && newTotal >= this.FORM_1099_THRESHOLD) {
         logger.info(`🚨 VENUE ${venueId} (tenant ${tenantId}) has reached $${this.FORM_1099_THRESHOLD} threshold!`);
         logger.info(`📋 1099-K required for tax year ${year}`);
       }
-      
+
       return {
         venueId,
         year,
@@ -53,7 +53,7 @@ export class TaxService {
 
   async getVenueTaxSummary(venueId: string, year: number | undefined, tenantId: string) {
     const taxYear = year || new Date().getFullYear();
-    
+
     const result = await db.query(
       `SELECT
         COUNT(*) as transaction_count,
@@ -65,9 +65,9 @@ export class TaxService {
        WHERE venue_id = $1 AND year = $2 AND tenant_id = $3`,
       [venueId, taxYear, tenantId]
     );
-    
+
     const total = parseFloat(result.rows[0]?.total_sales || '0');
-    
+
     return {
       venueId,
       year: taxYear,
@@ -89,17 +89,17 @@ export class TaxService {
   async calculateTax(data: any, tenantId: string) {
     // Simple tax calculation implementation
     const { amount, venueId, taxRate = 0.08 } = data;
-    
+
     const taxAmount = amount * taxRate;
     const totalWithTax = amount + taxAmount;
-    
+
     // Log the calculation
     await db.query(
       `INSERT INTO tax_calculations (venue_id, amount, tax_rate, tax_amount, total, tenant_id)
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [venueId, amount, taxRate, taxAmount, totalWithTax, tenantId]
     );
-    
+
     return {
       originalAmount: amount,
       taxRate,
@@ -113,7 +113,7 @@ export class TaxService {
   async generateTaxReport(year: number, tenantId: string) {
     // Generate comprehensive tax report for the year
     const result = await db.query(
-      `SELECT 
+      `SELECT
         venue_id,
         COUNT(*) as transaction_count,
         SUM(amount) as total_sales,
@@ -124,11 +124,11 @@ export class TaxService {
        ORDER BY total_sales DESC`,
       [year, tenantId]
     );
-    
+
     const venues1099Required = result.rows.filter(
       row => parseFloat(row.total_sales) >= this.FORM_1099_THRESHOLD
     );
-    
+
     return {
       year,
       generatedAt: new Date().toISOString(),

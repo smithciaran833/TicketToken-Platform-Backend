@@ -9,7 +9,7 @@ interface VenueBranding {
 /**
  * Domain routing middleware for Fastify
  * Checks if request comes from a custom domain and loads venue branding
- * 
+ *
  * SECURITY: Venue context is attached to request object, NOT headers.
  * This prevents header spoofing attacks.
  */
@@ -17,8 +17,10 @@ export async function domainRoutingMiddleware(
   request: FastifyRequest,
   reply: FastifyReply
 ) {
+  let hostname: string | undefined;
+  
   try {
-    const hostname = request.hostname;
+    hostname = request.hostname;
 
     // Skip for main domain and localhost
     if (
@@ -58,9 +60,9 @@ export async function domainRoutingMiddleware(
           source: 'domain-lookup'
         };
 
-        request.log.info({ 
-          venueId: response.data.venue.id, 
-          domain: hostname 
+        request.log.info({
+          venueId: response.data.venue.id,
+          domain: hostname
         }, 'White-label domain detected');
       }
     } catch (error: any) {
@@ -70,7 +72,8 @@ export async function domainRoutingMiddleware(
       }
     }
   } catch (error) {
-    request.log.error({ error, hostname: request.hostname }, 'Domain routing middleware error');
+    // Use the captured hostname or undefined to avoid re-accessing request.hostname
+    request.log.error({ error, hostname }, 'Domain routing middleware error');
     // Continue even if there's an error - don't break the request
   }
 }

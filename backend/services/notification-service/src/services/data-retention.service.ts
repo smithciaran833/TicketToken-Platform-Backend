@@ -122,7 +122,7 @@ class DataRetentionService {
     const cutoffDate = this.getCutoffDate(this.retentionDays);
 
     try {
-      const result = await db('webhook_events')
+      const result = await db('notification_webhook_events')
         .where('received_at', '<', cutoffDate)
         .where('processed', true)
         .delete();
@@ -272,7 +272,7 @@ class DataRetentionService {
         .where('created_at', '<', cutoffDate)
         .count('* as count')
         .first(),
-      db('webhook_events')
+      db('notification_webhook_events')
         .where('received_at', '<', cutoffDate)
         .where('processed', true)
         .count('* as count')

@@ -2,15 +2,15 @@ import { Knex } from 'knex';
 
 /**
  * CONSOLIDATED BASELINE MIGRATION - event-service
- * 
+ *
  * Created: 2026-01-13
  * Consolidates: 001, 002, 003, 004, 005, 006
- * 
- * Tables (7):
+ *
+ * Tables (6):
  *   Global: event_categories
- *   Tenant: events, event_schedules, event_capacity, event_pricing, event_metadata, idempotency_keys
- * 
- * RLS Enabled: 6 tables (all tenant tables)
+ *   Tenant: events, event_schedules, event_capacity, event_pricing, event_metadata
+ *
+ * RLS Enabled: 5 tables (all tenant tables)
  * Global Tables: 1 (event_categories)
  */
 
@@ -28,7 +28,7 @@ export async function up(knex: Knex): Promise<void> {
   // ==========================================================================
   // FUNCTIONS
   // ==========================================================================
-  
+
   // Function: Auto-update updated_at timestamp
   await knex.raw(`
     CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -218,39 +218,39 @@ export async function up(knex: Knex): Promise<void> {
 
   // Events CHECK constraints
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_status_check 
+    ALTER TABLE events ADD CONSTRAINT events_status_check
     CHECK (status IN ('DRAFT', 'REVIEW', 'APPROVED', 'PUBLISHED', 'ON_SALE', 'SOLD_OUT', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'POSTPONED'))
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_visibility_check 
+    ALTER TABLE events ADD CONSTRAINT events_visibility_check
     CHECK (visibility IN ('PUBLIC', 'PRIVATE', 'UNLISTED'))
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_event_type_check 
+    ALTER TABLE events ADD CONSTRAINT events_event_type_check
     CHECK (event_type IN ('single', 'recurring', 'series'))
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_royalty_percentage_check 
+    ALTER TABLE events ADD CONSTRAINT events_royalty_percentage_check
     CHECK (royalty_percentage IS NULL OR (royalty_percentage >= 0 AND royalty_percentage <= 100))
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_age_restriction_check 
+    ALTER TABLE events ADD CONSTRAINT events_age_restriction_check
     CHECK (age_restriction >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_priority_score_check 
+    ALTER TABLE events ADD CONSTRAINT events_priority_score_check
     CHECK (priority_score >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_view_count_check 
+    ALTER TABLE events ADD CONSTRAINT events_view_count_check
     CHECK (view_count >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_interest_count_check 
+    ALTER TABLE events ADD CONSTRAINT events_interest_count_check
     CHECK (interest_count >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE events ADD CONSTRAINT events_share_count_check 
+    ALTER TABLE events ADD CONSTRAINT events_share_count_check
     CHECK (share_count >= 0)
   `);
 
@@ -293,7 +293,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_event_schedules_tenant_event ON event_schedules(tenant_id, event_id)');
 
   await knex.raw(`
-    ALTER TABLE event_schedules ADD CONSTRAINT event_schedules_status_check 
+    ALTER TABLE event_schedules ADD CONSTRAINT event_schedules_status_check
     CHECK (status IN ('SCHEDULED', 'CONFIRMED', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED', 'POSTPONED', 'RESCHEDULED'))
   `);
 
@@ -342,23 +342,23 @@ export async function up(knex: Knex): Promise<void> {
 
   // event_capacity CHECK constraints
   await knex.raw(`
-    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_total_check 
+    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_total_check
     CHECK (total_capacity > 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_available_check 
+    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_available_check
     CHECK (available_capacity >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_reserved_check 
+    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_reserved_check
     CHECK (reserved_capacity >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_sold_check 
+    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_sold_check
     CHECK (sold_count >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_min_purchase_check 
+    ALTER TABLE event_capacity ADD CONSTRAINT event_capacity_min_purchase_check
     CHECK (minimum_purchase >= 1)
   `);
 
@@ -415,43 +415,43 @@ export async function up(knex: Knex): Promise<void> {
 
   // event_pricing CHECK constraints
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_base_price_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_base_price_check
     CHECK (base_price >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_service_fee_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_service_fee_check
     CHECK (service_fee >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_facility_fee_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_facility_fee_check
     CHECK (facility_fee >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_tax_rate_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_tax_rate_check
     CHECK (tax_rate >= 0 AND tax_rate <= 1)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_min_price_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_min_price_check
     CHECK (min_price IS NULL OR min_price >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_max_price_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_max_price_check
     CHECK (max_price IS NULL OR max_price >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_current_price_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_current_price_check
     CHECK (current_price IS NULL OR current_price >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_early_bird_price_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_early_bird_price_check
     CHECK (early_bird_price IS NULL OR early_bird_price >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_last_minute_price_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_last_minute_price_check
     CHECK (last_minute_price IS NULL OR last_minute_price >= 0)
   `);
   await knex.raw(`
-    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_group_discount_check 
+    ALTER TABLE event_pricing ADD CONSTRAINT event_pricing_group_discount_check
     CHECK (group_discount_percentage IS NULL OR (group_discount_percentage >= 0 AND group_discount_percentage <= 100))
   `);
 
@@ -517,37 +517,6 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_event_metadata_tenant_id ON event_metadata(tenant_id)');
 
   // ==========================================================================
-  // TABLE 7: idempotency_keys
-  // ==========================================================================
-  await knex.schema.createTable('idempotency_keys', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
-    table.uuid('tenant_id').notNullable();
-    table.string('idempotency_key', 255).notNullable();
-    table.string('method', 10).notNullable();
-    table.string('path', 512).notNullable();
-    table.string('request_hash', 64);
-    table.integer('response_status_code').notNullable();
-    table.jsonb('response_body');
-    table.jsonb('response_headers');
-    table.enu('state', ['processing', 'completed', 'failed']).notNullable().defaultTo('processing');
-    table.timestamp('created_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());
-    table.timestamp('completed_at', { useTz: true });
-    table.timestamp('expires_at', { useTz: true }).notNullable();
-    table.uuid('user_id');
-
-    table.unique(['tenant_id', 'idempotency_key']);
-  });
-
-  await knex.raw('CREATE INDEX idx_idempotency_keys_tenant_id ON idempotency_keys(tenant_id)');
-  await knex.raw("CREATE INDEX idx_idempotency_keys_expires_at ON idempotency_keys(expires_at) WHERE state = 'completed'");
-  await knex.raw('CREATE INDEX idx_idempotency_keys_lookup ON idempotency_keys(tenant_id, idempotency_key, state)');
-
-  await knex.raw(`
-    COMMENT ON TABLE idempotency_keys IS 
-    'Stores idempotency keys to prevent duplicate processing of retried requests. Keys expire after 24 hours by default.'
-  `);
-
-  // ==========================================================================
   // FOREIGN KEY CONSTRAINTS - INTERNAL
   // ==========================================================================
   console.log('Adding internal foreign key constraints...');
@@ -585,20 +554,6 @@ export async function up(knex: Knex): Promise<void> {
     ALTER TABLE event_metadata
     ADD CONSTRAINT fk_event_metadata_tenant_id
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT
-  `);
-
-  // idempotency_keys → tenants (FK) - NEW
-  await knex.raw(`
-    ALTER TABLE idempotency_keys
-    ADD CONSTRAINT fk_idempotency_keys_tenant_id
-    FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT
-  `);
-
-  // idempotency_keys → users (FK) - NEW
-  await knex.raw(`
-    ALTER TABLE idempotency_keys
-    ADD CONSTRAINT fk_idempotency_keys_user_id
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
   `);
 
   console.log('✅ Internal FK constraints added');
@@ -739,8 +694,7 @@ export async function up(knex: Knex): Promise<void> {
     'event_schedules',
     'event_capacity',
     'event_pricing',
-    'event_metadata',
-    'idempotency_keys'
+    'event_metadata'
   ];
 
   for (const tableName of rlsTables) {
@@ -750,8 +704,8 @@ export async function up(knex: Knex): Promise<void> {
   console.log('✅ Row Level Security enabled on all tenant tables');
   console.log('');
   console.log('✅ Event Service consolidated baseline migration complete');
-  console.log('   - 7 tables created');
-  console.log('   - 6 tables with RLS');
+  console.log('   - 6 tables created');
+  console.log('   - 5 tables with RLS');
   console.log('   - 1 global table (event_categories)');
 }
 
@@ -760,7 +714,6 @@ export async function down(knex: Knex): Promise<void> {
 
   // Tables to drop (in reverse dependency order)
   const allTables = [
-    'idempotency_keys',
     'event_metadata',
     'event_pricing',
     'event_capacity',
@@ -782,7 +735,7 @@ export async function down(knex: Knex): Promise<void> {
 
   // Drop triggers
   await knex.raw('DROP TRIGGER IF EXISTS audit_events_changes ON events');
-  
+
   const tablesWithVersion = ['events', 'event_schedules', 'event_capacity', 'event_pricing'];
   for (const tableName of tablesWithVersion) {
     await knex.raw(`DROP TRIGGER IF EXISTS ${tableName}_version_trigger ON ${tableName}`);

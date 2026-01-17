@@ -1,13 +1,13 @@
-import { Knex } from 'knex';
+import Knex from 'knex';
 
 /**
  * Integration Service - Consolidated Baseline Migration
- * 
+ *
  * Generated: January 13, 2026
  * Consolidates: 001, 002, 20260103 migrations
- * 
+ *
  * Tables: 13 (all tenant-scoped)
- * 
+ *
  * Standards Applied:
  * - gen_random_uuid() for all UUIDs
  * - tenant_id NOT NULL on all tables (no default)
@@ -24,7 +24,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 1. integrations - Master catalog of available integrations
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('integrations', (table) => {
+  await knex.schema.createTable('integrations', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.string('name', 255).notNullable();
@@ -46,7 +46,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 2. connections - User/venue connections to integrations
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('connections', (table) => {
+  await knex.schema.createTable('connections', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('integration_id').notNullable();
@@ -75,7 +75,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 3. field_mappings - Field mapping rules for data transformation
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('field_mappings', (table) => {
+  await knex.schema.createTable('field_mappings', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('connection_id').notNullable();
@@ -97,7 +97,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 4. webhooks - Webhook event queue and log
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('webhooks', (table) => {
+  await knex.schema.createTable('webhooks', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('connection_id').notNullable();
@@ -120,7 +120,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 5. integration_configs - Venue-specific integration configurations
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('integration_configs', (table) => {
+  await knex.schema.createTable('integration_configs', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -159,7 +159,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 6. integration_health - Health monitoring metrics
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('integration_health', (table) => {
+  await knex.schema.createTable('integration_health', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -190,7 +190,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 7. integration_webhooks - Integration webhook event storage
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('integration_webhooks', (table) => {
+  await knex.schema.createTable('integration_webhooks', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').comment('FK: venues.id');
@@ -220,7 +220,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 8. sync_queue - Queue for sync operations
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('sync_queue', (table) => {
+  await knex.schema.createTable('sync_queue', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -255,7 +255,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 9. sync_logs - Historical log of sync operations
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('sync_logs', (table) => {
+  await knex.schema.createTable('sync_logs', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -285,7 +285,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 10. integration_costs - API usage and cost tracking
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('integration_costs', (table) => {
+  await knex.schema.createTable('integration_costs', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -312,7 +312,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 11. oauth_tokens - Dedicated OAuth token storage with KMS encryption
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('oauth_tokens', (table) => {
+  await knex.schema.createTable('oauth_tokens', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -352,7 +352,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 12. venue_api_keys - API key storage for non-OAuth integrations
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('venue_api_keys', (table) => {
+  await knex.schema.createTable('venue_api_keys', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.uuid('venue_id').notNullable().comment('FK: venues.id');
@@ -401,7 +401,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // 13. field_mapping_templates - Reusable field mapping templates
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('field_mapping_templates', (table) => {
+  await knex.schema.createTable('field_mapping_templates', (table: Knex.CreateTableBuilder) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.string('name', 255).notNullable();

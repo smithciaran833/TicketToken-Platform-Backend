@@ -57,7 +57,9 @@ const productionSchema = envSchema.extend({
       (val: string) => val !== 'your-secret-key-here' && val !== 'default',
       'JWT_SECRET cannot be default value in production'
     ),
-  REDIS_PASSWORD: z.string().min(8, 'REDIS_PASSWORD is required and must be at least 8 characters in production'),
+  REDIS_PASSWORD: z.string({
+    required_error: 'REDIS_PASSWORD is required in production',
+  }).min(8, 'REDIS_PASSWORD must be at least 8 characters in production'),
 });
 
 export type EnvConfig = z.infer<typeof envSchema>;
@@ -72,7 +74,7 @@ export function validateEnv(): EnvConfig {
   try {
     // Use production schema if NODE_ENV is production
     const schema = env.NODE_ENV === 'production' ? productionSchema : envSchema;
-    
+
     const validated = schema.parse(env);
 
     return validated;
@@ -85,7 +87,7 @@ export function validateEnv(): EnvConfig {
       console.error('❌ Environment variable validation failed:');
       console.error(formatted);
       console.error('\nPlease check your .env file and ensure all required variables are set correctly.');
-      
+
       throw new Error(`Environment validation failed:\n${formatted}`);
     }
     throw error;

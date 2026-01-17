@@ -240,6 +240,7 @@ export async function up(knex: Knex): Promise<void> {
     table.uuid('referred_by').references('id').inTable('users');
     table.integer('referral_count').defaultTo(0);
     table.decimal('lifetime_value', 10, 2).defaultTo(0);
+    table.decimal('lifetime_value', 10, 2).defaultTo(0);
     table.decimal('total_spent', 10, 2).defaultTo(0);
     table.integer('events_attended').defaultTo(0);
     table.integer('ticket_purchase_count').defaultTo(0);
@@ -323,7 +324,7 @@ export async function up(knex: Knex): Promise<void> {
     table.boolean('is_active').defaultTo(true);
     table.timestamp('expires_at', { useTz: true });
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
-    table.timestamp('granted_at', { useTz: true });
+    table.timestamp('granted_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('revoked_at', { useTz: true });
     table.uuid('revoked_by').references('id').inTable('users');
   });

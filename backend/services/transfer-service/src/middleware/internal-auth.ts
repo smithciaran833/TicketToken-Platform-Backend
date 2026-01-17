@@ -34,7 +34,7 @@ declare module 'fastify' {
 // =============================================================================
 
 // AUDIT FIX S2S-3: Allowed internal services that can call transfer-service
-const ALLOWED_SERVICES = [
+export const ALLOWED_SERVICES = [
   'api-gateway',
   'payment-service',
   'ticket-service',

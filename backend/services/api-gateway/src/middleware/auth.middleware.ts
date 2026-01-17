@@ -267,27 +267,35 @@ function hasPermission(user: AuthUser, requiredPermission: string, request: Fast
     return true;
   }
 
-  // Check exact permission
-  if (user.permissions.includes(requiredPermission)) {
-    return true;
-  }
-
-  // Check wildcard permissions
+  // Check ownership permissions first (before exact match)
   const [resource, action] = requiredPermission.split(':');
-  if (user.permissions.includes(`${resource}:*`)) {
-    return true;
-  }
-
-  // Check ownership permissions
   if (action?.endsWith('-own')) {
     const basePermission = requiredPermission.replace('-own', '');
     const body = request.body as Record<string, any>;
     const params = request.params as Record<string, string>;
     const ownerId = body?.userId || params?.userId;
 
-    if (user.permissions.includes(basePermission) && ownerId === user.id) {
+    // If user has the -own permission, check ownership
+    if (user.permissions.includes(requiredPermission)) {
+      return ownerId === user.id;
+    }
+
+    // If user has the base permission (without -own), they can access any
+    if (user.permissions.includes(basePermission)) {
       return true;
     }
+
+    return false;
+  }
+
+  // Check exact permission
+  if (user.permissions.includes(requiredPermission)) {
+    return true;
+  }
+
+  // Check wildcard permissions
+  if (user.permissions.includes(`${resource}:*`)) {
+    return true;
   }
 
   return false;
@@ -329,6 +337,10 @@ export async function handleTokenRefresh(
     const { refreshToken } = request.body as { refreshToken: string };
 
     if (!refreshToken) {
+      logger.error({
+        error: 'Refresh token required',
+        ip: request.ip,
+      }, 'Token refresh failed');
       throw new AuthenticationError('Refresh token required');
     }
 
@@ -339,10 +351,18 @@ export async function handleTokenRefresh(
         algorithms: ['HS256']
       }) as JWTPayload;
     } catch (err) {
+      logger.error({
+        error: (err as any).message,
+        ip: request.ip,
+      }, 'Token refresh failed');
       throw new AuthenticationError('Invalid refresh token');
     }
 
     if (decoded.type !== 'refresh') {
+      logger.error({
+        error: 'Invalid token type',
+        ip: request.ip,
+      }, 'Token refresh failed');
       throw new AuthenticationError('Invalid token type');
     }
 
@@ -409,11 +429,13 @@ export async function handleTokenRefresh(
     });
 
   } catch (error) {
-    logger.error({
-      error: (error as any).message,
-      ip: request.ip,
-    }, 'Token refresh failed');
+    if (!(error instanceof AuthenticationError)) {
+      logger.error({
+        error: (error as any).message,
+        ip: request.ip,
+      }, 'Token refresh failed');
+    }
 
-    throw new AuthenticationError('Invalid refresh token');
+    throw error instanceof AuthenticationError ? error : new AuthenticationError('Invalid refresh token');
   }
 }

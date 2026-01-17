@@ -11,6 +11,8 @@ import { validateTenant } from '../middleware/tenant.middleware';
 import * as schemas from '../validators/auth.validators';
 import { responseSchemas } from '../validators/response.schemas';
 import { loginRateLimiter, registrationRateLimiter } from '../utils/rateLimiter';
+import { db } from '../config/database';
+import { AuthenticationError } from '../errors';
 
 export async function authRoutes(fastify: FastifyInstance, options: { container: Container }) {
   const { container } = options;
@@ -26,6 +28,7 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
   const deviceTrustService = container.resolve('deviceTrustService');
   const biometricService = container.resolve('biometricService');
   const rbacService = container.resolve('rbacService');
+  const auditService = container.resolve('auditService');
 
   // Create controllers and middleware
   const controller = new AuthController(authService, mfaService);
@@ -221,12 +224,40 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       );
 
       if (result.valid) {
-        const tokens = await jwtService.generateTokens({ id: userId });
+        // SECURITY FIX: Check user status before issuing tokens
+        const user = await db('users')
+          .where({ id: userId, tenant_id: tenantId })
+          .first();
+
+        if (!user) {
+          throw new AuthenticationError('User not found');
+        }
+
+        if (user.deleted_at) {
+          throw new AuthenticationError('Account has been deleted');
+        }
+
+        if (user.status === 'SUSPENDED' || user.status === 'BANNED') {
+          throw new AuthenticationError('Account is not active');
+        }
+
+        if (user.locked_until && new Date(user.locked_until) > new Date()) {
+          throw new AuthenticationError('Account is temporarily locked');
+        }
+
+        const tokens = await jwtService.generateTokenPair({ id: userId, tenant_id: tenantId });
+
+        // Audit log the successful biometric authentication
+        await auditService.logBiometricAuth(userId, credentialId, request.ip, request.headers['user-agent'], true, tenantId);
+
         return { success: true, tokens };
       }
 
       return reply.status(401).send({ error: 'Biometric verification failed' });
     } catch (error: any) {
+      // Audit log failed biometric authentication
+      await auditService.logBiometricAuth(userId, credentialId, request.ip, request.headers['user-agent'], false, tenantId, error.message);
+
       return reply.status(401).send({ error: error.message });
     }
   });
@@ -375,6 +406,17 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
           publicKey,
           biometricType || 'faceId'
         );
+
+        // Audit log biometric registration
+        await auditService.logBiometricRegistration(
+          request.user.id,
+          result.credentialId,
+          deviceId,
+          biometricType || 'faceId',
+          request.ip,
+          request.user.tenant_id
+        );
+
         return reply.status(201).send(result);
       } catch (error: any) {
         if (error.message === 'Device already registered') {
@@ -408,6 +450,15 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       try {
         const { credentialId } = request.params as { credentialId: string };
         await biometricService.removeBiometricDevice(request.user.id, request.user.tenant_id, credentialId);
+
+        // Audit log biometric device deletion
+        await auditService.logBiometricDeviceDeleted(
+          request.user.id,
+          credentialId,
+          request.ip,
+          request.user.tenant_id
+        );
+
         return reply.status(204).send();
       } catch (error: any) {
         if (error.message === 'Biometric credential not found') {

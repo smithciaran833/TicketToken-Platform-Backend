@@ -2,15 +2,15 @@ import { Knex } from 'knex';
 
 /**
  * Analytics Service - Consolidated Baseline Migration
- * 
+ *
  * Generated: January 13, 2026
  * Consolidates: 001_analytics_baseline.ts, 002_create_external_analytics_tables.ts,
  *               003_add_rls_to_price_tables.ts, 20260103_add_rls_policies.ts
- * 
+ *
  * Tables: 15 (all tenant-scoped)
  * Views: 36 regular + 5 materialized
  * Functions: 4 (1 trigger + 3 refresh)
- * 
+ *
  * Standards Applied:
  * - gen_random_uuid() for all UUIDs
  * - tenant_id on all tables
@@ -368,7 +368,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_pending_price_changes_approved ON pending_price_changes(approved_at)');
 
   // ---------------------------------------------------------------------------
-  // venue_analytics (table - not the view)
+  // venue_analytics_data (table - not the view)
   // ---------------------------------------------------------------------------
   await knex.schema.createTable('venue_analytics_data', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -476,9 +476,9 @@ export async function up(knex: Knex): Promise<void> {
       (SELECT MAX(es.ends_at) FROM event_schedules es WHERE es.event_id = e.id) AS event_end_time,
       (SELECT COALESCE(SUM(ec.total_capacity), 0) FROM event_capacity ec WHERE ec.event_id = e.id) AS total_event_capacity,
       (SELECT COALESCE(SUM(ec.available_capacity), 0) FROM event_capacity ec WHERE ec.event_id = e.id) AS available_capacity,
-      (SELECT COUNT(*) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('ACTIVE', 'REDEEMED', 'TRANSFERRED')) AS total_tickets_sold,
-      (SELECT COALESCE(SUM(t.face_value), 0) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('ACTIVE', 'REDEEMED', 'TRANSFERRED')) AS total_revenue,
-      (SELECT COALESCE(AVG(t.face_value), 0) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('ACTIVE', 'REDEEMED', 'TRANSFERRED')) AS avg_ticket_price,
+      (SELECT COUNT(*) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('active', 'used', 'transferred')) AS total_tickets_sold,
+      (SELECT COALESCE(SUM(t.face_value), 0) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('active', 'used', 'transferred')) AS total_revenue,
+      (SELECT COALESCE(AVG(t.face_value), 0) FROM tickets t WHERE t.event_id = e.id AND t.status IN ('active', 'used', 'transferred')) AS avg_ticket_price,
       CURRENT_TIMESTAMP AS view_generated_at
     FROM events e
     JOIN venues v ON e.venue_id = v.id
@@ -493,8 +493,8 @@ export async function up(knex: Knex): Promise<void> {
       (SELECT COUNT(*) FROM events e WHERE e.venue_id = v.id) AS total_events,
       (SELECT COUNT(*) FROM events e WHERE e.venue_id = v.id AND e.status = 'COMPLETED') AS completed_events,
       (SELECT COUNT(*) FROM events e WHERE e.venue_id = v.id AND e.status = 'ON_SALE') AS on_sale_events,
-      (SELECT COUNT(*) FROM tickets t JOIN events e ON t.event_id = e.id WHERE e.venue_id = v.id AND t.status IN ('ACTIVE', 'REDEEMED', 'TRANSFERRED')) AS total_tickets_sold,
-      (SELECT COALESCE(SUM(t.face_value), 0) FROM tickets t JOIN events e ON t.event_id = e.id WHERE e.venue_id = v.id AND t.status IN ('ACTIVE', 'REDEEMED', 'TRANSFERRED')) AS gross_revenue,
+      (SELECT COUNT(*) FROM tickets t JOIN events e ON t.event_id = e.id WHERE e.venue_id = v.id AND t.status IN ('active', 'used', 'transferred')) AS total_tickets_sold,
+      (SELECT COALESCE(SUM(t.face_value), 0) FROM tickets t JOIN events e ON t.event_id = e.id WHERE e.venue_id = v.id AND t.status IN ('active', 'used', 'transferred')) AS gross_revenue,
       CURRENT_TIMESTAMP AS last_updated
     FROM venues v WHERE v.deleted_at IS NULL
   `);
@@ -565,16 +565,16 @@ export async function up(knex: Knex): Promise<void> {
     CREATE OR REPLACE VIEW financial_summary_with_refunds AS
     SELECT fspm.*, t.type as transaction_type,
       CASE WHEN t.type = 'refund' THEN fspm.amount ELSE 0 END as refund_amount,
-      CASE WHEN t.type = 'payment' THEN fspm.amount ELSE 0 END as payment_amount
+      CASE WHEN t.type = 'ticket_purchase' THEN fspm.amount ELSE 0 END as payment_amount
     FROM financial_summary_payment_methods fspm JOIN payment_transactions t ON fspm.transaction_id = t.id
   `);
 
   await knex.raw(`
     CREATE OR REPLACE VIEW financial_summary_with_fees AS
     SELECT fswr.*,
-      CASE WHEN fswr.transaction_type = 'payment' THEN fswr.amount * 0.029 + 0.30 ELSE 0 END as processing_fee,
-      CASE WHEN fswr.transaction_type = 'payment' THEN fswr.amount * 0.10 ELSE 0 END as platform_fee,
-      CASE WHEN fswr.transaction_type = 'payment' THEN fswr.amount - (fswr.amount * 0.10) - (fswr.amount * 0.029 + 0.30) ELSE -fswr.amount END as net_revenue_after_fees
+      CASE WHEN fswr.transaction_type = 'ticket_purchase' THEN fswr.amount * 0.029 + 0.30 ELSE 0 END as processing_fee,
+      CASE WHEN fswr.transaction_type = 'ticket_purchase' THEN fswr.amount * 0.10 ELSE 0 END as platform_fee,
+      CASE WHEN fswr.transaction_type = 'ticket_purchase' THEN fswr.amount - (fswr.amount * 0.10) - (fswr.amount * 0.029 + 0.30) ELSE -fswr.amount END as net_revenue_after_fees
     FROM financial_summary_with_refunds fswr
   `);
 
@@ -615,10 +615,10 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw(`
     CREATE OR REPLACE VIEW customer_360_with_purchases AS
     SELECT cwp.*, COUNT(DISTINCT t.id) as transaction_count,
-      SUM(CASE WHEN t.type = 'payment' AND t.status = 'succeeded' THEN 1 ELSE 0 END) as successful_purchases,
-      SUM(CASE WHEN t.type = 'payment' AND t.status = 'succeeded' THEN t.amount ELSE 0 END) as lifetime_value,
-      AVG(CASE WHEN t.type = 'payment' AND t.status = 'succeeded' THEN t.amount END) as avg_purchase_amount,
-      MAX(CASE WHEN t.type = 'payment' THEN t.created_at END) as last_transaction_date
+      SUM(CASE WHEN t.type = 'ticket_purchase' AND t.status = 'completed' THEN 1 ELSE 0 END) as successful_purchases,
+      SUM(CASE WHEN t.type = 'ticket_purchase' AND t.status = 'completed' THEN t.amount ELSE 0 END) as lifetime_value,
+      AVG(CASE WHEN t.type = 'ticket_purchase' AND t.status = 'completed' THEN t.amount END) as avg_purchase_amount,
+      MAX(CASE WHEN t.type = 'ticket_purchase' THEN t.created_at END) as last_transaction_date
     FROM customer_360_with_preferences cwp
     LEFT JOIN payment_transactions t ON cwp.customer_id = t.user_id
     GROUP BY cwp.customer_id, cwp.email, cwp.username, cwp.first_name, cwp.last_name, cwp.created_at,
@@ -691,7 +691,7 @@ export async function up(knex: Knex): Promise<void> {
 
   await knex.raw(`
     CREATE OR REPLACE VIEW marketplace_activity_basic AS
-    SELECT mt.id as transaction_id, mt.ticket_id, mt.listing_id, mt.buyer_id, mt.seller_id,
+    SELECT mt.id as transaction_id, mt.listing_id, mt.buyer_id, mt.seller_id,
       mt.usd_value as sale_price, mt.status, mt.created_at
     FROM marketplace_transfers mt WHERE mt.deleted_at IS NULL
   `);
@@ -725,20 +725,19 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw(`DROP MATERIALIZED VIEW IF EXISTS marketplace_activity_materialized CASCADE`);
   await knex.raw(`CREATE MATERIALIZED VIEW marketplace_activity_materialized AS SELECT * FROM marketplace_activity`);
   await knex.raw(`CREATE INDEX idx_market_mat_date ON marketplace_activity_materialized(sale_date)`);
-  await knex.raw(`CREATE INDEX idx_market_mat_ticket ON marketplace_activity_materialized(ticket_id)`);
 
   await knex.raw(`
     CREATE OR REPLACE VIEW daily_marketplace_summary AS
     SELECT sale_date, COUNT(DISTINCT transaction_id) as transaction_count, SUM(sale_price) as total_volume,
       AVG(sale_price) as avg_sale_price, SUM(platform_fee) as total_platform_fees
-    FROM marketplace_activity WHERE status = 'COMPLETED' GROUP BY sale_date ORDER BY sale_date DESC
+    FROM marketplace_activity WHERE status = 'completed' GROUP BY sale_date ORDER BY sale_date DESC
   `);
 
   await knex.raw(`
     CREATE OR REPLACE VIEW seller_performance AS
     SELECT seller_id, seller_username, COUNT(*) as total_sales, SUM(sale_price) as total_revenue,
       SUM(seller_payout) as total_earnings
-    FROM marketplace_activity WHERE status = 'COMPLETED' GROUP BY seller_id, seller_username ORDER BY total_revenue DESC
+    FROM marketplace_activity WHERE status = 'completed' GROUP BY seller_id, seller_username ORDER BY total_revenue DESC
   `);
 
   // ---------------------------------------------------------------------------

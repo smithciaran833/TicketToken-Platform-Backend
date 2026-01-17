@@ -1,19 +1,15 @@
 /**
  * Knex Configuration for Transfer Service
- * 
+ *
  * AUDIT FIX LOW-3: No knexfile → Proper migration configuration
  */
-
 import type { Knex } from 'knex';
 import { config } from 'dotenv';
-
 // Load environment variables
 config();
-
 // =============================================================================
 // DATABASE CONNECTION CONFIG
 // =============================================================================
-
 const baseConfig: Knex.Config = {
   client: 'pg',
   connection: {
@@ -36,8 +32,8 @@ const baseConfig: Knex.Config = {
     createRetryIntervalMillis: 100,
   },
   migrations: {
-    directory: './migrations',
-    tableName: 'knex_migrations',
+    directory: './src/migrations',
+    tableName: 'knex_migrations_transfer',
     extension: 'ts',
     loadExtensions: ['.ts', '.js'],
   },
@@ -47,34 +43,26 @@ const baseConfig: Knex.Config = {
     loadExtensions: ['.ts', '.js'],
   },
 };
-
 // =============================================================================
 // ENVIRONMENT-SPECIFIC CONFIGURATIONS
 // =============================================================================
-
 const configuration: Record<string, Knex.Config> = {
   development: {
     ...baseConfig,
     debug: true,
     asyncStackTraces: true,
   },
-  
   test: {
     ...baseConfig,
     connection: {
       ...(baseConfig.connection as object),
-      database: process.env.DB_NAME_TEST || 'transfer_service_test',
+      database: process.env.DB_NAME_TEST || 'tickettoken_test',
     },
     pool: {
       min: 1,
       max: 5,
     },
-    // Use in-memory SQLite for faster tests (optional)
-    // client: 'better-sqlite3',
-    // connection: { filename: ':memory:' },
-    // useNullAsDefault: true,
   },
-  
   staging: {
     ...baseConfig,
     pool: {
@@ -83,7 +71,6 @@ const configuration: Record<string, Knex.Config> = {
       acquireTimeoutMillis: 60000,
     },
   },
-  
   production: {
     ...baseConfig,
     pool: {
@@ -97,19 +84,13 @@ const configuration: Record<string, Knex.Config> = {
       ...(baseConfig.connection as object),
       ssl: { rejectUnauthorized: true },
     },
-    // Disable debug in production
     debug: false,
     asyncStackTraces: false,
   },
 };
-
 // =============================================================================
 // EXPORT
 // =============================================================================
-
-const environment = process.env.NODE_ENV || 'development';
-
-export default configuration[environment] || configuration.development;
-
+export default configuration;
 // Also export named configurations for direct access
 export { configuration };

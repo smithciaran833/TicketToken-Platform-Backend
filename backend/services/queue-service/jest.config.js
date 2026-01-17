@@ -17,12 +17,17 @@ module.exports = {
   moduleFileExtensions: ['ts', 'js', 'json'],
   globals: {
     'ts-jest': {
-      tsconfig: {
-        esModuleInterop: true,
-      },
+      tsconfig: 'tsconfig.test.json',
+      isolatedModules: true,
     },
   },
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
   testTimeout: 10000,
   verbose: true,
+  clearMocks: true,
+  forceExit: true,
+  detectOpenHandles: true,
+  moduleNameMapper: {
+    '^@sendgrid/mail$': '<rootDir>/tests/__mocks__/@sendgrid/mail.js',
+  },
 };

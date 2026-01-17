@@ -131,7 +131,7 @@ export function applyCustomRateLimit(routeOptions: any, config: typeof rateLimit
  */
 export function bypassRateLimit(request: any): boolean {
   // Bypass for internal services
-  if (request.headers['x-internal-service'] === process.env.INTERNAL_SERVICE_SECRET) {
+  if (process.env.INTERNAL_SERVICE_SECRET && request.headers['x-internal-service'] === process.env.INTERNAL_SERVICE_SECRET) {
     return true;
   }
 

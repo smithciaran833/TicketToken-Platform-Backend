@@ -1474,7 +1474,7 @@ export async function up(knex: Knex): Promise<void> {
 
   await knex.raw(`
     CREATE INDEX idx_escrow_accounts_ready_release
-    ON escrow_accounts (hold_until) WHERE status = 'held' AND hold_until <= NOW();
+    ON escrow_accounts (hold_until) WHERE status = 'held' ;
   `);
 
   await knex.raw(`
@@ -1802,21 +1802,6 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // 52. WEBHOOK_EVENTS
-  await knex.schema.createTable('webhook_events', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
-    table.uuid('tenant_id').notNullable();
-    table.string('event_id', 255).unique().notNullable();
-    table.string('processor', 50).notNullable();
-    table.string('event_type', 100).notNullable();
-    table.jsonb('payload').notNullable();
-    table.timestamp('processed_at').nullable();
-    table.timestamp('received_at').defaultTo(knex.fn.now());
-
-    table.index('tenant_id');
-    table.index('processor');
-    table.index('event_type');
-  });
-
   // 53. OUTBOUND_WEBHOOKS
   await knex.schema.createTable('outbound_webhooks', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -2398,7 +2383,6 @@ export async function up(knex: Knex): Promise<void> {
     'payment_event_sequence',
     'payment_state_transitions',
     'webhook_inbox',
-    'webhook_events',
     'outbound_webhooks',
     'payment_idempotency',
     'reconciliation_reports',
@@ -2458,7 +2442,6 @@ export async function down(knex: Knex): Promise<void> {
     'reconciliation_reports',
     'payment_idempotency',
     'outbound_webhooks',
-    'webhook_events',
     'webhook_inbox',
     'payment_state_transitions',
     'payment_event_sequence',
@@ -2532,7 +2515,6 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('reconciliation_reports');
   await knex.schema.dropTableIfExists('payment_idempotency');
   await knex.schema.dropTableIfExists('outbound_webhooks');
-  await knex.schema.dropTableIfExists('webhook_events');
   await knex.schema.dropTableIfExists('webhook_inbox');
   await knex.schema.dropTableIfExists('payment_state_transitions');
   await knex.schema.dropTableIfExists('payment_event_sequence');

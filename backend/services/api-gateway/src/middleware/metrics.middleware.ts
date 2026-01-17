@@ -1,8 +1,5 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { register, collectDefaultMetrics, Counter, Histogram, Gauge } from 'prom-client';
-import { createLogger } from '../utils/logger';
-
-const logger = createLogger('metrics-middleware');
 
 // Create metrics
 const httpRequestDuration = new Histogram({
@@ -68,7 +65,7 @@ export async function setupMetricsMiddleware(server: FastifyInstance) {
   server.addHook('onRequest', async (request: FastifyRequest, _reply: FastifyReply) => {
     const labels = {
       method: request.method,
-      route: request.routeOptions?.url || request.url,  // FIXED: use routeOptions.url
+      route: request.routeOptions?.url || request.url,
     };
 
     httpRequestsInProgress.inc(labels);
@@ -84,12 +81,12 @@ export async function setupMetricsMiddleware(server: FastifyInstance) {
   server.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
     const labels = {
       method: request.method,
-      route: request.routeOptions?.url || request.url,  // FIXED: use routeOptions.url
+      route: request.routeOptions?.url || request.url,
       status_code: reply.statusCode.toString(),
     };
 
     // Duration
-    const responseTime = reply.elapsedTime;  // FIXED: use elapsedTime instead of getResponseTime()
+    const responseTime = reply.elapsedTime;
     httpRequestDuration.observe(labels, responseTime / 1000);
 
     // Total requests
@@ -98,7 +95,7 @@ export async function setupMetricsMiddleware(server: FastifyInstance) {
     // Requests in progress
     httpRequestsInProgress.dec({
       method: request.method,
-      route: request.routeOptions?.url || request.url,  // FIXED: use routeOptions.url
+      route: request.routeOptions?.url || request.url,
     });
 
     // Response size
@@ -106,7 +103,7 @@ export async function setupMetricsMiddleware(server: FastifyInstance) {
     if (contentLength) {
       httpResponseSize.observe({
         method: request.method,
-        route: request.routeOptions?.url || request.url,  // FIXED: use routeOptions.url
+        route: request.routeOptions?.url || request.url,
       }, parseInt(contentLength as string, 10));
     }
 
@@ -132,7 +129,7 @@ export async function setupMetricsMiddleware(server: FastifyInstance) {
     }
   }, 5000);
 
-  logger.info('Metrics middleware configured');
+  server.log.info('Metrics middleware configured');
 }
 
 // Export metrics for custom use

@@ -107,7 +107,7 @@ async function checkUserVenueAccess(
   }
 
   const userData = JSON.parse(user);
-  
+
   // Check if admin bypass
   if (userData.role === 'admin') {
     // Cache as admin bypass
@@ -175,7 +175,7 @@ export async function checkVenuePermission(
   }
 
   const userData = JSON.parse(user);
-  
+
   // Admin bypass with audit logging
   if (userData.role === 'admin') {
     await logSecurityEvent('admin_permission_bypass', {
@@ -286,7 +286,7 @@ export async function validateAPIKeyVenueAccess(
 
 // Extract venue ID from resource path
 function extractVenueFromResource(resource: string): string | null {
-  const venuePattern = /\/venues\/([a-f0-9-]+)/;
+  const venuePattern = /\/venues\/([a-z0-9-]+)/i;
   const match = resource.match(venuePattern);
   return match ? match[1] : null;
 }

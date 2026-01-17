@@ -614,7 +614,7 @@ export async function cleanupExpiredIdempotencyKeys(): Promise<number> {
     // Use a single efficient query to clean up all expired keys
     const result = await DatabaseService.query(
       `WITH deleted AS (
-        DELETE FROM idempotency_keys
+        DELETE FROM ticket_idempotency_keys
         WHERE 
           -- Completed keys past TTL
           (status = 'completed' AND updated_at < NOW() - $1 * INTERVAL '1 hour')

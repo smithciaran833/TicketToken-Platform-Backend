@@ -249,7 +249,7 @@ export function createRequestLogger(customConfig?: Partial<RequestLoggerConfig>)
       };
       
       // Log slow requests
-      if (duration > config.slowRequestThresholdMs) {
+      if (duration >= config.slowRequestThresholdMs) {
         logger.warn({
           ...responseLog,
           threshold: config.slowRequestThresholdMs

@@ -6,7 +6,7 @@ import { Knex } from 'knex';
  * Consolidated from 3 migrations on January 2025
  *
  * Tables (7 total):
- *   Tenant-scoped (6): indexer_state, indexed_transactions, marketplace_activity,
+ *   Tenant-scoped (6): indexer_state, indexed_transactions, indexer_marketplace_activity,
  *                      reconciliation_runs, ownership_discrepancies, reconciliation_log
  *   Global (1): failed_mongodb_writes
  *
@@ -16,6 +16,7 @@ import { Knex } from 'knex';
  *   - Added FORCE RLS to all tenant tables
  *   - Converted external FKs to comments (cross-service)
  *   - Changed uuid_generate_v4() to gen_random_uuid()
+ *   - Renamed marketplace_activity to indexer_marketplace_activity (collision with analytics view)
  */
 
 export async function up(knex: Knex): Promise<void> {
@@ -67,9 +68,9 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // 3. MARKETPLACE_ACTIVITY
+  // 3. INDEXER_MARKETPLACE_ACTIVITY (renamed from marketplace_activity)
   // --------------------------------------------------------------------------
-  await knex.schema.createTable('marketplace_activity', (table) => {
+  await knex.schema.createTable('indexer_marketplace_activity', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.string('token_id', 255).notNullable();
     table.uuid('ticket_id');
@@ -87,17 +88,17 @@ export async function up(knex: Knex): Promise<void> {
     table.foreign('tenant_id').references('id').inTable('tenants').onDelete('RESTRICT');
 
     // Indexes
-    table.index('token_id', 'idx_marketplace_activity_token_id');
-    table.index('ticket_id', 'idx_marketplace_activity_ticket_id');
-    table.index('marketplace', 'idx_marketplace_activity_marketplace');
-    table.index('activity_type', 'idx_marketplace_activity_activity_type');
-    table.index('transaction_signature', 'idx_marketplace_activity_tx_signature');
-    table.index('block_time', 'idx_marketplace_activity_block_time');
-    table.index('tenant_id', 'idx_marketplace_activity_tenant_id');
+    table.index('token_id', 'idx_indexer_marketplace_activity_token_id');
+    table.index('ticket_id', 'idx_indexer_marketplace_activity_ticket_id');
+    table.index('marketplace', 'idx_indexer_marketplace_activity_marketplace');
+    table.index('activity_type', 'idx_indexer_marketplace_activity_activity_type');
+    table.index('transaction_signature', 'idx_indexer_marketplace_activity_tx_sig');
+    table.index('block_time', 'idx_indexer_marketplace_activity_block_time');
+    table.index('tenant_id', 'idx_indexer_marketplace_activity_tenant_id');
   });
 
   // External FK comment
-  await knex.raw(`COMMENT ON COLUMN marketplace_activity.ticket_id IS 'FK: ticket-service.tickets(id) - not enforced, cross-service reference'`);
+  await knex.raw(`COMMENT ON COLUMN indexer_marketplace_activity.ticket_id IS 'FK: ticket-service.tickets(id) - not enforced, cross-service reference'`);
 
   // --------------------------------------------------------------------------
   // 4. RECONCILIATION_RUNS
@@ -214,7 +215,7 @@ export async function up(knex: Knex): Promise<void> {
   const tenantTables = [
     'indexer_state',
     'indexed_transactions',
-    'marketplace_activity',
+    'indexer_marketplace_activity',
     'reconciliation_runs',
     'ownership_discrepancies',
     'reconciliation_log'
@@ -253,7 +254,7 @@ export async function down(knex: Knex): Promise<void> {
     'reconciliation_log',
     'ownership_discrepancies',
     'reconciliation_runs',
-    'marketplace_activity',
+    'indexer_marketplace_activity',
     'indexed_transactions',
     'indexer_state'
   ];
@@ -267,7 +268,7 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('reconciliation_log');
   await knex.schema.dropTableIfExists('ownership_discrepancies');
   await knex.schema.dropTableIfExists('reconciliation_runs');
-  await knex.schema.dropTableIfExists('marketplace_activity');
+  await knex.schema.dropTableIfExists('indexer_marketplace_activity');
   await knex.schema.dropTableIfExists('indexed_transactions');
   await knex.schema.dropTableIfExists('indexer_state');
 

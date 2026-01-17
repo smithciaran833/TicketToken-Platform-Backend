@@ -4,7 +4,7 @@ import { Knex } from 'knex';
  * CONSOLIDATED BASELINE MIGRATION - Ticket Service
  *
  * This migration consolidates 11 migration files into a single baseline:
- * - 001_baseline_ticket.ts (18 tables)
+ * - 001_baseline_ticket.ts (17 tables - refunds removed as dead table)
  * - 002_add_ticket_scans.ts (1 table)
  * - 003_add_blockchain_tracking.ts (2 tables)
  * - 004_add_rls_role_verification.ts (1 table + functions)
@@ -19,16 +19,18 @@ import { Knex } from 'knex';
  * Consolidation Date: January 2025
  *
  * FIXES APPLIED:
- * 1. UUID: uuid_generate_v4() → gen_random_uuid() (18 tables)
+ * 1. UUID: uuid_generate_v4() → gen_random_uuid() (17 tables)
  * 2. RLS variable: app.tenant_id → app.current_tenant_id (3 tables)
- * 3. RLS system bypass: Added app.is_system_user check (24 policies)
+ * 3. RLS system bypass: Added app.is_system_user check (23 policies)
  * 4. Missing tenant_id: Added to ticket_bundle_items, multisig_approvals, multisig_rejections
- * 5. Missing FK: Added idempotency_keys.tenant_id → tenants
+ * 5. Missing FK: Added ticket_idempotency_keys.tenant_id → tenants
  * 6. Column absorption: Merged 006 columns into tickets and ticket_transfers
  * 7. CHECK fix: Added 'status_changed' to blockchain_sync_log.event_type
  * 8. Duplicate removal: Removed duplicate trigger (ticket_status_change) and function
+ * 9. Dead table removal: Removed refunds table (no code references)
+ * 10. Table rename: idempotency_keys → ticket_idempotency_keys (collision fix)
  *
- * TABLES: 30
+ * TABLES: 29
  * FUNCTIONS: 25
  * TRIGGERS: 6
  * ENUMS: 1
@@ -39,7 +41,7 @@ export async function up(knex: Knex): Promise<void> {
   // ============================================================================
   // SECTION 1: EXTENSIONS
   // ============================================================================
-  
+
   // gen_random_uuid() is built-in to PostgreSQL 13+, no extension needed
   // But we'll ensure uuid-ossp exists for compatibility
   await knex.raw('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
@@ -68,7 +70,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // ============================================================================
-  // SECTION 3: TABLES (30 total)
+  // SECTION 3: TABLES (29 total)
   // ============================================================================
 
   // --------------------------------------------------------------------------
@@ -251,25 +253,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 6: refunds
-  // Source: 001
-  // --------------------------------------------------------------------------
-  await knex.schema.createTable('refunds', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
-    table.uuid('tenant_id').notNullable().index();
-    table.uuid('order_id').notNullable().index();
-    table.uuid('ticket_id').index();
-    table.decimal('amount', 10, 2).notNullable();
-    table.enum('status', ['pending', 'approved', 'rejected', 'completed']).defaultTo('pending');
-    table.text('reason');
-    table.timestamp('processed_at');
-    table.timestamps(true, true);
-
-    table.index('status');
-  });
-
-  // --------------------------------------------------------------------------
-  // TABLE 7: waitlist
+  // TABLE 6: waitlist
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('waitlist', (table) => {
@@ -288,7 +272,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 8: ticket_price_history
+  // TABLE 7: ticket_price_history
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_price_history', (table) => {
@@ -303,7 +287,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 9: ticket_holds
+  // TABLE 8: ticket_holds
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_holds', (table) => {
@@ -321,7 +305,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 10: ticket_bundles
+  // TABLE 9: ticket_bundles
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_bundles', (table) => {
@@ -336,7 +320,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 11: ticket_bundle_items
+  // TABLE 10: ticket_bundle_items
   // Source: 001 + FIX: Added tenant_id
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_bundle_items', (table) => {
@@ -349,7 +333,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 12: ticket_audit_log
+  // TABLE 11: ticket_audit_log
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_audit_log', (table) => {
@@ -371,7 +355,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 13: ticket_notifications
+  // TABLE 12: ticket_notifications
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_notifications', (table) => {
@@ -390,7 +374,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 14: discounts
+  // TABLE 13: discounts
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('discounts', (table) => {
@@ -412,7 +396,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 15: order_discounts
+  // TABLE 14: order_discounts
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('order_discounts', (table) => {
@@ -429,7 +413,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 16: outbox
+  // TABLE 15: outbox
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('outbox', (table) => {
@@ -455,7 +439,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 17: reservation_history
+  // TABLE 16: reservation_history
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('reservation_history', (table) => {
@@ -472,7 +456,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 18: webhook_nonces (GLOBAL - no tenant_id)
+  // TABLE 17: webhook_nonces (GLOBAL - no tenant_id)
   // Source: 001
   // --------------------------------------------------------------------------
   await knex.schema.createTable('webhook_nonces', (table) => {
@@ -485,7 +469,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 19: ticket_scans
+  // TABLE 18: ticket_scans
   // Source: 002
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_scans', (table) => {
@@ -520,7 +504,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 20: pending_transactions
+  // TABLE 19: pending_transactions
   // Source: 003
   // --------------------------------------------------------------------------
   await knex.schema.createTable('pending_transactions', (table) => {
@@ -574,7 +558,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 21: blockchain_sync_log
+  // TABLE 20: blockchain_sync_log
   // Source: 003 + FIX: Added 'status_changed' to event_type CHECK
   // --------------------------------------------------------------------------
   await knex.schema.createTable('blockchain_sync_log', (table) => {
@@ -620,7 +604,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 22: tenant_access_violations (GLOBAL - no RLS)
+  // TABLE 21: tenant_access_violations (GLOBAL - no RLS)
   // Source: 004
   // --------------------------------------------------------------------------
   await knex.schema.createTable('tenant_access_violations', (table) => {
@@ -640,10 +624,10 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 23: idempotency_keys
-  // Source: 005 + FIX: Added FK to tenants
+  // TABLE 22: ticket_idempotency_keys
+  // Source: 005 + FIX: Added FK to tenants + RENAME: idempotency_keys → ticket_idempotency_keys
   // --------------------------------------------------------------------------
-  await knex.schema.createTable('idempotency_keys', (table) => {
+  await knex.schema.createTable('ticket_idempotency_keys', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.uuid('tenant_id').notNullable();
     table.string('idempotency_key', 255).notNullable();
@@ -664,24 +648,24 @@ export async function up(knex: Knex): Promise<void> {
     table.string('request_id', 255);
   });
 
-  // CHECK constraint for idempotency_keys
+  // CHECK constraint for ticket_idempotency_keys
   await knex.raw(`
-    ALTER TABLE idempotency_keys ADD CONSTRAINT chk_idempotency_status
+    ALTER TABLE ticket_idempotency_keys ADD CONSTRAINT chk_ticket_idempotency_status
     CHECK (status IN ('pending', 'processing', 'completed', 'failed'));
 
-    ALTER TABLE idempotency_keys ADD CONSTRAINT chk_idempotency_key_length
+    ALTER TABLE ticket_idempotency_keys ADD CONSTRAINT chk_ticket_idempotency_key_length
     CHECK (length(idempotency_key) >= 1 AND length(idempotency_key) <= 255);
   `);
 
-  // Indexes for idempotency_keys
+  // Indexes for ticket_idempotency_keys
   await knex.raw(`
-    CREATE UNIQUE INDEX idx_idempotency_keys_tenant_key_op ON idempotency_keys (tenant_id, idempotency_key, operation);
-    CREATE INDEX idx_idempotency_keys_expires ON idempotency_keys (expires_at) WHERE expires_at < NOW();
-    CREATE INDEX idx_idempotency_keys_lock_expires ON idempotency_keys (lock_expires_at) WHERE locked_at IS NOT NULL;
+    CREATE UNIQUE INDEX idx_ticket_idempotency_keys_tenant_key_op ON ticket_idempotency_keys (tenant_id, idempotency_key, operation);
+    CREATE INDEX idx_ticket_idempotency_keys_expires ON ticket_idempotency_keys (expires_at) ;
+    CREATE INDEX idx_ticket_idempotency_keys_lock_expires ON ticket_idempotency_keys (lock_expires_at) WHERE locked_at IS NOT NULL;
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 24: spending_limits
+  // TABLE 23: spending_limits
   // Source: 007 + FIX: RLS variable
   // --------------------------------------------------------------------------
   await knex.schema.createTable('spending_limits', (table) => {
@@ -713,7 +697,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 25: account_lockout_events (GLOBAL - no RLS)
+  // TABLE 24: account_lockout_events (GLOBAL - no RLS)
   // Source: 007
   // --------------------------------------------------------------------------
   await knex.schema.createTable('account_lockout_events', (table) => {
@@ -738,7 +722,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 26: multisig_approval_requests
+  // TABLE 25: multisig_approval_requests
   // Source: 007 + FIX: RLS variable
   // --------------------------------------------------------------------------
   await knex.schema.createTable('multisig_approval_requests', (table) => {
@@ -773,7 +757,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 27: multisig_approvals
+  // TABLE 26: multisig_approvals
   // Source: 007 + FIX: Added tenant_id
   // --------------------------------------------------------------------------
   await knex.schema.createTable('multisig_approvals', (table) => {
@@ -791,7 +775,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 28: multisig_rejections
+  // TABLE 27: multisig_rejections
   // Source: 007 + FIX: Added tenant_id
   // --------------------------------------------------------------------------
   await knex.schema.createTable('multisig_rejections', (table) => {
@@ -807,7 +791,7 @@ export async function up(knex: Knex): Promise<void> {
   });
 
   // --------------------------------------------------------------------------
-  // TABLE 29: spending_transactions
+  // TABLE 28: spending_transactions
   // Source: 007 + FIX: RLS variable
   // --------------------------------------------------------------------------
   await knex.schema.createTable('spending_transactions', (table) => {
@@ -833,7 +817,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // --------------------------------------------------------------------------
-  // TABLE 30: ticket_state_history
+  // TABLE 29: ticket_state_history
   // Source: 011
   // --------------------------------------------------------------------------
   await knex.schema.createTable('ticket_state_history', (table) => {
@@ -1023,12 +1007,6 @@ export async function up(knex: Knex): Promise<void> {
     FOREIGN KEY (validator_id) REFERENCES users(id) ON DELETE SET NULL;
   `);
 
-  // refunds FKs
-  await knex.raw(`
-    ALTER TABLE refunds ADD CONSTRAINT fk_refunds_ticket
-    FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE SET NULL;
-  `);
-
   // waitlist FKs
   await knex.raw(`
     ALTER TABLE waitlist ADD CONSTRAINT fk_waitlist_tenant
@@ -1152,9 +1130,9 @@ export async function up(knex: Knex): Promise<void> {
     FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE;
   `);
 
-  // idempotency_keys FKs (FIX: Added)
+  // ticket_idempotency_keys FKs
   await knex.raw(`
-    ALTER TABLE idempotency_keys ADD CONSTRAINT fk_idempotency_keys_tenant
+    ALTER TABLE ticket_idempotency_keys ADD CONSTRAINT fk_ticket_idempotency_keys_tenant
     FOREIGN KEY (tenant_id) REFERENCES tenants(id) ON DELETE RESTRICT;
   `);
 
@@ -1196,7 +1174,6 @@ export async function up(knex: Knex): Promise<void> {
     'reservations',
     'ticket_transfers',
     'ticket_validations',
-    'refunds',
     'waitlist',
     'ticket_price_history',
     'ticket_holds',
@@ -1211,7 +1188,7 @@ export async function up(knex: Knex): Promise<void> {
     'ticket_scans',
     'pending_transactions',
     'blockchain_sync_log',
-    'idempotency_keys',
+    'ticket_idempotency_keys',
     'spending_limits',
     'multisig_approval_requests',
     'multisig_approvals',
@@ -1707,7 +1684,7 @@ export async function up(knex: Knex): Promise<void> {
       v_resource_id UUID;
       v_lock_expires TIMESTAMPTZ;
     BEGIN
-      INSERT INTO idempotency_keys (
+      INSERT INTO ticket_idempotency_keys (
         tenant_id,
         idempotency_key,
         operation,
@@ -1727,7 +1704,7 @@ export async function up(knex: Knex): Promise<void> {
         NOW() + p_lock_duration
       )
       ON CONFLICT (tenant_id, idempotency_key, operation) DO NOTHING
-      RETURNING id, idempotency_keys.status INTO v_key_id, v_status;
+      RETURNING id, ticket_idempotency_keys.status INTO v_key_id, v_status;
 
       IF v_key_id IS NOT NULL THEN
         v_is_new := true;
@@ -1748,14 +1725,14 @@ export async function up(knex: Knex): Promise<void> {
           v_response_body,
           v_resource_id,
           v_lock_expires
-        FROM idempotency_keys ik
+        FROM ticket_idempotency_keys ik
         WHERE ik.tenant_id = p_tenant_id
           AND ik.idempotency_key = p_idempotency_key
           AND ik.operation = p_operation
         FOR UPDATE NOWAIT;
 
         IF v_status = 'processing' AND v_lock_expires < NOW() THEN
-          UPDATE idempotency_keys
+          UPDATE ticket_idempotency_keys
           SET locked_at = NOW(),
               locked_by = p_lock_holder,
               lock_expires_at = NOW() + p_lock_duration
@@ -1801,7 +1778,7 @@ export async function up(knex: Knex): Promise<void> {
       p_resource_type VARCHAR(100) DEFAULT NULL
     ) RETURNS BOOLEAN AS $$
     BEGIN
-      UPDATE idempotency_keys
+      UPDATE ticket_idempotency_keys
       SET status = p_status,
           response_status = p_response_status,
           response_body = p_response_body,
@@ -1825,7 +1802,7 @@ export async function up(knex: Knex): Promise<void> {
     ) RETURNS BOOLEAN AS $$
     BEGIN
       IF p_set_failed THEN
-        UPDATE idempotency_keys
+        UPDATE ticket_idempotency_keys
         SET status = 'failed',
             locked_at = NULL,
             locked_by = NULL,
@@ -1833,7 +1810,7 @@ export async function up(knex: Knex): Promise<void> {
             updated_at = NOW()
         WHERE id = p_key_id;
       ELSE
-        UPDATE idempotency_keys
+        UPDATE ticket_idempotency_keys
         SET locked_at = NULL,
             locked_by = NULL,
             lock_expires_at = NULL,
@@ -1854,7 +1831,7 @@ export async function up(knex: Knex): Promise<void> {
       deleted_count INTEGER;
     BEGIN
       WITH deleted AS (
-        DELETE FROM idempotency_keys
+        DELETE FROM ticket_idempotency_keys
         WHERE expires_at < NOW()
         RETURNING *
       )
@@ -2179,12 +2156,12 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   console.log('✅ Ticket service consolidated migration completed successfully');
-  console.log('   - 30 tables created');
+  console.log('   - 29 tables created');
   console.log('   - 25 functions created');
   console.log('   - 6 triggers created');
   console.log('   - 1 enum type created');
   console.log('   - 2 views created');
-  console.log('   - RLS enabled on 27 tables with standardized policies');
+  console.log('   - RLS enabled on 26 tables with standardized policies');
 }
 
 export async function down(knex: Knex): Promise<void> {
@@ -2241,7 +2218,6 @@ export async function down(knex: Knex): Promise<void> {
     'reservations',
     'ticket_transfers',
     'ticket_validations',
-    'refunds',
     'waitlist',
     'ticket_price_history',
     'ticket_holds',
@@ -2256,7 +2232,7 @@ export async function down(knex: Knex): Promise<void> {
     'ticket_scans',
     'pending_transactions',
     'blockchain_sync_log',
-    'idempotency_keys',
+    'ticket_idempotency_keys',
     'spending_limits',
     'multisig_approval_requests',
     'multisig_approvals',
@@ -2287,7 +2263,7 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('multisig_approval_requests');
   await knex.schema.dropTableIfExists('account_lockout_events');
   await knex.schema.dropTableIfExists('spending_limits');
-  await knex.schema.dropTableIfExists('idempotency_keys');
+  await knex.schema.dropTableIfExists('ticket_idempotency_keys');
   await knex.schema.dropTableIfExists('tenant_access_violations');
   await knex.schema.dropTableIfExists('blockchain_sync_log');
   await knex.schema.dropTableIfExists('pending_transactions');
@@ -2304,7 +2280,6 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('ticket_holds');
   await knex.schema.dropTableIfExists('ticket_price_history');
   await knex.schema.dropTableIfExists('waitlist');
-  await knex.schema.dropTableIfExists('refunds');
   await knex.schema.dropTableIfExists('ticket_validations');
   await knex.schema.dropTableIfExists('ticket_transfers');
   await knex.schema.dropTableIfExists('tickets');

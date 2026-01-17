@@ -57,7 +57,7 @@ export class IdempotencyService {
    */
   async check(key: string): Promise<any | null> {
     const result = await this.pool.query(
-      'SELECT result FROM idempotency_keys WHERE key = $1 AND expires_at > NOW()',
+      'SELECT result FROM queue_idempotency_keys WHERE key = $1 AND expires_at > NOW()',
       [key]
     );
 
@@ -83,7 +83,7 @@ export class IdempotencyService {
 
     // Store in PostgreSQL
     await this.pool.query(
-      `INSERT INTO idempotency_keys 
+      `INSERT INTO queue_idempotency_keys 
        (key, queue_name, job_type, result, processed_at, expires_at)
        VALUES ($1, $2, $3, $4, NOW(), $5)
        ON CONFLICT (key) DO UPDATE 
@@ -99,7 +99,7 @@ export class IdempotencyService {
    */
   async cleanup(): Promise<void> {
     const result = await this.pool.query(
-      'DELETE FROM idempotency_keys WHERE expires_at < NOW()'
+      'DELETE FROM queue_idempotency_keys WHERE expires_at < NOW()'
     );
     
     logger.info(`Cleaned up ${result.rowCount} expired idempotency keys`);

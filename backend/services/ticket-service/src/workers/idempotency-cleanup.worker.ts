@@ -184,10 +184,10 @@ export class IdempotencyCleanupWorker {
   private async deleteExpiredKeysBatch(cutoffDate: Date): Promise<number> {
     const result = await DatabaseService.query<{ count: string }>(
       `WITH deleted AS (
-        DELETE FROM idempotency_keys
+        DELETE FROM ticket_idempotency_keys
         WHERE created_at < $1
         AND id IN (
-          SELECT id FROM idempotency_keys
+          SELECT id FROM ticket_idempotency_keys
           WHERE created_at < $1
           LIMIT $2
         )

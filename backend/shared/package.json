@@ -39,6 +39,7 @@
     "isomorphic-dompurify": "^1.13.0",
     "jsonwebtoken": "^9.0.2",
     "knex": "^2.5.1",
+    "lru-cache": "^11.2.4",
     "mongoose": "^9.1.2",
     "nodemailer": "^6.9.8",
     "pg": "^8.0.0",

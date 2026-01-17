@@ -24,12 +24,14 @@ export class AuthController {
       if (error.code === '23505' || error.code === 'DUPLICATE_EMAIL' || error.statusCode === 409 ||
           error.message?.includes('duplicate') || error.message?.includes('already exists')) {
         return reply.status(409).send({
-          error: error.message || 'User with this email already exists'
+          error: error.message || 'User with this email already exists',
+          code: 'CONFLICT',
         });
       }
       console.error('Registration error:', error);
       return reply.status(error.statusCode || 500).send({
-        error: error.message || 'Registration failed'
+        error: error.message || 'Registration failed',
+        code: error.code || 'INTERNAL_ERROR',
       });
     }
   }
@@ -41,10 +43,10 @@ export class AuthController {
     try {
       // Check if CAPTCHA is required (after N failed attempts)
       const captchaRequired = await captchaService.isCaptchaRequired(identifier);
-      
+
       if (captchaRequired) {
         const captchaToken = request.body.captchaToken;
-        
+
         if (!captchaToken) {
           return reply.status(428).send({
             error: 'CAPTCHA required',
@@ -54,7 +56,7 @@ export class AuthController {
         }
 
         const captchaResult = await captchaService.verify(captchaToken, ipAddress);
-        
+
         if (!captchaResult.success) {
           return reply.status(400).send({
             error: 'CAPTCHA verification failed',
@@ -123,6 +125,7 @@ export class AuthController {
           console.log('[LOGIN] Both MFA methods failed');
           return reply.status(401).send({
             error: 'Invalid MFA token',
+            code: 'AUTHENTICATION_FAILED',
           });
         }
 
@@ -152,16 +155,18 @@ export class AuthController {
     } catch (error: any) {
       // Record failure for CAPTCHA threshold
       const failureResult = await captchaService.recordFailure(identifier);
-      
-      if (error.message?.includes('Invalid') || error.message?.includes('not found') || error.message?.includes('password')) {
+
+      if (error.message?.includes('Invalid') || error.message?.includes('not found') || error.message?.includes('password') || error.message?.includes('locked')) {
         return reply.status(401).send({
           error: 'Invalid credentials',
+          code: 'AUTHENTICATION_FAILED',
           requiresCaptcha: failureResult.requiresCaptcha,
         });
       }
       console.error('Login error:', error);
       return reply.status(500).send({
-        error: 'Login failed'
+        error: 'Login failed',
+        code: 'INTERNAL_ERROR',
       });
     }
   }
@@ -178,10 +183,11 @@ export class AuthController {
         userAgent
       );
 
-      reply.send(result);
+      reply.send(result.tokens);
     } catch (error: any) {
       return reply.status(401).send({
-        error: error.message || 'Unauthorized'
+        error: error.message || 'Unauthorized',
+        code: 'TOKEN_INVALID',
       });
     }
   }
@@ -194,7 +200,7 @@ export class AuthController {
 
     await this.authService.logout(userId);
 
-    reply.status(204).send();
+    reply.send({ success: true });
   }
 
   async getMe(request: any, reply: any) {
@@ -226,11 +232,33 @@ export class AuthController {
   }
 
   async verifyToken(request: any, reply: any) {
-    reply.send({ valid: true, user: request.user });
+    // Fetch full user from DB to satisfy response schema
+    const userId = request.user.id;
+    const user = await db('users')
+      .where('id', userId)
+      .whereNull('deleted_at')
+      .first();
+
+    if (!user) {
+      return reply.status(404).send({ error: 'User not found' });
+    }
+
+    reply.send({ valid: true, user });
   }
 
   async getCurrentUser(request: any, reply: any) {
-    reply.send({ user: request.user });
+    // Fetch full user from DB to satisfy response schema
+    const userId = request.user.id;
+    const user = await db('users')
+      .where('id', userId)
+      .whereNull('deleted_at')
+      .first();
+
+    if (!user) {
+      return reply.status(404).send({ error: 'User not found' });
+    }
+
+    reply.send({ user });
   }
 
   async setupMFA(request: any, reply: any) {
@@ -254,7 +282,8 @@ export class AuthController {
       const tenantId = request.user?.tenant_id;
       const { token } = request.body;
       const result = await this.mfaService.verifyAndEnableTOTP(userId, token, tenantId);
-      reply.send(result);
+      // Add success: true to satisfy response schema
+      reply.send({ success: true, backupCodes: result.backupCodes });
     } catch (error: any) {
       if (error.message?.includes('Invalid') || error.message?.includes('expired')) {
         return reply.status(400).send({ error: error.message });

@@ -1,22 +1,24 @@
-import { Pool } from 'pg';
-import Redis from 'ioredis';
 import path from 'path';
 import dotenv from 'dotenv';
 
-// Load test environment
+// Load test environment FIRST
 dotenv.config({ path: path.join(__dirname, '../../.env.test') });
 
-// Test database pool
+import { Pool } from 'pg';
+import Redis from 'ioredis';
+import { initRedis, closeRedisConnections } from '../../src/config/redis';
+
+// Test database pool (separate from app's pool, for direct DB queries in tests)
 export const testPool = new Pool({
-  host: process.env.TEST_DB_HOST || 'localhost',
-  port: parseInt(process.env.TEST_DB_PORT || '5432'),
-  database: process.env.TEST_DB_NAME || 'tickettoken_test',
-  user: process.env.TEST_DB_USER || 'postgres',
-  password: process.env.TEST_DB_PASSWORD || 'postgres',
+  host: process.env.DB_HOST || 'localhost',
+  port: parseInt(process.env.DB_PORT || '5432'),
+  database: process.env.DB_NAME || 'tickettoken_test',
+  user: process.env.DB_USER || 'postgres',
+  password: process.env.DB_PASSWORD || 'postgres',
   max: 5,
 });
 
-// Test Redis client
+// Test Redis client (separate from app's Redis, for direct Redis queries in tests)
 export const testRedis = new Redis({
   host: process.env.REDIS_HOST || 'localhost',
   port: parseInt(process.env.REDIS_PORT || '6379'),
@@ -26,6 +28,11 @@ export const testRedis = new Redis({
 
 // Default tenant ID from migration
 export const TEST_TENANT_ID = '00000000-0000-0000-0000-000000000001';
+
+// Initialize app's Redis (call this before buildApp)
+export async function initAppRedis(): Promise<void> {
+  await initRedis();
+}
 
 // Clean up tables between tests (order matters due to foreign keys)
 export async function cleanupDatabase(): Promise<void> {

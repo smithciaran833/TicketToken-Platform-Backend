@@ -63,7 +63,7 @@ export class ServiceDiscoveryService {
 
   async deregister(serviceId: string): Promise<void> {
     if (!this.redis) return;
-    
+
     const keys = await this.redis.keys(`${REDIS_KEYS.SERVICE_DISCOVERY}*:${serviceId}`);
 
     if (keys.length > 0) {
@@ -189,7 +189,7 @@ export class ServiceDiscoveryService {
   }
 
   private async getAllServices(): Promise<ServiceInstance[]> {
-    const services = ['auth', 'venue', 'event'];
+    const services = ['auth-service', 'venue-service', 'event-service'];
     const allInstances: ServiceInstance[] = [];
 
     for (const service of services) {
@@ -202,10 +202,16 @@ export class ServiceDiscoveryService {
 
   async getServiceTopology(): Promise<Record<string, ServiceInstance[]>> {
     const topology: Record<string, ServiceInstance[]> = {};
-    const services = ['auth', 'venue', 'event'];
+    
+    // Map short names to full service names
+    const serviceMap = {
+      'auth': 'auth-service',
+      'venue': 'venue-service',
+      'event': 'event-service',
+    };
 
-    for (const service of services) {
-      topology[service] = await this.discover(service);
+    for (const [shortName, fullName] of Object.entries(serviceMap)) {
+      topology[shortName] = await this.discover(fullName);
     }
 
     return topology;

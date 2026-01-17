@@ -1,6 +1,6 @@
 /**
  * Jest Test Setup
- * 
+ *
  * AUDIT FIX TEST-L2: Proper test setup with mocking
  */
 
@@ -67,22 +67,7 @@ jest.mock('../src/config/rabbitmq', () => ({
   },
 }));
 
-// Mock MongoDB
-jest.mock('../src/config/mongodb', () => ({
-  initializeMongoDB: jest.fn().mockResolvedValue(undefined),
-  closeMongoDB: jest.fn().mockResolvedValue(undefined),
-  getMongoDb: jest.fn().mockReturnValue({
-    collection: jest.fn().mockReturnValue({
-      findOne: jest.fn().mockResolvedValue(null),
-      find: jest.fn().mockReturnValue({
-        toArray: jest.fn().mockResolvedValue([]),
-      }),
-      insertOne: jest.fn().mockResolvedValue({ insertedId: 'test-id' }),
-      updateOne: jest.fn().mockResolvedValue({ modifiedCount: 1 }),
-      deleteOne: jest.fn().mockResolvedValue({ deletedCount: 1 }),
-    }),
-  }),
-}));
+// NOTE: MongoDB mock removed - individual tests should mock as needed
 
 // Mock SendGrid
 jest.mock('@sendgrid/mail', () => ({

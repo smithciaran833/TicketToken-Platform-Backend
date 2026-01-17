@@ -145,7 +145,7 @@ export async function cleanNotificationLogsJob(): Promise<void> {
  * Clean old webhook events
  */
 export async function cleanWebhookEventsJob(): Promise<void> {
-  const jobName = 'clean_webhook_events';
+  const jobName = 'clean_notification_webhook_events';
   
   if (!await acquireRetentionLock(jobName)) {
     logger.info('Retention job already running, skipping', { jobName });
@@ -165,7 +165,7 @@ export async function cleanWebhookEventsJob(): Promise<void> {
     const batchSize = 1000;
 
     while (true) {
-      const deleted = await db('webhook_events')
+      const deleted = await db('notification_webhook_events')
         .where('received_at', '<', cutoffDate)
         .limit(batchSize)
         .del();
@@ -176,7 +176,7 @@ export async function cleanWebhookEventsJob(): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    await logDeletion('webhook_events', totalDeleted, RETENTION_PERIODS.webhookEvents, cutoffDate);
+    await logDeletion('notification_webhook_events', totalDeleted, RETENTION_PERIODS.webhookEvents, cutoffDate);
 
     logger.info('Webhook events cleanup completed', { totalDeleted, cutoffDate });
   } catch (error) {
@@ -339,7 +339,7 @@ export async function runAllRetentionJobs(): Promise<void> {
 
   const jobs = [
     { name: 'notification_logs', fn: cleanNotificationLogsJob },
-    { name: 'webhook_events', fn: cleanWebhookEventsJob },
+    { name: 'notification_webhook_events', fn: cleanWebhookEventsJob },
     { name: 'delivery_status', fn: cleanDeliveryStatusJob },
     { name: 'analytics', fn: anonymizeAnalyticsJob },
     { name: 'redis_caches', fn: cleanRedisCachesJob },
@@ -386,7 +386,7 @@ export async function getRetentionStatus(): Promise<{
   
   const jobs = [
     'clean_notification_logs',
-    'clean_webhook_events',
+    'clean_notification_webhook_events',
     'clean_delivery_status',
     'anonymize_analytics',
     'clean_redis_caches',

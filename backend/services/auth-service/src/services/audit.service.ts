@@ -214,6 +214,72 @@ export class AuditService {
       metadata: { deletedBy, reason }, status: 'success'
     });
   }
+
+  // ============================================
+  // BIOMETRIC AUDIT METHODS
+  // ============================================
+
+  async logBiometricRegistration(
+    userId: string,
+    credentialId: string,
+    deviceId: string,
+    biometricType: string,
+    ipAddress?: string,
+    tenantId?: string
+  ): Promise<void> {
+    await this.log({
+      userId,
+      tenantId,
+      action: 'biometric.registered',
+      actionType: 'security',
+      resourceType: 'biometric_credential',
+      resourceId: credentialId,
+      ipAddress,
+      metadata: { deviceId, biometricType },
+      status: 'success'
+    });
+  }
+
+  async logBiometricAuth(
+    userId: string,
+    credentialId: string,
+    ipAddress?: string,
+    userAgent?: string,
+    success: boolean = true,
+    tenantId?: string,
+    errorMessage?: string
+  ): Promise<void> {
+    await this.log({
+      userId,
+      tenantId,
+      action: success ? 'biometric.authenticated' : 'biometric.auth_failed',
+      actionType: 'authentication',
+      resourceType: 'biometric_credential',
+      resourceId: credentialId,
+      ipAddress,
+      userAgent,
+      status: success ? 'success' : 'failure',
+      errorMessage
+    });
+  }
+
+  async logBiometricDeviceDeleted(
+    userId: string,
+    credentialId: string,
+    ipAddress?: string,
+    tenantId?: string
+  ): Promise<void> {
+    await this.log({
+      userId,
+      tenantId,
+      action: 'biometric.device_deleted',
+      actionType: 'security',
+      resourceType: 'biometric_credential',
+      resourceId: credentialId,
+      ipAddress,
+      status: 'success'
+    });
+  }
 }
 
 export const auditService = new AuditService();

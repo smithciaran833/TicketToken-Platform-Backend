@@ -9,55 +9,6 @@ export * from './utils/money';
 export { createAxiosInstance } from './http';
 
 // ============================================================================
-// DATABASE UTILITIES (NEW - Phase 1 Remediation)
-// ============================================================================
-
-// RLS context management for tenant isolation
-export {
-  TENANT_CONTEXT_SETTING,
-  USER_CONTEXT_SETTING,
-  IP_CONTEXT_SETTING,
-  USER_AGENT_CONTEXT_SETTING,
-  DatabaseContext,
-  setTenantContext,
-  setTenantContextLocal,
-  clearTenantContext,
-  getTenantContext,
-  setFullContext,
-  setFullContextLocal,
-  clearFullContext,
-  withTenantContext,
-  withContextTransaction,
-  createTenantContextMiddleware,
-  createContextCleanupMiddleware,
-  requireTenantContext,
-} from './database';
-
-// Migration helpers for consistent table creation
-export {
-  StandardTableOptions,
-  createStandardTable,
-  addUpdatedAtTrigger,
-  removeUpdatedAtTrigger,
-  addAuditTrigger,
-  removeAuditTrigger,
-  enableTableRLS,
-  disableTableRLS,
-  addForeignKey,
-  addNullableForeignKey,
-  createCompositeUniqueIndex,
-  createSoftDeleteUniqueIndex,
-  createJsonbIndex,
-  createFullTextSearchIndex,
-  dropTableSafely,
-  tableExists,
-  columnExists,
-  addColumnIfNotExists,
-  runSharedMigrations,
-  revertSharedMigrations,
-} from './database';
-
-// ============================================================================
 // HTTP CLIENT (NEW - Phase 1 Remediation)
 // ============================================================================
 
@@ -128,20 +79,11 @@ export { ReviewService, RatingService, ModerationService } from '../content-revi
 // SECURITY
 // ============================================================================
 
-// Audit logging (PHASE 0 - Secured)
-
-// Note: Framework-specific middleware (helmet, rate limiters, authenticate) removed
-// Services should implement their own middleware using their chosen framework
-
 // Audit service
 export { AuditService, auditService, auditMiddleware } from './services/audit.service';
 
 // PII Sanitizer utility
 export { PIISanitizer } from './utils/pii-sanitizer';
-
-// Input validation utilities (PHASE 1 - Critical Security)
-
-// Cryptography utilities (PHASE 1 - Critical Security)
 
 // ============================================================================
 // DISTRIBUTED SYSTEMS
@@ -184,6 +126,7 @@ export { publishSearchSync, closeSearchSync } from './publishers/searchSyncPubli
 // ============================================================================
 // SECRETS MANAGEMENT
 // ============================================================================
+
 // Secrets manager for AWS Secrets Manager / .env fallback
 export { secretsManager, SecretsManager } from '../utils/secrets-manager';
 

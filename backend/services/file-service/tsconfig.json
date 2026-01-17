@@ -49,7 +49,8 @@
     
     // Type definitions
     "types": [
-      "node"
+      "node",
+      "jest"
     ],
     
     // Path mapping

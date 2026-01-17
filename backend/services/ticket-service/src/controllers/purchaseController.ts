@@ -63,7 +63,7 @@ export class PurchaseController {
 
     try {
       // Check idempotency (in our local DB)
-      const existingRequest = await db('idempotency_keys')
+      const existingRequest = await db('ticket_idempotency_keys')
         .where({ key: idempotencyKey })
         .first();
 
@@ -105,7 +105,7 @@ export class PurchaseController {
       };
 
       // Cache the response for idempotency
-      await db('idempotency_keys').insert({
+      await db('ticket_idempotency_keys').insert({
         key: idempotencyKey,
         response: JSON.stringify(response),
         created_at: new Date(),
@@ -162,7 +162,7 @@ export class PurchaseController {
 
     try {
       // Check idempotency
-      const existingRequest = await trx('idempotency_keys')
+      const existingRequest = await trx('ticket_idempotency_keys')
         .where({ key: idempotencyKey })
         .first();
 
@@ -314,7 +314,7 @@ export class PurchaseController {
         message: 'Order created successfully'
       };
 
-      await trx('idempotency_keys').insert({
+      await trx('ticket_idempotency_keys').insert({
         key: idempotencyKey,
         response: JSON.stringify(response),
         created_at: new Date(),

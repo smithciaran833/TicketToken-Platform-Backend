@@ -49,7 +49,7 @@ declare module 'fastify' {
 // =============================================================================
 
 // AUDIT FIX S2S-H1: Whitelist allowed algorithms - NEVER allow 'none'
-const ALLOWED_ALGORITHMS: Algorithm[] = [
+export const ALLOWED_ALGORITHMS: Algorithm[] = [
   'RS256',   // RSA-SHA256 (asymmetric - preferred)
   'RS384',   // RSA-SHA384
   'RS512',   // RSA-SHA512
@@ -62,7 +62,7 @@ const ALLOWED_ALGORITHMS: Algorithm[] = [
 ];
 
 // AUDIT FIX S2S-H2, S2S-H3: Issuer and audience configuration
-const JWT_CONFIG = {
+export const JWT_CONFIG = {
   issuer: process.env.JWT_ISSUER || 'tickettoken-auth-service',
   audience: process.env.JWT_AUDIENCE || 'tickettoken-services',
 

@@ -27,8 +27,8 @@ async function lookupTenantFromStripeEvent(payload: any): Promise<string | null>
   try {
     // Try to extract customer or account ID from the Stripe event
     const customerId = payload?.data?.object?.customer;
-    const accountId = payload?.data?.object?.account;
-    
+    const accountId = payload?.data?.object?.account || payload?.data?.object?.id;
+
     if (customerId) {
       const result = await db.query(
         'SELECT tenant_id FROM stripe_customers WHERE stripe_customer_id = $1 LIMIT 1',
@@ -38,7 +38,7 @@ async function lookupTenantFromStripeEvent(payload: any): Promise<string | null>
         return result.rows[0].tenant_id;
       }
     }
-    
+
     if (accountId) {
       const result = await db.query(
         'SELECT tenant_id FROM venue_payment_accounts WHERE stripe_account_id = $1 LIMIT 1',
@@ -48,7 +48,7 @@ async function lookupTenantFromStripeEvent(payload: any): Promise<string | null>
         return result.rows[0].tenant_id;
       }
     }
-    
+
     return null;
   } catch (error) {
     logger.error({ error }, 'Failed to lookup tenant from Stripe event');
@@ -62,9 +62,9 @@ async function lookupTenantFromStripeEvent(payload: any): Promise<string | null>
 async function lookupTenantFromEmail(email: string): Promise<string | null> {
   try {
     const result = await db.query(
-      `SELECT tenant_id FROM notification_log 
-       WHERE recipient = $1 AND type = 'email' 
-       ORDER BY created_at DESC 
+      `SELECT tenant_id FROM notification_log
+       WHERE recipient = $1 AND type = 'email'
+       ORDER BY created_at DESC
        LIMIT 1`,
       [email]
     );
@@ -86,7 +86,7 @@ export class WebhookController {
 
       // Look up tenant_id from item_id for proper tenant isolation
       const tenantId = await lookupTenantFromPlaidItem(item_id);
-      
+
       if (!tenantId) {
         logger.warn(`Unable to determine tenant for Plaid item_id: ${item_id}`);
       }
@@ -129,11 +129,11 @@ export class WebhookController {
             logger.error({ tenantId, itemId: item_id, error: (request.body as any).error }, 'Plaid item error');
           }
           break;
-          
+
         case 'INCOME_VERIFICATION':
           logger.info({ tenantId, itemId: item_id, code: webhook_code }, 'Income verification webhook');
           break;
-          
+
         case 'ASSETS':
           logger.info({ tenantId, itemId: item_id, code: webhook_code }, 'Assets webhook');
           break;
@@ -168,7 +168,7 @@ export class WebhookController {
 
       // Extract customer/account ID and look up tenant_id
       const tenantId = await lookupTenantFromStripeEvent(payload);
-      
+
       if (!tenantId) {
         logger.warn('Unable to determine tenant from Stripe webhook event');
       }
@@ -182,26 +182,26 @@ export class WebhookController {
 
       // Process specific event types
       const eventType = payload?.type;
-      
+
       switch (eventType) {
         case 'payment_intent.succeeded':
           if (tenantId) {
             logger.info({ tenantId, paymentIntentId: payload?.data?.object?.id }, 'Payment succeeded');
           }
           break;
-          
+
         case 'payment_intent.payment_failed':
           if (tenantId) {
             logger.warn({ tenantId, paymentIntentId: payload?.data?.object?.id }, 'Payment failed');
           }
           break;
-          
+
         case 'account.updated':
           if (tenantId) {
-            logger.info({ tenantId, accountId: payload?.data?.object?.id }, 'Account updated');
+            logger.info({ tenantId, accountId: payload?.data?.object?.id }, 'Stripe account updated');
           }
           break;
-          
+
         case 'payout.paid':
         case 'payout.failed':
           if (tenantId) {
@@ -210,7 +210,7 @@ export class WebhookController {
           break;
       }
 
-      logger.info({ tenantId, eventType }, 'Stripe webhook processed successfully');
+      logger.info({ eventType, tenantId }, 'Stripe webhook processed successfully');
 
       return reply.send({ received: true });
     } catch (error: any) {
@@ -227,11 +227,9 @@ export class WebhookController {
       const events = request.body as any[]; // Array of events
 
       for (const event of events) {
-        logger.info(`📧 SendGrid event: ${event.event} for ${event.email}`);
-
         // Look up tenant from email for proper tenant isolation
         const tenantId = await lookupTenantFromEmail(event.email);
-        
+
         if (!tenantId) {
           logger.warn(`Unable to determine tenant for email: ${event.email}`);
         }
@@ -265,6 +263,7 @@ export class WebhookController {
               [event.event, event.email]
             );
           }
+          logger.info(`📧 SendGrid event: ${event.event} for ${event.email}`);
         }
 
         // Handle additional SendGrid events

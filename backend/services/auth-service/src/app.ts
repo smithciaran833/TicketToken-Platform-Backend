@@ -11,8 +11,8 @@ import { authRoutes } from './routes/auth.routes';
 import { internalRoutes } from './routes/internal.routes';
 import { env } from './config/env';
 import { setupHealthRoutes } from './services/monitoring.service';
-import { pool } from './config/database';
-import { getRedis } from './config/redis';
+import { pool, db } from './config/database';
+import { getRedis, closeRedisConnections } from './config/redis';
 import { correlationMiddleware } from './middleware/correlation.middleware';
 import { registerIdempotencyHooks } from './middleware/idempotency.middleware';
 import { registerLoadShedding } from './middleware/load-shedding.middleware';
@@ -33,8 +33,6 @@ export async function buildApp(): Promise<FastifyInstance> {
         }
       } : undefined
     },
-    // SEC-R13: Trust proxy for X-Forwarded-* headers
-    // In production, configure explicit trusted proxy IPs
     trustProxy: env.NODE_ENV === 'production'
       ? (process.env.TRUSTED_PROXIES?.split(',') || true)
       : true,
@@ -51,7 +49,6 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
 
-  // SEC-R13: HTTPS enforcement in production
   if (env.NODE_ENV === 'production') {
     app.addHook('onRequest', async (request, reply) => {
       const proto = request.headers['x-forwarded-proto'];
@@ -62,21 +59,14 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   }
 
-  // Register correlation ID middleware first
   await correlationMiddleware(app);
-
-  // Register idempotency hooks for state-changing operations
   registerIdempotencyHooks(app);
 
-  // Wrap request handling with correlation context
   app.addHook('preHandler', async (request) => {
     const correlationId = request.correlationId || request.id;
     return withCorrelation(correlationId, () => {});
   });
 
-  // ============================================
-  // M2: HTTP Metrics - Track all requests
-  // ============================================
   app.addHook('onRequest', async (request) => {
     (request as any).metricsStartTime = process.hrtime.bigint();
   });
@@ -96,11 +86,9 @@ export async function buildApp(): Promise<FastifyInstance> {
     }
   });
 
-  // DOC-API1, DOC-API2: OpenAPI/Swagger documentation
   await app.register(swagger, swaggerOptions);
   await app.register(swaggerUi, swaggerUiOptions);
 
-  // HC-F7: Under pressure - automatic load shedding (basic)
   await app.register(underPressure, {
     maxEventLoopDelay: 1000,
     maxHeapUsedBytes: 500 * 1024 * 1024,
@@ -133,23 +121,17 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
     healthCheckInterval: 5000,
     exposeStatusRoute: {
-      routeOpts: {
-        logLevel: 'warn',
-      },
-      routeSchemaOpts: {
-        hide: true,
-      },
+      routeOpts: { logLevel: 'warn' },
+      routeSchemaOpts: { hide: true },
       url: '/health/pressure',
     },
   });
 
-  // Register plugins
   await app.register(cors, {
     origin: true,
     credentials: true,
   });
 
-  // SEC-R14: HSTS header enabled
   await app.register(helmet, {
     contentSecurityPolicy: false,
     hsts: {
@@ -159,17 +141,18 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
 
-  // CSRF Protection
-  await app.register(csrf, {
-    cookieOpts: {
-      signed: true,
-      sameSite: 'strict',
-      httpOnly: true,
-      secure: env.NODE_ENV === 'production'
-    }
-  });
+  // CSRF Protection - disabled in test environment
+  if (env.NODE_ENV !== 'test') {
+    await app.register(csrf, {
+      cookieOpts: {
+        signed: true,
+        sameSite: 'strict',
+        httpOnly: true,
+        secure: env.NODE_ENV === 'production'
+      }
+    });
+  }
 
-  // SEC-R12: Global rate limiting with Redis store
   const redis = getRedis();
   await app.register(rateLimit, {
     global: true,
@@ -203,16 +186,11 @@ export async function buildApp(): Promise<FastifyInstance> {
     },
   });
 
-  // ============================================
-  // PRIORITY-BASED LOAD SHEDDING
-  // ============================================
   registerLoadShedding(app);
 
-  // Create and attach dependency container
   const container = createDependencyContainer();
   app.decorate('container', container);
 
-  // 404 Not Found handler (RFC 7807)
   app.setNotFoundHandler((request, reply) => {
     reply
       .status(404)
@@ -227,7 +205,6 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
   });
 
-  // Global error handler (RFC 7807)
   app.setErrorHandler((error: any, request, reply) => {
     request.log.error(error);
 
@@ -396,18 +373,40 @@ export async function buildApp(): Promise<FastifyInstance> {
       });
   });
 
-  // Setup health check routes
   await setupHealthRoutes(app);
 
-  // Register auth routes (public + authenticated user routes)
   await app.register(authRoutes, {
     prefix: '/auth',
     container
   });
 
-  // Register internal routes (S2S authenticated only)
   await app.register(internalRoutes, {
     prefix: '/auth/internal'
+  });
+
+  app.addHook('onClose', async () => {
+    logger.info('App closing, cleaning up connections...');
+
+    try {
+      await db.destroy();
+      logger.info('Knex connection closed');
+    } catch (err) {
+      logger.error('Error closing knex connection', { error: err });
+    }
+
+    try {
+      await pool.end();
+      logger.info('Database pool closed');
+    } catch (err) {
+      logger.error('Error closing database pool', { error: err });
+    }
+
+    try {
+      await closeRedisConnections();
+      logger.info('Redis connections closed');
+    } catch (err) {
+      logger.error('Error closing Redis connections', { error: err });
+    }
   });
 
   return app;

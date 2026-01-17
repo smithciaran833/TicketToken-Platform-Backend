@@ -2,22 +2,22 @@ import { Knex } from 'knex';
 
 /**
  * CONSOLIDATED BASELINE MIGRATION - venue-service
- * 
+ *
  * Created: 2026-01-13
  * Consolidates: 001, 003, 004, 005, 006, 007, 008, 009, 010, 011
- * 
- * Tables (27):
+ *
+ * Tables (26):
  *   Core: venues, venue_staff, venue_settings, venue_integrations, venue_layouts,
  *         venue_branding, custom_domains, white_label_pricing, venue_tier_history,
- *         venue_audit_log, api_keys, user_venue_roles
+ *         venue_audit_log, api_keys
  *   Verification: external_verifications, manual_review_queue, venue_compliance,
  *                 venue_compliance_reviews, venue_compliance_reports, venue_documents
  *   Notifications: notifications, email_queue
- *   Webhooks: webhook_events
+ *   Webhooks: venue_webhook_events
  *   Operations: venue_operations, transfer_history, resale_policies, seller_verifications,
  *               resale_blocks, fraud_logs
- * 
- * RLS Enabled: 25 tables (all except white_label_pricing, email_queue)
+ *
+ * RLS Enabled: 24 tables (all except white_label_pricing, email_queue)
  */
 
 export async function up(knex: Knex): Promise<void> {
@@ -576,30 +576,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_api_keys_is_active ON api_keys(is_active)');
 
   // ==========================================================================
-  // TABLE 12: user_venue_roles (conditional)
-  // ==========================================================================
-  const userVenueRolesExists = await knex.schema.hasTable('user_venue_roles');
-  if (!userVenueRolesExists) {
-    await knex.schema.createTable('user_venue_roles', (table) => {
-      table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
-      table.uuid('user_id').notNullable();
-      table.uuid('venue_id').notNullable().references('id').inTable('venues').onDelete('CASCADE');
-      table.uuid('tenant_id');
-      table.string('role', 50).notNullable();
-      table.specificType('permissions', 'TEXT[]').defaultTo('{}');
-      table.boolean('is_active').defaultTo(true);
-      table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
-      table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
-    });
-
-    await knex.raw('CREATE INDEX idx_user_venue_roles_user_id ON user_venue_roles(user_id)');
-    await knex.raw('CREATE INDEX idx_user_venue_roles_venue_id ON user_venue_roles(venue_id)');
-    await knex.raw('CREATE INDEX idx_user_venue_roles_tenant_id ON user_venue_roles(tenant_id)');
-    await knex.raw('CREATE UNIQUE INDEX idx_user_venue_roles_unique ON user_venue_roles(user_id, venue_id)');
-  }
-
-  // ==========================================================================
-  // TABLE 13: external_verifications
+  // TABLE 12: external_verifications
   // ==========================================================================
   await knex.schema.createTable('external_verifications', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -622,7 +599,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_external_verifications_created_at ON external_verifications(created_at)');
 
   // ==========================================================================
-  // TABLE 14: manual_review_queue
+  // TABLE 13: manual_review_queue
   // ==========================================================================
   await knex.schema.createTable('manual_review_queue', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -647,7 +624,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_manual_review_queue_created_at ON manual_review_queue(created_at)');
 
   // ==========================================================================
-  // TABLE 15: notifications
+  // TABLE 14: notifications
   // ==========================================================================
   await knex.schema.createTable('notifications', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -671,7 +648,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_notifications_created_at ON notifications(created_at)');
 
   // ==========================================================================
-  // TABLE 16: email_queue (GLOBAL - no tenant_id)
+  // TABLE 15: email_queue (GLOBAL - no tenant_id)
   // ==========================================================================
   await knex.schema.createTable('email_queue', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -692,7 +669,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_email_queue_created_at ON email_queue(created_at)');
 
   // ==========================================================================
-  // TABLE 17: venue_compliance_reviews
+  // TABLE 16: venue_compliance_reviews
   // ==========================================================================
   await knex.schema.createTable('venue_compliance_reviews', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -714,7 +691,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_venue_compliance_reviews_reviewer_id ON venue_compliance_reviews(reviewer_id)');
 
   // ==========================================================================
-  // TABLE 18: venue_compliance
+  // TABLE 17: venue_compliance
   // ==========================================================================
   const hasComplianceTable = await knex.schema.hasTable('venue_compliance');
   if (!hasComplianceTable) {
@@ -732,7 +709,7 @@ export async function up(knex: Knex): Promise<void> {
   }
 
   // ==========================================================================
-  // TABLE 19: venue_compliance_reports
+  // TABLE 18: venue_compliance_reports
   // ==========================================================================
   const hasReportsTable = await knex.schema.hasTable('venue_compliance_reports');
   if (!hasReportsTable) {
@@ -749,7 +726,7 @@ export async function up(knex: Knex): Promise<void> {
   }
 
   // ==========================================================================
-  // TABLE 20: venue_documents
+  // TABLE 19: venue_documents
   // ==========================================================================
   const hasDocumentsTable = await knex.schema.hasTable('venue_documents');
   if (!hasDocumentsTable) {
@@ -781,9 +758,9 @@ export async function up(knex: Knex): Promise<void> {
   }
 
   // ==========================================================================
-  // TABLE 21: webhook_events
+  // TABLE 20: venue_webhook_events
   // ==========================================================================
-  await knex.schema.createTable('webhook_events', (table) => {
+  await knex.schema.createTable('venue_webhook_events', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.string('event_id', 255).unique().notNullable();
     table.string('event_type', 100).notNullable();
@@ -806,22 +783,22 @@ export async function up(knex: Knex): Promise<void> {
     table.timestamp('lock_expires_at', { useTz: true });
   });
 
-  await knex.raw('CREATE INDEX idx_webhook_events_event_id ON webhook_events(event_id)');
-  await knex.raw('CREATE INDEX idx_webhook_events_event_type_processed ON webhook_events(event_type, processed_at)');
-  await knex.raw('CREATE INDEX idx_webhook_events_tenant_id ON webhook_events(tenant_id)');
-  await knex.raw('CREATE INDEX idx_webhook_events_status ON webhook_events(status)');
-  await knex.raw('CREATE INDEX idx_webhook_events_status_created ON webhook_events(status, processed_at)');
-  await knex.raw('CREATE INDEX idx_webhook_events_retry ON webhook_events(status, retry_count, last_retry_at)');
-  await knex.raw('CREATE INDEX idx_webhook_events_lock ON webhook_events(lock_key, lock_expires_at)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_event_id ON venue_webhook_events(event_id)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_event_type_processed ON venue_webhook_events(event_type, processed_at)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_tenant_id ON venue_webhook_events(tenant_id)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_status ON venue_webhook_events(status)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_status_created ON venue_webhook_events(status, processed_at)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_retry ON venue_webhook_events(status, retry_count, last_retry_at)');
+  await knex.raw('CREATE INDEX idx_venue_webhook_events_lock ON venue_webhook_events(lock_key, lock_expires_at)');
 
   await knex.raw(`
-    ALTER TABLE webhook_events
-    ADD CONSTRAINT webhook_events_status_check
+    ALTER TABLE venue_webhook_events
+    ADD CONSTRAINT venue_webhook_events_status_check
     CHECK (status IN ('pending', 'processing', 'completed', 'failed', 'retrying'))
   `);
 
   // ==========================================================================
-  // TABLE 22: venue_operations
+  // TABLE 21: venue_operations
   // ==========================================================================
   await knex.schema.createTable('venue_operations', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -853,7 +830,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // ==========================================================================
-  // TABLE 23: transfer_history
+  // TABLE 22: transfer_history
   // ==========================================================================
   await knex.schema.createTable('transfer_history', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -889,7 +866,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // ==========================================================================
-  // TABLE 24: resale_policies
+  // TABLE 23: resale_policies
   // ==========================================================================
   await knex.schema.createTable('resale_policies', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -922,7 +899,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE UNIQUE INDEX idx_resale_policies_unique ON resale_policies(venue_id, event_id, jurisdiction)');
 
   // ==========================================================================
-  // TABLE 25: seller_verifications
+  // TABLE 24: seller_verifications
   // ==========================================================================
   await knex.schema.createTable('seller_verifications', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -954,7 +931,7 @@ export async function up(knex: Knex): Promise<void> {
   `);
 
   // ==========================================================================
-  // TABLE 26: resale_blocks
+  // TABLE 25: resale_blocks
   // ==========================================================================
   await knex.schema.createTable('resale_blocks', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -973,7 +950,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_resale_blocks_expires ON resale_blocks(expires_at) WHERE active = true AND expires_at IS NOT NULL');
 
   // ==========================================================================
-  // TABLE 27: fraud_logs
+  // TABLE 26: fraud_logs
   // ==========================================================================
   await knex.schema.createTable('fraud_logs', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
@@ -1029,12 +1006,6 @@ export async function up(knex: Knex): Promise<void> {
     table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
   });
 
-  if (!userVenueRolesExists) {
-    await knex.schema.alterTable('user_venue_roles', (table) => {
-      table.foreign('user_id').references('id').inTable('users').onDelete('CASCADE');
-    });
-  }
-
   await knex.schema.alterTable('manual_review_queue', (table) => {
     table.foreign('assigned_to').references('id').inTable('users').onDelete('SET NULL');
   });
@@ -1053,7 +1024,7 @@ export async function up(knex: Knex): Promise<void> {
     });
   }
 
-  await knex.schema.alterTable('webhook_events', (table) => {
+  await knex.schema.alterTable('venue_webhook_events', (table) => {
     table.foreign('tenant_id').references('id').inTable('tenants').onDelete('SET NULL');
   });
 
@@ -1080,15 +1051,6 @@ export async function up(knex: Knex): Promise<void> {
     await knex.raw(`
       CREATE TRIGGER trigger_update_${tableName}_timestamp
       BEFORE UPDATE ON ${tableName}
-      FOR EACH ROW
-      EXECUTE FUNCTION update_updated_at_column();
-    `);
-  }
-
-  if (!userVenueRolesExists) {
-    await knex.raw(`
-      CREATE TRIGGER trigger_update_user_venue_roles_timestamp
-      BEFORE UPDATE ON user_venue_roles
       FOR EACH ROW
       EXECUTE FUNCTION update_updated_at_column();
     `);
@@ -1191,7 +1153,7 @@ export async function up(knex: Knex): Promise<void> {
     'manual_review_queue',
     'notifications',
     'venue_compliance_reviews',
-    'webhook_events',
+    'venue_webhook_events',
     'venue_operations',
     'transfer_history',
     'resale_policies',
@@ -1205,9 +1167,6 @@ export async function up(knex: Knex): Promise<void> {
   }
 
   // Conditional tables
-  if (!userVenueRolesExists) {
-    await setupTableRLS('user_venue_roles');
-  }
   if (!hasComplianceTable) {
     await setupTableRLS('venue_compliance');
   }
@@ -1260,8 +1219,8 @@ export async function up(knex: Knex): Promise<void> {
   console.log('Row Level Security enabled on all tenant tables.');
   console.log('');
   console.log('✅ Venue Service consolidated baseline migration complete');
-  console.log('   - 27 tables created');
-  console.log('   - 25 tables with RLS');
+  console.log('   - 26 tables created');
+  console.log('   - 24 tables with RLS');
   console.log('   - 2 global tables (white_label_pricing, email_queue)');
 }
 
@@ -1276,7 +1235,7 @@ export async function down(knex: Knex): Promise<void> {
     'resale_policies',
     'transfer_history',
     'venue_operations',
-    'webhook_events',
+    'venue_webhook_events',
     'venue_documents',
     'venue_compliance_reports',
     'venue_compliance',
@@ -1284,7 +1243,6 @@ export async function down(knex: Knex): Promise<void> {
     'notifications',
     'manual_review_queue',
     'external_verifications',
-    'user_venue_roles',
     'api_keys',
     'venue_audit_log',
     'venue_tier_history',
@@ -1321,7 +1279,6 @@ export async function down(knex: Knex): Promise<void> {
   // Drop triggers
   await knex.raw('DROP TRIGGER IF EXISTS audit_venue_compliance_changes ON venue_compliance');
   await knex.raw('DROP TRIGGER IF EXISTS audit_venues_changes ON venues');
-  await knex.raw('DROP TRIGGER IF EXISTS trigger_update_user_venue_roles_timestamp ON user_venue_roles');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_update_api_keys_timestamp ON api_keys');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_update_white_label_pricing_timestamp ON white_label_pricing');
   await knex.raw('DROP TRIGGER IF EXISTS trigger_update_custom_domains_timestamp ON custom_domains');

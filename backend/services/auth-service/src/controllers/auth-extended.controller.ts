@@ -24,7 +24,7 @@ export class AuthExtendedController {
           error: 'Too many password reset requests. Please try again later.'
         });
       }
-      
+
       // For all other errors, return generic message to prevent enumeration
       return reply.status(200).send({
         message: 'If an account exists with this email, you will receive password reset instructions.'
@@ -58,7 +58,7 @@ export class AuthExtendedController {
           error: error.errors?.[0] || error.message || 'Invalid or expired reset token'
         });
       }
-      
+
       // If we reach here, it's an unexpected error - already logged above
       return reply.status(500).send({
         error: 'Failed to reset password'
@@ -88,7 +88,7 @@ export class AuthExtendedController {
           error: error.errors?.[0] || error.message || 'Invalid or expired verification token'
         });
       }
-      
+
       console.error('Email verification error:', error);
       return reply.status(500).send({
         error: 'Failed to verify email'
@@ -111,10 +111,10 @@ export class AuthExtendedController {
       // Handle validation errors (rate limit, already verified)
       if (error instanceof ValidationError || error.message?.includes('already verified') || error.message?.includes('Too many')) {
         return reply.status(400).send({
-          error: error.message || 'Unable to resend verification email'
+          error: error.errors?.[0] || error.message || 'Unable to resend verification email'
         });
       }
-      
+
       console.error('Resend verification error:', error);
       return reply.status(500).send({
         error: 'Failed to send verification email'
@@ -146,14 +146,14 @@ export class AuthExtendedController {
           error: error.message || 'Current password is incorrect'
         });
       }
-      
+
       // Handle validation errors (weak password, same password)
       if (error instanceof ValidationError || error.message?.includes('must') || error.message?.includes('different')) {
         return reply.status(400).send({
-          error: error.message || 'Invalid password'
+          error: error.errors?.[0] || error.message || 'Invalid password'
         });
       }
-      
+
       console.error('Change password error:', error);
       return reply.status(500).send({
         error: 'Failed to change password'

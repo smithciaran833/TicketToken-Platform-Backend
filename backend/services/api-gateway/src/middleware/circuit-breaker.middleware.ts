@@ -186,7 +186,7 @@ function monitorCircuitBreakers(server: FastifyInstance) {
         timeouts: stats.timeouts,
       };
     }
-    
+
     const logger = createRequestLogger('circuit-breaker');
     logger.info({ metrics }, 'Circuit breaker metrics');
   }, 60000); // Log every minute
@@ -194,4 +194,9 @@ function monitorCircuitBreakers(server: FastifyInstance) {
 
 export function getCircuitBreaker(serviceName: string): CircuitBreaker | undefined {
   return circuitBreakers.get(serviceName);
+}
+
+// Export for testing purposes
+export function clearCircuitBreakers(): void {
+  circuitBreakers.clear();
 }

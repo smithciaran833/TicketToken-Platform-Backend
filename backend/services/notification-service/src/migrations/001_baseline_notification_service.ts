@@ -235,7 +235,7 @@ export async function up(knex: Knex): Promise<void> {
   // ---------------------------------------------------------------------------
   // webhook_events - Provider webhook deduplication
   // ---------------------------------------------------------------------------
-  await knex.schema.createTable('webhook_events', (table) => {
+  await knex.schema.createTable('notification_webhook_events', (table) => {
     table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
     table.string('provider', 50).notNullable();
     table.string('event_id', 255).notNullable();
@@ -247,8 +247,8 @@ export async function up(knex: Knex): Promise<void> {
     table.unique(['provider', 'event_id']);
   });
 
-  await knex.raw('CREATE INDEX idx_webhook_events_provider_event_id ON webhook_events(provider, event_id)');
-  await knex.raw('CREATE INDEX idx_webhook_events_created_at ON webhook_events(created_at)');
+  await knex.raw('CREATE INDEX idx_webhook_events_provider_event_id ON notification_webhook_events(provider, event_id)');
+  await knex.raw('CREATE INDEX idx_webhook_events_created_at ON notification_webhook_events(created_at)');
 
   // ============================================================================
   // TENANT-SCOPED TABLES (28) - All have tenant_id + RLS
@@ -1061,7 +1061,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw(`COMMENT ON TABLE suppression_list IS 'GLOBAL: Platform-wide email/phone blocklist'`);
   await knex.raw(`COMMENT ON TABLE notification_delivery_stats IS 'GLOBAL: Platform aggregate delivery stats'`);
   await knex.raw(`COMMENT ON TABLE notification_analytics IS 'GLOBAL: Platform hourly analytics'`);
-  await knex.raw(`COMMENT ON TABLE webhook_events IS 'GLOBAL: Provider webhook deduplication'`);
+  await knex.raw(`COMMENT ON TABLE notification_webhook_events IS 'GLOBAL: Provider webhook deduplication'`);
 }
 
 export async function down(knex: Knex): Promise<void> {

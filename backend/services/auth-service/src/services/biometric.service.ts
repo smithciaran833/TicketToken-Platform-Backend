@@ -121,11 +121,17 @@ export class BiometricService {
 
   /**
    * List registered biometric devices for a user
+   * Returns fields matching BiometricDevicesResponseSchema
    */
   async listBiometricDevices(userId: string, tenantId: string): Promise<any[]> {
     const devices = await db('biometric_credentials')
       .where({ user_id: userId, tenant_id: tenantId })
-      .select('id', 'device_id', 'credential_type', 'created_at');
+      .select(
+        'id as credentialId',
+        'device_id as deviceId',
+        'credential_type as biometricType',
+        'created_at as createdAt'
+      );
 
     return devices;
   }

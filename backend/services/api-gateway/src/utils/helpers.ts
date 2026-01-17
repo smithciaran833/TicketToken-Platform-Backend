@@ -44,21 +44,24 @@ export function chunk<T>(array: T[], size: number): T[][] {
 // Deep merge objects
 export function deepMerge(target: any, source: any): any {
   const output = { ...target };
-  
+
   if (isObject(target) && isObject(source)) {
     Object.keys(source).forEach(key => {
       if (isObject(source[key])) {
         if (!(key in target)) {
           Object.assign(output, { [key]: source[key] });
-        } else {
+        } else if (isObject(target[key])) {
           output[key] = deepMerge(target[key], source[key]);
+        } else {
+          // Target value is not an object, but source value is - overwrite with source
+          output[key] = source[key];
         }
       } else {
         Object.assign(output, { [key]: source[key] });
       }
     });
   }
-  
+
   return output;
 }
 
@@ -71,7 +74,7 @@ export function maskSensitiveData(value: string, visibleChars: number = 4): stri
   if (value.length <= visibleChars) {
     return '*'.repeat(value.length);
   }
-  
+
   const visible = value.slice(-visibleChars);
   const masked = '*'.repeat(value.length - visibleChars);
   return masked + visible;
@@ -80,12 +83,12 @@ export function maskSensitiveData(value: string, visibleChars: number = 4): stri
 // Format bytes to human readable
 export function formatBytes(bytes: number, decimals: number = 2): string {
   if (bytes === 0) return '0 Bytes';
-  
+
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  
+
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
+
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }

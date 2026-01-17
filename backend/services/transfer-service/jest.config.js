@@ -1,26 +1,23 @@
 /**
  * Jest Configuration for Transfer Service
- * 
+ *
  * AUDIT FIXES:
  * - TST-H1: No jest.config.js → Created configuration
  * - TST-H2: No coverage thresholds → Added coverage requirements
- * 
+ *
  * Features:
  * - TypeScript support with ts-jest
  * - Coverage thresholds for CI/CD
  * - Module path aliases
  * - Test environment configuration
  */
-
 /** @type {import('jest').Config} */
 module.exports = {
   // Use ts-jest for TypeScript
   preset: 'ts-jest',
   testEnvironment: 'node',
-  
   // Root directory
   rootDir: '.',
-  
   // Test file patterns
   testMatch: [
     '<rootDir>/tests/**/*.test.ts',
@@ -28,17 +25,14 @@ module.exports = {
     '<rootDir>/src/**/*.test.ts',
     '<rootDir>/src/**/*.spec.ts'
   ],
-  
   // Ignore patterns
   testPathIgnorePatterns: [
     '/node_modules/',
     '/dist/',
     '/coverage/'
   ],
-  
   // Module file extensions
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-  
   // Module name mapper for path aliases
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
@@ -48,16 +42,13 @@ module.exports = {
     '^@utils/(.*)$': '<rootDir>/src/utils/$1',
     '^@errors/(.*)$': '<rootDir>/src/errors/$1'
   },
-  
   // Setup files
   setupFilesAfterEnv: [
     '<rootDir>/tests/setup.ts'
   ],
-  
   // Global setup/teardown
   globalSetup: '<rootDir>/tests/global-setup.ts',
   globalTeardown: '<rootDir>/tests/global-teardown.ts',
-  
   // Coverage configuration
   collectCoverage: false, // Enable via --coverage flag
   collectCoverageFrom: [
@@ -68,10 +59,8 @@ module.exports = {
     '!src/index.ts',
     '!src/types/**/*'
   ],
-  
   // Coverage directory
   coverageDirectory: '<rootDir>/coverage',
-  
   // Coverage reporters
   coverageReporters: [
     'text',
@@ -80,7 +69,6 @@ module.exports = {
     'html',
     'json-summary'
   ],
-  
   // AUDIT FIX TST-H2: Coverage thresholds
   coverageThreshold: {
     global: {
@@ -109,31 +97,22 @@ module.exports = {
       statements: 85
     }
   },
-  
   // Verbose output
   verbose: true,
-  
   // Fail on console errors
   errorOnDeprecated: true,
-  
   // Clear mocks between tests
   clearMocks: true,
-  
   // Restore mocks automatically
   restoreMocks: true,
-  
   // Test timeout (30 seconds for integration tests)
   testTimeout: 30000,
-  
   // Force exit after tests complete
   forceExit: true,
-  
   // Detect open handles
   detectOpenHandles: true,
-  
   // Max workers
   maxWorkers: '50%',
-  
   // Transform configuration
   transform: {
     '^.+\\.tsx?$': ['ts-jest', {
@@ -141,7 +120,6 @@ module.exports = {
       isolatedModules: true
     }]
   },
-  
   // Test result processors
   reporters: [
     'default',
@@ -154,10 +132,8 @@ module.exports = {
       usePathForSuiteName: true
     }]
   ],
-  
   // Test sequencer for better parallelization
-  testSequencer: require.resolve('jest-test-sequencer-parallel'),
-  
+  // testSequencer: require.resolve('jest-test-sequencer-parallel'),
   // Globals
   globals: {
     'ts-jest': {

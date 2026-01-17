@@ -1,8 +1,8 @@
 /**
  * Bulkhead Pattern Middleware for Compliance Service
- * 
+ *
  * AUDIT FIX: GD-M2 - Implement bulkhead pattern for resource isolation
- * 
+ *
  * Bulkhead pattern isolates failures and prevents cascading failures
  * by limiting concurrent operations per resource type.
  */
@@ -103,20 +103,20 @@ function initBulkhead(name: string): BulkheadState {
  */
 async function acquireSlot(config: BulkheadConfig): Promise<void> {
   const state = initBulkhead(config.name);
-  
+
   // If under limit, acquire immediately
   if (state.active < config.maxConcurrent) {
     state.active++;
     updateMetrics(config.name, state);
     return;
   }
-  
+
   // Check queue limit
   if (state.queued.length >= config.maxQueued) {
     incrementMetric('bulkhead_rejected_total', { bulkhead: config.name });
     throw new BulkheadFullError(config.name);
   }
-  
+
   // Wait in queue
   return new Promise<void>((resolve, reject) => {
     const timeout = setTimeout(() => {
@@ -127,7 +127,7 @@ async function acquireSlot(config: BulkheadConfig): Promise<void> {
         reject(new BulkheadTimeoutError(config.name));
       }
     }, config.queueTimeout);
-    
+
     state.queued.push({ resolve, reject, timeout });
     updateMetrics(config.name, state);
   });
@@ -139,9 +139,9 @@ async function acquireSlot(config: BulkheadConfig): Promise<void> {
 function releaseSlot(config: BulkheadConfig): void {
   const state = bulkheads.get(config.name);
   if (!state) return;
-  
+
   state.active--;
-  
+
   // Process queued request if any
   if (state.queued.length > 0) {
     const next = state.queued.shift()!;
@@ -149,7 +149,7 @@ function releaseSlot(config: BulkheadConfig): void {
     state.active++;
     next.resolve();
   }
-  
+
   updateMetrics(config.name, state);
 }
 
@@ -168,7 +168,7 @@ function updateMetrics(name: string, state: BulkheadState): void {
 export class BulkheadFullError extends Error {
   readonly code = 'BULKHEAD_FULL';
   readonly statusCode = 503;
-  
+
   constructor(bulkheadName: string) {
     super(`Bulkhead '${bulkheadName}' is full - too many concurrent requests`);
     this.name = 'BulkheadFullError';
@@ -178,7 +178,7 @@ export class BulkheadFullError extends Error {
 export class BulkheadTimeoutError extends Error {
   readonly code = 'BULKHEAD_TIMEOUT';
   readonly statusCode = 503;
-  
+
   constructor(bulkheadName: string) {
     super(`Bulkhead '${bulkheadName}' queue timeout - request waited too long`);
     this.name = 'BulkheadTimeoutError';
@@ -198,18 +198,18 @@ export function createBulkheadMiddleware(
   const config = typeof configOrName === 'string'
     ? DEFAULT_CONFIGS[configOrName] || DEFAULT_CONFIGS.default
     : configOrName;
-  
+
   return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
     const startTime = Date.now();
-    
+
     try {
       await acquireSlot(config);
-      
+
       // Store release function for onResponse hook
       (request as any).bulkheadConfig = config;
-      
+
       incrementMetric('bulkhead_acquired_total', { bulkhead: config.name });
-      
+
       const waitTime = Date.now() - startTime;
       if (waitTime > 100) {
         logger.debug({
@@ -217,7 +217,7 @@ export function createBulkheadMiddleware(
           waitTimeMs: waitTime
         }, 'Bulkhead slot acquired after waiting');
       }
-      
+
     } catch (error) {
       if (error instanceof BulkheadFullError || error instanceof BulkheadTimeoutError) {
         logger.warn({
@@ -225,7 +225,7 @@ export function createBulkheadMiddleware(
           error: error.message,
           requestId: request.id
         }, 'Bulkhead rejected request');
-        
+
         reply.code(503).send({
           type: 'urn:error:compliance-service:service-unavailable',
           title: 'Service Unavailable',
@@ -266,9 +266,12 @@ export async function withBulkhead<T>(
   const config = typeof configOrName === 'string'
     ? DEFAULT_CONFIGS[configOrName] || DEFAULT_CONFIGS.default
     : configOrName;
-  
+
   await acquireSlot(config);
   
+  // Track acquisition in metrics (same as middleware)
+  incrementMetric('bulkhead_acquired_total', { bulkhead: config.name });
+
   try {
     return await fn();
   } finally {
@@ -286,7 +289,7 @@ export function getBulkheadStatus(): Record<string, {
   maxQueued: number;
 }> {
   const status: Record<string, any> = {};
-  
+
   for (const [name, config] of Object.entries(DEFAULT_CONFIGS)) {
     const state = bulkheads.get(name);
     status[name] = {
@@ -296,7 +299,7 @@ export function getBulkheadStatus(): Record<string, {
       maxQueued: config.maxQueued
     };
   }
-  
+
   return status;
 }
 

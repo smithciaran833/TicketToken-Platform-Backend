@@ -63,6 +63,10 @@ export function getSub(): Redis {
 export async function closeRedisConnections(): Promise<void> {
   const connectionManager = getConnectionManager();
   await connectionManager.disconnect();
+  // Reset client variables so getters throw after closing
+  redis = undefined as any;
+  redisPub = undefined as any;
+  redisSub = undefined as any;
   initialized = false;
   console.log('API Gateway Redis connections closed');
 }

@@ -39,11 +39,14 @@ export class DocumentController {
       const venueId = (fields.venueId as any)?.value;
       const documentType = (fields.documentType as any)?.value;
 
+      // Use filename as-is, including empty string if that's what we received
+      const filename = data.filename;
+
       const documentId = await documentService.storeDocument(
         venueId,
         documentType,
         buffer,
-        data.filename,
+        filename,
         tenantId
       );
 
@@ -72,14 +75,14 @@ export class DocumentController {
     try {
       const tenantId = requireTenantId(request);
       const { documentId } = request.params as any;
-      
+
       const doc = await documentService.getDocument(documentId, tenantId);
 
       logger.info(`Document retrieved for tenant ${tenantId}, documentId: ${documentId}`);
 
       reply.header('Content-Type', doc.contentType);
       reply.header('Content-Disposition', `attachment; filename="${doc.filename}"`);
-      
+
       return reply.send(doc.buffer);
     } catch (error: any) {
       logger.error(`Error retrieving document: ${error.message}`);

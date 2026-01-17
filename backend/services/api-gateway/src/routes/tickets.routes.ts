@@ -7,14 +7,14 @@ import { generateInternalAuthHeaders } from '../utils/internal-auth';
 // Validate idempotency key format
 function validateIdempotencyKey(request: FastifyRequest, reply: FastifyReply): boolean {
   const idempotencyKey = request.headers['idempotency-key'] as string | undefined;
-  
-  if (!idempotencyKey) {
+
+  if (idempotencyKey === undefined) {
     return true; // Optional header
   }
 
   // Must be 1-128 characters, alphanumeric with dashes/underscores
   const validFormat = /^[a-zA-Z0-9_-]{1,128}$/.test(idempotencyKey);
-  
+
   if (!validFormat) {
     reply.code(400).send({
       error: 'Invalid idempotency key',

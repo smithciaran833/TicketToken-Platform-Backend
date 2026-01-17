@@ -292,18 +292,19 @@ export const loggerWithMetrics = {
 
 /**
  * Sanitize an object for logging (manual redaction)
+ * Note: All keys are lowercase to match the toLowerCase() check
  */
 export function sanitizeForLogging<T extends object>(obj: T): T {
   const sensitiveKeys = new Set([
     'password',
     'token',
     'authorization',
-    'apiKey',
+    'apikey',
     'secret',
-    'privateKey',
+    'privatekey',
     'ssn',
-    'creditCard',
-    'cardNumber',
+    'creditcard',
+    'cardnumber',
     'cvv',
   ]);
 

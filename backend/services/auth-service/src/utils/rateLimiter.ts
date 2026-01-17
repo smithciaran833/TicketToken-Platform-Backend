@@ -76,7 +76,8 @@ export class RateLimiter {
 
 // Login - 5 attempts per 15 minutes
 export const loginRateLimiter = new RateLimiter('login', {
-  points: 5,
+  points: 10,
+  
   duration: 900,
   blockDuration: 900
 });
@@ -97,7 +98,7 @@ export const passwordResetRateLimiter = new RateLimiter('password-reset', {
 
 // OTP/MFA verification - strict: 5 attempts per 5 minutes
 export const otpRateLimiter = new RateLimiter('otp-verify', {
-  points: 5,
+  
   duration: 300,
   blockDuration: 900
 });

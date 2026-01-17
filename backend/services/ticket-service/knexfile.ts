@@ -4,7 +4,6 @@ import * as pg from 'pg';
 
 dotenv.config();
 
-// Parse decimal/numeric types as floats instead of strings
 pg.types.setTypeParser(1700, parseFloat);
 
 const config: { [key: string]: Knex.Config } = {
@@ -17,19 +16,29 @@ const config: { [key: string]: Knex.Config } = {
       user: process.env.DB_USER || 'postgres',
       password: process.env.DB_PASSWORD || 'postgres',
     },
-    pool: {
-      min: 2,
-      max: 10
-    },
+    pool: { min: 2, max: 10 },
     migrations: {
       tableName: 'knex_migrations_ticket',
       directory: './src/migrations'
     },
-    seeds: {
-      directory: './src/seeds'
-    }
+    seeds: { directory: './src/seeds' }
   },
-
+  test: {
+    client: 'postgresql',
+    connection: {
+      host: process.env.TEST_DB_HOST || 'localhost',
+      port: parseInt(process.env.TEST_DB_PORT || '5432'),
+      database: process.env.TEST_DB_NAME || 'tickettoken_test',
+      user: process.env.TEST_DB_USER || 'postgres',
+      password: process.env.TEST_DB_PASSWORD || 'postgres',
+    },
+    pool: { min: 2, max: 10 },
+    migrations: {
+      tableName: 'knex_migrations_ticket',
+      directory: './src/migrations'
+    },
+    seeds: { directory: './src/seeds' }
+  },
   production: {
     client: 'postgresql',
     connection: {
@@ -40,10 +49,7 @@ const config: { [key: string]: Knex.Config } = {
       password: process.env.DB_PASSWORD,
       ssl: { rejectUnauthorized: false }
     },
-    pool: {
-      min: 2,
-      max: 10
-    },
+    pool: { min: 2, max: 10 },
     migrations: {
       tableName: 'knex_migrations_ticket',
       directory: './src/migrations'

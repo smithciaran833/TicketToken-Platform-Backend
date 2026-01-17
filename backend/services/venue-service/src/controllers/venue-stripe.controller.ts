@@ -11,20 +11,20 @@ const stripe = createStripeClient();
 // SECURITY FIX (WH2-WH3): Webhook deduplication helper
 async function isWebhookProcessed(eventId: string): Promise<boolean> {
   try {
-    const existing = await db('webhook_events')
+    const existing = await db('venue_webhook_events')
       .where('event_id', eventId)
       .first();
     return !!existing;
   } catch (error) {
     // Table might not exist yet, allow processing
-    log.warn('webhook_events table check failed, allowing processing', { eventId });
+    log.warn('venue_webhook_events table check failed, allowing processing', { eventId });
     return false;
   }
 }
 
 async function markWebhookProcessed(eventId: string, eventType: string, tenantId?: string): Promise<void> {
   try {
-    await db('webhook_events').insert({
+    await db('venue_webhook_events').insert({
       event_id: eventId,
       event_type: eventType,
       tenant_id: tenantId || null,

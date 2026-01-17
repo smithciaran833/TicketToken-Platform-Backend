@@ -131,12 +131,13 @@ export class RBACService {
       .first();
 
     if (existing) {
-      // Update expiration if needed
-      if (expiresAt) {
-        await db('user_venue_roles')
-          .where('id', existing.id)
-          .update({ expires_at: expiresAt });
-      }
+      // Update expiration and granted_at when re-granting
+      await db('user_venue_roles')
+        .where('id', existing.id)
+        .update({
+          expires_at: expiresAt || null,
+          granted_at: db.fn.now(),
+        });
       return;
     }
 
@@ -147,7 +148,9 @@ export class RBACService {
       venue_id: venueId,
       role: role,
       granted_by: grantedBy,
-      expires_at: expiresAt,
+      granted_at: db.fn.now(),
+      expires_at: expiresAt || null,
+      is_active: true,
     });
   }
 
@@ -190,7 +193,7 @@ export class RBACService {
   }
 
   async getVenueRoles(venueId: string): Promise<any[]> {
-    return db('user_venue_roles')
+    const roles = await db('user_venue_roles')
       .where({
         venue_id: venueId,
         is_active: true,
@@ -198,6 +201,16 @@ export class RBACService {
       .where(function() {
         this.where('expires_at', '>', new Date()).orWhereNull('expires_at');
       })
-      .select('user_id', 'role', 'granted_at', 'expires_at');
+      .select('user_id', 'role', 'granted_at', 'expires_at', 'is_active', 'created_at');
+    
+    // Transform to camelCase for API response
+    return roles.map(role => ({
+      user_id: role.user_id,
+      role: role.role,
+      is_active: role.is_active,
+      created_at: role.created_at,
+      granted_at: role.granted_at,
+      expires_at: role.expires_at,
+    }));
   }
 }

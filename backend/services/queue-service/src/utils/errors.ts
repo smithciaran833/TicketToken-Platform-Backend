@@ -13,11 +13,13 @@ export class AppError extends Error {
 export class ValidationError extends AppError {
   constructor(message: string) {
     super(message, 400);
+    Object.setPrototypeOf(this, ValidationError.prototype);
   }
 }
 
 export class NotFoundError extends AppError {
   constructor(message: string) {
     super(message, 404);
+    Object.setPrototypeOf(this, NotFoundError.prototype);
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Response Filter for Compliance Service
- * 
+ *
  * Filters sensitive data from API responses to prevent
  * accidental exposure of PII, credentials, and internal data.
  */
@@ -19,7 +19,7 @@ const SENSITIVE_FIELDS = new Set([
   'tax_id',
   'socialSecurityNumber',
   'social_security_number',
-  
+
   // Bank Information
   'accountNumber',
   'account_number',
@@ -30,14 +30,14 @@ const SENSITIVE_FIELDS = new Set([
   'iban',
   'swiftCode',
   'swift_code',
-  
+
   // Personal Information
   'dateOfBirth',
   'date_of_birth',
   'dob',
   'driversLicense',
   'drivers_license',
-  
+
   // Credentials
   'password',
   'secret',
@@ -49,7 +49,7 @@ const SENSITIVE_FIELDS = new Set([
   'refresh_token',
   'privateKey',
   'private_key',
-  
+
   // Internal
   'internalId',
   'internal_id',
@@ -61,7 +61,7 @@ const SENSITIVE_FIELDS = new Set([
 
 // Fields that should be partially redacted
 const PARTIAL_REDACT_FIELDS: Record<string, (value: string) => string> = {
-  email: (v) => v.replace(/^(.{2}).*(@.*)$/, '$1***$2'),
+  email: (v) => v.replace(/^(.{1,2}).*(@.*)$/, '$1***$2'),
   phone: (v) => v.replace(/^(.{3}).*(.{4})$/, '$1****$2'),
   phoneNumber: (v) => v.replace(/^(.{3}).*(.{4})$/, '$1****$2'),
   phone_number: (v) => v.replace(/^(.{3}).*(.{4})$/, '$1****$2')
@@ -105,23 +105,23 @@ function filterRecursive<T>(
   }
 
   if (Array.isArray(data)) {
-    return data.map((item, index) => 
+    return data.map((item, index) =>
       filterRecursive(item, additionalFields, excludeFields, logRedactions, `${path}[${index}]`)
     ) as T;
   }
 
   if (typeof data === 'object' && data !== null) {
     const filtered: Record<string, any> = {};
-    
+
     for (const [key, value] of Object.entries(data)) {
       const currentPath = path ? `${path}.${key}` : key;
-      
+
       // Skip excluded fields
       if (excludeFields.has(key)) {
         filtered[key] = value;
         continue;
       }
-      
+
       // Check if field should be fully redacted
       if (SENSITIVE_FIELDS.has(key) || additionalFields.has(key)) {
         if (logRedactions && value !== undefined && value !== null) {
@@ -130,17 +130,17 @@ function filterRecursive<T>(
         filtered[key] = '[REDACTED]';
         continue;
       }
-      
+
       // Check if field should be partially redacted
       if (key in PARTIAL_REDACT_FIELDS && typeof value === 'string') {
         filtered[key] = PARTIAL_REDACT_FIELDS[key](value);
         continue;
       }
-      
+
       // Recursively filter nested objects
       filtered[key] = filterRecursive(value, additionalFields, excludeFields, logRedactions, currentPath);
     }
-    
+
     return filtered as T;
   }
 
@@ -203,7 +203,7 @@ export function responseFilterMiddleware(options?: {
 }) {
   return (req: any, res: any, next: any) => {
     const originalJson = res.json.bind(res);
-    
+
     res.json = (data: any) => {
       const filtered = filterResponse(data, {
         additionalFields: options?.additionalFields,
@@ -211,7 +211,7 @@ export function responseFilterMiddleware(options?: {
       });
       return originalJson(filtered);
     };
-    
+
     next();
   };
 }

@@ -2,12 +2,12 @@ import { Knex } from 'knex';
 
 /**
  * File Service - Consolidated Baseline Migration
- * 
+ *
  * Generated: January 13, 2026
  * Consolidates: 001-003 + 20260104 migrations
- * 
- * Tables: 14 (13 tenant-scoped, 1 global)
- * 
+ *
+ * Tables: 13 (12 tenant-scoped, 1 global)
+ *
  * Standards Applied:
  * - gen_random_uuid() for all UUIDs
  * - tenant_id NOT NULL on all tenant tables
@@ -29,27 +29,6 @@ export async function up(knex: Knex): Promise<void> {
       RETURN NEW;
     END;
     $$ LANGUAGE plpgsql;
-  `);
-
-  // Cleanup function for expired idempotency keys
-  await knex.raw(`
-    CREATE OR REPLACE FUNCTION cleanup_expired_idempotency_keys()
-    RETURNS void AS $$
-    BEGIN
-      DELETE FROM idempotency_keys WHERE expires_at < NOW();
-    END;
-    $$ LANGUAGE plpgsql;
-  `);
-
-  // ============================================================================
-  // ENUMS
-  // ============================================================================
-
-  await knex.raw(`
-    DO $$ BEGIN
-      CREATE TYPE idempotency_status AS ENUM ('processing', 'completed', 'failed');
-    EXCEPTION WHEN duplicate_object THEN NULL;
-    END $$;
   `);
 
   // ============================================================================
@@ -74,7 +53,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_av_scans_clean ON av_scans(clean)');
 
   // ============================================================================
-  // TENANT-SCOPED TABLES (13) - With tenant_id and RLS
+  // TENANT-SCOPED TABLES (12) - With tenant_id and RLS
   // ============================================================================
 
   // ---------------------------------------------------------------------------
@@ -415,35 +394,8 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_quota_alerts_quota_created ON quota_alerts(quota_id, created_at)');
   await knex.raw('CREATE INDEX idx_quota_alerts_type_sent ON quota_alerts(alert_type, notification_sent)');
 
-  // ---------------------------------------------------------------------------
-  // idempotency_keys - Request deduplication
-  // ---------------------------------------------------------------------------
-  await knex.schema.createTable('idempotency_keys', (table) => {
-    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
-    table.uuid('tenant_id').notNullable();
-    table.string('idempotency_key', 128).notNullable();
-    table.string('request_hash', 64);
-    table.string('endpoint', 512).notNullable();
-    table.string('method', 10).notNullable();
-    table.specificType('status', 'idempotency_status').defaultTo('processing');
-    table.jsonb('response');
-    table.uuid('file_id');
-    table.string('file_hash', 64);
-    table.string('recovery_point', 64);
-    table.timestamp('created_at').defaultTo(knex.fn.now());
-    table.timestamp('updated_at').defaultTo(knex.fn.now());
-    table.timestamp('expires_at').notNullable();
-
-    table.unique(['tenant_id', 'idempotency_key']);
-  });
-
-  await knex.raw('CREATE INDEX idx_idempotency_keys_tenant ON idempotency_keys(tenant_id)');
-  await knex.raw('CREATE INDEX idx_idempotency_keys_expires ON idempotency_keys(expires_at)');
-  await knex.raw('CREATE INDEX idx_idempotency_keys_tenant_hash ON idempotency_keys(tenant_id, file_hash)');
-  await knex.raw('CREATE INDEX idx_idempotency_keys_file ON idempotency_keys(file_id)');
-
   // ============================================================================
-  // ROW LEVEL SECURITY - 13 Tenant Tables
+  // ROW LEVEL SECURITY - 12 Tenant Tables
   // ============================================================================
 
   const tenantTables = [
@@ -459,7 +411,6 @@ export async function up(knex: Knex): Promise<void> {
     'storage_quotas',
     'storage_usage',
     'quota_alerts',
-    'idempotency_keys',
   ];
 
   for (const tableName of tenantTables) {
@@ -498,7 +449,6 @@ export async function down(knex: Knex): Promise<void> {
     'storage_quotas',
     'storage_usage',
     'quota_alerts',
-    'idempotency_keys',
   ];
 
   for (const tableName of tenantTables) {
@@ -510,7 +460,6 @@ export async function down(knex: Knex): Promise<void> {
   await knex.raw('DROP TRIGGER IF EXISTS trigger_files_updated_at ON files');
 
   // Drop tables in reverse dependency order
-  await knex.schema.dropTableIfExists('idempotency_keys');
   await knex.schema.dropTableIfExists('quota_alerts');
   await knex.schema.dropTableIfExists('storage_usage');
   await knex.schema.dropTableIfExists('storage_quotas');
@@ -528,11 +477,7 @@ export async function down(knex: Knex): Promise<void> {
   await knex.schema.dropTableIfExists('av_scans');
 
   // Drop functions
-  await knex.raw('DROP FUNCTION IF EXISTS cleanup_expired_idempotency_keys()');
   await knex.raw('DROP FUNCTION IF EXISTS update_updated_at_column()');
-
-  // Drop enums
-  await knex.raw('DROP TYPE IF EXISTS idempotency_status');
 
   console.log('✅ File Service rollback complete');
 }

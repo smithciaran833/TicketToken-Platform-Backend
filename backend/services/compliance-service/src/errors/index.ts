@@ -1,10 +1,10 @@
 /**
  * Error Classes for Compliance Service
- * 
+ *
  * AUDIT FIXES:
  * - ERR-3: Not RFC 7807 format → Structured error classes
  * - ERR-4: No correlation ID → Request ID in errors
- * 
+ *
  * RFC 7807 Problem Details format:
  * {
  *   type: string (URI reference)
@@ -44,7 +44,10 @@ export abstract class BaseError extends Error {
     cause?: Error;
   }) {
     super(params.message);
-    
+
+    // Set the name property so stack traces show the correct error class name
+    this.name = this.constructor.name;
+
     this.code = params.code;
     this.statusCode = params.statusCode;
     this.type = params.type || `urn:error:compliance-service:${params.code.toLowerCase().replace(/_/g, '-')}`;
@@ -57,10 +60,10 @@ export abstract class BaseError extends Error {
 
     // Maintain proper stack trace
     Error.captureStackTrace(this, this.constructor);
-    
+
     // Set prototype explicitly for instanceof checks
     Object.setPrototypeOf(this, new.target.prototype);
-    
+
     // Capture cause if provided
     if (params.cause) {
       this.cause = params.cause;
@@ -82,27 +85,47 @@ export abstract class BaseError extends Error {
       ...(this.tenantId && { tenantId: this.tenantId })
     };
   }
+
+  /**
+   * Convert to JSON for logging
+   */
+  toJSON(): Record<string, any> {
+    return {
+      name: this.name,
+      message: this.message,
+      code: this.code,
+      statusCode: this.statusCode,
+      type: this.type,
+      timestamp: this.timestamp,
+      requestId: this.requestId,
+      tenantId: this.tenantId,
+      isOperational: this.isOperational,
+      stack: this.stack
+    };
+  }
 }
 
 // =============================================================================
-// VALIDATION ERRORS
+// 4XX CLIENT ERROR CLASSES
 // =============================================================================
 
+/**
+ * Validation Error (400)
+ */
 export class ValidationError extends BaseError {
-  public readonly validationErrors?: Array<{ field: string; message: string; code?: string }>;
+  public readonly validationErrors?: Array<{ field: string; message: string }>;
 
   constructor(params: {
     message: string;
-    validationErrors?: Array<{ field: string; message: string; code?: string }>;
+    validationErrors?: Array<{ field: string; message: string }>;
     requestId?: string;
     tenantId?: string;
   }) {
     super({
       code: 'VALIDATION_ERROR',
       statusCode: 400,
-      message: params.message,
       title: 'Validation Error',
-      detail: params.message,
+      message: params.message,
       requestId: params.requestId,
       tenantId: params.tenantId
     });
@@ -110,175 +133,193 @@ export class ValidationError extends BaseError {
   }
 
   toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      validationErrors: this.validationErrors
-    };
+    const rfc = super.toRFC7807(instance);
+    if (this.validationErrors) {
+      rfc.validationErrors = this.validationErrors;
+    }
+    return rfc;
   }
 }
 
+/**
+ * Bad Request Error (400)
+ */
 export class BadRequestError extends BaseError {
   constructor(message: string, requestId?: string, tenantId?: string) {
     super({
       code: 'BAD_REQUEST',
       statusCode: 400,
       message,
-      title: 'Bad Request',
       requestId,
       tenantId
     });
   }
 }
 
-// =============================================================================
-// AUTHENTICATION & AUTHORIZATION ERRORS
-// =============================================================================
-
+/**
+ * Unauthorized Error (401)
+ */
 export class UnauthorizedError extends BaseError {
-  constructor(message: string = 'Authentication required', requestId?: string) {
+  constructor(message: string = 'Authentication required', requestId?: string, tenantId?: string) {
     super({
       code: 'UNAUTHORIZED',
       statusCode: 401,
       message,
-      title: 'Unauthorized',
-      requestId
+      requestId,
+      tenantId
     });
   }
 }
 
+/**
+ * Forbidden Error (403)
+ */
 export class ForbiddenError extends BaseError {
   constructor(message: string = 'Access denied', requestId?: string, tenantId?: string) {
     super({
       code: 'FORBIDDEN',
       statusCode: 403,
       message,
-      title: 'Forbidden',
       requestId,
       tenantId
     });
   }
 }
 
-// =============================================================================
-// NOT FOUND ERRORS
-// =============================================================================
-
+/**
+ * Not Found Error (404)
+ */
 export class NotFoundError extends BaseError {
-  public readonly resource: string;
+  public readonly resource?: string;
   public readonly resourceId?: string;
 
-  constructor(resource: string, resourceId?: string, requestId?: string) {
+  constructor(resource: string, resourceId?: string, requestId?: string, tenantId?: string) {
+    const message = resourceId 
+      ? `${resource} with ID ${resourceId} not found`
+      : `${resource} not found`;
+
     super({
       code: 'NOT_FOUND',
       statusCode: 404,
-      message: resourceId 
-        ? `${resource} with ID ${resourceId} not found`
-        : `${resource} not found`,
-      title: 'Resource Not Found',
-      requestId
+      message,
+      requestId,
+      tenantId
     });
     this.resource = resource;
     this.resourceId = resourceId;
   }
 
   toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      resource: this.resource,
-      resourceId: this.resourceId
-    };
+    const rfc = super.toRFC7807(instance);
+    if (this.resource) rfc.resource = this.resource;
+    if (this.resourceId) rfc.resourceId = this.resourceId;
+    return rfc;
   }
 }
 
+/**
+ * Venue Not Found Error
+ */
 export class VenueNotFoundError extends NotFoundError {
-  constructor(venueId: string, requestId?: string) {
-    super('Venue', venueId, requestId);
+  constructor(venueId: string, requestId?: string, tenantId?: string) {
+    super('Venue', venueId, requestId, tenantId);
   }
 }
 
+/**
+ * Document Not Found Error
+ */
 export class DocumentNotFoundError extends NotFoundError {
-  constructor(documentId: string, requestId?: string) {
-    super('Document', documentId, requestId);
+  constructor(documentId: string, requestId?: string, tenantId?: string) {
+    super('Document', documentId, requestId, tenantId);
   }
 }
 
+/**
+ * Tax Record Not Found Error
+ */
 export class TaxRecordNotFoundError extends NotFoundError {
-  constructor(recordId: string, requestId?: string) {
-    super('TaxRecord', recordId, requestId);
+  constructor(recordId: string, requestId?: string, tenantId?: string) {
+    super('TaxRecord', recordId, requestId, tenantId);
   }
 }
 
-// =============================================================================
-// CONFLICT ERRORS
-// =============================================================================
-
+/**
+ * Conflict Error (409)
+ */
 export class ConflictError extends BaseError {
   constructor(message: string, requestId?: string, tenantId?: string) {
     super({
       code: 'CONFLICT',
       statusCode: 409,
       message,
-      title: 'Resource Conflict',
       requestId,
       tenantId
     });
   }
 }
 
+/**
+ * Duplicate Resource Error
+ */
 export class DuplicateResourceError extends ConflictError {
   public readonly resource: string;
   public readonly identifier?: string;
 
-  constructor(resource: string, identifier?: string, requestId?: string) {
-    super(
-      identifier 
-        ? `${resource} with identifier ${identifier} already exists`
-        : `${resource} already exists`,
-      requestId
-    );
+  constructor(resource: string, identifier?: string, requestId?: string, tenantId?: string) {
+    const message = identifier
+      ? `${resource} with identifier ${identifier} already exists`
+      : `${resource} already exists`;
+    
+    super(message, requestId, tenantId);
     this.resource = resource;
     this.identifier = identifier;
   }
 }
 
+/**
+ * Duplicate 1099 Error
+ */
 export class Duplicate1099Error extends ConflictError {
-  constructor(venueId: string, year: number, requestId?: string) {
-    super(`1099 form already exists for venue ${venueId} for year ${year}`, requestId);
+  constructor(venueId: string, year: number, requestId?: string, tenantId?: string) {
+    super(
+      `1099 form already exists for venue ${venueId} for year ${year}`,
+      requestId,
+      tenantId
+    );
   }
 }
 
-// =============================================================================
-// RATE LIMIT ERRORS
-// =============================================================================
-
+/**
+ * Rate Limit Error (429)
+ */
 export class RateLimitError extends BaseError {
   public readonly retryAfter: number;
 
-  constructor(retryAfter: number, requestId?: string) {
+  constructor(retryAfter: number, requestId?: string, tenantId?: string) {
     super({
       code: 'RATE_LIMIT_EXCEEDED',
       statusCode: 429,
-      message: 'Rate limit exceeded',
-      title: 'Too Many Requests',
-      requestId
+      message: `Rate limit exceeded. Retry after ${retryAfter} seconds`,
+      requestId,
+      tenantId
     });
     this.retryAfter = retryAfter;
   }
 
   toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      retryAfter: this.retryAfter
-    };
+    const rfc = super.toRFC7807(instance);
+    rfc.retryAfter = this.retryAfter;
+    return rfc;
   }
 }
 
 // =============================================================================
-// COMPLIANCE-SPECIFIC ERRORS
+// DOMAIN-SPECIFIC ERROR CLASSES (422)
 // =============================================================================
 
 /**
- * OFAC Screening Errors
+ * OFAC Screening Error (422)
  */
 export class OFACError extends BaseError {
   public readonly screeningId?: string;
@@ -286,19 +327,15 @@ export class OFACError extends BaseError {
 
   constructor(params: {
     message: string;
-    code?: string;
     screeningId?: string;
     matchScore?: number;
     requestId?: string;
     tenantId?: string;
   }) {
     super({
-      code: params.code || 'OFAC_ERROR',
+      code: 'OFAC_ERROR',
       statusCode: 422,
       message: params.message,
-      type: `urn:error:compliance-service:ofac:${(params.code || 'error').toLowerCase().replace(/_/g, '-')}`,
-      title: 'OFAC Screening Error',
-      detail: params.message,
       requestId: params.requestId,
       tenantId: params.tenantId
     });
@@ -307,37 +344,44 @@ export class OFACError extends BaseError {
   }
 
   toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      screeningId: this.screeningId,
-      matchScore: this.matchScore
-    };
-  }
-}
-
-export class OFACMatchError extends OFACError {
-  constructor(name: string, matchScore: number, requestId?: string) {
-    super({
-      message: `OFAC potential match found for ${name} with score ${matchScore}`,
-      code: 'OFAC_MATCH',
-      matchScore,
-      requestId
-    });
-  }
-}
-
-export class OFACServiceUnavailableError extends OFACError {
-  constructor(requestId?: string) {
-    super({
-      message: 'OFAC screening service is temporarily unavailable',
-      code: 'OFAC_SERVICE_UNAVAILABLE',
-      requestId
-    });
+    const rfc = super.toRFC7807(instance);
+    if (this.screeningId) rfc.screeningId = this.screeningId;
+    if (this.matchScore !== undefined) rfc.matchScore = this.matchScore;
+    return rfc;
   }
 }
 
 /**
- * Tax/1099 Errors
+ * OFAC Match Error
+ */
+export class OFACMatchError extends OFACError {
+  constructor(name: string, matchScore: number, requestId?: string, tenantId?: string) {
+    super({
+      message: `OFAC match found for ${name} with score ${matchScore}`,
+      matchScore,
+      requestId,
+      tenantId
+    });
+    this.code = 'OFAC_MATCH';
+  }
+}
+
+/**
+ * OFAC Service Unavailable Error
+ */
+export class OFACServiceUnavailableError extends OFACError {
+  constructor(requestId?: string, tenantId?: string) {
+    super({
+      message: 'OFAC screening service is temporarily unavailable',
+      requestId,
+      tenantId
+    });
+    this.code = 'OFAC_SERVICE_UNAVAILABLE';
+  }
+}
+
+/**
+ * Tax Error (400)
  */
 export class TaxError extends BaseError {
   public readonly venueId?: string;
@@ -345,66 +389,67 @@ export class TaxError extends BaseError {
 
   constructor(params: {
     message: string;
-    code?: string;
     venueId?: string;
     taxYear?: number;
-    statusCode?: number;
     requestId?: string;
     tenantId?: string;
   }) {
     super({
-      code: params.code || 'TAX_ERROR',
-      statusCode: params.statusCode || 400,
+      code: 'TAX_ERROR',
+      statusCode: 400,
       message: params.message,
-      type: `urn:error:compliance-service:tax:${(params.code || 'error').toLowerCase().replace(/_/g, '-')}`,
-      title: 'Tax Processing Error',
-      detail: params.message,
       requestId: params.requestId,
       tenantId: params.tenantId
     });
     this.venueId = params.venueId;
     this.taxYear = params.taxYear;
   }
-
-  toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      venueId: this.venueId,
-      taxYear: this.taxYear
-    };
-  }
 }
 
+/**
+ * Tax Threshold Not Met Error
+ */
 export class TaxThresholdNotMetError extends TaxError {
   public readonly threshold: number;
   public readonly currentAmount: number;
 
-  constructor(venueId: string, year: number, threshold: number, currentAmount: number, requestId?: string) {
+  constructor(
+    venueId: string,
+    taxYear: number,
+    threshold: number,
+    currentAmount: number,
+    requestId?: string,
+    tenantId?: string
+  ) {
     super({
-      message: `1099 threshold not met: $${currentAmount.toFixed(2)} of $${threshold.toFixed(2)} required`,
-      code: 'TAX_THRESHOLD_NOT_MET',
+      message: `Tax reporting threshold not met. Current amount $${currentAmount.toFixed(2)} is below threshold $${threshold.toFixed(2)}`,
       venueId,
-      taxYear: year,
-      requestId
+      taxYear,
+      requestId,
+      tenantId
     });
+    this.code = 'TAX_THRESHOLD_NOT_MET';
     this.threshold = threshold;
     this.currentAmount = currentAmount;
   }
 }
 
+/**
+ * Invalid EIN Error
+ */
 export class InvalidEINError extends TaxError {
-  constructor(ein: string, requestId?: string) {
+  constructor(ein: string, requestId?: string, tenantId?: string) {
     super({
-      message: 'Invalid EIN format. Expected format: XX-XXXXXXX',
-      code: 'INVALID_EIN',
-      statusCode: 400,
-      requestId
+      message: `Invalid EIN format. Expected format: XX-XXXXXXX`,
+      requestId,
+      tenantId
     });
+    this.code = 'INVALID_EIN';
   }
 }
 
 /**
- * Verification Errors
+ * Verification Error (422)
  */
 export class VerificationError extends BaseError {
   public readonly venueId?: string;
@@ -412,60 +457,56 @@ export class VerificationError extends BaseError {
 
   constructor(params: {
     message: string;
-    code?: string;
     venueId?: string;
     verificationType?: string;
     requestId?: string;
     tenantId?: string;
   }) {
     super({
-      code: params.code || 'VERIFICATION_ERROR',
+      code: 'VERIFICATION_ERROR',
       statusCode: 422,
       message: params.message,
-      type: `urn:error:compliance-service:verification:${(params.code || 'error').toLowerCase().replace(/_/g, '-')}`,
-      title: 'Verification Error',
-      detail: params.message,
       requestId: params.requestId,
       tenantId: params.tenantId
     });
     this.venueId = params.venueId;
     this.verificationType = params.verificationType;
   }
-
-  toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      venueId: this.venueId,
-      verificationType: this.verificationType
-    };
-  }
 }
 
+/**
+ * Venue Not Verified Error
+ */
 export class VenueNotVerifiedError extends VerificationError {
-  constructor(venueId: string, requestId?: string) {
+  constructor(venueId: string, requestId?: string, tenantId?: string) {
     super({
-      message: `Venue ${venueId} has not completed verification`,
-      code: 'VENUE_NOT_VERIFIED',
+      message: `Venue ${venueId} is not verified`,
       venueId,
-      requestId
+      requestId,
+      tenantId
     });
-  }
-}
-
-export class W9NotFoundError extends VerificationError {
-  constructor(venueId: string, requestId?: string) {
-    super({
-      message: `W9 form not found for venue ${venueId}`,
-      code: 'W9_NOT_FOUND',
-      venueId,
-      verificationType: 'W9',
-      requestId
-    });
+    this.code = 'VENUE_NOT_VERIFIED';
   }
 }
 
 /**
- * Risk Assessment Errors
+ * W9 Not Found Error
+ */
+export class W9NotFoundError extends VerificationError {
+  constructor(venueId: string, requestId?: string, tenantId?: string) {
+    super({
+      message: `W9 form not found for venue ${venueId}`,
+      venueId,
+      verificationType: 'W9',
+      requestId,
+      tenantId
+    });
+    this.code = 'W9_NOT_FOUND';
+  }
+}
+
+/**
+ * Risk Assessment Error (422)
  */
 export class RiskError extends BaseError {
   public readonly venueId?: string;
@@ -473,116 +514,107 @@ export class RiskError extends BaseError {
 
   constructor(params: {
     message: string;
-    code?: string;
     venueId?: string;
     riskScore?: number;
     requestId?: string;
     tenantId?: string;
   }) {
     super({
-      code: params.code || 'RISK_ERROR',
+      code: 'RISK_ERROR',
       statusCode: 422,
       message: params.message,
-      type: `urn:error:compliance-service:risk:${(params.code || 'error').toLowerCase().replace(/_/g, '-')}`,
-      title: 'Risk Assessment Error',
-      detail: params.message,
       requestId: params.requestId,
       tenantId: params.tenantId
     });
     this.venueId = params.venueId;
     this.riskScore = params.riskScore;
   }
-
-  toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      venueId: this.venueId,
-      riskScore: this.riskScore
-    };
-  }
 }
 
+/**
+ * High Risk Venue Error
+ */
 export class HighRiskVenueError extends RiskError {
-  constructor(venueId: string, riskScore: number, requestId?: string) {
+  constructor(venueId: string, riskScore: number, requestId?: string, tenantId?: string) {
     super({
-      message: `Venue ${venueId} is flagged as high risk with score ${riskScore}`,
-      code: 'HIGH_RISK_VENUE',
+      message: `Venue ${venueId} has high risk score: ${riskScore}`,
       venueId,
       riskScore,
-      requestId
+      requestId,
+      tenantId
     });
+    this.code = 'HIGH_RISK_VENUE';
   }
 }
 
 /**
- * GDPR Errors
+ * GDPR Compliance Error (400)
  */
 export class GDPRError extends BaseError {
   public readonly userId?: string;
-  public readonly requestType?: 'export' | 'delete';
+  public readonly requestType?: string;
 
   constructor(params: {
     message: string;
-    code?: string;
     userId?: string;
-    requestType?: 'export' | 'delete';
+    requestType?: string;
     statusCode?: number;
     requestId?: string;
     tenantId?: string;
   }) {
     super({
-      code: params.code || 'GDPR_ERROR',
+      code: 'GDPR_ERROR',
       statusCode: params.statusCode || 400,
       message: params.message,
-      type: `urn:error:compliance-service:gdpr:${(params.code || 'error').toLowerCase().replace(/_/g, '-')}`,
-      title: 'GDPR Request Error',
-      detail: params.message,
       requestId: params.requestId,
       tenantId: params.tenantId
     });
     this.userId = params.userId;
     this.requestType = params.requestType;
   }
-
-  toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      userId: this.userId,
-      requestType: this.requestType
-    };
-  }
 }
 
+/**
+ * GDPR Export Not Ready Error (202)
+ */
 export class GDPRExportNotReadyError extends GDPRError {
-  constructor(userId: string, requestId?: string) {
+  constructor(userId: string, requestId?: string, tenantId?: string) {
     super({
-      message: `GDPR export for user ${userId} is not yet ready`,
-      code: 'GDPR_EXPORT_NOT_READY',
+      message: `GDPR export for user ${userId} is not ready yet`,
       userId,
       requestType: 'export',
       statusCode: 202,
-      requestId
+      requestId,
+      tenantId
     });
+    this.code = 'GDPR_EXPORT_NOT_READY';
   }
 }
 
+/**
+ * GDPR Retention Period Error (409)
+ */
 export class GDPRRetentionPeriodError extends GDPRError {
-  constructor(userId: string, reason: string, requestId?: string) {
+  constructor(userId: string, reason: string, requestId?: string, tenantId?: string) {
     super({
-      message: `Cannot delete data for user ${userId}: ${reason}`,
-      code: 'GDPR_RETENTION_REQUIRED',
+      message: `Cannot delete user ${userId} data: ${reason}`,
       userId,
       requestType: 'delete',
       statusCode: 409,
-      requestId
+      requestId,
+      tenantId
     });
+    this.code = 'GDPR_RETENTION_REQUIRED';
   }
 }
 
 // =============================================================================
-// DATABASE ERRORS
+// 5XX SERVER ERROR CLASSES
 // =============================================================================
 
+/**
+ * Database Error (500)
+ */
 export class DatabaseError extends BaseError {
   public readonly query?: string;
   public readonly constraint?: string;
@@ -599,156 +631,223 @@ export class DatabaseError extends BaseError {
       code: 'DATABASE_ERROR',
       statusCode: 500,
       message: params.message,
-      title: 'Database Error',
-      detail: params.message,
-      isOperational: true,
+      cause: params.cause,
+      isOperational: false,
       requestId: params.requestId,
-      tenantId: params.tenantId,
-      cause: params.cause
+      tenantId: params.tenantId
     });
     this.query = params.query;
     this.constraint = params.constraint;
   }
 }
 
+/**
+ * Database Connection Error (503)
+ */
 export class DatabaseConnectionError extends BaseError {
-  constructor(message: string = 'Database connection failed', requestId?: string) {
+  constructor(message: string = 'Database connection failed', requestId?: string, tenantId?: string) {
     super({
       code: 'DATABASE_CONNECTION_ERROR',
       statusCode: 503,
       message,
-      title: 'Database Unavailable',
-      isOperational: true,
-      requestId
+      isOperational: false,
+      requestId,
+      tenantId
     });
   }
 }
 
-// =============================================================================
-// EXTERNAL SERVICE ERRORS
-// =============================================================================
-
+/**
+ * External Service Error (502)
+ */
 export class ExternalServiceError extends BaseError {
   public readonly service: string;
   public readonly retryable: boolean;
 
   constructor(params: {
-    service: string;
     message: string;
+    service: string;
     retryable?: boolean;
     cause?: Error;
     requestId?: string;
+    tenantId?: string;
   }) {
     super({
       code: 'EXTERNAL_SERVICE_ERROR',
       statusCode: 502,
       message: params.message,
-      type: `urn:error:compliance-service:external:${params.service.toLowerCase()}`,
-      title: `${params.service} Service Error`,
-      detail: params.message,
-      isOperational: true,
+      cause: params.cause,
       requestId: params.requestId,
-      cause: params.cause
+      tenantId: params.tenantId
     });
     this.service = params.service;
     this.retryable = params.retryable ?? false;
   }
-
-  toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      service: this.service,
-      retryable: this.retryable
-    };
-  }
 }
 
+/**
+ * Plaid Service Error
+ */
 export class PlaidServiceError extends ExternalServiceError {
-  constructor(message: string, requestId?: string) {
+  constructor(message: string, requestId?: string, tenantId?: string) {
     super({
+      message,
       service: 'Plaid',
-      message,
       retryable: true,
-      requestId
+      requestId,
+      tenantId
     });
   }
 }
 
+/**
+ * SendGrid Service Error
+ */
 export class SendGridServiceError extends ExternalServiceError {
-  constructor(message: string, requestId?: string) {
+  constructor(message: string, requestId?: string, tenantId?: string) {
     super({
-      service: 'SendGrid',
       message,
+      service: 'SendGrid',
       retryable: true,
-      requestId
+      requestId,
+      tenantId
     });
   }
 }
 
-// =============================================================================
-// INTERNAL ERRORS
-// =============================================================================
-
+/**
+ * Internal Error (500) - Non-operational
+ */
 export class InternalError extends BaseError {
-  constructor(message: string = 'An unexpected error occurred', requestId?: string) {
+  constructor(message: string = 'An unexpected error occurred', requestId?: string, tenantId?: string) {
     super({
       code: 'INTERNAL_ERROR',
       statusCode: 500,
       message,
-      title: 'Internal Server Error',
       isOperational: false,
-      requestId
+      requestId,
+      tenantId
     });
   }
 }
 
+/**
+ * Service Unavailable Error (503)
+ */
 export class ServiceUnavailableError extends BaseError {
-  constructor(service: string = 'Service', requestId?: string) {
+  constructor(serviceName?: string, requestId?: string, tenantId?: string) {
+    const message = serviceName
+      ? `${serviceName} is temporarily unavailable`
+      : 'Service is temporarily unavailable';
+
     super({
       code: 'SERVICE_UNAVAILABLE',
       statusCode: 503,
-      message: `${service} is temporarily unavailable`,
-      title: 'Service Unavailable',
-      isOperational: true,
-      requestId
+      message,
+      requestId,
+      tenantId
     });
   }
 }
 
-// =============================================================================
-// IDEMPOTENCY ERRORS
-// =============================================================================
-
+/**
+ * Idempotency Conflict Error (409)
+ */
 export class IdempotencyError extends BaseError {
   public readonly idempotencyKey: string;
 
-  constructor(idempotencyKey: string, requestId?: string) {
+  constructor(idempotencyKey: string, requestId?: string, tenantId?: string) {
     super({
       code: 'IDEMPOTENCY_CONFLICT',
       statusCode: 409,
-      message: `Request with idempotency key ${idempotencyKey} is already being processed`,
-      title: 'Idempotency Conflict',
-      requestId
+      message: `Request with idempotency key ${idempotencyKey} already processed`,
+      requestId,
+      tenantId
     });
     this.idempotencyKey = idempotencyKey;
   }
 
   toRFC7807(instance?: string): Record<string, any> {
-    return {
-      ...super.toRFC7807(instance),
-      idempotencyKey: this.idempotencyKey
-    };
+    const rfc = super.toRFC7807(instance);
+    rfc.idempotencyKey = this.idempotencyKey;
+    return rfc;
+  }
+}
+
+/**
+ * Legacy Compliance Error (custom, maps to 400 or 422)
+ */
+export class ComplianceError extends BaseError {
+  public readonly complianceIssue?: string;
+
+  constructor(params: {
+    message: string;
+    complianceIssue?: string;
+    statusCode?: number;
+    requestId?: string;
+    tenantId?: string;
+  }) {
+    super({
+      code: 'COMPLIANCE_ERROR',
+      statusCode: params.statusCode || 422,
+      message: params.message,
+      requestId: params.requestId,
+      tenantId: params.tenantId
+    });
+    this.complianceIssue = params.complianceIssue;
+  }
+}
+
+/**
+ * Legacy Authentication Error (401)
+ */
+export class AuthenticationError extends BaseError {
+  constructor(params: {
+    message: string;
+    requestId?: string;
+    tenantId?: string;
+  }) {
+    super({
+      code: 'AUTHENTICATION_ERROR',
+      statusCode: 401,
+      message: params.message,
+      requestId: params.requestId,
+      tenantId: params.tenantId
+    });
+  }
+}
+
+/**
+ * Legacy Authorization Error (403)
+ */
+export class AuthorizationError extends BaseError {
+  public readonly requiredRole?: string;
+
+  constructor(params: {
+    message: string;
+    requiredRole?: string;
+    requestId?: string;
+    tenantId?: string;
+  }) {
+    super({
+      code: 'AUTHORIZATION_ERROR',
+      statusCode: 403,
+      message: params.message,
+      requestId: params.requestId,
+      tenantId: params.tenantId
+    });
+    this.requiredRole = params.requiredRole;
   }
 }
 
 // =============================================================================
-// ERROR UTILITIES
+// UTILITY FUNCTIONS
 // =============================================================================
 
 /**
- * Check if error is an operational error (expected, handled)
+ * Check if an error is operational
  */
-export function isOperationalError(error: unknown): boolean {
+export function isOperationalError(error: any): boolean {
   if (error instanceof BaseError) {
     return error.isOperational;
   }
@@ -756,36 +855,75 @@ export function isOperationalError(error: unknown): boolean {
 }
 
 /**
- * Check if error is a specific error type
+ * Check if error is of a specific type
  */
 export function isErrorType<T extends BaseError>(
-  error: unknown,
+  error: any,
   errorClass: new (...args: any[]) => T
 ): error is T {
   return error instanceof errorClass;
 }
 
 /**
- * Convert unknown error to BaseError
+ * Convert any error to BaseError
  */
-export function toBaseError(error: unknown, requestId?: string): BaseError {
+export function toBaseError(error: any, requestId?: string): BaseError {
   if (error instanceof BaseError) {
     return error;
   }
-  
+
   if (error instanceof Error) {
     return new InternalError(error.message, requestId);
   }
-  
-  return new InternalError(String(error), requestId);
+
+  if (typeof error === 'string') {
+    return new InternalError(error, requestId);
+  }
+
+  return new InternalError('An unknown error occurred', requestId);
 }
 
 /**
- * Create error response from error
+ * Convert error to RFC7807 response
  */
-export function toErrorResponse(error: unknown, requestId?: string): Record<string, any> {
+export function toErrorResponse(error: any, requestId?: string): Record<string, any> {
   const baseError = toBaseError(error, requestId);
   return baseError.toRFC7807(requestId);
+}
+
+// =============================================================================
+// ERROR FACTORY
+// =============================================================================
+
+export function createError(
+  type: 'validation' | 'auth' | 'authz' | 'notfound' | 'conflict' | 'ratelimit' | 'database' | 'external' | 'unavailable' | 'compliance',
+  message: string,
+  metadata?: Record<string, any>
+): BaseError {
+  switch (type) {
+    case 'validation':
+      return new ValidationError({ message, ...metadata });
+    case 'auth':
+      return new AuthenticationError({ message, ...metadata });
+    case 'authz':
+      return new AuthorizationError({ message, ...metadata });
+    case 'notfound':
+      return new NotFoundError(metadata?.resource || 'Resource', metadata?.resourceId, metadata?.requestId, metadata?.tenantId);
+    case 'conflict':
+      return new ConflictError(message, metadata?.requestId, metadata?.tenantId);
+    case 'ratelimit':
+      return new RateLimitError(metadata?.retryAfter || 60, metadata?.requestId, metadata?.tenantId);
+    case 'database':
+      return new DatabaseError({ message, ...metadata });
+    case 'external':
+      return new ExternalServiceError({ message, service: metadata?.service || 'Unknown', ...metadata });
+    case 'unavailable':
+      return new ServiceUnavailableError(metadata?.serviceName, metadata?.requestId, metadata?.tenantId);
+    case 'compliance':
+      return new ComplianceError({ message, ...metadata });
+    default:
+      throw new Error(`Unknown error type: ${type}`);
+  }
 }
 
 export default {
@@ -824,8 +962,12 @@ export default {
   InternalError,
   ServiceUnavailableError,
   IdempotencyError,
+  ComplianceError,
+  AuthenticationError,
+  AuthorizationError,
   isOperationalError,
   isErrorType,
   toBaseError,
-  toErrorResponse
+  toErrorResponse,
+  createError
 };

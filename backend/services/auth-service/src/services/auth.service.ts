@@ -56,7 +56,7 @@ export class AuthService {
 
       if (tenantResult.rows.length === 0) {
         const error: any = new Error('Invalid tenant');
-        error.code = 'INVALID_TENANT';
+        error.code = 'TENANT_INVALID';
         error.statusCode = 400;
         throw error;
       }
@@ -81,7 +81,7 @@ export class AuthService {
         const insertResult = await client.query(
           `INSERT INTO users (email, password_hash, first_name, last_name, phone, email_verified, email_verification_token, tenant_id, created_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-           RETURNING id, email, first_name, last_name, email_verified, mfa_enabled, permissions, role, tenant_id`,
+           RETURNING id, email, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, created_at, updated_at`,
           [normalizeEmail(data.email), passwordHash, sanitizedFirstName, sanitizedLastName, normalizePhone(data.phone) || null, false, emailVerificationToken, tenantId, new Date()]
         );
 
@@ -124,7 +124,10 @@ export class AuthService {
           last_name: user.last_name,
           email_verified: user.email_verified,
           mfa_enabled: user.mfa_enabled || false,
+          role: user.role || 'user',
           tenant_id: user.tenant_id,
+          created_at: user.created_at,
+          updated_at: user.updated_at || user.created_at,
         },
         tokens,
       };
@@ -146,7 +149,7 @@ export class AuthService {
 
     try {
       const result = await pool.query(
-        'SELECT id, email, password_hash, first_name, last_name, email_verified, mfa_enabled, permissions, role, tenant_id, failed_login_attempts, locked_until FROM users WHERE email = $1 AND deleted_at IS NULL',
+        'SELECT id, email, password_hash, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, failed_login_attempts, locked_until, created_at, updated_at FROM users WHERE email = $1 AND deleted_at IS NULL',
         [normalizeEmail(data.email)]
       );
 
@@ -280,9 +283,10 @@ export class AuthService {
           last_name: user.last_name,
           email_verified: user.email_verified,
           mfa_enabled: user.mfa_enabled || false,
-          permissions: user.permissions,
-          role: user.role,
+          role: user.role || 'user',
           tenant_id: user.tenant_id,
+          created_at: user.created_at,
+          updated_at: user.updated_at || user.created_at,
         },
         tokens,
       };
@@ -307,7 +311,7 @@ export class AuthService {
 
       const decoded = this.jwtService.decode(tokens.accessToken);
       const result = await pool.query(
-        'SELECT id, email, first_name, last_name, email_verified, mfa_enabled, permissions, role, tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL',
+        'SELECT id, email, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, created_at, updated_at FROM users WHERE id = $1 AND deleted_at IS NULL',
         [decoded.sub]
       );
 
@@ -327,9 +331,10 @@ export class AuthService {
           last_name: user.last_name,
           email_verified: user.email_verified,
           mfa_enabled: user.mfa_enabled || false,
-          permissions: user.permissions,
-          role: user.role,
+          role: user.role || 'user',
           tenant_id: user.tenant_id,
+          created_at: user.created_at,
+          updated_at: user.updated_at || user.created_at,
         },
         tokens,
       };
@@ -591,7 +596,7 @@ export class AuthService {
 
   async getUserById(userId: string) {
     const result = await pool.query(
-      'SELECT id, email, first_name, last_name, email_verified, mfa_enabled, permissions, role, tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT id, email, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, created_at, updated_at FROM users WHERE id = $1 AND deleted_at IS NULL',
       [userId]
     );
 

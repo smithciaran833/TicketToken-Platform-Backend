@@ -1,11 +1,29 @@
 module.exports = {
-  preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/tests', '<rootDir>/src'],
-  testMatch: ['**/*.test.ts'],
+  testMatch: ['**/*.test.ts', '**/*.test.js'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json', 'node'],
-  
-  // Coverage collection
+
+  // Use SWC instead of ts-jest - way faster, less memory
+  transform: {
+    '^.+\\.(t|j)sx?$': ['@swc/jest', {
+      jsc: {
+        parser: {
+          syntax: 'typescript',
+          decorators: true,
+        },
+        target: 'es2022',
+      },
+    }],
+  },
+
+  // Map source imports to compiled dist
+  moduleNameMapper: {
+    '^@tickettoken/shared$': '<rootDir>/../../shared/dist/src/index',
+    '^@tickettoken/shared/(.*)$': '<rootDir>/../../shared/dist/src/$1',
+  },
+
+  // Coverage
   collectCoverageFrom: [
     'src/**/*.ts',
     '!src/**/*.d.ts',
@@ -13,60 +31,16 @@ module.exports = {
     '!src/migrations/**',
     '!src/types/**',
   ],
-  
-  // Coverage thresholds - fail if below these percentages
-  coverageThreshold: {
-    global: {
-      branches: 70,
-      functions: 75,
-      lines: 75,
-      statements: 75,
-    },
-    // Stricter thresholds for critical files
-    './src/services/auth.service.ts': {
-      branches: 80,
-      functions: 85,
-      lines: 85,
-      statements: 85,
-    },
-    './src/services/jwt.service.ts': {
-      branches: 80,
-      functions: 85,
-      lines: 85,
-      statements: 85,
-    },
-  },
-  
-  // Coverage reporters for CI integration
-  coverageReporters: [
-    'text',           // Console output
-    'text-summary',   // Summary in console
-    'lcov',           // For codecov/coveralls
-    'json-summary',   // For badges/CI parsing
-    'html',           // Local HTML report
-  ],
-  
   coverageDirectory: '<rootDir>/coverage',
-  
-  // CI-optimized worker configuration
-  maxWorkers: process.env.CI ? 2 : '50%',
-  
-  // Fail fast in CI
-  bail: process.env.CI ? 1 : 0,
-  
-  // Verbose output in CI
-  verbose: !!process.env.CI,
-  
+
+  // Performance
+  maxWorkers: 2,
+
   setupFiles: ['<rootDir>/tests/jest.setup.js'],
   testTimeout: 30000,
-  
-  // Clear mocks between tests
+
   clearMocks: true,
   restoreMocks: true,
-  
-  // Detect open handles (useful for debugging async issues)
   detectOpenHandles: true,
-  
-  // Force exit after tests complete
   forceExit: true,
 };

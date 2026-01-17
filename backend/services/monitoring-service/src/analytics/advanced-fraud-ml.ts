@@ -19,6 +19,7 @@ export class AdvancedFraudDetector {
   private patternCache = new Map<string, FraudPattern[]>();
   private knownScalpers = new Set<string>();
   private suspiciousIPs = new Map<string, number>();
+  private analysisInterval: NodeJS.Timeout | null = null;
 
   constructor() {
     this.initializeDeepLearningModel();
@@ -81,11 +82,11 @@ export class AdvancedFraudDetector {
     try {
       const features = this.extractFeatures(userData);
       const featureTensor = tf.tensor2d([features]);
-      
+
       // Get neural network prediction
       const prediction = this.model!.predict(featureTensor) as tf.Tensor;
       const fraudProbability = (await prediction.data())[0];
-      
+
       featureTensor.dispose();
       prediction.dispose();
 
@@ -98,8 +99,8 @@ export class AdvancedFraudDetector {
         riskScore = Math.min(riskScore + 0.3, 1);
       }
 
-      // Check IP reputation
-      if (this.getIPRiskScore(userData.ip_address) > 0.5) {
+      // Check IP reputation - directly check for VPN
+      if (this.isKnownVPN(userData.ip_address)) {
         patterns.push('suspicious_ip');
         riskScore = Math.min(riskScore + 0.2, 1);
       }
@@ -141,14 +142,14 @@ export class AdvancedFraudDetector {
 
   private async detectScalperBehavior(userData: any): Promise<number> {
     let score = 0;
-    
+
     // Multiple indicators
     if (userData.time_between_requests < 1) score += 0.25;
     if (userData.total_tickets_attempted > 10) score += 0.2;
     if (userData.multiple_ips_used) score += 0.15;
     if (this.detectAutomation(userData)) score += 0.2;
     if (userData.targeting_high_demand) score += 0.2;
-    
+
     return Math.min(score, 1);
   }
 
@@ -160,11 +161,11 @@ export class AdvancedFraudDetector {
     if (this.suspiciousIPs.has(ipAddress)) {
       return this.suspiciousIPs.get(ipAddress)!;
     }
-    
+
     let score = 0;
     if (this.isKnownVPN(ipAddress)) score += 0.3;
     if (this.isDataCenter(ipAddress)) score += 0.4;
-    
+
     return Math.min(score, 1);
   }
 
@@ -180,7 +181,7 @@ export class AdvancedFraudDetector {
 
   private isSuspiciousUserAgent(userAgent: string): boolean {
     if (!userAgent) return false;
-    const suspicious = ['bot', 'crawler', 'spider', 'scraper', 'curl', 'wget'];
+    const suspicious = ['bot', 'crawler', 'spider', 'scraper', 'curl', 'wget', 'scrapy', 'python-requests', 'python'];
     const ua = userAgent.toLowerCase();
     return suspicious.some(s => ua.includes(s));
   }
@@ -209,7 +210,7 @@ export class AdvancedFraudDetector {
   }
 
   private startRealtimeAnalysis() {
-    setInterval(async () => {
+    this.analysisInterval = setInterval(async () => {
       try {
         // Real-time fraud analysis
         logger.debug('Running fraud analysis...');
@@ -217,6 +218,13 @@ export class AdvancedFraudDetector {
         logger.error('Error in realtime analysis:', error);
       }
     }, 30000);
+  }
+
+  stopRealtimeAnalysis() {
+    if (this.analysisInterval) {
+      clearInterval(this.analysisInterval);
+      this.analysisInterval = null;
+    }
   }
 
   async getFraudMetrics() {

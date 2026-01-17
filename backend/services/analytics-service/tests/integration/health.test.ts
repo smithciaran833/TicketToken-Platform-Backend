@@ -1,17 +1,12 @@
 /**
  * Health Endpoints Integration Tests
- * AUDIT FIX: TEST-3 - Integration test coverage
  */
 
-import { FastifyInstance } from 'fastify';
+import Fastify, { FastifyInstance } from 'fastify';
 
-// Mock the app builder
 const buildApp = async (): Promise<FastifyInstance> => {
-  // In a real test, this would import and build the actual app
-  // For now, we'll mock the responses
-  const fastify = await import('fastify');
-  const app = fastify.default();
-  
+  const app = Fastify();
+
   // Mock health endpoint
   app.get('/health', async () => ({
     status: 'healthy',
@@ -23,23 +18,23 @@ const buildApp = async (): Promise<FastifyInstance> => {
       redis: { status: 'healthy', latency: 2 },
     },
   }));
-  
+
   // Mock liveness endpoint
   app.get('/livez', async () => ({
     status: 'ok',
   }));
-  
+
   // Mock readiness endpoint
   app.get('/readyz', async () => ({
     status: 'ok',
   }));
-  
+
   // Mock metrics endpoint
   app.get('/metrics', async (_request, reply) => {
     reply.type('text/plain');
     return '# HELP analytics_up Service up indicator\nanalytics_up 1\n';
   });
-  
+
   return app;
 };
 
@@ -63,7 +58,7 @@ describe('Health Endpoints', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      
+
       const body = JSON.parse(response.body);
       expect(body.status).toBe('healthy');
       expect(body.timestamp).toBeDefined();
@@ -103,19 +98,19 @@ describe('Health Endpoints', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      
+
       const body = JSON.parse(response.body);
       expect(body.status).toBe('ok');
     });
 
     it('should be fast (< 100ms)', async () => {
       const start = Date.now();
-      
+
       await app.inject({
         method: 'GET',
         url: '/livez',
       });
-      
+
       const duration = Date.now() - start;
       expect(duration).toBeLessThan(100);
     });
@@ -129,7 +124,7 @@ describe('Health Endpoints', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      
+
       const body = JSON.parse(response.body);
       expect(body.status).toBe('ok');
     });
@@ -194,7 +189,7 @@ describe('Request Headers', () => {
 
   it('should accept X-Request-ID header', async () => {
     const requestId = 'test-request-123';
-    
+
     const response = await app.inject({
       method: 'GET',
       url: '/health',
@@ -204,7 +199,6 @@ describe('Request Headers', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    // Response should include the request ID
   });
 
   it('should handle missing headers gracefully', async () => {
@@ -239,7 +233,7 @@ describe('Performance', () => {
     );
 
     const responses = await Promise.all(requests);
-    
+
     responses.forEach((response) => {
       expect(response.statusCode).toBe(200);
     });
@@ -247,14 +241,13 @@ describe('Performance', () => {
 
   it('should complete health check within SLA', async () => {
     const start = Date.now();
-    
+
     await app.inject({
       method: 'GET',
       url: '/health',
     });
-    
+
     const duration = Date.now() - start;
-    // Health check should complete within 1 second
     expect(duration).toBeLessThan(1000);
   });
 });

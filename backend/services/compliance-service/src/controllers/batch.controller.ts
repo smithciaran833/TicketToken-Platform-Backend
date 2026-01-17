@@ -9,9 +9,9 @@ export class BatchController {
   async generate1099Forms(request: FastifyRequest, reply: FastifyReply) {
     try {
       const tenantId = requireTenantId(request);
-      const { year } = request.body as any;
+      const { year } = (request.body as any) || {};
       const targetYear = year || new Date().getFullYear() - 1;
-      
+
       const result = await batchService.generateYear1099Forms(targetYear, tenantId);
 
       logger.info(`Generated 1099 forms for tenant ${tenantId}, year ${targetYear}: ${result.generated} forms`);
@@ -33,7 +33,7 @@ export class BatchController {
   async getBatchJobs(request: FastifyRequest, reply: FastifyReply) {
     try {
       const tenantId = requireTenantId(request);
-      
+
       const jobs = await db.query(
         `SELECT * FROM compliance_batch_jobs
          WHERE tenant_id = $1
@@ -58,7 +58,7 @@ export class BatchController {
   async runDailyChecks(request: FastifyRequest, reply: FastifyReply) {
     try {
       const tenantId = requireTenantId(request);
-      
+
       await batchService.dailyComplianceChecks(tenantId);
 
       logger.info(`Daily compliance checks completed for tenant ${tenantId}`);
@@ -79,7 +79,7 @@ export class BatchController {
   async updateOFACList(request: FastifyRequest, reply: FastifyReply) {
     try {
       const tenantId = requireTenantId(request);
-      
+
       await batchService.processOFACUpdates(tenantId);
 
       logger.info(`OFAC list updated for tenant ${tenantId}`);

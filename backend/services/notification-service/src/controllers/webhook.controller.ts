@@ -258,7 +258,7 @@ export class WebhookController {
     });
 
     // Store webhook data for processing
-    await db('webhook_events').insert({
+    await db('notification_webhook_events').insert({
       provider,
       payload: JSON.stringify(data),
       received_at: new Date(),

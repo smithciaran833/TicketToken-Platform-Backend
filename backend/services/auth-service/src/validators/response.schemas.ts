@@ -48,6 +48,16 @@ const SafeUserSchema = z.object({
   password_changed_at: z.string().or(z.date()).nullable().optional(),
 });
 
+// Wallet user schema - simpler version for wallet auth responses
+// Wallet service returns fewer fields than standard auth
+const WalletUserSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  email_verified: z.boolean(),
+  mfa_enabled: z.boolean(),
+  tenant_id: z.string().uuid(),
+});
+
 const TokensSchema = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
@@ -124,24 +134,33 @@ const DisableMFAResponseSchema = z.object({
 // WALLET RESPONSES
 // ============================================
 
+// Fixed: Added 'message' field that service returns
 const WalletNonceResponseSchema = z.object({
   nonce: z.string(),
+  message: z.string(),
   expiresAt: z.string().optional(),
 });
 
+// Fixed: Use WalletUserSchema instead of SafeUserSchema
 const WalletAuthResponseSchema = z.object({
   success: z.boolean().optional(),
-  user: SafeUserSchema,
+  user: WalletUserSchema,
   tokens: TokensSchema,
+  wallet: z.object({
+    address: z.string(),
+    chain: z.string(),
+    connected: z.boolean(),
+  }).optional(),
 });
 
+// Fixed: Match what service actually returns
 const WalletLinkResponseSchema = z.object({
   success: z.boolean(),
   message: z.string().optional(),
   wallet: z.object({
-    publicKey: z.string(),
+    address: z.string(),
     chain: z.string(),
-    linkedAt: z.string(),
+    connected: z.boolean(),
   }).optional(),
 });
 
@@ -168,13 +187,13 @@ const BiometricRegisterResponseSchema = z.object({
   credentialId: z.string(),
 });
 
+// FIXED: Removed lastUsedAt since service doesn't return it
 const BiometricDevicesResponseSchema = z.object({
   devices: z.array(z.object({
     credentialId: z.string(),
     deviceId: z.string(),
     biometricType: z.string(),
     createdAt: z.string(),
-    lastUsedAt: z.string().nullable().optional(),
   })),
 });
 

@@ -49,7 +49,8 @@ const FILTER_CONFIG = {
     'sql',
     'bindings',
     'internalMessage',
-    'debugInfo'
+    'debugInfo',
+    'debug'
   ],
 
   // Fields to mask (show partial value)
@@ -70,7 +71,8 @@ const FILTER_CONFIG = {
   maxDepth: 10
 };
 
-const isProduction = process.env.NODE_ENV === 'production';
+// Check production mode dynamically for testing
+const isProduction = (): boolean => process.env.NODE_ENV === 'production';
 
 // =============================================================================
 // MASKING HELPERS
@@ -79,7 +81,7 @@ const isProduction = process.env.NODE_ENV === 'production';
 /**
  * Mask email address (show first 3 chars and domain)
  */
-function maskEmail(email: string): string {
+export function maskEmail(email: string): string {
   if (!email || typeof email !== 'string') return email;
 
   const parts = email.split('@');
@@ -98,7 +100,7 @@ function maskEmail(email: string): string {
 /**
  * Mask wallet address (show first 4 and last 4 chars)
  */
-function maskWallet(wallet: string): string {
+export function maskWallet(wallet: string): string {
   if (!wallet || typeof wallet !== 'string') return wallet;
 
   if (wallet.length <= 8) {
@@ -145,7 +147,7 @@ function shouldRemoveField(fieldName: string): boolean {
   }
 
   // Remove production-only fields in production
-  if (isProduction && FILTER_CONFIG.productionOnlyRemove.some(f =>
+  if (isProduction() && FILTER_CONFIG.productionOnlyRemove.some(f =>
     lowerFieldName.includes(f.toLowerCase())
   )) {
     return true;
@@ -272,7 +274,7 @@ function filterError(error: Error): Record<string, unknown> {
   }
 
   // Include stack trace only in development
-  if (!isProduction && error.stack) {
+  if (!isProduction() && error.stack) {
     filtered.stack = error.stack;
   }
 
@@ -333,7 +335,7 @@ export function createErrorResponse(
     type: 'about:blank',
     title: isAppError ? error.message : 'Internal Server Error',
     status: isAppError ? (error as any).statusCode : 500,
-    detail: isProduction ? undefined : filterErrorResponse(error).message,
+    detail: isProduction() ? undefined : filterErrorResponse(error).message,
     instance: requestId ? `/requests/${requestId}` : undefined
   };
 
@@ -348,7 +350,7 @@ export function createErrorResponse(
   }
 
   // Include stack in development
-  if (!isProduction && error instanceof Error && error.stack) {
+  if (!isProduction() && error instanceof Error && error.stack) {
     response.stack = error.stack;
   }
 
@@ -389,20 +391,25 @@ export function filterTransferData(
   transfer: Record<string, unknown>,
   requestingUserId?: string
 ): Record<string, unknown> {
-  const filtered = filterObject(transfer) as Record<string, unknown>;
+  // Check if user is sender BEFORE filtering
+  const isSender = transfer.senderId === requestingUserId;
 
-  // Hide acceptance code unless user is sender
-  if (filtered.senderId !== requestingUserId) {
-    delete filtered.acceptanceCode;
-    delete filtered.acceptanceCodeHash;
-  }
+  // Clone transfer to avoid mutating original
+  const cloned = { ...transfer };
 
   // Remove internal tracking fields
-  delete filtered.internalNotes;
-  delete filtered.adminNotes;
-  delete filtered.auditLog;
+  delete cloned.internalNotes;
+  delete cloned.adminNotes;
+  delete cloned.auditLog;
 
-  return filtered;
+  // If not sender, remove acceptance code before filtering
+  if (!isSender) {
+    delete cloned.acceptanceCode;
+    delete cloned.acceptanceCodeHash;
+  }
+
+  // Now filter the object
+  return filterObject(cloned) as Record<string, unknown>;
 }
 
 // =============================================================================

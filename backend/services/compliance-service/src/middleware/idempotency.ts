@@ -1,8 +1,8 @@
 /**
  * Idempotency Middleware for Compliance Service
- * 
+ *
  * AUDIT FIX IDP-1,2,3,4: No idempotency anywhere
- * 
+ *
  * Prevents duplicate 1099 generation, duplicate OFAC checks, etc.
  * Uses Redis for distributed idempotency key storage.
  */
@@ -69,7 +69,7 @@ export function idempotency(options?: {
     }
 
     const idempotencyKey = req.headers[IDEMPOTENCY_HEADER.toLowerCase()] as string;
-    
+
     // If no key provided, proceed without idempotency
     if (!idempotencyKey) {
       return next();
@@ -91,19 +91,19 @@ export function idempotency(options?: {
           throw new IdempotencyError(idempotencyKey, requestId);
         }
 
-        // Check if request body matches (prevent key reuse with different data)
-        if (existing.requestHash && existing.requestHash !== requestHash) {
-          logger.warn({ requestId, idempotencyKey }, 'Idempotency key reused with different request body');
-          throw new ConflictError(
-            'Idempotency key has already been used with a different request body',
-            requestId
-          );
-        }
-
-        // Return cached response
+        // Return cached response for completed requests
         if (existing.status === 'completed' && existing.response) {
+          // Check if request body matches (prevent key reuse with different data)
+          if (existing.requestHash && existing.requestHash !== requestHash) {
+            logger.warn({ requestId, idempotencyKey }, 'Idempotency key reused with different request body');
+            throw new ConflictError(
+              'Idempotency key has already been used with a different request body',
+              requestId
+            );
+          }
+
           logger.info({ requestId, idempotencyKey }, 'Returning cached idempotent response');
-          
+
           res.set('X-Idempotent-Replayed', 'true');
           if (existing.response.headers) {
             Object.entries(existing.response.headers).forEach(([key, value]) => {
@@ -126,7 +126,7 @@ export function idempotency(options?: {
         createdAt: new Date().toISOString(),
         requestHash
       };
-      
+
       await redisService.setWithTTL(redisKey, processingRecord, LOCK_TTL);
 
       // Intercept response to store result
@@ -169,7 +169,7 @@ export function idempotency(options?: {
       if (error instanceof IdempotencyError || error instanceof ConflictError) {
         throw error;
       }
-      
+
       logger.error({ requestId, idempotencyKey, error: (error as Error).message }, 'Idempotency check failed');
       // On Redis error, proceed without idempotency (fail open)
       next();

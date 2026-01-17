@@ -1,13 +1,13 @@
 /**
  * Knex Configuration for Integration Service
- * 
+ *
  * AUDIT FIXES:
  * - SEC-4/MIG-1: SSL rejectUnauthorized: false → Proper SSL verification in production
  * - DB-1: No timeouts → Lock and statement timeouts configured
  * - DB-2: Direct process.env → Still needed for CLI, but with proper defaults
  */
 
-import type { Knex } from 'knex';
+import Knex from 'knex';
 import * as dotenv from 'dotenv';
 import pg from 'pg';
 
@@ -26,11 +26,11 @@ const isTest = process.env.NODE_ENV === 'test';
 // SSL configuration based on environment
 function getSslConfig(): false | { rejectUnauthorized: boolean } {
   const sslEnabled = process.env.DB_SSL === 'true' || process.env.DB_SSL === 'require';
-  
+
   if (!sslEnabled) {
     return false;
   }
-  
+
   return {
     // AUDIT FIX MIG-1: In production, verify SSL certificates
     rejectUnauthorized: isProduction
@@ -91,11 +91,11 @@ const config: { [key: string]: Knex.Config } = {
   test: {
     client: 'postgresql',
     connection: {
-      host: process.env.DB_HOST || 'localhost',
-      port: parseInt(process.env.DB_PORT || '6432'),
-      database: process.env.DB_NAME || 'tickettoken_test_db',
-      user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD || 'postgres',
+      host: process.env.TEST_DB_HOST || 'localhost',
+      port: parseInt(process.env.TEST_DB_PORT || '5432'),
+      database: process.env.TEST_DB_NAME || 'tickettoken_test',
+      user: process.env.TEST_DB_USER || 'postgres',
+      password: process.env.TEST_DB_PASSWORD || 'postgres',
       ssl: false
     },
     pool: {

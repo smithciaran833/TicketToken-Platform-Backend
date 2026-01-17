@@ -14,7 +14,8 @@ module.exports = {
   ],
   transform: {
     '^.+\\.ts$': ['ts-jest', {
-      tsconfig: 'tsconfig.json'
+      tsconfig: 'tsconfig.json',
+      isolatedModules: true
     }]
   },
   collectCoverageFrom: [
@@ -33,6 +34,8 @@ module.exports = {
   },
   coverageReporters: ['text', 'lcov', 'html'],
   moduleNameMapper: {
+    '^@tickettoken/shared/clients$': '<rootDir>/tests/__mocks__/@tickettoken/shared/clients.ts',
+    '^@tickettoken/shared/http-client/base-service-client$': '<rootDir>/tests/__mocks__/@tickettoken/shared/http-client/base-service-client.ts',
     '^@/(.*)$': '<rootDir>/src/$1'
   },
   setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],

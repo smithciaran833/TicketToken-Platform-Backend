@@ -3,7 +3,7 @@
  * 
  * AUDIT FIX:
  * - IDP-1: Webhooks not deduplicated → Track webhook events by provider ID
- * - IDP-2: No webhook_events tracking table → Redis-based tracking with DB fallback
+ * - IDP-2: No notification_webhook_events tracking table → Redis-based tracking with DB fallback
  * 
  * Prevents duplicate processing of webhook events from SendGrid/Twilio
  */
@@ -105,7 +105,7 @@ export async function isWebhookDuplicate(
   
   // Check database as last resort
   try {
-    const existing = await db('webhook_events')
+    const existing = await db('notification_webhook_events')
       .where({ provider, event_id: eventId })
       .first();
     
@@ -150,7 +150,7 @@ export async function markWebhookProcessed(
   
   // Store in database (persistent)
   try {
-    await db('webhook_events').insert({
+    await db('notification_webhook_events').insert({
       provider,
       event_id: eventId,
       event_type: eventType,

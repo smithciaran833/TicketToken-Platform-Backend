@@ -95,10 +95,6 @@ module.exports = {
   // Reporters
   reporters: [
     'default',
-    ['jest-junit', {
-      outputDirectory: '<rootDir>/test-results',
-      outputName: 'junit.xml',
-    }],
   ],
   
   // Ignore patterns
@@ -106,11 +102,5 @@ module.exports = {
     '/node_modules/',
     '/dist/',
     '/coverage/',
-  ],
-  
-  // Watch plugins
-  watchPlugins: [
-    'jest-watch-typeahead/filename',
-    'jest-watch-typeahead/testname',
   ],
 };

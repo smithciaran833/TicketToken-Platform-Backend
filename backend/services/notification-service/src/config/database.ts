@@ -9,26 +9,23 @@ import { metricsService } from '../services/metrics.service';
 const poolConfig: Knex.PoolConfig = {
   min: parseInt(process.env.DB_POOL_MIN || '2'),
   max: parseInt(process.env.DB_POOL_MAX || '10'),
-  
+
   // Time to wait for a connection before timing out
   acquireTimeoutMillis: parseInt(process.env.DB_ACQUIRE_TIMEOUT || '30000'),
-  
+
   // Time a connection can be idle before being destroyed
   idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT || '30000'),
-  
+
   // Time to wait for connection destruction
   reapIntervalMillis: parseInt(process.env.DB_REAP_INTERVAL || '1000'),
-  
-  // Create connections in FIFO order (more predictable)
-  priorityRange: 2,
-  
+
   // Log pool activity
   log: (message: string, logLevel: string) => {
     if (process.env.DB_POOL_DEBUG === 'true') {
       logger.debug(`Database pool: ${message}`, { logLevel });
     }
   },
-  
+
   // Validate connection before use
   afterCreate: async (conn: any, done: any) => {
     try {
@@ -54,13 +51,13 @@ export const db = knex({
     database: process.env.DB_NAME || 'tickettoken_db',
     user: process.env.DB_USER || 'postgres',
     password: process.env.DB_PASSWORD || 'postgres',
-    
+
     // Connection timeout
     connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT || '10000'),
-    
+
     // Statement timeout (30 seconds default)
     statement_timeout: parseInt(process.env.DB_STATEMENT_TIMEOUT || '30000'),
-    
+
     // Keep connection alive
     keepAlive: true,
     keepAliveInitialDelayMillis: 10000,
@@ -112,7 +109,7 @@ class DatabaseHealthMonitor {
   async checkHealth(): Promise<boolean> {
     try {
       await db.raw('SELECT 1');
-      
+
       if (!this.isHealthy) {
         logger.info('Database connection restored');
         this.isHealthy = true;
@@ -120,11 +117,11 @@ class DatabaseHealthMonitor {
 
       // Update metrics
       metricsService.setGauge('database_health', 1);
-      
+
       return true;
     } catch (error) {
       logger.error('Database health check failed', { error });
-      
+
       if (this.isHealthy) {
         logger.error('Database connection lost');
         this.isHealthy = false;
@@ -132,7 +129,7 @@ class DatabaseHealthMonitor {
 
       // Update metrics
       metricsService.setGauge('database_health', 0);
-      
+
       return false;
     }
   }
@@ -147,14 +144,22 @@ class DatabaseHealthMonitor {
 
 export const dbHealthMonitor = new DatabaseHealthMonitor();
 
+// Store interval reference for cleanup
+let poolMetricsInterval: NodeJS.Timeout | null = null;
+
 /**
  * Track pool metrics periodically
  */
 function trackPoolMetrics(): void {
-  setInterval(() => {
+  // Clear any existing interval
+  if (poolMetricsInterval) {
+    clearInterval(poolMetricsInterval);
+  }
+
+  poolMetricsInterval = setInterval(() => {
     try {
       const pool = (db.client as any).pool;
-      
+
       if (pool) {
         // Track pool statistics
         metricsService.setGauge('db_pool_size', pool.numUsed() + pool.numFree());
@@ -170,6 +175,16 @@ function trackPoolMetrics(): void {
 }
 
 /**
+ * Stop pool metrics tracking
+ */
+export function stopPoolMetrics(): void {
+  if (poolMetricsInterval) {
+    clearInterval(poolMetricsInterval);
+    poolMetricsInterval = null;
+  }
+}
+
+/**
  * Initialize database connection with retry
  */
 export async function connectDatabase(): Promise<void> {
@@ -180,7 +195,7 @@ export async function connectDatabase(): Promise<void> {
     try {
       // Test the connection
       await db.raw('SELECT 1');
-      
+
       logger.info('Database connected successfully', {
         host: process.env.DB_HOST,
         database: process.env.DB_NAME,
@@ -218,9 +233,12 @@ export async function closeDatabaseConnections(): Promise<void> {
     // Stop health monitoring
     dbHealthMonitor.stop();
 
+    // Stop pool metrics tracking
+    stopPoolMetrics();
+
     // Close all connections
     await db.destroy();
-    
+
     logger.info('Database connections closed');
   } catch (error) {
     logger.error('Error closing database connections', { error });
@@ -240,7 +258,7 @@ export function getPoolStats(): {
 } {
   try {
     const pool = (db.client as any).pool;
-    
+
     if (!pool) {
       return {
         size: 0,

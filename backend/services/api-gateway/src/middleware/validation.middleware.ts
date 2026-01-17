@@ -44,7 +44,8 @@ export function validateBody(schemaName: string) {
 
     const { error } = schema.validate(request.body, {
       abortEarly: false,
-      stripUnknown: false // Don't strip - let service handle that
+      stripUnknown: false, // Don't strip - let service handle that
+      allowUnknown: true // Allow unknown fields - service will validate
     });
 
     if (error) {
@@ -84,7 +85,8 @@ export function validateQuery(schema: Joi.ObjectSchema) {
 
     const { error } = schema.validate(request.query, {
       abortEarly: false,
-      stripUnknown: false
+      stripUnknown: false,
+      allowUnknown: true
     });
 
     if (error) {

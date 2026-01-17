@@ -17,11 +17,11 @@ pg.types.setTypeParser(1700, (val: string) => parseFloat(val));
 function getSSLConfig(): false | { rejectUnauthorized: boolean; ca?: string } {
   const isProduction = process.env.NODE_ENV === 'production';
   const sslEnabled = process.env.DB_SSL === 'true' || isProduction;
-  
+
   if (!sslEnabled) {
     return false;
   }
-  
+
   return {
     rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false',
     ca: process.env.DB_CA_CERT || undefined
@@ -67,13 +67,13 @@ const config = {
     // Issue #77: Set lock_timeout
     acquireConnectionTimeout: 60000
   },
-  
+
   test: {
     client: 'pg',
     connection: {
       host: process.env.DB_HOST || 'localhost',
       port: parseInt(process.env.DB_PORT || '5432', 10),
-      database: process.env.DB_NAME || 'tickettoken_test',
+      database: process.env.DB_NAME_TEST || 'tickettoken_test',
       user: process.env.DB_USER || 'postgres',
       password: process.env.DB_PASSWORD,
       ssl: false // No SSL in test
@@ -89,7 +89,7 @@ const config = {
       directory: './src/migrations'
     }
   },
-  
+
   production: {
     client: 'pg',
     connection: {
@@ -127,11 +127,11 @@ const config = {
 if (process.env.NODE_ENV === 'production') {
   const required = ['DB_HOST', 'DB_USER', 'DB_PASSWORD', 'DB_NAME'];
   const missing = required.filter(key => !process.env[key]);
-  
+
   if (missing.length > 0) {
     throw new Error(`Missing required database environment variables: ${missing.join(', ')}`);
   }
-  
+
   // Warn about insecure passwords
   const password = process.env.DB_PASSWORD;
   if (password === 'postgres' || password === 'password') {

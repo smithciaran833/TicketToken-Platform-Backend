@@ -1,7 +1,9 @@
 import { config } from 'dotenv';
 
-// Load environment variables
-config();
+// Load environment variables (skip when running in Jest)
+if (!process.env.JEST_WORKER_ID) {
+  config();
+}
 
 export interface EnvConfig {
   // Server
@@ -102,18 +104,29 @@ export interface EnvConfig {
 }
 
 function getEnvVar(key: string, defaultValue?: string): string {
-  const value = process.env[key] || defaultValue;
-  if (!value) {
-    throw new Error(`Environment variable ${key} is not set`);
+  const value = process.env[key];
+  if (value !== undefined) {
+    return value;
   }
-  return value;
+  if (defaultValue !== undefined) {
+    return defaultValue;
+  }
+  throw new Error(`Environment variable ${key} is not set`);
 }
 
 function getEnvVarAsNumber(key: string, defaultValue?: number): number {
   const value = process.env[key];
+  
+  // If value is empty string without a default, throw error
+  if (value === '' && defaultValue === undefined) {
+    throw new Error(`Environment variable ${key} is not a valid number`);
+  }
+  
+  // If no value and we have a default, use the default
   if (!value && defaultValue !== undefined) {
     return defaultValue;
   }
+  
   const parsed = parseInt(value || '', 10);
   if (isNaN(parsed)) {
     throw new Error(`Environment variable ${key} is not a valid number`);
@@ -123,7 +136,14 @@ function getEnvVarAsNumber(key: string, defaultValue?: number): number {
 
 function getEnvVarAsBoolean(key: string, defaultValue: boolean = false): boolean {
   const value = process.env[key];
-  if (!value) return defaultValue;
+  
+  // Explicitly handle empty string as false
+  if (value === '') return false;
+  
+  // If no value, use default
+  if (value === undefined) return defaultValue;
+  
+  // Only 'true' (case-insensitive) is true
   return value.toLowerCase() === 'true';
 }
 
@@ -155,8 +175,8 @@ export const env: EnvConfig = {
 
   // AUDIT FIX CFG-1: Remove empty defaults for API keys - require in production
   // SendGrid
-  SENDGRID_API_KEY: process.env.NODE_ENV === 'production' 
-    ? getEnvVar('SENDGRID_API_KEY') 
+  SENDGRID_API_KEY: process.env.NODE_ENV === 'production'
+    ? getEnvVar('SENDGRID_API_KEY')
     : getEnvVar('SENDGRID_API_KEY', 'dev-sendgrid-key'),
   SENDGRID_FROM_EMAIL: getEnvVar('SENDGRID_FROM_EMAIL', 'noreply@tickettoken.com'),
   SENDGRID_FROM_NAME: getEnvVar('SENDGRID_FROM_NAME', 'TicketToken'),

@@ -102,7 +102,7 @@ export class WebhookService {
    */
   async isProcessedOrProcessing(eventId: string): Promise<{ processed: boolean; processing: boolean }> {
     try {
-      const event = await this.db('webhook_events')
+      const event = await this.db('venue_webhook_events')
         .where('event_id', eventId)
         .first();
       
@@ -172,7 +172,7 @@ export class WebhookService {
 
     try {
       // WH4/WH6/WH8: Create or update event record with pending status
-      await this.db('webhook_events')
+      await this.db('venue_webhook_events')
         .insert({
           event_id: eventId,
           event_type: eventType,
@@ -197,7 +197,7 @@ export class WebhookService {
       await processor(payload);
 
       // WH4: Mark as completed
-      await this.db('webhook_events')
+      await this.db('venue_webhook_events')
         .where('event_id', eventId)
         .update({
           status: 'completed' as WebhookStatus,
@@ -215,7 +215,7 @@ export class WebhookService {
       const retryCount = await this.getRetryCount(eventId);
       const newStatus: WebhookStatus = retryCount >= maxRetries ? 'failed' : 'retrying';
 
-      await this.db('webhook_events')
+      await this.db('venue_webhook_events')
         .where('event_id', eventId)
         .update({
           status: newStatus,
@@ -237,7 +237,7 @@ export class WebhookService {
    */
   private async getRetryCount(eventId: string): Promise<number> {
     try {
-      const event = await this.db('webhook_events')
+      const event = await this.db('venue_webhook_events')
         .where('event_id', eventId)
         .first('retry_count');
       return event?.retry_count || 0;
@@ -255,7 +255,7 @@ export class WebhookService {
     cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
 
     try {
-      const deletedCount = await this.db('webhook_events')
+      const deletedCount = await this.db('venue_webhook_events')
         .where('processed_at', '<', cutoffDate)
         .whereIn('status', ['completed', 'failed'])
         .delete();
@@ -277,7 +277,7 @@ export class WebhookService {
     cooldownDate.setMinutes(cooldownDate.getMinutes() - cooldownMinutes);
 
     try {
-      const events = await this.db('webhook_events')
+      const events = await this.db('venue_webhook_events')
         .where('status', 'retrying')
         .where('retry_count', '<', this.maxRetries)
         .where(function() {
@@ -306,7 +306,7 @@ export class WebhookService {
     retrying: number;
   }> {
     try {
-      const stats = await this.db('webhook_events')
+      const stats = await this.db('venue_webhook_events')
         .select('status')
         .count('* as count')
         .groupBy('status');

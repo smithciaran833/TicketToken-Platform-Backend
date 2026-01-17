@@ -279,7 +279,7 @@ const requestLoggerPlugin: FastifyPluginCallback = (fastify, _opts, done) => {
 
 export const requestLogger = fp(requestLoggerPlugin, {
   name: 'request-logger',
-  fastify: '4.x'
+  fastify: '5.x'
 });
 
 // =============================================================================
