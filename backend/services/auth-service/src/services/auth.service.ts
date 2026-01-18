@@ -79,10 +79,10 @@ export class AuthService {
 
         this.log.info('Creating new user', { tenantId });
         const insertResult = await client.query(
-          `INSERT INTO users (email, password_hash, first_name, last_name, phone, email_verified, email_verification_token, tenant_id, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `INSERT INTO users (email, password_hash, first_name, last_name, phone, email_verified, email_verification_token, tenant_id, created_at, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING id, email, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, created_at, updated_at`,
-          [normalizeEmail(data.email), passwordHash, sanitizedFirstName, sanitizedLastName, normalizePhone(data.phone) || null, false, emailVerificationToken, tenantId, new Date()]
+          [normalizeEmail(data.email), passwordHash, sanitizedFirstName, sanitizedLastName, normalizePhone(data.phone) || null, false, emailVerificationToken, tenantId, new Date(), 'ACTIVE']
         );
 
         user = insertResult.rows[0];
@@ -149,7 +149,7 @@ export class AuthService {
 
     try {
       const result = await pool.query(
-        'SELECT id, email, password_hash, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, failed_login_attempts, locked_until, created_at, updated_at FROM users WHERE email = $1 AND deleted_at IS NULL',
+        'SELECT id, email, password_hash, first_name, last_name, email_verified, mfa_enabled, role, tenant_id, status, failed_login_attempts, locked_until, created_at, updated_at FROM users WHERE email = $1 AND deleted_at IS NULL',
         [normalizeEmail(data.email)]
       );
 
@@ -221,6 +221,85 @@ export class AuthService {
           reason: !user ? 'user_not_found' : 'invalid_password'
         });
         throw new Error('Invalid credentials');
+      }
+
+      // Check account status - only ACTIVE users can login
+      if (user.status !== 'ACTIVE') {
+        this.log.warn('Login attempt on non-active account', {
+          userId: user.id,
+          status: user.status
+        });
+
+        const elapsed = Date.now() - startTime;
+        if (elapsed < MIN_RESPONSE_TIME) {
+          await this.delay(MIN_RESPONSE_TIME - elapsed);
+        }
+
+        throw new Error('Invalid credentials');
+      }
+
+      // FIX: Check if MFA is enabled - if so, return user WITHOUT tokens
+      // The controller will handle MFA verification and token generation
+      if (user.mfa_enabled && !data.mfaToken) {
+        const elapsed = Date.now() - startTime;
+        if (elapsed < MIN_RESPONSE_TIME) {
+          await this.delay(MIN_RESPONSE_TIME - elapsed);
+        }
+
+        this.log.info('MFA required for login', {
+          userId: user.id,
+          tenantId: user.tenant_id
+        });
+
+        // Reset failed login attempts since password was correct
+        await pool.query(
+          'UPDATE users SET failed_login_attempts = 0, locked_until = NULL WHERE id = $1',
+          [user.id]
+        );
+
+        return {
+          user: {
+            id: user.id,
+            email: user.email,
+            first_name: user.first_name,
+            last_name: user.last_name,
+            email_verified: user.email_verified,
+            mfa_enabled: user.mfa_enabled || false,
+            role: user.role || 'user',
+            tenant_id: user.tenant_id,
+            created_at: user.created_at,
+            updated_at: user.updated_at || user.created_at,
+          },
+          tokens: null, // No tokens when MFA is required
+        };
+      }
+
+      // FIX: If MFA is enabled AND token was provided, validate it
+      if (user.mfa_enabled && data.mfaToken) {
+        const { MFAService } = await import('./mfa.service');
+        const mfaService = new MFAService();
+        
+        // Try TOTP first
+        const mfaValid = await mfaService.verifyTOTP(user.id, data.mfaToken, user.tenant_id);
+        
+        if (!mfaValid) {
+          // Try backup code as fallback
+          const backupValid = await mfaService.verifyBackupCode(user.id, data.mfaToken, user.tenant_id);
+          
+          if (!backupValid) {
+            // Both failed - deny access
+            const elapsed = Date.now() - startTime;
+            if (elapsed < MIN_RESPONSE_TIME) {
+              await this.delay(MIN_RESPONSE_TIME - elapsed);
+            }
+            
+            this.log.warn('Invalid MFA token during login', { userId: user.id });
+            throw new Error('Invalid credentials');
+          }
+        }
+        
+        this.log.info('MFA verification successful', { userId: user.id });
+        // Continue to token generation below...
       }
 
       const client = await pool.connect();
@@ -348,7 +427,7 @@ export class AuthService {
     }
   }
 
-  async logout(userId: string, refreshToken?: string, tenantId?: string) {
+  async logout(userId: string, refreshToken?: string, tenantId?: string, accessToken?: string) {
     this.log.info('Logout attempt', { userId });
 
     try {
@@ -364,17 +443,61 @@ export class AuthService {
         }
       }
 
-      if (refreshToken && userTenantId) {
-        const expiryTime = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      // FIX Issue #3: Invalidate the ACCESS token's JTI, not the refresh token
+      if (accessToken && userTenantId) {
+        try {
+          // Decode the access token to get its JTI
+          const decoded = this.jwtService.decode(accessToken);
 
-        await pool.query(
-          `INSERT INTO invalidated_tokens (token, user_id, tenant_id, invalidated_at, expires_at)
-           VALUES ($1, $2, $3, NOW(), $4)
-           ON CONFLICT (token) DO NOTHING`,
-          [refreshToken, userId, userTenantId, expiryTime]
-        );
+          if (decoded && decoded.jti) {
+            // Calculate expiry time (access tokens typically expire in 15 minutes, but use 1 day to be safe)
+            const expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+            // Store the ACCESS token's JTI
+            await pool.query(
+              `INSERT INTO invalidated_tokens (token, user_id, tenant_id, invalidated_at, expires_at)
+               VALUES ($1, $2, $3, NOW(), $4)
+               ON CONFLICT (token) DO NOTHING`,
+              [decoded.jti, userId, userTenantId, expiryTime]
+            );
+
+            this.log.info('Access token invalidated', { userId, jti: decoded.jti });
+          }
+        } catch (decodeError) {
+          this.log.error('Failed to decode access token for invalidation', {
+            userId,
+            error: decodeError instanceof Error ? decodeError.message : 'Unknown error'
+          });
+          // Continue with logout even if token invalidation fails
+        }
       }
 
+      // Also invalidate refresh token if provided (original logic)
+      if (refreshToken && userTenantId) {
+        try {
+          const decoded = this.jwtService.decode(refreshToken);
+
+          if (decoded && decoded.jti) {
+            const expiryTime = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+
+            await pool.query(
+              `INSERT INTO invalidated_tokens (token, user_id, tenant_id, invalidated_at, expires_at)
+               VALUES ($1, $2, $3, NOW(), $4)
+               ON CONFLICT (token) DO NOTHING`,
+              [decoded.jti, userId, userTenantId, expiryTime]
+            );
+
+            this.log.info('Refresh token invalidated', { userId, jti: decoded.jti });
+          }
+        } catch (decodeError) {
+          this.log.error('Failed to decode refresh token for invalidation', {
+            userId,
+            error: decodeError instanceof Error ? decodeError.message : 'Unknown error'
+          });
+        }
+      }
+
+      // End all active sessions
       await pool.query(
         'UPDATE user_sessions SET ended_at = NOW() WHERE user_id = $1 AND ended_at IS NULL',
         [userId]
@@ -389,6 +512,7 @@ export class AuthService {
         error: error instanceof Error ? error.message : 'Unknown error'
       });
 
+      // Return success anyway to not leak information
       return { success: true };
     }
   }
