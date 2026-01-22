@@ -56,8 +56,9 @@ async function proxyToPaymentService(
   path: string
 ) {
   const axios = require('axios');
+  const { generateInternalAuthHeaders } = require('../utils/internal-auth');
   const serviceUrl = `${serviceUrls.payment}/api/v1/payments${path}`;
-  
+
   try {
     // Build headers - filter and add gateway headers
     const headers: Record<string, string> = {
@@ -77,6 +78,14 @@ async function proxyToPaymentService(
       headers['x-tenant-id'] = request.user.tenant_id;
       headers['x-tenant-source'] = 'jwt';
     }
+
+    // PHASE A FIX: Add HMAC authentication headers for S2S calls
+    const internalAuthHeaders = generateInternalAuthHeaders(
+      request.method,
+      `/api/v1/payments${path}`,
+      request.body
+    );
+    Object.assign(headers, internalAuthHeaders);
 
     const response = await axios({
       method: request.method,

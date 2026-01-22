@@ -21,6 +21,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tickettoken/shared": "file:../../shared",
     "@fastify/cors": "^8.4.2",
     "@fastify/helmet": "^11.1.1",
     "@fastify/rate-limit": "^9.1.0",

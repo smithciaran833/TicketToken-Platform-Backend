@@ -117,24 +117,18 @@ jest.mock('ioredis', () => {
 });
 
 // =============================================================================
-// MOCK BULLMQ
+// MOCK BULL (Note: This service uses bull, not bullmq)
 // =============================================================================
-jest.mock('bullmq', () => {
-  return {
-    Queue: jest.fn().mockImplementation(() => ({
-      add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
-      close: jest.fn().mockResolvedValue(undefined),
-      getJobs: jest.fn().mockResolvedValue([]),
-      getJobCounts: jest.fn().mockResolvedValue({ waiting: 0, active: 0, completed: 0, failed: 0 }),
-      obliterate: jest.fn().mockResolvedValue(undefined),
-      on: jest.fn(),
-    })),
-    Worker: jest.fn().mockImplementation(() => ({
-      close: jest.fn().mockResolvedValue(undefined),
-      on: jest.fn(),
-    })),
-    Job: jest.fn(),
-  };
+jest.mock('bull', () => {
+  return jest.fn().mockImplementation(() => ({
+    add: jest.fn().mockResolvedValue({ id: 'mock-job-id' }),
+    process: jest.fn(),
+    close: jest.fn().mockResolvedValue(undefined),
+    getJobs: jest.fn().mockResolvedValue([]),
+    getJobCounts: jest.fn().mockResolvedValue({ waiting: 0, active: 0, completed: 0, failed: 0 }),
+    obliterate: jest.fn().mockResolvedValue(undefined),
+    on: jest.fn(),
+  }));
 });
 
 // =============================================================================

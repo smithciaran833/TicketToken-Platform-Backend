@@ -13,6 +13,7 @@
     "migrate:make": "knex migrate:make --knexfile knexfile.ts -x ts"
   },
   "dependencies": {
+    "@tickettoken/shared": "file:../../shared",
     "@aws-sdk/client-secrets-manager": "^3.962.0",
     "@fastify/helmet": "^12.0.1",
     "@fastify/rate-limit": "^10.1.1",

@@ -32,17 +32,19 @@ async function verifyInternalService(request: FastifyRequest, reply: FastifyRepl
     return reply.status(401).send({ error: 'Request expired' });
   }
 
-  if (signature === 'temp-signature') {
-    log.info('Internal request accepted with temp signature', { service: serviceName });
-    return;
-  }
+  // SECURITY FIX: Removed temp-signature bypass
+  // All requests must have valid HMAC authentication - no exceptions
 
   const expectedSignature = crypto
     .createHmac('sha256', INTERNAL_SECRET)
     .update(`${serviceName}:${timestamp}:${request.url}`)
     .digest('hex');
 
-  if (signature !== expectedSignature) {
+  // SECURITY FIX: Use timing-safe comparison to prevent timing attacks
+  const signatureValid = signature.length === expectedSignature.length &&
+    crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSignature));
+
+  if (!signatureValid) {
     log.warn('Invalid internal service signature', { service: serviceName });
     return reply.status(401).send({ error: 'Invalid signature' });
   }
