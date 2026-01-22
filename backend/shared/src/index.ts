@@ -61,7 +61,50 @@ export {
   buildInternalHeaders,
   internalAuthErrorHandler,
   InternalAuthError,
+  captureRawBody,
 } from './middleware/internal-auth.middleware';
+
+// ============================================================================
+// HMAC AUTHENTICATION (Phase 2 - Service-to-Service Security)
+// ============================================================================
+
+// HMAC signing and validation for internal service communication
+export {
+  // Types
+  HmacConfig,
+  HmacHeaders,
+  HmacValidationResult,
+  HmacPayloadComponents,
+  HmacErrorCode,
+  HMAC_HEADER_NAMES,
+  DEFAULT_HMAC_CONFIG,
+  // Errors
+  HmacError,
+  ReplayAttackError,
+  TimestampError,
+  SignatureError,
+  MissingHeadersError,
+  // Configuration
+  isHmacEnabled,
+  getHmacSecret,
+  getServiceName,
+  createHmacConfig,
+  getReplayWindowMs,
+  // Nonce Store
+  NonceStore,
+  getNonceStore,
+  createNonceStore,
+  // Signer (client-side)
+  HmacSigner,
+  getHmacSigner,
+  createHmacSigner,
+  signRequest,
+  // Validator (server-side)
+  HmacValidator,
+  getHmacValidator,
+  createHmacValidator,
+  validateRequest,
+} from './hmac';
 
 // Cache utilities
 export { createCache } from './cache/src/index';

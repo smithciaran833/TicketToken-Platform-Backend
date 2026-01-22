@@ -12,7 +12,13 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import crypto from 'crypto';
+import * as crypto from 'crypto';
+import {
+  HmacValidator,
+  isHmacEnabled,
+  HmacError,
+  HMAC_HEADER_NAMES,
+} from '../hmac';
 
 /**
  * Configuration for internal auth middleware
@@ -46,6 +52,8 @@ export interface InternalRequest extends Request {
   isInternalRequest?: boolean;
   /** Calling service name */
   callingService?: string;
+  /** Raw body for HMAC validation */
+  rawBody?: string | Buffer;
 }
 
 /**
@@ -78,85 +86,142 @@ const DEFAULT_CONFIG: InternalAuthConfig = {
  */
 export function createInternalAuthMiddleware(config: InternalAuthConfig = {}) {
   const opts = { ...DEFAULT_CONFIG, ...config };
+  const hmacEnabled = isHmacEnabled();
+  const hmacValidator = hmacEnabled ? new HmacValidator() : null;
 
-  if (!opts.apiKey) {
+  if (!hmacEnabled && !opts.apiKey) {
     console.warn(
-      `[${opts.serviceName}] WARNING: INTERNAL_API_KEY not set. Internal endpoints are unprotected!`
+      `[${opts.serviceName}] WARNING: INTERNAL_API_KEY not set and HMAC disabled. Internal endpoints are unprotected!`
     );
   }
 
-  return (req: InternalRequest, res: Response, next: NextFunction) => {
-    // Check for internal service header
-    const isInternalHeader = req.headers['x-internal-service'] === 'true';
-    
-    if (!isInternalHeader) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'This endpoint is only accessible to internal services',
+  if (hmacEnabled) {
+    console.log(`[${opts.serviceName}] HMAC authentication enabled for internal endpoints`);
+  }
+
+  return async (req: InternalRequest, res: Response, next: NextFunction) => {
+    try {
+      // Check for internal service header
+      const isInternalHeader = req.headers['x-internal-service'] === 'true';
+
+      if (!isInternalHeader) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'This endpoint is only accessible to internal services',
+        });
+      }
+
+      // Determine authentication method based on headers present
+      const hasHmacHeaders = !!(
+        req.headers[HMAC_HEADER_NAMES.SIGNATURE] &&
+        req.headers[HMAC_HEADER_NAMES.TIMESTAMP] &&
+        req.headers[HMAC_HEADER_NAMES.NONCE]
+      );
+
+      if (hmacEnabled && hasHmacHeaders && hmacValidator) {
+        // HMAC authentication (new)
+        const body = req.rawBody || req.body;
+        const result = await hmacValidator.validate(
+          req.headers as Record<string, string>,
+          req.method,
+          req.path,
+          body
+        );
+
+        if (!result.valid) {
+          console.warn(
+            `[${opts.serviceName}] HMAC validation failed: ${result.error} (${result.errorCode})`
+          );
+          const statusCode = result.errorCode === 'MISSING_HEADERS' ? 400 : 401;
+          return res.status(statusCode).json({
+            error: result.errorCode === 'MISSING_HEADERS' ? 'Bad Request' : 'Unauthorized',
+            message: result.error,
+            code: result.errorCode,
+          });
+        }
+
+        // Set calling service from validated HMAC headers
+        req.callingService = result.serviceName;
+      } else {
+        // Legacy API key authentication
+        const providedApiKey = req.headers['x-internal-api-key'] as string;
+
+        if (opts.apiKey && !validateApiKey(providedApiKey, opts.apiKey)) {
+          console.warn(`[${opts.serviceName}] Invalid internal API key from ${req.ip}`);
+          return res.status(401).json({
+            error: 'Unauthorized',
+            message: 'Invalid internal API key',
+          });
+        }
+
+        // Set calling service from header (legacy)
+        req.callingService = req.headers['x-calling-service'] as string;
+      }
+
+      // Extract tenant context
+      const tenantId = req.headers['x-tenant-id'] as string;
+
+      if (!tenantId && !opts.allowNoTenant) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'X-Tenant-ID header is required',
+        });
+      }
+
+      // Extract and validate tenant ID format (UUID)
+      if (tenantId && !isValidUUID(tenantId)) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'Invalid X-Tenant-ID format (expected UUID)',
+        });
+      }
+
+      // Extract user context (optional)
+      const userId = req.headers['x-user-id'] as string;
+      if (userId && !isValidUUID(userId)) {
+        return res.status(400).json({
+          error: 'Bad Request',
+          message: 'Invalid X-User-ID format (expected UUID)',
+        });
+      }
+
+      // Extract tracing headers
+      const traceId = req.headers['x-trace-id'] as string || generateTraceId();
+      const spanId = req.headers['x-span-id'] as string;
+
+      // Set request context
+      req.tenantId = tenantId;
+      req.userId = userId;
+      req.traceId = traceId;
+      req.spanId = spanId;
+      req.isInternalRequest = true;
+
+      // Add trace ID to response headers
+      res.setHeader('X-Trace-ID', traceId);
+
+      // Log internal request
+      console.log(
+        `[${opts.serviceName}] Internal request from ${req.callingService || 'unknown'}: ` +
+        `${req.method} ${req.path} tenant=${tenantId || 'none'} trace=${traceId}` +
+        (hmacEnabled && hasHmacHeaders ? ' (HMAC)' : ' (API-Key)')
+      );
+
+      next();
+    } catch (error) {
+      if (error instanceof HmacError) {
+        return res.status(error.statusCode).json({
+          error: error.statusCode === 400 ? 'Bad Request' : 'Unauthorized',
+          message: error.message,
+          code: error.code,
+        });
+      }
+
+      console.error(`[${opts.serviceName}] Internal auth error:`, error);
+      return res.status(500).json({
+        error: 'Internal Server Error',
+        message: 'Authentication validation failed',
       });
     }
-
-    // Validate API key
-    const providedApiKey = req.headers['x-internal-api-key'] as string;
-    
-    if (opts.apiKey && !validateApiKey(providedApiKey, opts.apiKey)) {
-      console.warn(`[${opts.serviceName}] Invalid internal API key from ${req.ip}`);
-      return res.status(401).json({
-        error: 'Unauthorized',
-        message: 'Invalid internal API key',
-      });
-    }
-
-    // Extract tenant context
-    const tenantId = req.headers['x-tenant-id'] as string;
-    
-    if (!tenantId && !opts.allowNoTenant) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'X-Tenant-ID header is required',
-      });
-    }
-
-    // Extract and validate tenant ID format (UUID)
-    if (tenantId && !isValidUUID(tenantId)) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'Invalid X-Tenant-ID format (expected UUID)',
-      });
-    }
-
-    // Extract user context (optional)
-    const userId = req.headers['x-user-id'] as string;
-    if (userId && !isValidUUID(userId)) {
-      return res.status(400).json({
-        error: 'Bad Request',
-        message: 'Invalid X-User-ID format (expected UUID)',
-      });
-    }
-
-    // Extract tracing headers
-    const traceId = req.headers['x-trace-id'] as string || generateTraceId();
-    const spanId = req.headers['x-span-id'] as string;
-    const callingService = req.headers['x-calling-service'] as string;
-
-    // Set request context
-    req.tenantId = tenantId;
-    req.userId = userId;
-    req.traceId = traceId;
-    req.spanId = spanId;
-    req.isInternalRequest = true;
-    req.callingService = callingService;
-
-    // Add trace ID to response headers
-    res.setHeader('X-Trace-ID', traceId);
-
-    // Log internal request
-    console.log(
-      `[${opts.serviceName}] Internal request from ${callingService || 'unknown'}: ` +
-      `${req.method} ${req.path} tenant=${tenantId || 'none'} trace=${traceId}`
-    );
-
-    next();
   };
 }
 
@@ -321,3 +386,41 @@ export class InternalAuthError extends Error {
     Object.setPrototypeOf(this, InternalAuthError.prototype);
   }
 }
+
+/**
+ * Middleware to capture raw body for HMAC validation.
+ * Must be applied BEFORE body parsers (express.json()).
+ *
+ * Usage:
+ * ```typescript
+ * app.use('/internal', captureRawBody());
+ * app.use(express.json());
+ * app.use('/internal', createInternalAuthMiddleware());
+ * ```
+ */
+export function captureRawBody() {
+  return (req: InternalRequest, res: Response, next: NextFunction) => {
+    if (req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE') {
+      return next();
+    }
+
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      chunks.push(chunk);
+    });
+
+    req.on('end', () => {
+      if (chunks.length > 0) {
+        req.rawBody = Buffer.concat(chunks);
+      }
+      // Don't call next() here - let the body parser handle stream consumption
+    });
+
+    next();
+  };
+}
+
+/**
+ * Check if HMAC authentication is enabled
+ */
+export { isHmacEnabled } from '../hmac';

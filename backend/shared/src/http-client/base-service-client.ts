@@ -10,6 +10,7 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosResponse, AxiosError } from 'axios';
 import { CircuitBreaker, CircuitBreakerOptions, createDefaultCircuitBreaker } from './circuit-breaker';
 import { withRetry, RetryOptions, RetryPresets } from './retry';
+import { HmacSigner, isHmacEnabled } from '../hmac';
 
 /**
  * Configuration for the base service client
@@ -111,6 +112,7 @@ export abstract class BaseServiceClient {
   protected readonly circuitBreaker: CircuitBreaker;
   protected readonly config: Required<ServiceClientConfig>;
   protected readonly retryOptions: RetryOptions;
+  protected readonly hmacSigner: HmacSigner | null;
 
   constructor(config: ServiceClientConfig) {
     this.config = {
@@ -125,7 +127,10 @@ export abstract class BaseServiceClient {
     };
 
     this.retryOptions = this.config.retry;
-    
+
+    // Initialize HMAC signer if enabled
+    this.hmacSigner = isHmacEnabled() ? new HmacSigner({ serviceName: this.config.serviceName }) : null;
+
     // Create circuit breaker
     this.circuitBreaker = createDefaultCircuitBreaker(this.config.serviceName);
     
@@ -196,8 +201,14 @@ export abstract class BaseServiceClient {
 /**
  * Build headers for a request including tenant context and tracing.
  * Throws if tenantId is missing or invalid.
+ *
+ * @param context - Request context with tenant and user info
+ * @param hmacParams - Optional params for HMAC signing (method, path, body)
  */
-  protected buildHeaders(context: RequestContext): Record<string, string> {
+  protected buildHeaders(
+    context: RequestContext,
+    hmacParams?: { method: string; path: string; body?: unknown }
+  ): Record<string, string> {
     // Validate tenantId is present and valid
     if (!context.tenantId || context.tenantId === 'undefined' || context.tenantId === 'null') {
       throw new ServiceClientError(
@@ -213,8 +224,14 @@ export abstract class BaseServiceClient {
       'X-Internal-Service': 'true',
     };
 
-    // Add API key authentication
-    if (this.config.apiKey) {
+    // Use HMAC authentication if enabled, otherwise fall back to API key
+    if (this.hmacSigner && hmacParams) {
+      // HMAC authentication (new)
+      const hmacHeaders = this.hmacSigner.sign(hmacParams.method, hmacParams.path, hmacParams.body);
+      Object.assign(headers, hmacHeaders);
+      headers['X-Calling-Service'] = this.config.serviceName;
+    } else if (this.config.apiKey) {
+      // Legacy API key authentication
       headers['X-Internal-API-Key'] = this.config.apiKey;
     }
 
@@ -308,7 +325,7 @@ export abstract class BaseServiceClient {
     config?: AxiosRequestConfig
   ): Promise<ServiceResponse<T>> {
     const startTime = Date.now();
-    const headers = this.buildHeaders(context);
+    const headers = this.buildHeaders(context, { method, path, body: data });
 
     // Add idempotency key for mutation requests to prevent duplicate operations on retry
     const isMutationRequest = ['POST', 'PUT', 'PATCH'].includes(method.toUpperCase());
