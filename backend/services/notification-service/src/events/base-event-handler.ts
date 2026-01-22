@@ -1,11 +1,13 @@
 import Bull from 'bull';
 import { logger } from '../config/logger';
 import { db } from '../config/database';
+import { getAuthServiceClient, getEventServiceClient } from '../clients';
+import { createRequestContext } from '@tickettoken/shared';
 
 export abstract class BaseEventHandler {
   protected queue: Bull.Queue;
   protected serviceName: string;
-  
+
   constructor(queueName: string, serviceName: string) {
     this.serviceName = serviceName;
     this.queue = new Bull(queueName, {
@@ -19,30 +21,36 @@ export abstract class BaseEventHandler {
 
   abstract initializeListeners(): void;
 
-  protected async getUserDetails(userId: string): Promise<any> {
+  /**
+   * Create request context for HMAC-authenticated service calls
+   */
+  protected createServiceContext(tenantId?: string): ReturnType<typeof createRequestContext> {
+    return createRequestContext({
+      tenantId: tenantId || process.env.DEFAULT_TENANT_ID,
+      serviceName: 'notification-service',
+    });
+  }
+
+  protected async getUserDetails(userId: string, tenantId?: string): Promise<any> {
     try {
-      // Query user from database
+      // Query user from database first
       const result = await db('users')
         .where('id', userId)
         .first();
-      
+
       if (!result) {
-        // Fallback to auth service API
-        const authServiceUrl = process.env.AUTH_SERVICE_URL || 'http://auth-service:3001';
-        const response = await fetch(`${authServiceUrl}/api/v1/users/${userId}`, {
-          headers: {
-            'X-Service-Token': process.env.SERVICE_TOKEN || '',
-            'X-Service-Name': this.serviceName
-          }
-        });
-        
-        if (!response.ok) {
+        // Fallback to auth service API with HMAC authentication
+        const authClient = getAuthServiceClient();
+        const ctx = this.createServiceContext(tenantId);
+        const user = await authClient.getUserById(userId, ctx);
+
+        if (!user) {
           throw new Error(`User not found: ${userId}`);
         }
-        
-        return await response.json();
+
+        return user;
       }
-      
+
       return result;
     } catch (error) {
       logger.error(`Failed to get user details for ${userId}:`, error);
@@ -55,28 +63,25 @@ export abstract class BaseEventHandler {
     }
   }
 
-  protected async getEventDetails(eventId: string): Promise<any> {
+  protected async getEventDetails(eventId: string, tenantId?: string): Promise<any> {
     try {
       const result = await db('events')
         .where('id', eventId)
         .first();
-      
+
       if (!result) {
-        const eventServiceUrl = process.env.EVENT_SERVICE_URL || 'http://event-service:3003';
-        const response = await fetch(`${eventServiceUrl}/api/v1/events/${eventId}`, {
-          headers: {
-            'X-Service-Token': process.env.SERVICE_TOKEN || '',
-            'X-Service-Name': this.serviceName
-          }
-        });
-        
-        if (!response.ok) {
+        // Fallback to event service API with HMAC authentication
+        const eventClient = getEventServiceClient();
+        const ctx = this.createServiceContext(tenantId);
+        const event = await eventClient.getEventById(eventId, ctx);
+
+        if (!event) {
           throw new Error(`Event not found: ${eventId}`);
         }
-        
-        return await response.json();
+
+        return event;
       }
-      
+
       return result;
     } catch (error) {
       logger.error(`Failed to get event details for ${eventId}:`, error);

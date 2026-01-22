@@ -1,7 +1,8 @@
 import puppeteer from 'puppeteer';
-import axios from 'axios';
 import { logger } from '../utils/logger';
 import QRCode from 'qrcode';
+import { getVenueServiceClient } from '../clients';
+import { createRequestContext } from '@tickettoken/shared';
 
 interface TicketData {
   ticketId: string;
@@ -107,25 +108,18 @@ export class TicketPDFService {
 
   /**
    * Fetch venue branding from venue-service
+   * Uses HMAC-authenticated client from shared library
    */
   private async fetchVenueBranding(venueId: string): Promise<any> {
     try {
-      const venueServiceUrl = process.env.VENUE_SERVICE_URL || 'http://venue-service:3002';
-      const response = await axios.get(
-        `${venueServiceUrl}/api/v1/branding/${venueId}`,
-        { timeout: 2000 }
-      );
+      const venueClient = getVenueServiceClient();
+      // Create request context for HMAC authentication
+      const ctx = createRequestContext({
+        tenantId: process.env.DEFAULT_TENANT_ID,
+        serviceName: 'file-service',
+      });
 
-      // Check if white-label
-      const venueResponse = await axios.get(
-        `${venueServiceUrl}/api/v1/venues/${venueId}`,
-        { timeout: 2000 }
-      );
-
-      return {
-        branding: response.data.branding,
-        isWhiteLabel: venueResponse.data.venue?.hide_platform_branding || false
-      };
+      return await venueClient.getVenueBrandingWithWhiteLabel(venueId, ctx);
     } catch (error: any) {
       logger.warn({ venueId, errorMessage: error.message }, 'Failed to fetch branding for venue');
       return null;

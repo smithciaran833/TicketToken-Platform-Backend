@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "^3.962.0",
+    "@tickettoken/shared": "file:../../shared",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",
     "@fastify/rate-limit": "^10.3.0",

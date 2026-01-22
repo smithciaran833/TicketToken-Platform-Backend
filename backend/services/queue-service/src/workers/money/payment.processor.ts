@@ -1,10 +1,11 @@
 import { BullJobData } from '../../adapters/bull-job-adapter';
-import axios from 'axios';
 import { BaseWorker } from '../base.worker';
 import { PaymentJobData, JobResult } from '../../types/job.types';
 import { IdempotencyService } from '../../services/idempotency.service';
 import { RateLimiterService } from '../../services/rate-limiter.service';
 import { logger } from '../../utils/logger';
+import { getPaymentServiceClient } from '../../clients';
+import { createRequestContext } from '@tickettoken/shared';
 
 export class PaymentProcessor extends BaseWorker<PaymentJobData, JobResult> {
   protected name = 'payment-processor';
@@ -91,45 +92,31 @@ export class PaymentProcessor extends BaseWorker<PaymentJobData, JobResult> {
   }
   
   private async processPaymentViaService(data: PaymentJobData, idempotencyKey: string): Promise<any> {
-    const paymentServiceUrl = process.env.PAYMENT_SERVICE_URL || 'http://localhost:3005';
-    
     try {
-      const response = await axios.post(
-        `${paymentServiceUrl}/api/v1/payments/process`,
-        {
-          userId: data.userId,
-          venueId: data.venueId,
-          eventId: data.eventId,
-          amount: data.amount,
-          currency: data.currency || 'USD',
-          paymentMethod: data.paymentMethod,
-          idempotencyKey
-        },
-        {
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Idempotency-Key': idempotencyKey
-          },
-          timeout: 30000 // 30 second timeout
-        }
-      );
-      
-      return response.data;
+      // Use HMAC-authenticated client from shared library
+      const paymentClient = getPaymentServiceClient();
+      const ctx = createRequestContext({
+        tenantId: data.venueId, // Use venueId as tenant context
+        serviceName: 'queue-service',
+      });
+
+      const response = await paymentClient.processPayment({
+        userId: data.userId,
+        venueId: data.venueId,
+        eventId: data.eventId,
+        amount: data.amount,
+        currency: data.currency || 'USD',
+        paymentMethod: data.paymentMethod,
+        idempotencyKey
+      }, ctx);
+
+      return response;
     } catch (error: any) {
       logger.error('Payment service call failed:', {
         error: error.message,
-        status: error.response?.status,
-        data: error.response?.data
+        statusCode: error.statusCode,
       });
-      
-      // Re-throw with more context
-      if (error.response) {
-        const serviceError = new Error(error.response.data?.message || 'Payment service error');
-        (serviceError as any).statusCode = error.response.status;
-        (serviceError as any).details = error.response.data;
-        throw serviceError;
-      }
-      
+
       throw error;
     }
   }

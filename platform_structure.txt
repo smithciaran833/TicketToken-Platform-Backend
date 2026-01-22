@@ -472,6 +472,7 @@
 │       ├── package.json
 │       ├── src
 │       ├── templates
+│       ├── tests
 │       ├── tsconfig.json
 │       ├── utils
 │       └── validators
@@ -565,6 +566,18 @@
 │   │   └── SERVICE-CHECKLIST-MAPPING.md
 │   └── standardization
 │       ├── ANALYSIS_SUMMARY.md
+│       ├── AUDIT_analytics-service.md
+│       ├── AUDIT_api-gateway.md
+│       ├── AUDIT_blockchain-indexer.md
+│       ├── AUDIT_compliance-service.md
+│       ├── AUDIT_file-service.md
+│       ├── AUDIT_integration-service.md
+│       ├── AUDIT_marketplace-service.md
+│       ├── AUDIT_monitoring-service.md
+│       ├── AUDIT_queue-service.md
+│       ├── AUDIT_scanning-service.md
+│       ├── AUDIT_search-service.md
+│       ├── AUDIT_transfer-service.md
 │       ├── SERVICE_INVENTORY.md
 │       ├── SERVICE_INVENTORY_analytics-service.md
 │       ├── SERVICE_INVENTORY_api-gateway.md
@@ -714,4 +727,4 @@
 │       └── scan-security.ts
 └── tsconfig.base.json
 
-136 directories, 579 files
+137 directories, 591 files
