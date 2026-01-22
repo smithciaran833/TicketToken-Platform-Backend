@@ -3,7 +3,7 @@ import { Knex } from 'knex';
 
 export interface IEventSchedule {
   id?: string;
-  tenant_id?: string;
+  tenant_id: string; // AUDIT FIX: Made required (was optional)
   event_id: string;
   starts_at: Date;
   ends_at: Date;
@@ -42,46 +42,62 @@ export class EventScheduleModel extends BaseModel {
     }
   }
 
-  async findByEventId(eventId: string, tenantId?: string): Promise<IEventSchedule[]> {
-    let query = this.db(this.tableName).where({ event_id: eventId });
-    
-    if (tenantId) {
-      query = query.where({ tenant_id: tenantId });
+  /**
+   * AUDIT FIX (MEDIUM): Made tenantId required instead of optional
+   */
+  async findByEventId(eventId: string, tenantId: string): Promise<IEventSchedule[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findByEventId');
     }
-    
-    return query.orderBy('starts_at', 'asc');
-  }
 
-  async findUpcomingSchedules(eventId: string, tenantId?: string): Promise<IEventSchedule[]> {
-    let query = this.db(this.tableName)
-      .where({ event_id: eventId })
-      .where('starts_at', '>', new Date())
-      .whereIn('status', ['SCHEDULED', 'CONFIRMED']);
-    
-    if (tenantId) {
-      query = query.where({ tenant_id: tenantId });
-    }
-    
-    return query.orderBy('starts_at', 'asc');
-  }
-
-  async findSchedulesByDateRange(startDate: Date, endDate: Date): Promise<IEventSchedule[]> {
     return this.db(this.tableName)
+      .where({ event_id: eventId, tenant_id: tenantId })
+      .orderBy('starts_at', 'asc');
+  }
+
+  /**
+   * AUDIT FIX (MEDIUM): Made tenantId required instead of optional
+   */
+  async findUpcomingSchedules(eventId: string, tenantId: string): Promise<IEventSchedule[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findUpcomingSchedules');
+    }
+
+    return this.db(this.tableName)
+      .where({ event_id: eventId, tenant_id: tenantId })
+      .where('starts_at', '>', new Date())
+      .whereIn('status', ['SCHEDULED', 'CONFIRMED'])
+      .orderBy('starts_at', 'asc');
+  }
+
+  /**
+   * AUDIT FIX (MEDIUM): Added tenantId parameter for proper isolation
+   */
+  async findSchedulesByDateRange(startDate: Date, endDate: Date, tenantId: string): Promise<IEventSchedule[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findSchedulesByDateRange');
+    }
+
+    return this.db(this.tableName)
+      .where({ tenant_id: tenantId })
       .whereBetween('starts_at', [startDate, endDate])
       .orderBy('starts_at', 'asc');
   }
 
-  async getNextSchedule(eventId: string, tenantId?: string): Promise<IEventSchedule | null> {
-    let query = this.db(this.tableName)
-      .where({ event_id: eventId })
-      .where('starts_at', '>', new Date())
-      .whereIn('status', ['SCHEDULED', 'CONFIRMED']);
-    
-    if (tenantId) {
-      query = query.where({ tenant_id: tenantId });
+  /**
+   * AUDIT FIX (MEDIUM): Made tenantId required instead of optional
+   */
+  async getNextSchedule(eventId: string, tenantId: string): Promise<IEventSchedule | null> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getNextSchedule');
     }
-    
-    return query.orderBy('starts_at', 'asc').first();
+
+    return this.db(this.tableName)
+      .where({ event_id: eventId, tenant_id: tenantId })
+      .where('starts_at', '>', new Date())
+      .whereIn('status', ['SCHEDULED', 'CONFIRMED'])
+      .orderBy('starts_at', 'asc')
+      .first();
   }
 
   async updateWithTenant(id: string, tenantId: string, data: Partial<IEventSchedule>): Promise<IEventSchedule | null> {
@@ -92,7 +108,7 @@ export class EventScheduleModel extends BaseModel {
         updated_at: new Date()
       })
       .returning('*');
-    
+
     return result || null;
   }
 }

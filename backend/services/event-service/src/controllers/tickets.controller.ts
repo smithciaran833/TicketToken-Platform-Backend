@@ -137,11 +137,28 @@ export const updateTicketType: AuthenticatedHandler = async (request, reply) => 
       });
     }
 
-    // Note: In production, you'd want to check if tickets have been sold
-    // via the ticket service before allowing certain updates
-    // For now, we'll allow all updates
-
+    // MEDIUM PRIORITY FIX for Issue #11: Check if tickets have been sold before allowing price changes
+    // TODO: Implement service-to-service call to ticket-service to check sold count
+    // Example implementation:
+    //   const ticketService = container.resolve('ticketService');
+    //   const soldCount = await ticketService.getSoldCount(id, typeId);
+    //   if (soldCount > 0 && value.base_price && value.base_price !== pricing.base_price) {
+    //     throw createProblemError(400, 'TICKETS_SOLD', 'Cannot change price after tickets have been sold');
+    //   }
+    
+    // For now, check if price is being changed and add warning in response
+    const isPriceChanging = value.base_price && value.base_price !== pricing.base_price;
+    
     const updated = await pricingService.updatePricing(typeId, value, tenantId);
+    
+    // Add warning if price was changed
+    if (isPriceChanging) {
+      return reply.send({
+        success: true,
+        data: updated,
+        warning: 'Price updated. TODO: Verify no tickets have been sold via ticket-service before allowing price changes.'
+      });
+    }
 
     return reply.send({
       success: true,

@@ -596,10 +596,16 @@ export async function authRoutes(fastify: FastifyInstance, options: { container:
       }
     }, async (request: any, reply: any) => {
       const { venueId } = request.params as { venueId: string };
-      const { userId, role } = request.body as { userId: string; role: string };
+      const { userId, role, expiresAt } = request.body as { userId: string; role: string; expiresAt?: string };
 
-      await rbacService.grantVenueRole(userId, request.user.tenant_id, venueId, role, request.user.id);
-
+      await rbacService.grantVenueRole(
+        userId,
+        request.user.tenant_id,
+        venueId,
+        role,
+        request.user.id,
+        expiresAt ? new Date(expiresAt) : undefined
+      );    
       return {
         success: true,
         message: `Role ${role} granted to user ${userId} for venue ${venueId}`

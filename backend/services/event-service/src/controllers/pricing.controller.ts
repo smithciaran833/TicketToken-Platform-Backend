@@ -1,6 +1,4 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { db } from '../config/database';
-import { PricingService } from '../services/pricing.service';
 import { createProblemError } from '../middleware/error-handler';
 
 /**
@@ -8,6 +6,8 @@ import { createProblemError } from '../middleware/error-handler';
  * 
  * CRITICAL FIX for RH5: All errors use createProblemError() 
  * to ensure consistent RFC 7807 format via the global error handler.
+ * 
+ * HIGH PRIORITY FIX for Issue #6: Use DI container instead of direct instantiation
  */
 
 export async function getEventPricing(
@@ -17,7 +17,9 @@ export async function getEventPricing(
   const { eventId } = request.params;
   const tenantId = (request as any).tenantId;
 
-  const pricingService = new PricingService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.getEventPricing(eventId, tenantId);
 
   return reply.send({ pricing });
@@ -30,7 +32,9 @@ export async function getPricingById(
   const { id } = request.params;
   const tenantId = (request as any).tenantId;
 
-  const pricingService = new PricingService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.getPricingById(id, tenantId);
 
   if (!pricing) {
@@ -60,7 +64,9 @@ export async function createPricing(
   const tenantId = (request as any).tenantId;
   const data = request.body;
 
-  const pricingService = new PricingService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.createPricing(
     { ...data, event_id: eventId },
     tenantId
@@ -88,7 +94,9 @@ export async function updatePricing(
   const tenantId = (request as any).tenantId;
   const data = request.body;
 
-  const pricingService = new PricingService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.updatePricing(id, data, tenantId);
 
   if (!pricing) {
@@ -113,7 +121,9 @@ export async function calculatePrice(
     throw createProblemError(400, 'INVALID_QUANTITY', 'Quantity must be at least 1');
   }
 
-  const pricingService = new PricingService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const pricingService = container.resolve('pricingService');
   const calculation = await pricingService.calculatePrice(id, quantity, tenantId);
 
   if (!calculation) {
@@ -130,7 +140,9 @@ export async function getActivePricing(
   const { eventId } = request.params;
   const tenantId = (request as any).tenantId;
 
-  const pricingService = new PricingService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.getActivePricing(eventId, tenantId);
 
   return reply.send({ pricing });

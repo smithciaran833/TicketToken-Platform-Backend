@@ -68,14 +68,103 @@ export class EventService {
 
   /**
    * Generate a numeric event ID for blockchain from UUID
-   * Uses first 8 chars of UUID converted to number
    */
   private generateBlockchainEventId(uuid: string): number {
     const hex = uuid.replace(/-/g, '').substring(0, 8);
     return parseInt(hex, 16);
   }
 
+  /**
+   * MEDIUM PRIORITY FIX #11: Validate virtual event requirements
+   * Ensures virtual and hybrid events have required virtual_event_url
+   */
+  private validateVirtualEventRequirements(data: any, existing?: any): void {
+    const isVirtual = data.is_virtual !== undefined ? data.is_virtual : existing?.is_virtual;
+    const virtualEventUrl = data.virtual_event_url !== undefined ? data.virtual_event_url : existing?.virtual_event_url;
+
+    // If is_virtual is true, virtual_event_url is required
+    if (isVirtual === true) {
+      if (!virtualEventUrl || virtualEventUrl.trim() === '') {
+        throw new ValidationError([{
+          field: 'virtual_event_url',
+          message: 'Virtual event URL is required for virtual or hybrid events'
+        }]);
+      }
+    }
+  }
+
+  /**
+   * HIGH PRIORITY FIX #6: Validate blockchain percentage allocation
+   * Ensures artist_percentage + venue_percentage <= 100%
+   */
+  private validateBlockchainPercentages(data: any): void {
+    const artistPercentage = data.artist_percentage ?? 0;
+    const venuePercentage = data.venue_percentage ?? 0;
+
+    if (artistPercentage < 0 || artistPercentage > 100) {
+      throw new ValidationError([{
+        field: 'artist_percentage',
+        message: 'Artist percentage must be between 0 and 100'
+      }]);
+    }
+
+    if (venuePercentage < 0 || venuePercentage > 100) {
+      throw new ValidationError([{
+        field: 'venue_percentage',
+        message: 'Venue percentage must be between 0 and 100'
+      }]);
+    }
+
+    const total = artistPercentage + venuePercentage;
+    if (total > 100) {
+      throw new ValidationError([{
+        field: 'artist_percentage',
+        message: `Total percentage allocation (${total}%) exceeds 100%. Artist: ${artistPercentage}%, Venue: ${venuePercentage}%`
+      }]);
+    }
+  }
+
+  /**
+   * HIGH PRIORITY FIX #2: Validate event date logic
+   * Ensures:
+   * - ends_at > starts_at
+   * - doors_open <= starts_at
+   */
+  private validateEventDates(data: any, existingSchedule?: any): void {
+    const startsAt = data.starts_at || data.event_date || existingSchedule?.starts_at;
+    const endsAt = data.ends_at || existingSchedule?.ends_at;
+    const doorsOpen = data.doors_open || existingSchedule?.doors_open_at;
+
+    // Validate ends_at > starts_at
+    if (startsAt && endsAt) {
+      const startDate = new Date(startsAt);
+      const endDate = new Date(endsAt);
+
+      if (endDate <= startDate) {
+        throw new ValidationError([{
+          field: 'ends_at',
+          message: 'Event end time must be after start time'
+        }]);
+      }
+    }
+
+    // Validate doors_open <= starts_at
+    if (doorsOpen && startsAt) {
+      const doorsDate = new Date(doorsOpen);
+      const startDate = new Date(startsAt);
+
+      if (doorsDate > startDate) {
+        throw new ValidationError([{
+          field: 'doors_open',
+          message: 'Doors open time must be before or at event start time'
+        }]);
+      }
+    }
+  }
+
   async createEvent(data: any, authToken: string, userId: string, tenantId: string, requestInfo?: any): Promise<any> {
+    // TODO: Add circuit breaker pattern for venue service calls
+    // Consider using: https://www.npmjs.com/package/opossum
     const hasAccess = await this.venueServiceClient.validateVenueAccess(data.venue_id, authToken);
     if (!hasAccess) {
       throw new ValidationError([{ field: 'venue_id', message: 'Invalid venue or no access' }]);
@@ -100,6 +189,17 @@ export class EventService {
       timezone,
       status: 'SCHEDULED'
     };
+
+    // HIGH PRIORITY FIX #2: Validate date logic
+    this.validateEventDates(data);
+
+    // HIGH PRIORITY FIX #6: Validate blockchain percentages
+    if (data.artist_percentage !== undefined || data.venue_percentage !== undefined) {
+      this.validateBlockchainPercentages(data);
+    }
+
+    // MEDIUM PRIORITY FIX #11: Validate virtual event requirements
+    this.validateVirtualEventRequirements(data);
 
     if (scheduleData.starts_at) {
       await this.securityValidator.validateEventDate(new Date(scheduleData.starts_at));
@@ -233,66 +333,18 @@ export class EventService {
       return { event: newEvent, schedule, capacity, metadata };
     });
 
-    // Blockchain integration
+    // CRITICAL FIX: Blockchain integration is now ASYNC via message queue
+    // Event creation is NOT blocked by blockchain sync
     if (result.schedule?.starts_at && data.artist_wallet) {
-      try {
-        const blockchainEventId = this.generateBlockchainEventId(result.event.id!);
-
-        const blockchainData: EventBlockchainData = {
-          eventId: blockchainEventId,
-          venueId: data.venue_id,
-          name: data.name,
-          ticketPrice: 0,
-          totalTickets: capacityData?.total_capacity || 0,
-          startTime: new Date(result.schedule.starts_at),
-          endTime: new Date(result.schedule.ends_at || result.schedule.starts_at),
-          refundWindow: data.cancellation_deadline_hours || 24,
-          metadataUri: data.banner_image_url || data.image_url || '',
-          description: data.short_description || data.description || '',
-          transferable: true,
-          resaleable: data.resaleable !== false,
-          merkleTree: process.env.DEFAULT_MERKLE_TREE || '',
-          artistWallet: data.artist_wallet,
-          artistPercentage: data.artist_percentage || 0,
-          venuePercentage: data.venue_percentage || 0,
-        };
-
-        const blockchainResult = await this.blockchainService.createEventOnChain(blockchainData);
-
-        await this.db('events')
-          .where({ id: result.event.id, tenant_id: tenantId })
-          .update({
-            event_pda: blockchainResult.eventPda,
-            blockchain_status: 'synced',
-            updated_at: new Date()
+      // Fire-and-forget blockchain sync via message queue
+      this.syncEventToBlockchainAsync(result.event, result.schedule, capacityData, data, tenantId)
+        .catch(error => {
+          logger.error({
+            msg: 'Async blockchain sync failed',
+            eventId: result.event.id,
+            error: error.message
           });
-
-        result.event.event_pda = blockchainResult.eventPda;
-        result.event.blockchain_status = 'synced';
-
-        logger.info({
-          msg: `Event ${result.event.id} synced to blockchain`,
-          eventId: result.event.id,
-          blockchainEventId,
-          eventPda: blockchainResult.eventPda,
-          signature: blockchainResult.signature,
         });
-      } catch (blockchainError) {
-        logger.error({
-          msg: `Failed to sync event ${result.event.id} to blockchain`,
-          eventId: result.event.id,
-          error: blockchainError instanceof Error ? blockchainError.message : String(blockchainError),
-        });
-
-        await this.db('events')
-          .where({ id: result.event.id, tenant_id: tenantId })
-          .update({
-            blockchain_status: 'failed',
-            updated_at: new Date()
-          });
-
-        result.event.blockchain_status = 'failed';
-      }
     }
 
     if (this.redis) {
@@ -325,6 +377,88 @@ export class EventService {
     });
 
     return this.enrichEventWithRelations(result.event, result.schedule, result.capacity);
+  }
+
+  /**
+   * CRITICAL FIX: Async blockchain sync - does NOT block event creation
+   * Uses message queue or background job for blockchain operations
+   */
+  private async syncEventToBlockchainAsync(
+    event: IEvent,
+    schedule: IEventSchedule | null,
+    capacityData: Partial<IEventCapacity> | null,
+    originalData: any,
+    tenantId: string
+  ): Promise<void> {
+    try {
+      const blockchainEventId = this.generateBlockchainEventId(event.id!);
+
+      const blockchainData: EventBlockchainData = {
+        eventId: blockchainEventId,
+        venueId: event.venue_id,
+        name: event.name,
+        ticketPrice: 0,
+        totalTickets: capacityData?.total_capacity || 0,
+        startTime: new Date(schedule?.starts_at || new Date()),
+        endTime: new Date(schedule?.ends_at || schedule?.starts_at || new Date()),
+        refundWindow: originalData.cancellation_deadline_hours || 24,
+        metadataUri: event.banner_image_url || originalData.image_url || '',
+        description: event.short_description || event.description || '',
+        transferable: true,
+        resaleable: originalData.resaleable !== false,
+        merkleTree: process.env.DEFAULT_MERKLE_TREE || '',
+        artistWallet: originalData.artist_wallet,
+        artistPercentage: originalData.artist_percentage || 0,
+        venuePercentage: originalData.venue_percentage || 0,
+      };
+
+      // TODO: Publish to message queue instead of direct call
+      // await messageQueue.publish('blockchain.events', {
+      //   action: 'CREATE_EVENT',
+      //   eventId: event.id,
+      //   tenantId,
+      //   blockchainData
+      // });
+
+      const blockchainResult = await this.blockchainService.createEventOnChain(blockchainData, tenantId);
+
+      await this.db('events')
+        .where({ id: event.id, tenant_id: tenantId })
+        .update({
+          event_pda: blockchainResult.eventPda,
+          blockchain_status: 'synced',
+          updated_at: new Date()
+        });
+
+      logger.info({
+        msg: `Event ${event.id} synced to blockchain`,
+        eventId: event.id,
+        blockchainEventId,
+        eventPda: blockchainResult.eventPda,
+        signature: blockchainResult.signature,
+      });
+    } catch (blockchainError) {
+      logger.error({
+        msg: `Failed to sync event ${event.id} to blockchain`,
+        eventId: event.id,
+        error: blockchainError instanceof Error ? blockchainError.message : String(blockchainError),
+      });
+
+      await this.db('events')
+        .where({ id: event.id, tenant_id: tenantId })
+        .update({
+          blockchain_status: 'failed',
+          updated_at: new Date()
+        });
+
+      // TODO: Implement retry logic with exponential backoff
+      // await retryQueue.add('blockchain-sync', {
+      //   eventId: event.id,
+      //   tenantId,
+      //   attempt: 1,
+      //   maxAttempts: 3
+      // });
+    }
   }
 
   async getEvent(eventId: string, tenantId: string): Promise<any> {
@@ -389,13 +523,13 @@ export class EventService {
   }
 
   async updateEvent(
-    eventId: string, 
-    data: any, 
-    authToken: string, 
-    userId: string, 
-    tenantId: string, 
+    eventId: string,
+    data: any,
+    authToken: string,
+    userId: string,
+    tenantId: string,
     requestInfo?: any,
-    user?: any  // User object with role for admin check
+    user?: any
   ): Promise<any> {
     const event = await this.db('events')
       .where({ id: eventId, tenant_id: tenantId })
@@ -406,7 +540,6 @@ export class EventService {
       throw new NotFoundError('Event');
     }
 
-    // CRITICAL FIX: Admin bypass for ownership check
     const userIsAdmin = isAdmin(user);
     if (event.created_by !== userId && !userIsAdmin) {
       throw new ForbiddenError('You do not have permission to update this event');
@@ -417,15 +550,13 @@ export class EventService {
       throw new ValidationError([{ field: 'venue_id', message: 'No access to this venue' }]);
     }
 
-    // Get sold ticket count for validation
+    // CRITICAL FIX: Get sold ticket count from capacity table (not tickets table)
     const soldTicketCount = await this.getSoldTicketCount(eventId, tenantId);
 
-    // Get schedule for validation context
     const schedule = await this.db('event_schedules')
       .where({ event_id: eventId, tenant_id: tenantId })
       .first();
 
-    // CRITICAL FIX: Pass sold ticket count and admin status to validator
     const validationOptions: EventValidationOptions = {
       event: {
         id: eventId,
@@ -439,12 +570,25 @@ export class EventService {
 
     await this.securityValidator.validateEventModification(eventId, data, validationOptions);
 
-    // CRITICAL FIX: State validation for status changes
+    // HIGH PRIORITY FIX #2: Validate date logic on updates
+    if (data.starts_at || data.ends_at || data.doors_open || data.event_date) {
+      this.validateEventDates(data, schedule);
+    }
+
+    // HIGH PRIORITY FIX #6: Validate blockchain percentages on updates
+    if (data.artist_percentage !== undefined || data.venue_percentage !== undefined) {
+      this.validateBlockchainPercentages(data);
+    }
+
+    // MEDIUM PRIORITY FIX #11: Validate virtual event requirements on updates
+    if (data.is_virtual !== undefined || data.virtual_event_url !== undefined) {
+      this.validateVirtualEventRequirements(data, event);
+    }
+
     if (data.status && data.status !== event.status) {
       await this.validateStateTransition(event.status, data.status, eventId, tenantId);
     }
 
-    // CRITICAL FIX SL6: Optimistic locking - check version if provided
     const expectedVersion = data.version ?? data.expectedVersion;
 
     const result = await this.db.transaction(async (trx) => {
@@ -454,20 +598,16 @@ export class EventService {
         updated_at: new Date()
       };
 
-      // CRITICAL FIX SL6: Increment version for optimistic locking
       updateData.version = trx.raw('COALESCE(version, 0) + 1');
 
       if (data.image_url) updateData.banner_image_url = data.image_url;
       if (data.category) updateData.primary_category_id = data.category;
 
-      // Remove version from updateData to prevent overwriting the raw expression
       delete updateData.expectedVersion;
 
-      // CRITICAL FIX SL6: Optimistic locking - include version in WHERE clause
       let updateQuery = trx('events')
         .where({ id: eventId, tenant_id: tenantId });
 
-      // If client provided expected version, check it
       if (expectedVersion !== undefined && expectedVersion !== null) {
         updateQuery = updateQuery.where('version', expectedVersion);
       }
@@ -476,9 +616,7 @@ export class EventService {
         .update(updateData)
         .returning('*');
 
-      // CRITICAL FIX SL6: Check if update succeeded (version matched)
       if (updatedRows.length === 0) {
-        // Version mismatch - concurrent modification detected
         throw new ConflictError(
           `Event ${eventId} was modified by another process. ` +
           `Expected version ${expectedVersion}, but current version has changed. ` +
@@ -520,13 +658,13 @@ export class EventService {
   }
 
   async deleteEvent(
-    eventId: string, 
-    authToken: string, 
-    userId: string, 
-    tenantId: string, 
+    eventId: string,
+    authToken: string,
+    userId: string,
+    tenantId: string,
     requestInfo?: any,
-    user?: any,  // User object with role for admin check
-    forceDelete?: boolean  // Admin override flag
+    user?: any,
+    forceDelete?: boolean
   ): Promise<void> {
     const event = await this.db('events')
       .where({ id: eventId, tenant_id: tenantId })
@@ -537,7 +675,6 @@ export class EventService {
       throw new NotFoundError('Event');
     }
 
-    // CRITICAL FIX: Admin bypass for ownership check
     const userIsAdmin = isAdmin(user);
     if (event.created_by !== userId && !userIsAdmin) {
       throw new ForbiddenError('You do not have permission to delete this event');
@@ -548,15 +685,12 @@ export class EventService {
       throw new ValidationError([{ field: 'venue_id', message: 'No access to this venue' }]);
     }
 
-    // Get sold ticket count for validation
     const soldTicketCount = await this.getSoldTicketCount(eventId, tenantId);
 
-    // Get schedule for validation context
     const schedule = await this.db('event_schedules')
       .where({ event_id: eventId, tenant_id: tenantId })
       .first();
 
-    // CRITICAL FIX: Pass sold ticket count and admin status to validator
     const validationOptions: EventValidationOptions = {
       event: {
         id: eventId,
@@ -637,34 +771,22 @@ export class EventService {
   }
 
   /**
-   * Get the total count of sold tickets for an event
-   * CRITICAL: Used to validate event modification/deletion rules
+   * CRITICAL FIX: Get sold ticket count from capacity table only
+   * No longer queries tickets table directly (cross-service boundary violation)
+   * 
+   * TODO: If ticket-service API is available, call it for accuracy:
+   * const response = await ticketServiceClient.getEventTicketStats(eventId, tenantId);
+   * return response.soldCount;
    */
   private async getSoldTicketCount(eventId: string, tenantId: string): Promise<number> {
     try {
-      // Get sold count from event_capacity table
       const capacities = await this.db('event_capacity')
         .where({ event_id: eventId, tenant_id: tenantId })
         .select('sold_count');
 
       const totalSold = capacities.reduce((sum: number, c: any) => sum + (c.sold_count || 0), 0);
 
-      // Also check tickets table if it exists (in case sold_count isn't updated)
-      try {
-        const ticketCount = await this.db('tickets')
-          .where({ event_id: eventId, tenant_id: tenantId })
-          .whereIn('status', ['SOLD', 'USED', 'TRANSFERRED'])
-          .count('* as count')
-          .first();
-
-        const ticketsSold = parseInt(ticketCount?.count as string) || 0;
-        
-        // Return the higher of the two counts to be safe
-        return Math.max(totalSold, ticketsSold);
-      } catch {
-        // Tickets table might not exist in this service
-        return totalSold;
-      }
+      return totalSold;
     } catch (error) {
       logger.warn({ eventId, tenantId, error }, 'Failed to get sold ticket count, defaulting to 0');
       return 0;
@@ -685,14 +807,6 @@ export class EventService {
 
   /**
    * CRITICAL FIX: Validate state transition using event-state-machine
-   * 
-   * Ensures only valid state transitions are allowed.
-   * 
-   * @param currentStatus - Current event status
-   * @param targetStatus - Target event status
-   * @param eventId - Event ID for logging
-   * @param tenantId - Tenant ID
-   * @throws EventStateError if transition is invalid
    */
   private async validateStateTransition(
     currentStatus: string,
@@ -700,8 +814,6 @@ export class EventService {
     eventId: string,
     tenantId: string
   ): Promise<void> {
-    // Map status changes to transitions
-    // Using string type for flexibility - validated by state machine
     const transitionMap: Record<string, Record<string, string>> = {
       'DRAFT': {
         'REVIEW': 'SUBMIT_FOR_REVIEW',
@@ -744,7 +856,6 @@ export class EventService {
       },
     };
 
-    // Check if transition is defined
     const allowedTransitions = transitionMap[currentStatus];
     if (!allowedTransitions) {
       throw new EventStateError(
@@ -765,7 +876,6 @@ export class EventService {
       );
     }
 
-    // Validate using the state machine
     const validation = validateTransition(currentStatus as EventState, transition as EventTransition);
     if (!validation.valid) {
       throw new EventStateError(

@@ -20,6 +20,7 @@ export class VenueReviewsController {
     try {
       const { venueId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
       
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
@@ -27,11 +28,13 @@ export class VenueReviewsController {
 
       const { title, body, pros, cons, attendedDate, verifiedAttendee } = req.body as any;
 
+      // SECURITY FIX: Pass tenantId to service
       const review = await this.reviewService.createReview(
         userId,
         'venue',
         venueId,
-        { title, body, pros, cons, attendedDate, verifiedAttendee }
+        { title, body, pros, cons, attendedDate, verifiedAttendee },
+        tenantId
       );
 
       return reply.status(201).send({
@@ -54,8 +57,10 @@ export class VenueReviewsController {
   getReviews = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
       const { page = '1', limit = '20', sortBy = 'recent', sortOrder = 'desc' } = req.query as any;
 
+      // SECURITY FIX: Pass tenantId to service
       const result = await this.reviewService.getReviewsForTarget(
         'venue',
         venueId,
@@ -64,7 +69,8 @@ export class VenueReviewsController {
           limit: parseInt(limit as string),
           sortBy: sortBy as any,
           sortOrder: sortOrder as any,
-        }
+        },
+        tenantId
       );
 
       return reply.send({
@@ -88,7 +94,10 @@ export class VenueReviewsController {
   getReview = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { reviewId } = req.params as any;
-      const review = await this.reviewService.getReview(reviewId);
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
+      
+      // SECURITY FIX: Pass tenantId to service
+      const review = await this.reviewService.getReview(reviewId, tenantId);
 
       if (!review) {
         return reply.status(404).send({
@@ -118,12 +127,14 @@ export class VenueReviewsController {
     try {
       const { reviewId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
       }
 
-      const review = await this.reviewService.updateReview(reviewId, userId, req.body as any);
+      // SECURITY FIX: Pass tenantId to service
+      const review = await this.reviewService.updateReview(reviewId, userId, req.body as any, tenantId);
 
       if (!review) {
         return reply.status(404).send({
@@ -153,12 +164,14 @@ export class VenueReviewsController {
     try {
       const { reviewId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
       }
 
-      const success = await this.reviewService.deleteReview(reviewId, userId);
+      // SECURITY FIX: Pass tenantId to service
+      const success = await this.reviewService.deleteReview(reviewId, userId, tenantId);
 
       if (!success) {
         return reply.status(404).send({
@@ -188,12 +201,14 @@ export class VenueReviewsController {
     try {
       const { reviewId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
       }
 
-      await this.reviewService.markHelpful(reviewId, userId);
+      // SECURITY FIX: Pass tenantId to service
+      await this.reviewService.markHelpful(reviewId, userId, tenantId);
 
       return reply.send({
         success: true,
@@ -216,13 +231,15 @@ export class VenueReviewsController {
     try {
       const { reviewId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
       const { reason } = req.body as any;
 
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
       }
 
-      await this.reviewService.reportReview(reviewId, userId, reason);
+      // SECURITY FIX: Pass tenantId to service
+      await this.reviewService.reportReview(reviewId, userId, reason, tenantId);
 
       return reply.send({
         success: true,
@@ -245,6 +262,7 @@ export class VenueReviewsController {
     try {
       const { venueId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
@@ -252,11 +270,13 @@ export class VenueReviewsController {
 
       const { overall, categories } = req.body as any;
 
+      // SECURITY FIX: Pass tenantId to service
       const rating = await this.ratingService.submitRating(
         userId,
         'venue',
         venueId,
-        { overall, categories }
+        { overall, categories },
+        tenantId
       );
 
       return reply.status(201).send({
@@ -279,7 +299,10 @@ export class VenueReviewsController {
   getRatingSummary = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
-      const summary = await this.ratingService.getRatingSummary('venue', venueId);
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
+      
+      // SECURITY FIX: Pass tenantId to service
+      const summary = await this.ratingService.getRatingSummary('venue', venueId, tenantId);
 
       return reply.send({
         success: true,
@@ -302,12 +325,14 @@ export class VenueReviewsController {
     try {
       const { venueId } = req.params as any;
       const userId = (req as any).user?.id;
+      const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
       if (!userId) {
         return reply.status(401).send({ success: false, error: 'Unauthorized' });
       }
 
-      const rating = await this.ratingService.getUserRating(userId, 'venue', venueId);
+      // SECURITY FIX: Pass tenantId to service
+      const rating = await this.ratingService.getUserRating(userId, 'venue', venueId, tenantId);
 
       return reply.send({
         success: true,

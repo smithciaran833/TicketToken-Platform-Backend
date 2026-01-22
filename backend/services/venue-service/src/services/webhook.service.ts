@@ -64,16 +64,16 @@ export class WebhookService {
   private async acquireLock(eventId: string, ttlMs: number): Promise<boolean> {
     const lockKey = `${this.lockPrefix}${eventId}`;
     const lockValue = `${process.pid}:${Date.now()}`;
-    
+
     try {
       // SET NX with expiry - atomic operation
       const result = await this.redis.set(lockKey, lockValue, 'PX', ttlMs, 'NX');
-      
+
       if (result === 'OK') {
         log.debug({ eventId, lockKey, ttlMs }, 'Acquired webhook processing lock');
         return true;
       }
-      
+
       log.debug({ eventId, lockKey }, 'Failed to acquire lock - already held');
       return false;
     } catch (error: any) {
@@ -88,7 +88,7 @@ export class WebhookService {
    */
   private async releaseLock(eventId: string): Promise<void> {
     const lockKey = `${this.lockPrefix}${eventId}`;
-    
+
     try {
       await this.redis.del(lockKey);
       log.debug({ eventId, lockKey }, 'Released webhook processing lock');
@@ -105,11 +105,11 @@ export class WebhookService {
       const event = await this.db('venue_webhook_events')
         .where('event_id', eventId)
         .first();
-      
+
       if (!event) {
         return { processed: false, processing: false };
       }
-      
+
       return {
         processed: event.status === 'completed',
         processing: event.status === 'processing',
@@ -150,12 +150,12 @@ export class WebhookService {
 
     // WH10: Check for duplicates and acquire lock
     const status = await this.isProcessedOrProcessing(eventId);
-    
+
     if (status.processed) {
       log.info({ eventId, eventType }, 'Webhook already processed - skipping');
       return { success: true, duplicate: true };
     }
-    
+
     if (status.processing) {
       log.info({ eventId, eventType }, 'Webhook currently being processed - skipping');
       return { success: true, duplicate: true };
@@ -172,6 +172,7 @@ export class WebhookService {
 
     try {
       // WH4/WH6/WH8: Create or update event record with pending status
+      // IMPORTANT: Don't stringify payload - Knex does it automatically for JSONB columns
       await this.db('venue_webhook_events')
         .insert({
           event_id: eventId,
@@ -179,7 +180,7 @@ export class WebhookService {
           status: 'processing' as WebhookStatus,
           tenant_id: tenantId || null,
           source,
-          payload: JSON.stringify(payload),
+          payload: payload,  // Let Knex handle JSONB stringification
           source_ip: sourceIp || null,
           headers_hash: headersHash,
           processing_started_at: new Date(),

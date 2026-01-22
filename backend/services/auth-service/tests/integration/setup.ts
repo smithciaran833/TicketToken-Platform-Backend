@@ -9,13 +9,16 @@ import Redis from 'ioredis';
 import { initRedis, closeRedisConnections } from '../../src/config/redis';
 
 // Test database pool (separate from app's pool, for direct DB queries in tests)
+// Increased pool size to handle parallel test execution
 export const testPool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: parseInt(process.env.DB_PORT || '5432'),
   database: process.env.DB_NAME || 'tickettoken_test',
   user: process.env.DB_USER || 'postgres',
   password: process.env.DB_PASSWORD || 'postgres',
-  max: 5,
+  max: 20, // Increased from 5 to handle parallel tests
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 10000,
 });
 
 // Test Redis client (separate from app's Redis, for direct Redis queries in tests)
@@ -24,6 +27,7 @@ export const testRedis = new Redis({
   port: parseInt(process.env.REDIS_PORT || '6379'),
   password: process.env.REDIS_PASSWORD,
   db: parseInt(process.env.REDIS_DB || '1'),
+  maxRetriesPerRequest: 3,
 });
 
 // Default tenant ID from migration
@@ -52,13 +56,24 @@ export async function cleanupDatabase(): Promise<void> {
   ];
 
   for (const table of tables) {
-    await testPool.query(`TRUNCATE TABLE ${table} CASCADE`);
+    try {
+      await testPool.query(`TRUNCATE TABLE ${table} CASCADE`);
+    } catch (e: any) {
+      // Ignore errors if table doesn't exist
+      if (e.code !== '42P01') {
+        throw e;
+      }
+    }
   }
 }
 
 // Clean up Redis between tests
 export async function cleanupRedis(): Promise<void> {
-  await testRedis.flushdb();
+  try {
+    await testRedis.flushdb();
+  } catch (e) {
+    // Ignore Redis cleanup errors in tests
+  }
 }
 
 // Full cleanup
@@ -69,8 +84,34 @@ export async function cleanupAll(): Promise<void> {
 
 // Close connections after all tests
 export async function closeConnections(): Promise<void> {
-  await testPool.end();
-  await testRedis.quit();
+  // Close test pool
+  try {
+    await testPool.end();
+  } catch (e) {
+    // Ignore errors during cleanup
+  }
+
+  // Close test Redis
+  try {
+    await testRedis.quit();
+  } catch (e) {
+    // Ignore errors during cleanup
+  }
+
+  // Close app's Redis connections
+  try {
+    await closeRedisConnections();
+  } catch (e) {
+    // Ignore errors during cleanup
+  }
+
+  // Close app's database pool
+  try {
+    const { pool } = await import('../../src/config/database');
+    await pool.end();
+  } catch (e) {
+    // Ignore errors during cleanup
+  }
 }
 
 // Test user factory

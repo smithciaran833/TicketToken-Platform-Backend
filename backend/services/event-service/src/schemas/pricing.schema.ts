@@ -197,6 +197,17 @@ export const pricingResponseSchema = {
 /**
  * Pricing list response schema
  * RD5: Response schema for list endpoints
+ * 
+ * NAMING CONVENTION (Issue #12):
+ * Uses "pricing" (SINGULAR) despite returning an array, because pricing represents
+ * a single CONFIGURATION for an event with multiple tiers/options within it.
+ * Think of it as "the pricing configuration" which contains multiple price points.
+ * 
+ * This differs from "capacities" (plural) which represents multiple distinct
+ * capacity sections (VIP, GA, Balcony), each being a separate entity.
+ * 
+ * Design rationale: Pricing is conceptually singular (one pricing strategy per event),
+ * while capacity is conceptually plural (multiple distinct seating sections).
  */
 export const pricingListResponseSchema = {
   type: 'object',

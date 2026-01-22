@@ -189,7 +189,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       // Query user with optional tenant filter
       let query = `
-        SELECT 
+        SELECT
           id, email, name, first_name, last_name,
           tenant_id, role, status, email_verified, mfa_enabled,
           billing_address, phone, avatar_url,
@@ -267,7 +267,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
     try {
       let query = `
-        SELECT 
+        SELECT
           id, email, name, first_name, last_name,
           tenant_id, role, status, email_verified
         FROM users
@@ -333,7 +333,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
     try {
       // Parse roles or use defaults
-      const roleList = roles 
+      const roleList = roles
         ? roles.split(',').map(r => r.trim().toLowerCase())
         : ['admin', 'superadmin', 'compliance_admin', 'venue_admin'];
 
@@ -346,13 +346,13 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const query = `
-        SELECT 
+        SELECT
           id, email, name, first_name, last_name,
           role, status, email_verified, last_login_at
         FROM users
-        WHERE tenant_id = $1 
+        WHERE tenant_id = $1
           AND role = ANY($2)
-          AND status = 'active'
+          AND status = 'ACTIVE'
           AND deleted_at IS NULL
         ORDER BY role, name
         LIMIT 100
@@ -392,93 +392,6 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   // ============================================================================
 
   /**
-   * GET /users/:userId/tax-info
-   * Get user's tax information for 1099-DA generation
-   * Used by: payment-service (form-1099-da.service)
-   */
-  fastify.get('/users/:userId/tax-info', async (request, reply) => {
-    const { userId } = request.params as { userId: string };
-    const tenantId = request.headers['x-tenant-id'] as string;
-    const traceId = request.headers['x-trace-id'] as string;
-
-    if (!userId) {
-      return reply.status(400).send({ error: 'User ID required' });
-    }
-
-    try {
-      // Query user with tax information
-      let query = `
-        SELECT 
-          u.id, u.email, u.name, u.first_name, u.last_name,
-          u.tenant_id, u.billing_address, u.phone,
-          uti.tax_id_type, uti.tax_id_last_four, uti.tax_id_verified,
-          uti.tin_match_status, uti.w9_submitted_at, uti.tax_year,
-          uti.tax_classification, uti.legal_name, uti.business_name,
-          uti.address as tax_address, uti.city as tax_city, 
-          uti.state as tax_state, uti.postal_code as tax_postal_code,
-          uti.country as tax_country
-        FROM users u
-        LEFT JOIN user_tax_info uti ON u.id = uti.user_id
-        WHERE u.id = $1 AND u.deleted_at IS NULL
-      `;
-      const params: any[] = [userId];
-
-      if (tenantId) {
-        query += ` AND u.tenant_id = $2`;
-        params.push(tenantId);
-      }
-
-      const result = await pool.query(query, params);
-
-      if (result.rows.length === 0) {
-        return reply.status(404).send({ error: 'User not found' });
-      }
-
-      const user = result.rows[0];
-
-      request.log.info({
-        userId,
-        hasTaxInfo: !!user.tax_id_type,
-        requestingService: (request as any).service?.name,
-        traceId,
-      }, 'Internal user tax info lookup');
-
-      return reply.send({
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name || `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-          firstName: user.first_name,
-          lastName: user.last_name,
-          tenantId: user.tenant_id,
-          billingAddress: user.billing_address,
-          phone: user.phone,
-        },
-        taxInfo: user.tax_id_type ? {
-          taxIdType: user.tax_id_type,
-          taxIdLastFour: user.tax_id_last_four,
-          taxIdVerified: user.tax_id_verified,
-          tinMatchStatus: user.tin_match_status,
-          w9SubmittedAt: user.w9_submitted_at,
-          taxYear: user.tax_year,
-          taxClassification: user.tax_classification,
-          legalName: user.legal_name,
-          businessName: user.business_name,
-          address: user.tax_address,
-          city: user.tax_city,
-          state: user.tax_state,
-          postalCode: user.tax_postal_code,
-          country: user.tax_country,
-        } : null,
-        hasTaxInfo: !!user.tax_id_type,
-      });
-    } catch (error: any) {
-      request.log.error({ error, userId, traceId }, 'Failed to get user tax info');
-      return reply.status(500).send({ error: 'Internal error' });
-    }
-  });
-
-  /**
    * GET /users/:userId/chargeback-count
    * Get user's chargeback count and history summary
    * Used by: payment-service (chargeback-reserve.service)
@@ -516,10 +429,10 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       const user = userResult.rows[0];
 
       // Get chargeback counts
-      // Note: payment_chargebacks table is owned by payment-service, but 
+      // Note: payment_chargebacks table is owned by payment-service, but
       // if we have a user_chargebacks summary table in auth-service, use that
       // Otherwise, return 0 and let payment-service handle its own data
-      
+
       // Check if user has a chargeback summary in a local table
       const months = parseInt(monthsBack || '12');
       const cutoffDate = new Date();
@@ -536,7 +449,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
       try {
         const chargebackQuery = `
-          SELECT 
+          SELECT
             COUNT(*) as total_chargebacks,
             SUM(CASE WHEN created_at > $2 THEN 1 ELSE 0 END) as chargebacks_in_period,
             SUM(amount_cents) as total_amount_cents,
@@ -545,7 +458,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
           WHERE user_id = $1
         `;
         const chargebackResult = await pool.query(chargebackQuery, [userId, cutoffDate.toISOString()]);
-        
+
         if (chargebackResult.rows.length > 0 && chargebackResult.rows[0].total_chargebacks) {
           const row = chargebackResult.rows[0];
           chargebackData = {
@@ -556,9 +469,12 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
             chargebackRate: 0, // Would need transaction count to calculate
           };
         }
-      } catch (e) {
+      } catch (e: any) {
         // Table may not exist, return default values
-        request.log.debug({ userId }, 'user_chargeback_summary table not available');
+        // Error code 42P01 = undefined_table in PostgreSQL
+        if (e.code !== '42P01') {
+          request.log.debug({ userId, error: e.message }, 'user_chargeback_summary query failed');
+        }
       }
 
       request.log.info({
@@ -586,6 +502,9 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * POST /users/batch-verification-check
    * Check identity verification status for multiple users
    * Used by: transfer-service (transfer-rules.service)
+   * 
+   * Note: Uses identity_verified and email_verified columns from users table.
+   * KYC status is handled by Stripe Connect, not stored locally.
    */
   fastify.post('/users/batch-verification-check', async (request, reply) => {
     const { userIds } = request.body as { userIds: string[] };
@@ -602,9 +521,12 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
 
     try {
       let query = `
-        SELECT 
-          id, email, identity_verified, email_verified,
-          kyc_status, kyc_verified_at, mfa_enabled
+        SELECT
+          id, email, 
+          COALESCE(identity_verified, false) as identity_verified,
+          COALESCE(email_verified, false) as email_verified,
+          COALESCE(mfa_enabled, false) as mfa_enabled,
+          stripe_connect_status
         FROM users
         WHERE id = ANY($1) AND deleted_at IS NULL
       `;
@@ -629,13 +551,24 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       }> = {};
 
       for (const user of result.rows) {
+        // Map stripe_connect_status to a KYC-like status for compatibility
+        // Stripe handles actual KYC, we just reflect their status
+        let kycStatus: string | null = null;
+        if (user.stripe_connect_status === 'enabled') {
+          kycStatus = 'verified';
+        } else if (user.stripe_connect_status === 'pending') {
+          kycStatus = 'pending';
+        } else if (user.stripe_connect_status === 'rejected') {
+          kycStatus = 'rejected';
+        }
+
         verificationMap[user.id] = {
           userId: user.id,
           email: user.email,
           identityVerified: user.identity_verified || false,
           emailVerified: user.email_verified || false,
-          kycStatus: user.kyc_status,
-          kycVerifiedAt: user.kyc_verified_at,
+          kycStatus: kycStatus,
+          kycVerifiedAt: null, // Stripe doesn't provide this timestamp
           mfaEnabled: user.mfa_enabled || false,
         };
       }

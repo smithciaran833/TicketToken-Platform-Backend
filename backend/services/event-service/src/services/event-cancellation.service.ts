@@ -1,17 +1,16 @@
 /**
  * Event Cancellation Service
  *
- * CRITICAL FIX for audit findings (28-event-state-management.md):
- * - Triggers refunds when event is cancelled
- * - Notifies ticket holders
- * - Invalidates tickets
- * - Cancels resale listings
- * - Generates cancellation report
+ * CRITICAL FIX: Wrapped entire workflow in database transaction
+ * - All steps now atomic - rollback on any failure
+ * - Proper error handling and recovery
+ * - Real service integration placeholders with TODO markers
  */
 
 import { logger } from '../utils/logger';
-import { db } from '../config/database';
+import { getDb } from '../config/database';
 import * as crypto from 'crypto';
+import { Knex } from 'knex';
 
 export interface CancellationResult {
   eventId: string;
@@ -31,7 +30,7 @@ export interface CancellationOptions {
   notifyHolders?: boolean;
   cancelResales?: boolean;
   generateReport?: boolean;
-  cancelledBy: string; // User ID who initiated cancellation
+  cancelledBy: string;
 }
 
 export interface CancellationReport {
@@ -67,20 +66,18 @@ export interface CancellationReport {
   generatedAt: Date;
 }
 
-/**
- * Service to handle event cancellation workflow
- */
 export class EventCancellationService {
 
   /**
-   * Execute full cancellation workflow for an event
-   * CRITICAL: This is the main entry point for event cancellation
+   * CRITICAL FIX: Execute full cancellation workflow in a transaction
+   * All database operations are now atomic - either all succeed or all rollback
    */
   async cancelEvent(
     eventId: string,
     tenantId: string,
     options: CancellationOptions
   ): Promise<CancellationResult> {
+    const db = getDb();
     const result: CancellationResult = {
       eventId,
       status: 'completed',
@@ -102,15 +99,59 @@ export class EventCancellationService {
     }, 'Starting event cancellation workflow');
 
     try {
-      // 1. Update event status to CANCELLED
-      timeline.push({ timestamp: new Date(), action: 'Update event status', status: 'success' });
-      await this.updateEventStatus(eventId, tenantId, options);
+      // CRITICAL FIX: Wrap entire workflow in transaction
+      await db.transaction(async (trx) => {
+        // 1. Update event status to CANCELLED
+        timeline.push({ timestamp: new Date(), action: 'Update event status', status: 'success' });
+        await this.updateEventStatus(eventId, tenantId, options, trx);
 
-      // 2. Get all tickets for this event
+        // 2. Invalidate all tickets in database
+        try {
+          result.ticketsInvalidated = await this.invalidateTickets(eventId, tenantId, trx);
+          timeline.push({ timestamp: new Date(), action: 'Invalidate tickets', status: 'success', details: `${result.ticketsInvalidated} tickets invalidated` });
+        } catch (error: any) {
+          result.errors.push(`Ticket invalidation failed: ${error.message}`);
+          timeline.push({ timestamp: new Date(), action: 'Invalidate tickets', status: 'failed', details: error.message });
+          logger.error({ error, eventId }, 'Failed to invalidate tickets');
+          throw error; // Rollback transaction
+        }
+
+        // 3. Record cancellation audit log
+        await this.recordCancellationAudit(eventId, tenantId, options, result, trx);
+        timeline.push({ timestamp: new Date(), action: 'Record audit log', status: 'success' });
+
+        // 4. Generate cancellation report
+        if (options.generateReport !== false) {
+          try {
+            const report = await this.generateCancellationReport(
+              eventId,
+              tenantId,
+              options,
+              result,
+              timeline,
+              trx
+            );
+            result.reportId = report.id;
+            result.reportUrl = `/api/v1/events/${eventId}/cancellation-report/${report.id}`;
+            timeline.push({ timestamp: new Date(), action: 'Generate report', status: 'success', details: `Report ID: ${report.id}` });
+          } catch (error: any) {
+            result.errors.push(`Report generation failed: ${error.message}`);
+            timeline.push({ timestamp: new Date(), action: 'Generate report', status: 'failed', details: error.message });
+            logger.error({ error, eventId }, 'Failed to generate cancellation report');
+            // Don't throw - report generation shouldn't block cancellation
+          }
+        }
+      });
+
+      // CRITICAL FIX: After transaction commits, trigger external service calls
+      // These are done outside transaction because they call external services
+      // and we don't want to hold the transaction open during HTTP calls
+
+      // 5. Get all tickets for this event (from ticket-service)
       const tickets = await this.getEventTickets(eventId, tenantId);
       timeline.push({ timestamp: new Date(), action: 'Fetch tickets', status: 'success', details: `${tickets.length} tickets found` });
 
-      // 3. Trigger refunds (calls payment-service)
+      // 6. Trigger refunds (calls payment-service)
       if (options.refundPolicy !== 'none') {
         try {
           result.refundsTriggered = await this.triggerRefunds(
@@ -123,21 +164,11 @@ export class EventCancellationService {
         } catch (error: any) {
           result.errors.push(`Refund trigger failed: ${error.message}`);
           timeline.push({ timestamp: new Date(), action: 'Trigger refunds', status: 'failed', details: error.message });
-          logger.error({ error, eventId }, 'Failed to trigger refunds');
+          logger.error({ error, eventId }, 'Failed to trigger refunds - event already cancelled');
         }
       }
 
-      // 4. Invalidate all tickets
-      try {
-        result.ticketsInvalidated = await this.invalidateTickets(eventId, tenantId);
-        timeline.push({ timestamp: new Date(), action: 'Invalidate tickets', status: 'success', details: `${result.ticketsInvalidated} tickets invalidated` });
-      } catch (error: any) {
-        result.errors.push(`Ticket invalidation failed: ${error.message}`);
-        timeline.push({ timestamp: new Date(), action: 'Invalidate tickets', status: 'failed', details: error.message });
-        logger.error({ error, eventId }, 'Failed to invalidate tickets');
-      }
-
-      // 5. Cancel resale listings
+      // 7. Cancel resale listings (calls marketplace-service)
       if (options.cancelResales !== false) {
         try {
           result.resalesCancelled = await this.cancelResaleListings(eventId, tenantId);
@@ -149,7 +180,7 @@ export class EventCancellationService {
         }
       }
 
-      // 6. Notify ticket holders
+      // 8. Notify ticket holders (calls notification-service)
       if (options.notifyHolders !== false) {
         try {
           result.notificationsSent = await this.notifyTicketHolders(
@@ -163,30 +194,6 @@ export class EventCancellationService {
           result.errors.push(`Notification failed: ${error.message}`);
           timeline.push({ timestamp: new Date(), action: 'Notify ticket holders', status: 'failed', details: error.message });
           logger.error({ error, eventId }, 'Failed to notify ticket holders');
-        }
-      }
-
-      // 7. Record cancellation audit log
-      await this.recordCancellationAudit(eventId, tenantId, options, result);
-      timeline.push({ timestamp: new Date(), action: 'Record audit log', status: 'success' });
-
-      // 8. Generate cancellation report
-      if (options.generateReport !== false) {
-        try {
-          const report = await this.generateCancellationReport(
-            eventId,
-            tenantId,
-            options,
-            result,
-            timeline
-          );
-          result.reportId = report.id;
-          result.reportUrl = `/api/v1/events/${eventId}/cancellation-report/${report.id}`;
-          timeline.push({ timestamp: new Date(), action: 'Generate report', status: 'success', details: `Report ID: ${report.id}` });
-        } catch (error: any) {
-          result.errors.push(`Report generation failed: ${error.message}`);
-          timeline.push({ timestamp: new Date(), action: 'Generate report', status: 'failed', details: error.message });
-          logger.error({ error, eventId }, 'Failed to generate cancellation report');
         }
       }
 
@@ -205,41 +212,41 @@ export class EventCancellationService {
     } catch (error: any) {
       result.status = 'failed';
       result.errors.push(`Critical error: ${error.message}`);
-      logger.error({ error, eventId }, 'Event cancellation workflow failed');
+      logger.error({ error, eventId }, 'Event cancellation workflow failed - transaction rolled back');
       throw error;
     }
   }
 
   /**
    * Generate a comprehensive cancellation report
-   * AUDIT FIX: Generates report on cancellation
    */
   private async generateCancellationReport(
     eventId: string,
     tenantId: string,
     options: CancellationOptions,
     result: CancellationResult,
-    timeline: CancellationReport['timeline']
+    timeline: CancellationReport['timeline'],
+    trx: Knex.Transaction
   ): Promise<CancellationReport> {
     const reportId = crypto.randomUUID();
 
     // Get event details
-    const event = await db('events')
+    const event = await trx('events')
       .where({ id: eventId, tenant_id: tenantId })
       .first();
 
     // Get ticket breakdown by tier
-    const ticketBreakdown = await db('event_pricing')
+    const ticketBreakdown = await trx('event_pricing')
       .select('name as tier')
-      .select(db.raw('COALESCE(SUM(1), 0) as quantity'))
+      .select(trx.raw('COALESCE(SUM(1), 0) as quantity'))
       .select('base_price as unitPrice')
-      .select(db.raw('COALESCE(SUM(base_price), 0) as totalValue'))
+      .select(trx.raw('COALESCE(SUM(base_price), 0) as totalValue'))
       .where({ event_id: eventId })
       .groupBy('name', 'base_price');
 
     // Get revenue summary
-    const revenueSummary = await db('event_capacity')
-      .select(db.raw('COALESCE(SUM(sold_count), 0) as totalTicketsSold'))
+    const revenueSummary = await trx('event_capacity')
+      .select(trx.raw('COALESCE(SUM(sold_count), 0) as totalTicketsSold'))
       .where({ event_id: eventId })
       .first();
 
@@ -278,7 +285,7 @@ export class EventCancellationService {
 
     // Store report in database
     try {
-      await db('event_cancellation_reports').insert({
+      await trx('event_cancellation_reports').insert({
         id: reportId,
         tenant_id: tenantId,
         event_id: eventId,
@@ -286,7 +293,6 @@ export class EventCancellationService {
         created_at: new Date(),
       });
     } catch (error) {
-      // Table might not exist - log and continue
       logger.warn({ error, eventId, reportId }, 'Failed to store cancellation report in database, table may not exist');
     }
 
@@ -299,14 +305,12 @@ export class EventCancellationService {
     return report;
   }
 
-  /**
-   * Get a previously generated cancellation report
-   */
   async getCancellationReport(
     eventId: string,
     tenantId: string,
     reportId: string
   ): Promise<CancellationReport | null> {
+    const db = getDb();
     try {
       const row = await db('event_cancellation_reports')
         .where({
@@ -327,13 +331,15 @@ export class EventCancellationService {
 
   /**
    * Update event status to CANCELLED
+   * CRITICAL FIX: Now accepts transaction parameter
    */
   private async updateEventStatus(
     eventId: string,
     tenantId: string,
-    options: CancellationOptions
+    options: CancellationOptions,
+    trx: Knex.Transaction
   ): Promise<void> {
-    await db('events')
+    await trx('events')
       .where({ id: eventId, tenant_id: tenantId })
       .whereNull('deleted_at')
       .update({
@@ -349,27 +355,23 @@ export class EventCancellationService {
 
   /**
    * Get all tickets for an event
+   * TODO: Replace with actual ticket-service HTTP client call
    */
   private async getEventTickets(
     eventId: string,
     tenantId: string
   ): Promise<Array<{ id: string; user_id: string; email: string; status: string }>> {
-    // This would typically query the ticket-service
-    // For now, we'll query our local database or emit an event
-
-    // In a real implementation, this would call ticket-service
+    // TODO: Implement actual ticket-service HTTP client
     // const response = await ticketServiceClient.getTicketsByEvent(eventId, tenantId);
+    // return response.tickets;
 
-    // Placeholder - in production, this calls ticket-service
-    logger.info({ eventId, tenantId }, 'Fetching tickets for event');
-
-    // Return empty array for now - actual implementation would call ticket-service
+    logger.info({ eventId, tenantId }, 'Fetching tickets for event (placeholder)');
     return [];
   }
 
   /**
    * Trigger refunds for all ticket purchases
-   * CRITICAL FIX: Implements refund trigger workflow
+   * TODO: Replace with actual payment-service HTTP client call or message queue
    */
   private async triggerRefunds(
     eventId: string,
@@ -377,91 +379,76 @@ export class EventCancellationService {
     tickets: Array<{ id: string; user_id: string }>,
     refundPolicy: 'full' | 'partial'
   ): Promise<number> {
-    let refundsTriggered = 0;
+    // TODO: Implement actual refund trigger via payment-service
+    // Option 1: HTTP Client
+    // const response = await paymentServiceClient.processRefunds({
+    //   eventId,
+    //   tenantId,
+    //   refundPolicy,
+    //   tickets
+    // });
+    // return response.refundsProcessed;
 
-    // In production, this would:
-    // 1. Call payment-service to get all transactions for this event
-    // 2. Issue refunds based on refund policy
-    // 3. Track refund status
+    // Option 2: Message Queue (preferred for async processing)
+    // await messageQueue.publish('payment.refunds', {
+    //   type: 'EVENT_CANCELLED_REFUND_REQUEST',
+    //   eventId,
+    //   tenantId,
+    //   refundPolicy,
+    //   tickets
+    // });
 
-    // Emit refund event to payment-service via message queue
-    const refundEvent = {
-      type: 'EVENT_CANCELLED_REFUND_REQUEST',
-      eventId,
-      tenantId,
-      refundPolicy,
-      ticketCount: tickets.length,
-      timestamp: new Date().toISOString(),
-    };
-
-    // In production: await messageQueue.publish('refunds', refundEvent);
     logger.info({
       eventId,
       ticketCount: tickets.length,
       refundPolicy,
-    }, 'Refund request published to payment-service');
+    }, 'Refund request would be sent to payment-service (placeholder)');
 
-    // For each unique order/transaction, we'd trigger a refund
-    refundsTriggered = tickets.length; // Placeholder count
-
-    return refundsTriggered;
+    return tickets.length;
   }
 
   /**
    * Invalidate all tickets for the event
-   * CRITICAL FIX: Marks tickets as invalid for scanning
+   * CRITICAL FIX: Now accepts transaction parameter
    */
-  private async invalidateTickets(eventId: string, tenantId: string): Promise<number> {
-    // In production, this would:
-    // 1. Update ticket status in ticket-service
-    // 2. Revoke blockchain NFTs if applicable
-    // 3. Update scanning database
+  private async invalidateTickets(
+    eventId: string,
+    tenantId: string,
+    trx: Knex.Transaction
+  ): Promise<number> {
+    // TODO: Call ticket-service to invalidate tickets
+    // await ticketServiceClient.invalidateEventTickets(eventId, tenantId);
 
-    // Emit ticket invalidation event
-    const invalidationEvent = {
-      type: 'EVENT_CANCELLED_TICKETS_INVALID',
-      eventId,
-      tenantId,
-      timestamp: new Date().toISOString(),
-    };
-
-    // In production: await messageQueue.publish('tickets', invalidationEvent);
-    logger.info({ eventId }, 'Ticket invalidation event published');
-
-    // Also update local event_capacity to show no available tickets
-    const result = await db('event_capacity')
-      .where({ event_id: eventId })
+    // Update local event_capacity to reflect cancellation
+    const result = await trx('event_capacity')
+      .where({ event_id: eventId, tenant_id: tenantId })
       .update({
         available_capacity: 0,
         is_active: false,
         updated_at: new Date(),
       });
 
-    return (result as any)?.rowCount || 0;
+    logger.info({ eventId, rowsUpdated: result }, 'Event capacity marked as inactive');
+
+    return result || 0;
   }
 
   /**
    * Cancel all resale listings for the event
+   * TODO: Replace with actual marketplace-service HTTP client call
    */
   private async cancelResaleListings(eventId: string, tenantId: string): Promise<number> {
-    // In production, this would call marketplace-service
+    // TODO: Implement actual marketplace-service call
+    // const response = await marketplaceServiceClient.cancelEventListings(eventId, tenantId);
+    // return response.cancelledCount;
 
-    const cancellationEvent = {
-      type: 'EVENT_CANCELLED_RESALES_CANCELLED',
-      eventId,
-      tenantId,
-      timestamp: new Date().toISOString(),
-    };
-
-    // In production: await messageQueue.publish('marketplace', cancellationEvent);
-    logger.info({ eventId }, 'Resale cancellation event published');
-
-    return 0; // Placeholder - actual count from marketplace-service
+    logger.info({ eventId }, 'Resale cancellation would be sent to marketplace-service (placeholder)');
+    return 0;
   }
 
   /**
    * Notify all ticket holders about cancellation
-   * CRITICAL FIX: Sends notifications to all affected users
+   * TODO: Replace with actual notification-service HTTP client call
    */
   private async notifyTicketHolders(
     eventId: string,
@@ -469,10 +456,9 @@ export class EventCancellationService {
     tickets: Array<{ id: string; user_id: string; email?: string }>,
     reason: string
   ): Promise<number> {
-    // Get unique user IDs
+    const db = getDb();
     const uniqueUserIds = [...new Set(tickets.map(t => t.user_id))];
 
-    // Get event details for notification content
     const event = await db('events')
       .where({ id: eventId, tenant_id: tenantId })
       .first();
@@ -482,56 +468,39 @@ export class EventCancellationService {
       return 0;
     }
 
-    // Build notification payload
-    const notificationEvent = {
-      type: 'EVENT_CANCELLED_NOTIFICATION',
-      eventId,
-      tenantId,
-      eventName: event.name,
-      reason,
-      affectedUserIds: uniqueUserIds,
-      notification: {
-        title: `Event Cancelled: ${event.name}`,
-        body: `We're sorry, but ${event.name} has been cancelled. ${reason}. You will receive a refund within 5-7 business days.`,
-        data: {
-          eventId,
-          type: 'event_cancelled',
-        },
-      },
-      email: {
-        subject: `Event Cancelled: ${event.name}`,
-        template: 'event-cancelled',
-        variables: {
-          eventName: event.name,
-          eventDate: event.event_date,
-          cancellationReason: reason,
-          refundInfo: 'You will receive a full refund within 5-7 business days.',
-        },
-      },
-      timestamp: new Date().toISOString(),
-    };
+    // TODO: Implement actual notification-service call
+    // await notificationServiceClient.sendBulkNotification({
+    //   type: 'EVENT_CANCELLED',
+    //   eventId,
+    //   tenantId,
+    //   eventName: event.name,
+    //   reason,
+    //   userIds: uniqueUserIds,
+    //   emailTemplate: 'event-cancelled',
+    //   pushNotification: true
+    // });
 
-    // In production: await messageQueue.publish('notifications', notificationEvent);
     logger.info({
       eventId,
       userCount: uniqueUserIds.length,
-    }, 'Notification event published to notification-service');
+    }, 'Notification would be sent to notification-service (placeholder)');
 
     return uniqueUserIds.length;
   }
 
   /**
    * Record cancellation in audit log
+   * CRITICAL FIX: Now accepts transaction parameter
    */
   private async recordCancellationAudit(
     eventId: string,
     tenantId: string,
     options: CancellationOptions,
-    result: CancellationResult
+    result: CancellationResult,
+    trx: Knex.Transaction
   ): Promise<void> {
-    // Create audit record
     try {
-      await db('event_audit_log').insert({
+      await trx('event_audit_log').insert({
         id: crypto.randomUUID(),
         tenant_id: tenantId,
         event_id: eventId,
@@ -551,19 +520,17 @@ export class EventCancellationService {
         created_at: new Date(),
       });
     } catch (error) {
-      // Don't fail cancellation if audit log fails
       logger.warn({ error, eventId }, 'Failed to create audit log entry');
+      throw error; // Rollback transaction if audit fails
     }
   }
 
-  /**
-   * Check if an event can be cancelled
-   */
   async canCancelEvent(eventId: string, tenantId: string): Promise<{
     canCancel: boolean;
     reason?: string;
     warnings?: string[];
   }> {
+    const db = getDb();
     const event = await db('events')
       .where({ id: eventId, tenant_id: tenantId })
       .whereNull('deleted_at')
@@ -573,19 +540,16 @@ export class EventCancellationService {
       return { canCancel: false, reason: 'Event not found' };
     }
 
-    // Already cancelled or completed
     if (['CANCELLED', 'COMPLETED'].includes(event.status)) {
       return { canCancel: false, reason: `Event is already ${event.status}` };
     }
 
     const warnings: string[] = [];
 
-    // Check if event has started
     if (event.event_date && new Date(event.event_date) < new Date()) {
       warnings.push('Event has already started - some attendees may have already entered');
     }
 
-    // Check if there are tickets sold
     const ticketCount = await db('event_capacity')
       .where({ event_id: eventId })
       .sum('sold_count as total')
@@ -603,5 +567,4 @@ export class EventCancellationService {
   }
 }
 
-// Export singleton instance
 export const eventCancellationService = new EventCancellationService();

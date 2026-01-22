@@ -27,7 +27,8 @@ export class ReviewService {
     userId: string,
     targetType: UserContentTargetType,
     targetId: string,
-    data: ReviewData
+    data: ReviewData,
+    tenantId: string
   ): Promise<IUserContent> {
     try {
       // Check if user already reviewed this target
@@ -66,7 +67,7 @@ export class ReviewService {
       // Invalidate cache for this target
       await this.invalidateCache(targetType, targetId);
 
-      console.log(`[ReviewService] Created review ${review._id} for ${targetType}:${targetId}`);
+      console.log(`[ReviewService] Created review ${review._id} for ${targetType}:${targetId} (tenant: ${tenantId})`);
       return review;
     } catch (error) {
       throw new Error(`Failed to create review: ${(error as Error).message}`);
@@ -79,7 +80,8 @@ export class ReviewService {
   async updateReview(
     reviewId: string,
     userId: string,
-    data: Partial<ReviewData>
+    data: Partial<ReviewData>,
+    tenantId: string
   ): Promise<IUserContent> {
     try {
       const review = await UserContentModel.findById(reviewId);
@@ -113,7 +115,7 @@ export class ReviewService {
       // Invalidate cache
       await this.invalidateCache(review.targetType, review.targetId.toString());
 
-      console.log(`[ReviewService] Updated review ${reviewId}`);
+      console.log(`[ReviewService] Updated review ${reviewId} (tenant: ${tenantId})`);
       return review;
     } catch (error) {
       throw new Error(`Failed to update review: ${(error as Error).message}`);
@@ -123,7 +125,7 @@ export class ReviewService {
   /**
    * Get a single review by ID
    */
-  async getReview(reviewId: string): Promise<IUserContent | null> {
+  async getReview(reviewId: string, tenantId: string): Promise<IUserContent | null> {
     try {
       return await UserContentModel.findById(reviewId);
     } catch (error) {
@@ -134,7 +136,7 @@ export class ReviewService {
   /**
    * Delete a review
    */
-  async deleteReview(reviewId: string, userId: string): Promise<boolean> {
+  async deleteReview(reviewId: string, userId: string, tenantId: string): Promise<boolean> {
     try {
       const review = await UserContentModel.findById(reviewId);
 
@@ -153,7 +155,7 @@ export class ReviewService {
       // Invalidate cache
       await this.invalidateCache(review.targetType, review.targetId.toString());
 
-      console.log(`[ReviewService] Deleted review ${reviewId}`);
+      console.log(`[ReviewService] Deleted review ${reviewId} (tenant: ${tenantId})`);
       return true;
     } catch (error) {
       throw new Error(`Failed to delete review: ${(error as Error).message}`);
@@ -166,7 +168,8 @@ export class ReviewService {
   async getReviewsForTarget(
     targetType: UserContentTargetType,
     targetId: string,
-    options: QueryOptions = {}
+    options: QueryOptions = {},
+    tenantId: string
   ): Promise<PaginatedResult<IUserContent>> {
    try {
       const page = options.page || 1;
@@ -232,7 +235,7 @@ export class ReviewService {
       // Cache the result
       await this.cacheReviews(cacheKey, result);
 
-      console.log(`[ReviewService] Found ${reviews.length} reviews for ${targetType}:${targetId}`);
+      console.log(`[ReviewService] Found ${reviews.length} reviews for ${targetType}:${targetId} (tenant: ${tenantId})`);
       return result;
     } catch (error) {
       throw new Error(`Failed to get reviews: ${(error as Error).message}`);
@@ -289,7 +292,7 @@ export class ReviewService {
   /**
    * Mark review as helpful
    */
-  async markHelpful(reviewId: string, userId: string): Promise<void> {
+  async markHelpful(reviewId: string, userId: string, tenantId: string): Promise<void> {
     try {
       const review = await UserContentModel.findById(reviewId);
 
@@ -312,7 +315,7 @@ export class ReviewService {
       // Invalidate cache
       await this.invalidateCache(review.targetType, review.targetId.toString());
 
-      console.log(`[ReviewService] User ${userId} marked review ${reviewId} as helpful`);
+      console.log(`[ReviewService] User ${userId} marked review ${reviewId} as helpful (tenant: ${tenantId})`);
     } catch (error) {
       throw new Error(`Failed to mark helpful: ${(error as Error).message}`);
     }
@@ -353,7 +356,7 @@ export class ReviewService {
   /**
    * Report a review
    */
-  async reportReview(reviewId: string, userId: string, reason: string): Promise<void> {
+  async reportReview(reviewId: string, userId: string, reason: string, tenantId: string): Promise<void> {
     try {
       const review = await UserContentModel.findById(reviewId);
 
@@ -374,7 +377,7 @@ export class ReviewService {
 
       await review.addFlag(flagType, userId);
 
-      console.log(`[ReviewService] User ${userId} reported review ${reviewId} for ${reason}`);
+      console.log(`[ReviewService] User ${userId} reported review ${reviewId} for ${reason} (tenant: ${tenantId})`);
     } catch (error) {
       throw new Error(`Failed to report review: ${(error as Error).message}`);
     }
@@ -416,7 +419,7 @@ export class ReviewService {
 
     try {
       const pattern = `${this.CACHE_PREFIX}${targetType}:${targetId}:*`;
-      
+
       // Use scan to find and delete matching keys
       const keys = await this.scanKeys(pattern);
       if (keys.length > 0) {
@@ -441,7 +444,7 @@ export class ReviewService {
     const sortBy = options.sortBy || 'createdAt';
     const sortOrder = options.sortOrder || 'desc';
     const status = options.status || 'approved';
-    
+
     return `${this.CACHE_PREFIX}${targetType}:${targetId}:${page}:${limit}:${sortBy}:${sortOrder}:${status}`;
   }
 

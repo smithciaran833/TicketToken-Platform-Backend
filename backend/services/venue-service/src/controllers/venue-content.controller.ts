@@ -1,12 +1,26 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { VenueContentService } from '../services/venue-content.service';
+import { getTenantId } from '../middleware/tenant.middleware';
+import { UnauthorizedError } from '../utils/errors';
+import { db } from '../config/database';
 import { logger } from '../utils/logger';
+import { initializeCache } from '../services/cache.service';
+import { getRedis } from '../config/redis';
 
+/**
+ * SECURITY FIX: VenueContentController updated to pass tenantId to all service calls
+ * SECURITY FIX: Requires authentication - no 'system' fallback
+ * CACHE FIX: Initialize with cacheService to enable cache invalidation
+ * All methods now extract tenantId from request and pass it through to service layer
+ */
 export class VenueContentController {
   private contentService: VenueContentService;
 
   constructor() {
-    this.contentService = new VenueContentService();
+    // CACHE FIX: Initialize cacheService and pass to VenueContentService
+    const redis = getRedis();
+    const cacheService = initializeCache(redis);
+    this.contentService = new VenueContentService(db, cacheService);
   }
 
   /**
@@ -17,10 +31,17 @@ export class VenueContentController {
     try {
       const { venueId } = req.params as any;
       const { contentType, content, displayOrder, featured } = req.body as any;
-      const userId = (req as any).user?.id || 'system';
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const userId = (req as any).user.id;
+      const tenantId = getTenantId(req);
 
       const result = await this.contentService.createContent({
         venueId,
+        tenantId,
         contentType,
         content,
         createdBy: userId,
@@ -49,9 +70,11 @@ export class VenueContentController {
     try {
       const { venueId } = req.params as any;
       const { contentType, status } = req.query as any;
+      const tenantId = getTenantId(req);
 
       const content = await this.contentService.getVenueContent(
         venueId,
+        tenantId,
         contentType as any,
         status as any
       );
@@ -76,7 +99,9 @@ export class VenueContentController {
   getContent = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { contentId } = req.params as any;
-      const content = await this.contentService.getContent(contentId);
+      const tenantId = getTenantId(req);
+
+      const content = await this.contentService.getContent(contentId, tenantId);
 
       if (!content) {
         return reply.status(404).send({
@@ -106,9 +131,16 @@ export class VenueContentController {
     try {
       const { contentId } = req.params as any;
       const { content, displayOrder, featured, primaryImage } = req.body as any;
-      const userId = (req as any).user?.id || 'system';
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const userId = (req as any).user.id;
+      const tenantId = getTenantId(req);
 
       const result = await this.contentService.updateContent(contentId, {
+        tenantId,
         content,
         displayOrder,
         featured,
@@ -143,7 +175,14 @@ export class VenueContentController {
   deleteContent = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { contentId } = req.params as any;
-      const result = await this.contentService.deleteContent(contentId);
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const tenantId = getTenantId(req);
+
+      const result = await this.contentService.deleteContent(contentId, tenantId);
 
       if (!result) {
         return reply.status(404).send({
@@ -172,9 +211,15 @@ export class VenueContentController {
   publishContent = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { contentId } = req.params as any;
-      const userId = (req as any).user?.id || 'system';
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const userId = (req as any).user.id;
+      const tenantId = getTenantId(req);
 
-      const result = await this.contentService.publishContent(contentId, userId);
+      const result = await this.contentService.publishContent(contentId, tenantId, userId);
 
       return reply.send({
         success: true,
@@ -196,9 +241,15 @@ export class VenueContentController {
   archiveContent = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { contentId } = req.params as any;
-      const userId = (req as any).user?.id || 'system';
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const userId = (req as any).user.id;
+      const tenantId = getTenantId(req);
 
-      const result = await this.contentService.archiveContent(contentId, userId);
+      const result = await this.contentService.archiveContent(contentId, tenantId, userId);
 
       return reply.send({
         success: true,
@@ -220,7 +271,9 @@ export class VenueContentController {
   getSeatingChart = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
-      const chart = await this.contentService.getSeatingChart(venueId);
+      const tenantId = getTenantId(req);
+
+      const chart = await this.contentService.getSeatingChart(venueId, tenantId);
 
       if (!chart) {
         return reply.status(404).send({
@@ -250,9 +303,15 @@ export class VenueContentController {
     try {
       const { venueId } = req.params as any;
       const { sections } = req.body as any;
-      const userId = (req as any).user?.id || 'system';
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const userId = (req as any).user.id;
+      const tenantId = getTenantId(req);
 
-      const result = await this.contentService.updateSeatingChart(venueId, sections, userId);
+      const result = await this.contentService.updateSeatingChart(venueId, tenantId, sections, userId);
 
       return reply.send({
         success: true,
@@ -275,8 +334,9 @@ export class VenueContentController {
     try {
       const { venueId } = req.params as any;
       const { type } = req.query as any;
+      const tenantId = getTenantId(req);
 
-      const photos = await this.contentService.getPhotos(venueId, type as string);
+      const photos = await this.contentService.getPhotos(venueId, tenantId, type as string);
 
       return reply.send({
         success: true,
@@ -299,9 +359,15 @@ export class VenueContentController {
     try {
       const { venueId } = req.params as any;
       const { media } = req.body as any;
-      const userId = (req as any).user?.id || 'system';
+      
+      // SECURITY FIX: Require authentication
+      if (!(req as any).user?.id) {
+        throw new UnauthorizedError('Authentication required');
+      }
+      const userId = (req as any).user.id;
+      const tenantId = getTenantId(req);
 
-      const result = await this.contentService.addPhoto(venueId, media, userId);
+      const result = await this.contentService.addPhoto(venueId, tenantId, media, userId);
 
       return reply.status(201).send({
         success: true,
@@ -323,7 +389,9 @@ export class VenueContentController {
   getAmenities = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
-      const amenities = await this.contentService.getAmenities(venueId);
+      const tenantId = getTenantId(req);
+
+      const amenities = await this.contentService.getAmenities(venueId, tenantId);
 
       return reply.send({
         success: true,
@@ -345,7 +413,9 @@ export class VenueContentController {
   getAccessibility = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
-      const info = await this.contentService.getAccessibilityInfo(venueId);
+      const tenantId = getTenantId(req);
+
+      const info = await this.contentService.getAccessibilityInfo(venueId, tenantId);
 
       return reply.send({
         success: true,
@@ -367,7 +437,9 @@ export class VenueContentController {
   getParkingInfo = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
-      const info = await this.contentService.getParkingInfo(venueId);
+      const tenantId = getTenantId(req);
+
+      const info = await this.contentService.getParkingInfo(venueId, tenantId);
 
       return reply.send({
         success: true,
@@ -389,7 +461,9 @@ export class VenueContentController {
   getPolicies = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     try {
       const { venueId } = req.params as any;
-      const policies = await this.contentService.getPolicies(venueId);
+      const tenantId = getTenantId(req);
+
+      const policies = await this.contentService.getPolicies(venueId, tenantId);
 
       return reply.send({
         success: true,

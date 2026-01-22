@@ -1,6 +1,6 @@
 /**
  * Idempotency Middleware
- * 
+ *
  * Prevents duplicate processing of state-changing requests.
  * Uses Redis to store request results keyed by Idempotency-Key header.
  */
@@ -74,7 +74,7 @@ export async function idempotencyMiddleware(
   }
 
   const idempotencyKey = request.headers['idempotency-key'] as string;
-  
+
   // If no idempotency key provided, proceed normally
   if (!idempotencyKey) {
     return;
@@ -121,14 +121,18 @@ export async function idempotencyMiddleware(
         originalCreatedAt: record.createdAt,
       });
 
+      // FIX: Set flag BEFORE sending to prevent onSend from processing
+      (request as any).idempotencyReplayed = true;
+
       // Set replay indicator header
       reply.header('Idempotency-Replayed', 'true');
-      
+
       // Restore original headers
       Object.entries(record.headers).forEach(([key, value]) => {
         reply.header(key, value);
       });
 
+      // Send the cached response (this prevents route handler from running)
       return reply.status(record.statusCode).send(record.body);
     }
 
@@ -165,6 +169,12 @@ export async function captureIdempotentResponse(
   reply: FastifyReply,
   payload: any
 ): Promise<any> {
+  // FIX: Return IMMEDIATELY if this is a replayed response
+  // Don't do ANYTHING - the response was already sent in preHandler
+  if ((request as any).idempotencyReplayed) {
+    return payload;
+  }
+
   const idempotencyKey = (request as any).idempotencyKey;
   const redisKey = (request as any).idempotencyRedisKey;
   const requestHash = (request as any).idempotencyRequestHash;

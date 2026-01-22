@@ -269,12 +269,11 @@ export async function up(knex: Knex): Promise<void> {
     table.boolean('require_artist_approval').defaultTo(false);
     table.jsonb('approved_resale_platforms');
 
-    // Optimistic locking (from 007)
     table.integer('version').defaultTo(1).notNullable();
 
-    // Timestamps
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true });
   });
 
   await knex.raw('CREATE INDEX idx_venue_settings_venue_id ON venue_settings(venue_id)');
@@ -301,6 +300,7 @@ export async function up(knex: Knex): Promise<void> {
 
     table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
     table.timestamp('updated_at', { useTz: true }).defaultTo(knex.fn.now());
+    table.timestamp('deleted_at', { useTz: true });
   });
 
   // Generated columns
@@ -311,6 +311,7 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_venue_integrations_type ON venue_integrations(integration_type)');
   await knex.raw('CREATE INDEX idx_venue_integrations_tenant_id ON venue_integrations(tenant_id)');
   await knex.raw('CREATE UNIQUE INDEX idx_venue_integrations_unique ON venue_integrations(venue_id, integration_type)');
+  await knex.raw('CREATE INDEX idx_venue_integrations_deleted_at ON venue_integrations(deleted_at)');
 
   // CHECK constraint for provider
   await knex.raw(`
@@ -552,6 +553,25 @@ export async function up(knex: Knex): Promise<void> {
   await knex.raw('CREATE INDEX idx_venue_audit_log_action ON venue_audit_log(action)');
 
   // ==========================================================================
+  // TABLE 10b: content_audit_log (PHASE 3 FIX)
+  // ==========================================================================
+  await knex.schema.createTable('content_audit_log', (table) => {
+    table.uuid('id').primary().defaultTo(knex.raw('gen_random_uuid()'));
+    table.string('content_id', 255).notNullable(); // MongoDB ObjectId as string
+    table.uuid('tenant_id').notNullable();
+    table.string('action', 100).notNullable(); // 'create', 'update', 'delete', 'publish', 'archive'
+    table.uuid('user_id');
+    table.jsonb('changes').defaultTo('{}');
+    table.timestamp('created_at', { useTz: true }).defaultTo(knex.fn.now());
+  });
+
+  await knex.raw('CREATE INDEX idx_content_audit_log_content_id ON content_audit_log(content_id, created_at DESC)');
+  await knex.raw('CREATE INDEX idx_content_audit_log_tenant_id ON content_audit_log(tenant_id)');
+  await knex.raw('CREATE INDEX idx_content_audit_log_user_id ON content_audit_log(user_id)');
+  await knex.raw('CREATE INDEX idx_content_audit_log_action ON content_audit_log(action)');
+  await knex.raw('CREATE INDEX idx_content_audit_log_created_at ON content_audit_log(created_at DESC)');
+
+  // ==========================================================================
   // TABLE 11: api_keys
   // ==========================================================================
   await knex.schema.createTable('api_keys', (table) => {
@@ -676,10 +696,14 @@ export async function up(knex: Knex): Promise<void> {
     table.uuid('venue_id').notNullable().references('id').inTable('venues').onDelete('CASCADE');
     table.uuid('tenant_id');
     table.timestamp('scheduled_date').notNullable();
-    table.string('status').notNullable().defaultTo('scheduled');
+    table.string('status').notNullable().defaultTo('pending');
     table.uuid('reviewer_id');
     table.jsonb('findings').defaultTo('{}');
     table.text('notes');
+    table.timestamp('processing_started_at');
+    table.timestamp('processing_completed_at');
+    table.uuid('report_id');
+    table.text('error_message');
     table.timestamp('completed_at');
     table.timestamp('created_at').notNullable().defaultTo(knex.fn.now());
     table.timestamp('updated_at').defaultTo(knex.fn.now());
@@ -1016,6 +1040,7 @@ export async function up(knex: Knex): Promise<void> {
 
   await knex.schema.alterTable('venue_compliance_reviews', (table) => {
     table.foreign('reviewer_id').references('id').inTable('users').onDelete('SET NULL');
+    table.foreign('report_id').references('id').inTable('venue_compliance_reports').onDelete('SET NULL');
   });
 
   if (!hasDocumentsTable) {
@@ -1148,6 +1173,7 @@ export async function up(knex: Knex): Promise<void> {
     'custom_domains',
     'venue_tier_history',
     'venue_audit_log',
+    'content_audit_log', // PHASE 3 FIX
     'api_keys',
     'external_verifications',
     'manual_review_queue',
@@ -1244,6 +1270,7 @@ export async function down(knex: Knex): Promise<void> {
     'manual_review_queue',
     'external_verifications',
     'api_keys',
+    'content_audit_log', // PHASE 3 FIX
     'venue_audit_log',
     'venue_tier_history',
     'custom_domains',

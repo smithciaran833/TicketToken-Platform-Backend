@@ -3,7 +3,7 @@ import { Knex } from 'knex';
 
 export interface IEventCapacity {
   id?: string;
-  tenant_id?: string;
+  tenant_id: string; // AUDIT FIX: Made required for tenant isolation
   event_id: string;
   schedule_id?: string;
   section_name: string;
@@ -40,21 +40,42 @@ export class EventCapacityModel extends BaseModel {
     super('event_capacity', db);
   }
 
-  async findByEventId(eventId: string): Promise<IEventCapacity[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async findByEventId(eventId: string, tenantId: string): Promise<IEventCapacity[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findByEventId');
+    }
+
     return this.db(this.tableName)
-      .where({ event_id: eventId, is_active: true })
+      .where({ event_id: eventId, tenant_id: tenantId, is_active: true })
       .orderBy('section_name', 'asc');
   }
 
-  async findByScheduleId(scheduleId: string): Promise<IEventCapacity[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async findByScheduleId(scheduleId: string, tenantId: string): Promise<IEventCapacity[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findByScheduleId');
+    }
+
     return this.db(this.tableName)
-      .where({ schedule_id: scheduleId, is_active: true })
+      .where({ schedule_id: scheduleId, tenant_id: tenantId, is_active: true })
       .orderBy('section_name', 'asc');
   }
 
-  async getTotalCapacity(eventId: string, scheduleId?: string): Promise<number> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async getTotalCapacity(eventId: string, tenantId: string, scheduleId?: string): Promise<number> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getTotalCapacity');
+    }
+
     const query = this.db(this.tableName)
-      .where({ event_id: eventId, is_active: true })
+      .where({ event_id: eventId, tenant_id: tenantId, is_active: true })
       .sum('total_capacity as total');
 
     if (scheduleId) {
@@ -65,9 +86,16 @@ export class EventCapacityModel extends BaseModel {
     return parseInt(result?.total || '0', 10);
   }
 
-  async getAvailableCapacity(eventId: string, scheduleId?: string): Promise<number> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async getAvailableCapacity(eventId: string, tenantId: string, scheduleId?: string): Promise<number> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getAvailableCapacity');
+    }
+
     const query = this.db(this.tableName)
-      .where({ event_id: eventId, is_active: true })
+      .where({ event_id: eventId, tenant_id: tenantId, is_active: true })
       .sum('available_capacity as available');
 
     if (scheduleId) {
@@ -78,21 +106,42 @@ export class EventCapacityModel extends BaseModel {
     return parseInt(result?.available || '0', 10);
   }
 
-  async updateSoldCount(capacityId: string, quantity: number): Promise<void> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async updateSoldCount(capacityId: string, tenantId: string, quantity: number): Promise<void> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for updateSoldCount');
+    }
+
     await this.db(this.tableName)
-      .where({ id: capacityId })
+      .where({ id: capacityId, tenant_id: tenantId })
       .increment('sold_count', quantity);
   }
 
-  async updatePendingCount(capacityId: string, quantity: number): Promise<void> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async updatePendingCount(capacityId: string, tenantId: string, quantity: number): Promise<void> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for updatePendingCount');
+    }
+
     await this.db(this.tableName)
-      .where({ id: capacityId })
+      .where({ id: capacityId, tenant_id: tenantId })
       .increment('pending_count', quantity);
   }
 
-  async decrementPendingCount(capacityId: string, quantity: number): Promise<void> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async decrementPendingCount(capacityId: string, tenantId: string, quantity: number): Promise<void> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for decrementPendingCount');
+    }
+
     await this.db(this.tableName)
-      .where({ id: capacityId })
+      .where({ id: capacityId, tenant_id: tenantId })
       .decrement('pending_count', quantity);
   }
 }

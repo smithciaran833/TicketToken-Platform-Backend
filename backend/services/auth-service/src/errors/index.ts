@@ -1,85 +1,81 @@
-export class AppError extends Error {
-  public statusCode: number;
-  public code: string;
-  public isOperational: boolean;
+/**
+ * Custom Error Classes
+ */
 
-  constructor(message: string, statusCode: number, code: string = 'INTERNAL_ERROR') {
+export class AuthenticationError extends Error {
+  statusCode = 401;
+  code = 'AUTHENTICATION_FAILED';
+  isOperational = true;
+
+  constructor(message: string) {
     super(message);
-    this.statusCode = statusCode;
-    this.code = code;
-    this.isOperational = true;
-    Error.captureStackTrace(this, this.constructor);
+    this.name = 'AuthenticationError';
+    Object.setPrototypeOf(this, AuthenticationError.prototype);
   }
 }
 
-export class ValidationError extends AppError {
-  public errors: any[];
+export class AuthorizationError extends Error {
+  statusCode = 403;
+  code = 'ACCESS_DENIED';
+  isOperational = true;
 
-  constructor(errors: any[]) {
-    super('Validation failed', 422, 'VALIDATION_ERROR');
-    this.errors = errors;
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthorizationError';
+    Object.setPrototypeOf(this, AuthorizationError.prototype);
   }
 }
 
-export class NotFoundError extends AppError {
-  constructor(resource = 'Resource') {
-    super(`${resource} not found`, 404, 'NOT_FOUND');
+export class TenantError extends Error {
+  statusCode = 403;
+  code = 'INVALID_TENANT_ID_FORMAT';
+  isOperational = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'TenantError';
+    Object.setPrototypeOf(this, TenantError.prototype);
   }
 }
 
-export class AuthenticationError extends AppError {
-  constructor(message = 'Authentication failed', code = 'AUTHENTICATION_FAILED') {
-    super(message, 401, code);
+export class TokenError extends Error {
+  statusCode = 401;
+  code = 'TOKEN_ERROR';
+  isOperational = true;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'TokenError';
+    Object.setPrototypeOf(this, TokenError.prototype);
   }
 }
 
-export class AuthorizationError extends AppError {
-  constructor(message = 'Access denied') {
-    super(message, 403, 'ACCESS_DENIED');
-  }
-}
+export class RateLimitError extends Error {
+  statusCode = 429;
+  code = 'RATE_LIMIT_EXCEEDED';
+  isOperational = true;
+  ttl: number;
+  limit: number;
 
-export class ConflictError extends AppError {
-  constructor(message = 'Resource conflict') {
-    super(message, 409, 'CONFLICT');
-  }
-}
-
-export class RateLimitError extends AppError {
-  public ttl?: number;
-
-  constructor(message = 'Too many requests', ttl?: number) {
-    super(message, 429, 'RATE_LIMIT_EXCEEDED');
+  constructor(message: string, ttl: number = 60, limit: number = 100) {
+    super(message);
+    this.name = 'RateLimitError';
     this.ttl = ttl;
+    this.limit = limit;
+    Object.setPrototypeOf(this, RateLimitError.prototype);
   }
 }
 
-export class TokenError extends AppError {
-  constructor(message = 'Invalid or expired token') {
-    super(message, 401, 'TOKEN_INVALID');
-  }
-}
+export class ValidationError extends Error {
+  statusCode = 400;
+  code = 'VALIDATION_ERROR';
+  isOperational = true;
+  errors: string[];
 
-export class TenantError extends AppError {
-  constructor(message = 'Invalid tenant context') {
-    super(message, 400, 'TENANT_INVALID');
-  }
-}
-
-export class MFARequiredError extends AppError {
-  constructor(message = 'MFA verification required') {
-    super(message, 401, 'MFA_REQUIRED');
-  }
-}
-
-export class CaptchaError extends AppError {
-  constructor(message = 'CAPTCHA verification required', code = 'CAPTCHA_REQUIRED') {
-    super(message, 400, code);
-  }
-}
-
-export class SessionError extends AppError {
-  constructor(message = 'Session expired') {
-    super(message, 401, 'SESSION_EXPIRED');
+  constructor(errors: string[]) {
+    super(errors.join(', '));
+    this.name = 'ValidationError';
+    this.errors = errors;
+    Object.setPrototypeOf(this, ValidationError.prototype);
   }
 }

@@ -13,7 +13,7 @@ export const loginSchema = Joi.object({
   email: Joi.string().email().max(255).required(),
   password: Joi.string().max(128).required(),
   captchaToken: Joi.string().max(2048).optional(),
-  mfaToken: Joi.string().min(6).max(10).optional(), // 6 for TOTP, 9 for backup codes (XXXX-XXXX)
+  mfaToken: Joi.string().min(6).max(10).optional(),
 }).unknown(false);
 
 export const refreshTokenSchema = Joi.object({
@@ -45,7 +45,7 @@ export const logoutSchema = Joi.object({
 export const setupMFASchema = Joi.object({}).unknown(false);
 
 export const verifyMFASchema = Joi.object({
-  token: Joi.string().min(6).max(10).required(), // 6 for TOTP, 9 for backup codes
+  token: Joi.string().min(6).max(10).required(),
 }).unknown(false);
 
 export const disableMFASchema = Joi.object({
@@ -115,8 +115,9 @@ export const oauthLinkSchema = Joi.object({
   code: Joi.string().max(2048).required(),
 }).unknown(false);
 
+// Only google supported for now. Apple planned for Phase 2.
 export const providerParamSchema = Joi.object({
-  provider: Joi.string().valid('google', 'apple', 'facebook').required(),
+  provider: Joi.string().valid('google').required(),
 }).unknown(false);
 
 export const publicKeyParamSchema = Joi.object({
@@ -155,7 +156,7 @@ export const updateProfileSchema = Joi.object({
 
 export const paginationQuerySchema = Joi.object({
   page: Joi.number().integer().min(1).default(1),
-  limit: Joi.number().integer().min(1).max(100).default(20),
+  limit: Joi.number().integer().default(20),
 }).unknown(true);
 
 export const emptyBodySchema = Joi.object({}).unknown(true);

@@ -155,9 +155,16 @@ export class EventModel extends BaseModel {
     super('events', db);
   }
 
-  async findBySlug(slug: string): Promise<IEvent | null> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async findBySlug(slug: string, tenantId: string): Promise<IEvent | null> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findBySlug');
+    }
+
     const event = await this.db('events')
-      .where({ slug })
+      .where({ slug, tenant_id: tenantId })
       .whereNull('deleted_at')
       .first();
 
@@ -177,10 +184,10 @@ export class EventModel extends BaseModel {
 
   /**
    * Create event with defaults, using ON CONFLICT to handle race conditions.
-   * 
+   *
    * AUDIT FIX (DB2): Uses INSERT ... ON CONFLICT to prevent duplicate creation
    * when concurrent requests create events with same slug/tenant combination.
-   * 
+   *
    * @param eventData - Partial event data
    * @returns Created or existing event
    */
@@ -215,7 +222,7 @@ export class EventModel extends BaseModel {
     `, Object.values(dbData));
 
     const record = result.rows?.[0] || result;
-    
+
     // Log if we hit a conflict
     if (record && record._inserted === false) {
       // Remove the _inserted flag before returning
@@ -230,10 +237,10 @@ export class EventModel extends BaseModel {
 
   /**
    * Upsert event with explicit conflict handling.
-   * 
+   *
    * AUDIT FIX (DB2): Explicit upsert method for idempotent operations.
    * Uses ON CONFLICT to either insert new record or update existing.
-   * 
+   *
    * @param eventData - Event data including tenant_id and venue_id
    * @param conflictColumns - Columns to check for conflict (default: slug, venue_id)
    * @param updateColumns - Columns to update on conflict (default: name, description, updated_at)
@@ -304,19 +311,40 @@ export class EventModel extends BaseModel {
     return this.transformFromDb(record);
   }
 
-  async getEventsByVenue(venueId: string, options: any = {}): Promise<IEvent[]> {
-    const events = await this.findAll({ venue_id: venueId }, options);
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async getEventsByVenue(venueId: string, tenantId: string, options: any = {}): Promise<IEvent[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getEventsByVenue');
+    }
+
+    const events = await this.findAll({ venue_id: venueId, tenant_id: tenantId }, options);
     return events.map((e: any) => this.transformFromDb(e));
   }
 
-  async getEventsByCategory(categoryId: string, options: any = {}): Promise<IEvent[]> {
-    const events = await this.findAll({ primary_category_id: categoryId }, options);
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async getEventsByCategory(categoryId: string, tenantId: string, options: any = {}): Promise<IEvent[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getEventsByCategory');
+    }
+
+    const events = await this.findAll({ primary_category_id: categoryId, tenant_id: tenantId }, options);
     return events.map((e: any) => this.transformFromDb(e));
   }
 
-  async getFeaturedEvents(limit: number = 10): Promise<IEvent[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async getFeaturedEvents(tenantId: string, limit: number = 10): Promise<IEvent[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getFeaturedEvents');
+    }
+
     const events = await this.db('events')
-      .where({ is_featured: true, visibility: 'PUBLIC' })
+      .where({ is_featured: true, visibility: 'PUBLIC', tenant_id: tenantId })
       .whereNull('deleted_at')
       .whereIn('status', ['PUBLISHED', 'ON_SALE'])
       .orderBy('priority_score', 'desc')
@@ -328,10 +356,10 @@ export class EventModel extends BaseModel {
 
   /**
    * Search events with proper tenant isolation.
-   * 
+   *
    * CRITICAL: tenant_id parameter is REQUIRED for security.
    * This provides defense-in-depth alongside RLS policies.
-   * 
+   *
    * @param searchTerm - Search query string
    * @param options - Search options including tenant_id (REQUIRED), filters, pagination
    * @returns Array of matching events
@@ -394,16 +422,43 @@ export class EventModel extends BaseModel {
     return events.map((e: any) => this.transformFromDb(e));
   }
 
-  async incrementViewCount(eventId: string): Promise<void> {
-    await this.db('events').where({ id: eventId }).increment('view_count', 1);
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id validation for security
+   */
+  async incrementViewCount(eventId: string, tenantId: string): Promise<void> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for incrementViewCount');
+    }
+
+    await this.db('events')
+      .where({ id: eventId, tenant_id: tenantId })
+      .increment('view_count', 1);
   }
 
-  async incrementInterestCount(eventId: string): Promise<void> {
-    await this.db('events').where({ id: eventId }).increment('interest_count', 1);
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id validation for security
+   */
+  async incrementInterestCount(eventId: string, tenantId: string): Promise<void> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for incrementInterestCount');
+    }
+
+    await this.db('events')
+      .where({ id: eventId, tenant_id: tenantId })
+      .increment('interest_count', 1);
   }
 
-  async incrementShareCount(eventId: string): Promise<void> {
-    await this.db('events').where({ id: eventId }).increment('share_count', 1);
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id validation for security
+   */
+  async incrementShareCount(eventId: string, tenantId: string): Promise<void> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for incrementShareCount');
+    }
+
+    await this.db('events')
+      .where({ id: eventId, tenant_id: tenantId })
+      .increment('share_count', 1);
   }
 
   private transformForDb(eventData: Partial<IEvent>): any {

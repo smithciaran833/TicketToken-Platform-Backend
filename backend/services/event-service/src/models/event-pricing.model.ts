@@ -3,6 +3,7 @@ import { Knex } from 'knex';
 
 export interface IEventPricing {
   id?: string;
+  tenant_id: string; // AUDIT FIX: Added tenant_id field for proper isolation
   event_id: string;
   schedule_id?: string;
   capacity_id?: string;
@@ -41,29 +42,57 @@ export class EventPricingModel extends BaseModel {
     super('event_pricing', db);
   }
 
-  async findByEventId(eventId: string): Promise<IEventPricing[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async findByEventId(eventId: string, tenantId: string): Promise<IEventPricing[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findByEventId');
+    }
+
     return this.db(this.tableName)
-      .where({ event_id: eventId, is_active: true })
+      .where({ event_id: eventId, tenant_id: tenantId, is_active: true })
       .orderBy('display_order', 'asc')
       .orderBy('base_price', 'asc');
   }
 
-  async findByScheduleId(scheduleId: string): Promise<IEventPricing[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async findByScheduleId(scheduleId: string, tenantId: string): Promise<IEventPricing[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findByScheduleId');
+    }
+
     return this.db(this.tableName)
-      .where({ schedule_id: scheduleId, is_active: true })
+      .where({ schedule_id: scheduleId, tenant_id: tenantId, is_active: true })
       .orderBy('display_order', 'asc');
   }
 
-  async findByCapacityId(capacityId: string): Promise<IEventPricing[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async findByCapacityId(capacityId: string, tenantId: string): Promise<IEventPricing[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for findByCapacityId');
+    }
+
     return this.db(this.tableName)
-      .where({ capacity_id: capacityId, is_active: true })
+      .where({ capacity_id: capacityId, tenant_id: tenantId, is_active: true })
       .orderBy('base_price', 'asc');
   }
 
-  async getActivePricing(eventId: string): Promise<IEventPricing[]> {
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async getActivePricing(eventId: string, tenantId: string): Promise<IEventPricing[]> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for getActivePricing');
+    }
+
     const now = new Date();
     return this.db(this.tableName)
-      .where({ event_id: eventId, is_active: true, is_visible: true })
+      .where({ event_id: eventId, tenant_id: tenantId, is_active: true, is_visible: true })
       .where(function(this: any) {
         this.whereNull('sales_start_at').orWhere('sales_start_at', '<=', now);
       })
@@ -73,12 +102,22 @@ export class EventPricingModel extends BaseModel {
       .orderBy('display_order', 'asc');
   }
 
-  async calculateTotalPrice(pricingId: string, quantity: number = 1): Promise<number> {
-    const pricing = await this.findById(pricingId);
+  /**
+   * AUDIT FIX (CRITICAL): Added tenant_id parameter for proper isolation
+   */
+  async calculateTotalPrice(pricingId: string, tenantId: string, quantity: number = 1): Promise<number> {
+    if (!tenantId) {
+      throw new Error('tenant_id is required for calculateTotalPrice');
+    }
+
+    const pricing = await this.db(this.tableName)
+      .where({ id: pricingId, tenant_id: tenantId })
+      .first();
+
     if (!pricing) return 0;
 
-    const basePrice = pricing.is_dynamic && pricing.current_price 
-      ? pricing.current_price 
+    const basePrice = pricing.is_dynamic && pricing.current_price
+      ? pricing.current_price
       : pricing.base_price;
 
     const serviceFee = pricing.service_fee || 0;

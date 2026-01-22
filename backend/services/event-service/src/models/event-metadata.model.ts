@@ -4,6 +4,7 @@ import { Knex } from 'knex';
 export interface IEventMetadata {
   id?: string;
   event_id: string;
+  tenant_id?: string; // AUDIT FIX: Added for defense-in-depth
   performers?: any[];
   headliner?: string;
   supporting_acts?: string[];
@@ -44,26 +45,40 @@ export class EventMetadataModel extends BaseModel {
       .first();
   }
 
+  /**
+   * AUDIT FIX (HIGH): Fixed race condition by using INSERT ... ON CONFLICT
+   * instead of SELECT + INSERT/UPDATE pattern.
+   * 
+   * This makes the upsert operation atomic and prevents duplicate records
+   * from being created by concurrent requests.
+   */
   async upsert(eventId: string, metadata: Partial<IEventMetadata>): Promise<IEventMetadata> {
-    const existing = await this.findByEventId(eventId);
+    const dataToUpsert = {
+      event_id: eventId,
+      ...metadata,
+      updated_at: new Date()
+    };
 
-    if (existing) {
-      const [updated] = await this.db(this.tableName)
-        .where({ event_id: eventId })
-        .update({
-          ...metadata,
-          updated_at: new Date()
-        })
-        .returning('*');
-      return updated;
-    } else {
-      const [created] = await this.db(this.tableName)
-        .insert({
-          event_id: eventId,
-          ...metadata
-        })
-        .returning('*');
-      return created;
-    }
+    // Build column lists for the query
+    const columns = Object.keys(dataToUpsert);
+    const values = Object.values(dataToUpsert);
+    const placeholders = columns.map((_, i) => `$${i + 1}`);
+
+    // Build UPDATE clause (excluding event_id from updates)
+    const updateColumns = columns.filter(col => col !== 'event_id');
+    const updateClause = updateColumns
+      .map(col => `${col} = EXCLUDED.${col}`)
+      .join(', ');
+
+    // Use INSERT ... ON CONFLICT for atomic upsert
+    const [result] = await this.db.raw(`
+      INSERT INTO event_metadata (${columns.join(', ')})
+      VALUES (${placeholders.join(', ')})
+      ON CONFLICT (event_id)
+      DO UPDATE SET ${updateClause}
+      RETURNING *
+    `, values);
+
+    return result.rows?.[0] || result;
   }
 }

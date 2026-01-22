@@ -1,0 +1,717 @@
+.
+├── CLAUDE.md
+├── CLINE_MIGRATION_AUDIT.md
+├── CODEBASE_AUDIT.md
+├── COMPLETE_AUDIT_SUMMARY.md
+├── Dockerfile
+├── Dockerfile.base
+├── Makefile
+├── PHASE2_RLS_MIGRATION_MAP.md
+├── PHASE3_INTERNAL_API_PLAN.md
+├── PHASE4_CLIENT_INVENTORY.md
+├── PHASE5_BYPASS_REFACTOR_PLAN.md
+├── PHASE6_ORPHAN_TABLE_PLAN.md
+├── REMEDIATION_PLAN.md
+├── SERVICE_BYPASS_ANALYSIS.md
+├── TODO_REPORT.md
+├── VENUE_SERVICE_MIGRATION_AUDIT.md
+├── audit-results
+│   ├── analytics-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 16-caching.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   └── 24-scheduled-jobs-cron.md
+│   ├── api-gateway
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 14-file-handling.md
+│   │   ├── 15-api-gateway.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 22-api-versioning.md
+│   │   ├── 23-cors.md
+│   │   └── 24-caching.md
+│   ├── auth-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 25-compliance-legal.md
+│   │   ├── 37-wallet-key-management.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── blockchain-indexer
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration.md
+│   │   ├── 20-deployment.md
+│   │   ├── 31-external-integrations.md
+│   │   ├── 36-background-jobs.md
+│   │   ├── 37-event-driven.md
+│   │   ├── 38-caching.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── blockchain-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 26-blockchain-integration.md
+│   │   ├── 31-blockchain-database-consistency.md
+│   │   ├── 36-wallet-security.md
+│   │   ├── 37-key-management.md
+│   │   ├── 38-time-sensitive-operations.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── compliance-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   └── 25-compliance-legal.md
+│   ├── event-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 28-event-state-management.md
+│   │   ├── 38-time-sensitive-operations.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── file-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   └── 21-database-migrations.md
+│   ├── integration-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   └── 21-database-migrations.md
+│   ├── marketplace-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 23-webhooks-outbound.md
+│   │   ├── 25-compliance-legal.md
+│   │   ├── 29-resale-business-rules.md
+│   │   ├── 30-royalty-fee-calculation.md
+│   │   ├── 32-payment-split-accuracy.md
+│   │   ├── 34-refund-scenarios.md
+│   │   ├── 38-time-sensitive-operations.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── minting-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 17-queues-background-jobs.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 26-blockchain-integration.md
+│   │   ├── 31-nft-minting-operations.md
+│   │   ├── 36-wallet-security.md
+│   │   ├── 37-key-management.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── monitoring-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   └── 24-scheduled-jobs-cron.md
+│   ├── notification-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration.md
+│   │   ├── 20-deployment.md
+│   │   ├── 26-gdpr-compliance.md
+│   │   ├── 31-external-integrations.md
+│   │   ├── 36-background-jobs.md
+│   │   ├── 37-event-driven.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── order-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 17-queues-background-jobs.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 24-scheduled-jobs-cron.md
+│   │   ├── 25-compliance-legal.md
+│   │   ├── 34-refund-scenarios.md
+│   │   ├── 38-time-sensitive-operations.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── payment-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 32-payment-processing-security.md
+│   │   ├── 33-refund-dispute-handling.md
+│   │   ├── AUDIT_FINDINGS.md
+│   │   └── MEDIUM_FINDINGS_COMPLETE.md
+│   ├── queue-service
+│   │   ├── 01-security.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 17-queues-background-jobs.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   └── 21-database-migrations.md
+│   ├── scanning-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   └── 21-database-migrations.md
+│   ├── search-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 16-caching.md
+│   │   ├── 18-search.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   └── 21-database-migrations.md
+│   ├── ticket-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 30-ticket-lifecycle-management.md
+│   │   ├── 31-blockchain-database-consistency.md
+│   │   └── AUDIT_FINDINGS.md
+│   ├── transfer-service
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-s2s-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 26-blockchain-operations.md
+│   │   ├── 31-external-integrations.md
+│   │   ├── 36-background-jobs.md
+│   │   ├── 38-caching.md
+│   │   └── AUDIT_FINDINGS.md
+│   └── venue-service
+│       ├── 01-security.md
+│       ├── 02-input-validation.md
+│       ├── 03-error-handling.md
+│       ├── 04-logging-observability.md
+│       ├── 05-s2s-auth.md
+│       ├── 06-database-integrity.md
+│       ├── 07-idempotency.md
+│       ├── 08-rate-limiting.md
+│       ├── 09-multi-tenancy.md
+│       ├── 10-testing.md
+│       ├── 11-documentation.md
+│       ├── 12-health-checks.md
+│       ├── 13-graceful-degradation.md
+│       ├── 14-file-handling.md
+│       ├── 19-configuration-management.md
+│       ├── 20-deployment-cicd.md
+│       ├── 21-database-migrations.md
+│       ├── 29-resale-business-rules.md
+│       └── AUDIT_FINDINGS.md
+├── aws
+│   ├── README.md
+│   ├── THIRD_PARTY_LICENSES
+│   └── install
+├── backend
+│   ├── services
+│   │   ├── analytics-service
+│   │   ├── api-gateway
+│   │   ├── auth-service
+│   │   ├── blockchain-indexer
+│   │   ├── blockchain-service
+│   │   ├── compliance-service
+│   │   ├── event-service
+│   │   ├── file-service
+│   │   ├── integration-service
+│   │   ├── marketplace-service
+│   │   ├── minting-service
+│   │   ├── monitoring-service
+│   │   ├── notification-service
+│   │   ├── order-service
+│   │   ├── payment-service
+│   │   ├── queue-service
+│   │   ├── scanning-service
+│   │   ├── search-service
+│   │   ├── ticket-service
+│   │   ├── transfer-service
+│   │   └── venue-service
+│   └── shared
+│       ├── REDIS_MIGRATION.md
+│       ├── config
+│       ├── content-reviews
+│       ├── idl
+│       ├── jest.config.base.js
+│       ├── jest.config.js
+│       ├── mongodb
+│       ├── package-lock.json
+│       ├── package.json
+│       ├── src
+│       ├── templates
+│       ├── tsconfig.json
+│       ├── utils
+│       └── validators
+├── blockchain-service-test-results.txt
+├── database
+│   ├── elasticsearch
+│   │   ├── ELASTICSEARCH_IMPLEMENTATION_PLAN.md
+│   │   └── mappings
+│   ├── influxdb
+│   │   └── buckets
+│   ├── migrations
+│   │   └── postgresql
+│   ├── mongodb
+│   │   ├── MONGODB_IMPLEMENTATION_PLAN.md
+│   │   └── collections
+│   ├── postgresql
+│   │   ├── add_final_rls_policies.sql
+│   │   ├── add_missing_rls_policies.sql
+│   │   ├── certs
+│   │   ├── config
+│   │   ├── enable_rls.sql
+│   │   ├── functions
+│   │   ├── seeds
+│   │   ├── triggers
+│   │   ├── validations
+│   │   └── views
+│   ├── redis
+│   │   ├── REDIS_IMPLEMENTATION_PLAN.md
+│   │   ├── configurations
+│   │   └── data-structures
+│   └── scripts
+│       ├── check-database-status.sql
+│       ├── create-migration.sh
+│       └── reset-database.sh
+├── docker-compose.yml
+├── docs
+│   ├── PLATFORM_GAPS.md
+│   ├── flow-audits
+│   │   ├── 00_MASTER_FLOW_AUDIT_INDEX.md
+│   │   ├── MASTER_FLOW_INDEX.md
+│   │   ├── auth-identity
+│   │   ├── blockchain-nft
+│   │   ├── compliance-admin
+│   │   ├── events-venues
+│   │   ├── marketplace
+│   │   ├── payments-financial
+│   │   ├── platform-ops
+│   │   └── ticketing
+│   ├── integration-analysis
+│   ├── research
+│   │   ├── 01-security.md
+│   │   ├── 02-input-validation.md
+│   │   ├── 03-error-handling.md
+│   │   ├── 04-logging-observability.md
+│   │   ├── 05-service-to-service-auth.md
+│   │   ├── 06-database-integrity.md
+│   │   ├── 07-idempotency.md
+│   │   ├── 08-rate-limiting.md
+│   │   ├── 09-multi-tenancy.md
+│   │   ├── 10-testing.md
+│   │   ├── 11-documentation.md
+│   │   ├── 12-health-checks.md
+│   │   ├── 13-graceful-degradation.md
+│   │   ├── 14-file-handling.md
+│   │   ├── 15-notifications.md
+│   │   ├── 16-caching.md
+│   │   ├── 17-queues-background-jobs.md
+│   │   ├── 18-search.md
+│   │   ├── 19-configuration-management.md
+│   │   ├── 20-deployment-cicd.md
+│   │   ├── 21-database-migrations.md
+│   │   ├── 22-api-versioning.md
+│   │   ├── 23-webhooks-outbound.md
+│   │   ├── 24-scheduled-jobs-cron.md
+│   │   ├── 25-compliance-legal.md
+│   │   ├── 26-blockchain-operations.md
+│   │   ├── 27-ticket-lifecycle.md
+│   │   ├── 28-event-state-management.md
+│   │   ├── 29-resale-business-rules.md
+│   │   ├── 30-royalty-fee-calculation.md
+│   │   ├── 31-blockchain-database-consistency.md
+│   │   ├── 32-payment-split-accuracy.md
+│   │   ├── 33-inventory-management.md
+│   │   ├── 34-refund-scenarios.md
+│   │   ├── 35-qr-entry-validation.md
+│   │   ├── 36-nft-minting-integrity.md
+│   │   ├── 37-wallet-key-management.md
+│   │   ├── 38-time-sensitive-operations.md
+│   │   ├── AUDIT-EXECUTION-PLAN.md
+│   │   ├── MASTER-CHECKLIST.md
+│   │   └── SERVICE-CHECKLIST-MAPPING.md
+│   └── standardization
+│       ├── ANALYSIS_SUMMARY.md
+│       ├── SERVICE_INVENTORY.md
+│       ├── SERVICE_INVENTORY_analytics-service.md
+│       ├── SERVICE_INVENTORY_api-gateway.md
+│       ├── SERVICE_INVENTORY_blockchain-indexer.md
+│       ├── SERVICE_INVENTORY_blockchain-service.md
+│       ├── SERVICE_INVENTORY_compliance-service.md
+│       ├── SERVICE_INVENTORY_file-service.md
+│       ├── SERVICE_INVENTORY_integration-service.md
+│       ├── SERVICE_INVENTORY_marketplace-service.md
+│       ├── SERVICE_INVENTORY_minting-service.md
+│       ├── SERVICE_INVENTORY_monitoring-service.md
+│       ├── SERVICE_INVENTORY_notification-service.md
+│       ├── SERVICE_INVENTORY_order-service.md
+│       ├── SERVICE_INVENTORY_queue-service.md
+│       ├── SERVICE_INVENTORY_scanning-service.md
+│       ├── SERVICE_INVENTORY_search-service.md
+│       ├── SERVICE_INVENTORY_transfer-service.md
+│       ├── SERVICE_INVENTORY_venue-service.md
+│       └── STANDARDIZATION_DECISIONS.md
+├── ecosystem.config.js
+├── examples
+│   └── sdk-usage
+│       └── basic-example.ts
+├── frontend
+│   ├── README.md
+│   ├── apps
+│   │   ├── fan-app
+│   │   └── venue-dashboard
+│   ├── docs
+│   │   ├── ADMIN_SCREENS.md
+│   │   ├── ADMIN_USER_FLOWS.md
+│   │   ├── ARTIST_SCREENS.md
+│   │   ├── ARTIST_USER_FLOWS.md
+│   │   ├── DESIGN_SYSTEM.md
+│   │   ├── FAN_SCREENS.md
+│   │   ├── FAN_USER_FLOWS.md
+│   │   ├── MOCKUP_CHECKLIST.md
+│   │   ├── SCANNER_SCREENS.md
+│   │   ├── TECH_STACK.md
+│   │   ├── VENUE_OWNER_USER_FLOWS.md
+│   │   └── VENUE_SCREENS.md
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── packages
+│   │   ├── eslint-config
+│   │   ├── typescript-config
+│   │   └── ui
+│   └── turbo.json
+├── infrastructure
+│   ├── monitoring
+│   │   ├── alerts
+│   │   ├── alerts.yml
+│   │   ├── grafana
+│   │   ├── prometheus
+│   │   ├── prometheus-complete.yml
+│   │   └── prometheus.yml
+│   ├── pgbouncer
+│   │   ├── pgbouncer.ini
+│   │   └── userlist.txt
+│   └── redis
+│       ├── data
+│       ├── logs
+│       └── redis.conf
+├── operations
+│   ├── load-tests
+│   │   ├── final-summary.sh
+│   │   └── load-test.sh
+│   └── scripts
+│       ├── deploy.sh
+│       ├── health.sh
+│       ├── monitor.sh
+│       └── smoke.sh
+├── packages
+│   ├── CONTRIBUTING.md
+│   ├── README.md
+│   ├── lerna.json
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── sdk-javascript
+│   │   ├── LICENSE
+│   │   ├── examples
+│   │   ├── jest.config.js
+│   │   ├── package.json
+│   │   ├── rollup.config.js
+│   │   ├── src
+│   │   └── tsconfig.json
+│   ├── sdk-react
+│   │   ├── LICENSE
+│   │   ├── examples
+│   │   ├── jest.config.js
+│   │   ├── package.json
+│   │   ├── rollup.config.js
+│   │   ├── src
+│   │   └── tsconfig.json
+│   ├── sdk-typescript
+│   │   ├── LICENSE
+│   │   ├── README.md
+│   │   ├── SECURITY.md
+│   │   ├── jest.config.js
+│   │   ├── openapitools.json
+│   │   ├── package-lock.json
+│   │   ├── package.json
+│   │   ├── src
+│   │   ├── test-sdk.js
+│   │   ├── tickettoken-sdk-typescript-1.0.0.tgz
+│   │   └── tsconfig.json
+│   └── tsconfig.json
+├── payment-service-test-results-full.log
+├── payment-service-test-results.txt
+├── platform_structure.txt
+├── scripts
+│   ├── docker-build.sh
+│   ├── migrate-all.sh
+│   └── test-db.sh
+├── smart-contracts
+│   ├── Anchor.toml
+│   ├── Cargo.lock
+│   ├── Cargo.toml
+│   ├── deployed-idl.json
+│   ├── package-lock.json
+│   ├── package.json
+│   ├── programs
+│   │   └── tickettoken
+│   ├── scripts
+│   │   └── create-merkle-tree.js
+│   ├── target
+│   │   ├── deploy
+│   │   ├── idl
+│   │   ├── release
+│   │   ├── sbf-solana-solana
+│   │   └── types
+│   ├── tests
+│   │   └── tickettoken.ts
+│   └── tsconfig.json
+├── todos-report.json
+├── tools
+│   ├── check-deps.js
+│   ├── check-env.js
+│   ├── check-ports.js
+│   ├── extract-checklists.js
+│   ├── scan-todos.js
+│   └── security-audit
+│       ├── README.md
+│       ├── filter-findings.ts
+│       ├── run-audit.ts
+│       ├── scan-input-validation.ts
+│       └── scan-security.ts
+└── tsconfig.base.json
+
+136 directories, 579 files

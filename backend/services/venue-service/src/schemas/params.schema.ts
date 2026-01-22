@@ -6,7 +6,7 @@ import * as Joi from 'joi';
  */
 
 // UUID v4 regex pattern
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Venue ID param schema
@@ -49,6 +49,7 @@ export const integrationIdParamsSchema = {
 
 /**
  * Content ID param schema (includes venueId)
+ * SECURITY FIX (RD6): Added .unknown(false) to reject unknown properties
  */
 export const contentIdParamsSchema = {
   params: Joi.object({
@@ -66,11 +67,12 @@ export const contentIdParamsSchema = {
         'string.pattern.base': 'contentId must be a valid UUID',
         'any.required': 'contentId is required',
       }),
-  }),
+  }).unknown(false),  // RD6: Reject unknown properties
 };
 
 /**
  * Review ID param schema (includes venueId)
+ * SECURITY FIX (RD6): Added .unknown(false) to reject unknown properties
  */
 export const reviewIdParamsSchema = {
   params: Joi.object({
@@ -88,11 +90,12 @@ export const reviewIdParamsSchema = {
         'string.pattern.base': 'reviewId must be a valid UUID',
         'any.required': 'reviewId is required',
       }),
-  }),
+  }).unknown(false),  // RD6: Reject unknown properties
 };
 
 /**
  * Generic UUID param validator factory
+ * SECURITY FIX (RD6): Added .unknown(false) to reject unknown properties
  */
 export function createUuidParamSchema(paramName: string) {
   return {
@@ -104,12 +107,13 @@ export function createUuidParamSchema(paramName: string) {
           'string.pattern.base': `${paramName} must be a valid UUID`,
           'any.required': `${paramName} is required`,
         }),
-    }),
+    }).unknown(false),  // RD6: Reject unknown properties
   };
 }
 
 /**
  * Combined UUID params validator factory
+ * SECURITY FIX (RD6): Added .unknown(false) to reject unknown properties
  */
 export function createMultipleUuidParamsSchema(paramNames: string[]) {
   const schema: Record<string, Joi.Schema> = {};
@@ -125,7 +129,7 @@ export function createMultipleUuidParamsSchema(paramNames: string[]) {
   }
 
   return {
-    params: Joi.object(schema),
+    params: Joi.object(schema).unknown(false),  // RD6: Reject unknown properties
   };
 }
 

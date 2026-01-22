@@ -33,6 +33,29 @@ pg.types.setTypeParser(1700, (val: string) => parseFloat(val));
 // Query timeout (30 seconds)
 const QUERY_TIMEOUT_MS = 30000;
 
+/**
+ * LOW FIX (Issue #9): Private database connection variable
+ * Prevents external code from accidentally reassigning the connection
+ */
+let _db: Knex;
+
+/**
+ * LOW FIX (Issue #9): Getter function for database connection
+ * Use this instead of directly importing `db` to prevent accidental reassignment
+ * 
+ * @returns The Knex database connection
+ * @throws Error if database is not initialized
+ */
+export const getDb = (): Knex => {
+  if (!_db) {
+    throw new Error('Database not initialized. Call connectDatabase() first.');
+  }
+  return _db;
+};
+
+/**
+ * @deprecated Use getDb() instead. This export will be removed in a future version.
+ */
 export let db: Knex;
 
 /**
@@ -119,7 +142,7 @@ export async function connectDatabase() {
       }
       
       // Create database connection
-      db = knex({
+      _db = knex({
         client: 'postgresql',
         connection: {
           host, // Use resolved IP or original hostname
@@ -161,7 +184,10 @@ export async function connectDatabase() {
       });
 
       // Test connection
-      await db.raw('SELECT 1');
+      await _db.raw('SELECT 1');
+      
+      // Set the deprecated export for backward compatibility
+      db = _db;
       
       logger.info('Database connection established successfully');
       return; // Success! Exit the retry loop
@@ -185,7 +211,7 @@ export async function connectDatabase() {
 
 // Keep legacy function for backward compatibility
 export const createDatabaseConnection = (): Knex => {
-  return db;
+  return getDb();
 };
 
 /**
@@ -329,7 +355,7 @@ export async function withTransactionRetry<T>(
   } = {}
 ): Promise<T> {
   return withDeadlockRetry(
-    () => db.transaction(callback),
+    () => getDb().transaction(callback),
     options
   );
 }

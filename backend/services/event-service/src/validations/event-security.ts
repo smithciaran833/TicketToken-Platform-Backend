@@ -7,6 +7,16 @@
  * - Enforces business rules for event lifecycle
  */
 
+import crypto from 'crypto';
+import { logger } from '../utils/logger';
+import { 
+  ValidationError, 
+  ForbiddenError, 
+  BadRequestError,
+  EventStateError,
+  ErrorCodes 
+} from '../utils/errors';
+
 export interface EventSecurityConfig {
   maxAdvanceDays: number;
   minAdvanceHours: number;
@@ -93,7 +103,7 @@ export interface CriticalChangeConfirmation {
  * Generate confirmation token for critical changes
  */
 function generateConfirmationToken(): string {
-  return require('crypto').randomBytes(32).toString('hex');
+  return crypto.randomBytes(32).toString('hex');
 }
 
 /**
@@ -104,15 +114,22 @@ const LOCKED_STATUSES = ['COMPLETED', 'CANCELLED'];
 export class EventSecurityValidator {
   private config: EventSecurityConfig;
 
-  constructor() {
+  constructor(config?: Partial<EventSecurityConfig>) {
+    // Load configuration from environment with defaults
     this.config = {
-      maxAdvanceDays: 365,
-      minAdvanceHours: 2,
-      maxTicketsPerOrder: 10,
-      maxTicketsPerCustomer: 50,
+      maxAdvanceDays: config?.maxAdvanceDays ?? 
+        parseInt(process.env.EVENT_MAX_ADVANCE_DAYS || '365', 10),
+      minAdvanceHours: config?.minAdvanceHours ?? 
+        parseInt(process.env.EVENT_MIN_ADVANCE_HOURS || '2', 10),
+      maxTicketsPerOrder: config?.maxTicketsPerOrder ?? 
+        parseInt(process.env.EVENT_MAX_TICKETS_PER_ORDER || '10', 10),
+      maxTicketsPerCustomer: config?.maxTicketsPerCustomer ?? 
+        parseInt(process.env.EVENT_MAX_TICKETS_PER_CUSTOMER || '50', 10),
       // CRITICAL FIX: Refund window defaults
-      refundWindowHours: 48, // 48 hours for ticket holders to request refunds
-      minHoursBeforeEventForModification: 72, // Cannot modify critical fields within 72 hours of event
+      refundWindowHours: config?.refundWindowHours ?? 
+        parseInt(process.env.EVENT_REFUND_WINDOW_HOURS || '48', 10),
+      minHoursBeforeEventForModification: config?.minHoursBeforeEventForModification ?? 
+        parseInt(process.env.EVENT_MIN_HOURS_BEFORE_MODIFICATION || '72', 10),
     };
   }
 
@@ -205,7 +222,7 @@ export class EventSecurityValidator {
     );
 
     if (criticalChanges.length > 0 && hoursUntilEvent < this.config.minHoursBeforeEventForModification) {
-      throw new Error(
+      throw new ForbiddenError(
         `Cannot modify ${criticalChanges.join(', ')} within ${this.config.minHoursBeforeEventForModification} hours ` +
         `of the event. Event starts in ${Math.round(hoursUntilEvent)} hours.`
       );
@@ -219,22 +236,36 @@ export class EventSecurityValidator {
     return { ...this.config };
   }
 
-  async validateTicketPurchase(
+  validateTicketPurchase(
     _customerId: string,
     _eventId: string,
     quantity: number,
     existingTicketCount: number
-  ): Promise<void> {
+  ): void {
     if (quantity > this.config.maxTicketsPerOrder) {
-      throw new Error(`Cannot purchase more than ${this.config.maxTicketsPerOrder} tickets per order`);
+      throw new ValidationError(
+        `Cannot purchase more than ${this.config.maxTicketsPerOrder} tickets per order`,
+        [{
+          field: 'quantity',
+          message: `Exceeds maximum of ${this.config.maxTicketsPerOrder} tickets per order`,
+          code: ErrorCodes.VALIDATION_ERROR
+        }]
+      );
     }
 
     if (existingTicketCount + quantity > this.config.maxTicketsPerCustomer) {
-      throw new Error(`Cannot purchase more than ${this.config.maxTicketsPerCustomer} tickets per event`);
+      throw new ValidationError(
+        `Cannot purchase more than ${this.config.maxTicketsPerCustomer} tickets per event`,
+        [{
+          field: 'quantity',
+          message: `Total would exceed maximum of ${this.config.maxTicketsPerCustomer} tickets per customer`,
+          code: ErrorCodes.VALIDATION_ERROR
+        }]
+      );
     }
   }
 
-  async validateEventDate(eventDate: Date): Promise<void> {
+  validateEventDate(eventDate: Date): void {
     const maxDate = new Date();
     maxDate.setDate(maxDate.getDate() + this.config.maxAdvanceDays);
     
@@ -242,11 +273,25 @@ export class EventSecurityValidator {
     minDate.setHours(minDate.getHours() + this.config.minAdvanceHours);
 
     if (eventDate < minDate) {
-      throw new Error(`Event must be scheduled at least ${this.config.minAdvanceHours} hours in advance`);
+      throw new ValidationError(
+        `Event must be scheduled at least ${this.config.minAdvanceHours} hours in advance`,
+        [{
+          field: 'date',
+          message: `Event date is too soon (minimum ${this.config.minAdvanceHours} hours in advance)`,
+          code: ErrorCodes.VALIDATION_ERROR
+        }]
+      );
     }
 
     if (eventDate > maxDate) {
-      throw new Error(`Event cannot be scheduled more than ${this.config.maxAdvanceDays} days in advance`);
+      throw new ValidationError(
+        `Event cannot be scheduled more than ${this.config.maxAdvanceDays} days in advance`,
+        [{
+          field: 'date',
+          message: `Event date is too far in future (maximum ${this.config.maxAdvanceDays} days)`,
+          code: ErrorCodes.VALIDATION_ERROR
+        }]
+      );
     }
   }
 
@@ -265,14 +310,14 @@ export class EventSecurityValidator {
     options?: EventValidationOptions
   ): Promise<void> {
     if (!eventId) {
-      throw new Error('Event ID is required for modification');
+      throw new BadRequestError('Event ID is required for modification', ErrorCodes.BAD_REQUEST);
     }
 
     // If no options provided (legacy call), just validate date
     if (!options) {
       if (data.date || data.starts_at || data.event_date) {
         const dateValue = data.date || data.starts_at || data.event_date;
-        await this.validateEventDate(new Date(dateValue));
+        this.validateEventDate(new Date(dateValue));
       }
       return;
     }
@@ -282,7 +327,11 @@ export class EventSecurityValidator {
     // Check if event is in a locked status
     if (LOCKED_STATUSES.includes(event.status)) {
       if (!forceAdminOverride) {
-        throw new Error(`Cannot modify event with status '${event.status}'`);
+        throw new EventStateError(
+          `Cannot modify event with status '${event.status}'`,
+          event.status,
+          'any'
+        );
       }
     }
 
@@ -295,14 +344,19 @@ export class EventSecurityValidator {
       if (attemptedCriticalChanges.length > 0) {
         // Admin can override with explicit flag
         if (isAdmin && forceAdminOverride) {
-          console.warn(
-            `ADMIN OVERRIDE: Modifying critical fields [${attemptedCriticalChanges.join(', ')}] ` +
-            `for event ${eventId} with ${soldTicketCount} tickets sold`
+          logger.warn(
+            {
+              eventId,
+              soldTicketCount,
+              criticalFields: attemptedCriticalChanges,
+              action: 'admin_override_modification'
+            },
+            `ADMIN OVERRIDE: Modifying critical fields [${attemptedCriticalChanges.join(', ')}] for event ${eventId} with ${soldTicketCount} tickets sold`
           );
           return;
         }
 
-        throw new Error(
+        throw new ForbiddenError(
           `Cannot modify ${attemptedCriticalChanges.join(', ')} after tickets have been sold. ` +
           `${soldTicketCount} ticket(s) already sold. ` +
           (isAdmin ? 'Use admin override to force this change.' : 'Contact support for assistance.')
@@ -313,7 +367,7 @@ export class EventSecurityValidator {
     // Validate new date if being changed
     if (data.date || data.starts_at || data.event_date) {
       const dateValue = data.date || data.starts_at || data.event_date;
-      await this.validateEventDate(new Date(dateValue));
+      this.validateEventDate(new Date(dateValue));
     }
   }
 
@@ -330,7 +384,7 @@ export class EventSecurityValidator {
     options?: EventValidationOptions
   ): Promise<void> {
     if (!eventId) {
-      throw new Error('Event ID is required for deletion');
+      throw new BadRequestError('Event ID is required for deletion', ErrorCodes.BAD_REQUEST);
     }
 
     // If no options provided (legacy call), allow deletion
@@ -342,20 +396,24 @@ export class EventSecurityValidator {
 
     // Check if event is already completed
     if (event.status === 'COMPLETED') {
-      throw new Error('Cannot delete a completed event');
+      throw new ForbiddenError('Cannot delete a completed event');
     }
 
     // If tickets have been sold, block deletion unless admin override
     if (soldTicketCount > 0) {
       if (isAdmin && forceAdminOverride) {
-        console.warn(
-          `ADMIN OVERRIDE: Deleting event ${eventId} with ${soldTicketCount} tickets sold. ` +
-          `Refunds must be processed separately.`
+        logger.warn(
+          {
+            eventId,
+            soldTicketCount,
+            action: 'admin_override_deletion'
+          },
+          `ADMIN OVERRIDE: Deleting event ${eventId} with ${soldTicketCount} tickets sold. Refunds must be processed separately.`
         );
         return;
       }
 
-      throw new Error(
+      throw new ForbiddenError(
         `Cannot delete event with ${soldTicketCount} ticket(s) sold. ` +
         'Please cancel the event and process refunds instead. ' +
         (isAdmin ? 'Use admin override with forceDelete=true to proceed.' : '')
@@ -366,7 +424,7 @@ export class EventSecurityValidator {
     if (event.starts_at) {
       const eventDate = new Date(event.starts_at);
       if (eventDate < new Date()) {
-        throw new Error('Cannot delete an event that has already started');
+        throw new ForbiddenError('Cannot delete an event that has already started');
       }
     }
   }
@@ -376,7 +434,14 @@ export class EventSecurityValidator {
    */
   async validateVenueCapacity(requestedCapacity: number, venueCapacity: number): Promise<void> {
     if (requestedCapacity > venueCapacity) {
-      throw new Error(`Event capacity (${requestedCapacity}) cannot exceed venue capacity (${venueCapacity})`);
+      throw new ValidationError(
+        `Event capacity (${requestedCapacity}) cannot exceed venue capacity (${venueCapacity})`,
+        [{
+          field: 'capacity',
+          message: `Requested capacity exceeds venue capacity of ${venueCapacity}`,
+          code: ErrorCodes.VALIDATION_ERROR
+        }]
+      );
     }
   }
 
@@ -386,17 +451,29 @@ export class EventSecurityValidator {
   validateStatusTransition(currentStatus: string, targetStatus: string, soldTicketCount: number): void {
     // Cannot go back to DRAFT if tickets sold
     if (targetStatus === 'DRAFT' && soldTicketCount > 0) {
-      throw new Error('Cannot return to DRAFT status after tickets have been sold');
+      throw new EventStateError(
+        'Cannot return to DRAFT status after tickets have been sold',
+        currentStatus,
+        targetStatus
+      );
     }
 
     // Cannot publish cancelled event
     if (currentStatus === 'CANCELLED' && ['PUBLISHED', 'ON_SALE'].includes(targetStatus)) {
-      throw new Error('Cannot publish a cancelled event');
+      throw new EventStateError(
+        'Cannot publish a cancelled event',
+        currentStatus,
+        targetStatus
+      );
     }
 
     // Cannot cancel completed event
     if (currentStatus === 'COMPLETED' && targetStatus === 'CANCELLED') {
-      throw new Error('Cannot cancel a completed event');
+      throw new EventStateError(
+        'Cannot cancel a completed event',
+        currentStatus,
+        targetStatus
+      );
     }
   }
 
@@ -487,12 +564,15 @@ export class EventSecurityValidator {
   ): boolean {
     // Check token matches
     if (confirmation.confirmationToken !== providedToken) {
-      throw new Error('Invalid confirmation token');
+      throw new BadRequestError('Invalid confirmation token', ErrorCodes.BAD_REQUEST);
     }
 
     // Check not expired
     if (new Date() > confirmation.expiresAt) {
-      throw new Error('Confirmation token has expired. Please retry the operation.');
+      throw new BadRequestError(
+        'Confirmation token has expired. Please retry the operation.',
+        ErrorCodes.BAD_REQUEST
+      );
     }
 
     return true;
@@ -520,7 +600,14 @@ export class EventSecurityValidator {
   }
 }
 
-// Cache for pending confirmations (in production, use Redis)
+// TODO [PHASE 2 - Issue #1]: Migrate to Redis for distributed confirmation cache
+// Current in-memory cache doesn't scale across service instances.
+// In production, user could hit different pods between generating and confirming tokens.
+// Replace with Redis:
+//   - Use key pattern: `event:confirm:{token}`
+//   - Set 5-minute TTL with Redis SETEX
+//   - Inject Redis client as constructor dependency
+//   - Keep Map as fallback for tests/development
 const pendingConfirmations = new Map<string, CriticalChangeConfirmation>();
 
 /**

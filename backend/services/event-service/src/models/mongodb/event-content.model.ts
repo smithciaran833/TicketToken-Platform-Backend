@@ -17,6 +17,7 @@ export type EventContentStatus = 'draft' | 'published' | 'archived';
 
 export interface IEventContent extends Document {
   _id: Types.ObjectId;
+  tenantId: string; // AUDIT FIX: Added tenantId for proper isolation
   eventId: Types.ObjectId;
   contentType: EventContentType;
   status: EventContentStatus;
@@ -36,6 +37,12 @@ export interface IEventContent extends Document {
 
 const eventContentSchema = new Schema<IEventContent>(
   {
+    tenantId: {
+      type: String,
+      required: true,
+      index: true, // AUDIT FIX: Added for tenant isolation queries
+    },
+
     eventId: {
       type: Schema.Types.ObjectId,
       required: true,
@@ -215,12 +222,13 @@ const eventContentSchema = new Schema<IEventContent>(
   }
 );
 
-// Indexes
-eventContentSchema.index({ eventId: 1, contentType: 1, status: 1 });
-eventContentSchema.index({ eventId: 1, status: 1, displayOrder: 1 });
-eventContentSchema.index({ contentType: 1, status: 1 });
-eventContentSchema.index({ eventId: 1, 'content.media.type': 1 });
-eventContentSchema.index({ featured: 1, status: 1 });
+// AUDIT FIX: Updated indexes to include tenantId for proper isolation
+eventContentSchema.index({ tenantId: 1, eventId: 1 }); // Compound index for tenant+event queries
+eventContentSchema.index({ tenantId: 1, eventId: 1, contentType: 1, status: 1 });
+eventContentSchema.index({ tenantId: 1, eventId: 1, status: 1, displayOrder: 1 });
+eventContentSchema.index({ tenantId: 1, contentType: 1, status: 1 });
+eventContentSchema.index({ tenantId: 1, eventId: 1, 'content.media.type': 1 });
+eventContentSchema.index({ tenantId: 1, featured: 1, status: 1 });
 eventContentSchema.index({ 'content.lineup.setTime': 1 });
 eventContentSchema.index({ archivedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 day TTL
 

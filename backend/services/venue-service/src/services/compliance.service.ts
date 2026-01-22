@@ -1,8 +1,10 @@
 import { logger } from '../utils/logger';
 import { db } from '../config/database';
 import { getConfig } from '../config/index';
+import { CacheIntegration } from './cache-integration';
 
 export interface ComplianceReport {
+  id?: string;
   venueId: string;
   generatedAt: Date;
   overallStatus: 'compliant' | 'non_compliant' | 'review_needed';
@@ -39,7 +41,53 @@ interface ComplianceRecommendation {
 }
 
 export class ComplianceService {
-  async generateComplianceReport(venueId: string): Promise<ComplianceReport> {
+  private cache?: CacheIntegration;
+
+  constructor(cache?: CacheIntegration) {
+    this.cache = cache;
+  }
+
+  /**
+   * SECURITY FIX: Validate tenant context
+   */
+  private validateTenantContext(tenantId?: string): void {
+    if (!tenantId) {
+      throw new Error('Tenant context required for compliance operations');
+    }
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(tenantId)) {
+      throw new Error('Invalid tenant ID format');
+    }
+  }
+
+  /**
+   * SECURITY FIX: Verify venue belongs to tenant
+   */
+  private async verifyVenueOwnership(venueId: string, tenantId: string): Promise<void> {
+    const venue = await db('venues')
+      .where({ id: venueId, tenant_id: tenantId })
+      .first();
+
+    if (!venue) {
+      logger.warn({ venueId, tenantId }, 'Venue ownership verification failed');
+      throw new Error('Venue not found or access denied');
+    }
+  }
+
+  async generateComplianceReport(venueId: string, tenantId?: string): Promise<ComplianceReport> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
+
+    // Check cache first (1 hour TTL)
+    const cacheKey = `compliance:report:${tenantId}:${venueId}`;
+    if (this.cache) {
+      const cached = await this.cache.get<ComplianceReport>(cacheKey);
+      if (cached) {
+        logger.debug({ venueId, tenantId }, 'Compliance report served from cache');
+        return cached;
+      }
+    }
+
     const venue = await db('venues').where({ id: venueId }).first();
     if (!venue) {
       throw new Error('Venue not found');
@@ -71,26 +119,41 @@ export class ComplianceService {
     // Generate recommendations
     report.recommendations = this.generateRecommendations(report.categories);
 
-    // Store report
-    await this.storeComplianceReport(report);
+    // Store report and get ID
+    const reportId = await this.storeComplianceReport(report, tenantId!);
+    report.id = reportId;
 
-    logger.info({ venueId, status: report.overallStatus }, 'Compliance report generated');
+    // Cache for 1 hour
+    if (this.cache) {
+      await this.cache.set(cacheKey, report, 3600).catch(err => {
+        logger.warn({ err, venueId }, 'Failed to cache compliance report');
+      });
+    }
+
+    logger.info({ venueId, reportId, status: report.overallStatus }, 'Compliance report generated');
 
     return report;
   }
 
-  async scheduleComplianceReview(venueId: string, reviewDate: Date): Promise<void> {
+  async scheduleComplianceReview(venueId: string, reviewDate: Date, tenantId?: string): Promise<void> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
+
     await db('venue_compliance_reviews').insert({
       venue_id: venueId,
+      tenant_id: tenantId,
       scheduled_date: reviewDate,
-      status: 'scheduled',
+      status: 'pending',
       created_at: new Date(),
     });
 
     logger.info({ venueId, reviewDate }, 'Compliance review scheduled');
   }
 
-  async updateComplianceSettings(venueId: string, settings: any): Promise<void> {
+  async updateComplianceSettings(venueId: string, settings: any, tenantId?: string): Promise<void> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
+
     const existing = await db('venue_compliance')
       .where({ venue_id: venueId })
       .first();
@@ -105,18 +168,26 @@ export class ComplianceService {
     } else {
       await db('venue_compliance').insert({
         venue_id: venueId,
+        tenant_id: tenantId,
         settings,
         created_at: new Date(),
       });
     }
 
+    // Invalidate cached report
+    if (this.cache) {
+      await this.cache.delete(`compliance:report:${tenantId}:${venueId}`).catch(err => {
+        logger.warn({ err, venueId }, 'Failed to invalidate compliance cache');
+      });
+    }
+
     // Check if settings change affects compliance
-    await this.checkComplianceImpact(venueId, settings);
+    await this.checkComplianceImpact(venueId, settings, tenantId!);
   }
 
   private async checkDataProtection(venueId: string): Promise<ComplianceCategory> {
     const checks: ComplianceCheck[] = [];
-    
+
     // Check GDPR compliance
     const gdprSettings = await this.getGDPRSettings(venueId);
     checks.push({
@@ -143,8 +214,8 @@ export class ComplianceService {
       severity: 'critical',
     });
 
-    const status = checks.every(c => c.passed) ? 'compliant' : 
-                   checks.some(c => !c.passed && c.severity === 'critical') ? 'non_compliant' : 
+    const status = checks.every(c => c.passed) ? 'compliant' :
+                   checks.some(c => !c.passed && c.severity === 'critical') ? 'non_compliant' :
                    'review_needed';
 
     return { status, checks, lastReviewDate: new Date() };
@@ -153,11 +224,11 @@ export class ComplianceService {
   private async checkAgeVerification(venueId: string): Promise<ComplianceCategory> {
     const checks: ComplianceCheck[] = [];
     const settings = await this.getAgeVerificationSettings(venueId);
-    
+
     // Get venue type to determine severity
     const venue = await db('venues').where({ id: venueId }).first();
     const venueType = venue?.venue_type || '';
-    
+
     // Determine severity based on venue type
     const ageRestrictedVenues = ['bar', 'nightclub', 'casino', 'comedy_club'];
     const severity = ageRestrictedVenues.includes(venueType) ? 'critical' : 'medium';
@@ -165,8 +236,8 @@ export class ComplianceService {
     checks.push({
       name: 'Age Verification System',
       passed: settings.enabled || !ageRestrictedVenues.includes(venueType),
-      details: settings.enabled 
-        ? `Minimum age: ${settings.minimumAge}` 
+      details: settings.enabled
+        ? `Minimum age: ${settings.minimumAge}`
         : ageRestrictedVenues.includes(venueType)
           ? 'Age verification required for this venue type but not enabled'
           : 'Age verification not required for this venue type',
@@ -182,7 +253,7 @@ export class ComplianceService {
       });
     }
 
-    const status = checks.every(c => c.passed) ? 'compliant' : 
+    const status = checks.every(c => c.passed) ? 'compliant' :
                    checks.some(c => !c.passed && c.severity === 'critical') ? 'non_compliant' :
                    'review_needed';
     return { status, checks };
@@ -255,8 +326,8 @@ export class ComplianceService {
       });
     }
 
-    const status = checks.every(c => c.passed) ? 'compliant' : 
-                   checks.some(c => !c.passed && c.severity === 'critical') ? 'non_compliant' : 
+    const status = checks.every(c => c.passed) ? 'compliant' :
+                   checks.some(c => !c.passed && c.severity === 'critical') ? 'non_compliant' :
                    'review_needed';
     return { status, checks };
   }
@@ -271,7 +342,7 @@ export class ComplianceService {
             category,
             issue: check.name,
             recommendation: this.getRecommendation(category, check.name),
-            priority: check.severity === 'critical' ? 'immediate' : 
+            priority: check.severity === 'critical' ? 'immediate' :
                      check.severity === 'high' ? 'high' : 'medium',
             dueDate: this.calculateDueDate(check.severity),
           });
@@ -323,11 +394,15 @@ export class ComplianceService {
     return new Date(Date.now() + ((daysToAdd as any)[severity] || 30) * 24 * 60 * 60 * 1000);
   }
 
-  private async storeComplianceReport(report: ComplianceReport): Promise<void> {
-    await db('venue_compliance_reports').insert({
+  private async storeComplianceReport(report: ComplianceReport, tenantId: string): Promise<string> {
+    const [result] = await db('venue_compliance_reports').insert({
       venue_id: report.venueId,
-      report: JSON.stringify(report)
-    });
+      tenant_id: tenantId,
+      report: JSON.stringify(report),
+      created_at: new Date(),
+    }).returning('id');
+
+    return result.id;
   }
 
   // Helper methods for checks
@@ -335,7 +410,7 @@ export class ComplianceService {
     const compliance = await db('venue_compliance')
       .where({ venue_id: venueId })
       .first();
-    
+
     return compliance?.settings?.gdpr || { enabled: false };
   }
 
@@ -343,7 +418,7 @@ export class ComplianceService {
     const compliance = await db('venue_compliance')
       .where({ venue_id: venueId })
       .first();
-    
+
     const settings = compliance?.settings?.dataRetention || {};
     return {
       configured: !!settings.customerDataDays,
@@ -355,7 +430,7 @@ export class ComplianceService {
     const compliance = await db('venue_compliance')
       .where({ venue_id: venueId })
       .first();
-    
+
     return compliance?.settings?.ageRestriction || { enabled: false };
   }
 
@@ -363,7 +438,7 @@ export class ComplianceService {
     const compliance = await db('venue_compliance')
       .where({ venue_id: venueId })
       .first();
-    
+
     const settings = compliance?.settings?.accessibility || {};
     return {
       ...settings,
@@ -376,7 +451,7 @@ export class ComplianceService {
     const taxDocs = await db('venue_documents')
       .where({ venue_id: venueId, document_type: 'tax_id', status: 'approved' })
       .first();
-    
+
     return !!taxDocs;
   }
 
@@ -386,7 +461,7 @@ export class ComplianceService {
       .where({ venue_id: venueId, is_active: true })
       .whereIn('integration_type', ['stripe', 'square'])
       .first();
-    
+
     return !!integration;
   }
 
@@ -394,7 +469,7 @@ export class ComplianceService {
     const license = await db('venue_documents')
       .where({ venue_id: venueId, document_type: 'business_license', status: 'approved' })
       .first();
-    
+
     return !!license;
   }
 
@@ -402,24 +477,24 @@ export class ComplianceService {
     const license = await db('venue_documents')
       .where({ venue_id: venueId, document_type: 'entertainment_license', status: 'approved' })
       .first();
-    
+
     return !!license;
   }
 
-  private async checkComplianceImpact(venueId: string, newSettings: any): Promise<void> {
+  private async checkComplianceImpact(venueId: string, newSettings: any, tenantId: string): Promise<void> {
     // Check if settings change requires immediate compliance review
     const criticalChanges = ['gdpr', 'ageRestriction', 'dataRetention'];
     const hasCriticalChange = Object.keys(newSettings).some(key => criticalChanges.includes(key));
-    
+
     if (hasCriticalChange) {
       logger.warn({ venueId, settings: newSettings }, 'Critical compliance settings changed');
-      
+
       // Trigger compliance review notification
       await this.triggerComplianceReviewNotification(venueId, newSettings);
-      
+
       // Schedule immediate compliance review
       const reviewDate = new Date(Date.now() + 24 * 60 * 60 * 1000); // Next day
-      await this.scheduleComplianceReview(venueId, reviewDate);
+      await this.scheduleComplianceReview(venueId, reviewDate, tenantId);
     }
   }
 
@@ -431,10 +506,11 @@ export class ComplianceService {
     try {
       const venue = await db('venues').where({ id: venueId }).first();
       const changedKeys = Object.keys(changedSettings);
-      
+
       // Create notification record
       await db('notifications').insert({
         venue_id: venueId,
+        tenant_id: venue.tenant_id,
         type: 'compliance_review_required',
         priority: 'high',
         title: 'Compliance Review Required',

@@ -9,7 +9,7 @@ const log = logger.child({ component: 'BaseModel' });
  * - Over-fetching data (performance)
  * - Exposing new columns accidentally (security)
  * - Breaking queries when columns are added/removed
- * 
+ *
  * Override in subclass to customize columns for specific tables.
  */
 const DEFAULT_COLUMNS = [
@@ -23,11 +23,11 @@ const DEFAULT_COLUMNS = [
 export class BaseModel<T = any> {
   protected tableName: string;
   protected db: Knex | Knex.Transaction;
-  
+
   /**
    * Columns to select by default. Override in subclass to customize.
    * Set to null to use SELECT * (not recommended for production).
-   * 
+   *
    * AUDIT FIX (QS8/DB7): Explicit column selection instead of SELECT *
    */
   protected selectColumns: string[] | null = null;
@@ -53,28 +53,28 @@ export class BaseModel<T = any> {
 
   /**
    * Find all records with tenant isolation
-   * 
+   *
    * AUDIT FIX (QS8): Uses explicit column selection when selectColumns is defined
    */
   async findAll(conditions: Partial<T> = {}, options: any = {}): Promise<T[]> {
     try {
       let query = this.db(this.tableName).where(conditions);
-      
+
       // Apply tenant filter if tenant_id exists in conditions
       // This maintains backward compatibility for tables without tenant_id
-      
+
       if (!options.includeDeleted) {
         query = query.whereNull('deleted_at');
       }
-      
+
       if (options.limit) {
         query = query.limit(options.limit);
       }
-      
+
       if (options.offset) {
         query = query.offset(options.offset);
       }
-      
+
       const columns = options.columns || this.getSelectColumns();
       return await query.select(columns) as T[];
     } catch (error) {

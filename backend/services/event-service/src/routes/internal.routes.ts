@@ -6,14 +6,19 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { db } from '../config/database';
+import { getDb } from '../config/database';
 import * as crypto from 'crypto';
 
 // Internal authentication configuration
 const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
 
+// CRITICAL: Fail hard in production if secret is not set
+if (!INTERNAL_SECRET && process.env.NODE_ENV === 'production') {
+  throw new Error('INTERNAL_SERVICE_SECRET must be set in production');
+}
+
 if (!INTERNAL_SECRET) {
-  console.error('WARNING: INTERNAL_SERVICE_SECRET not set - internal routes will reject all requests in production');
+  console.warn('WARNING: INTERNAL_SERVICE_SECRET not set - internal routes will only accept temp signatures in non-production');
 }
 
 /**
@@ -38,9 +43,13 @@ async function verifyInternalService(request: FastifyRequest, reply: FastifyRepl
     return reply.status(401).send({ error: 'Request expired' });
   }
 
-  // Accept temp-signature in development
-  if (signature === 'temp-signature' && process.env.NODE_ENV !== 'production') {
-    request.log.info({ service: serviceName }, 'Internal request accepted with temp signature');
+  // Accept temp-signature ONLY in non-production environments
+  if (signature === 'temp-signature') {
+    if (process.env.NODE_ENV === 'production') {
+      request.log.error({ service: serviceName }, 'Temp signature attempted in production');
+      return reply.status(401).send({ error: 'Invalid signature' });
+    }
+    request.log.warn({ service: serviceName }, 'Internal request accepted with temp signature (non-production only)');
     return;
   }
 
@@ -83,6 +92,7 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
     }
 
     try {
+      const db = getDb();
       let query = db('events')
         .select(
           'id', 'tenant_id', 'name', 'description', 'short_description',
@@ -91,7 +101,7 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
           'banner_image_url', 'thumbnail_image_url',
           'capacity', 'is_virtual', 'is_hybrid',
           // Blockchain fields
-          'event_pda', 'artist_wallet', 'artist_percentage', 
+          'event_pda', 'artist_wallet', 'artist_percentage',
           'venue_percentage', 'resaleable',
           // Additional metadata
           'cancellation_policy', 'refund_policy',
@@ -158,10 +168,6 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
     }
   });
 
-  // ============================================================================
-  // PHASE 5a NEW ENDPOINTS - Additional internal APIs for bypass refactoring
-  // ============================================================================
-
   /**
    * GET /internal/events/:eventId/pda
    * Get event's blockchain PDA (Program Derived Address) and related blockchain data
@@ -177,6 +183,7 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
     }
 
     try {
+      const db = getDb();
       let query = db('events')
         .select(
           'id', 'tenant_id', 'name', 'status',
@@ -253,7 +260,8 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
     }
 
     try {
-      // Get event details with ticket statistics
+      const db = getDb();
+      // Get event details
       let eventQuery = db('events')
         .select(
           'id', 'tenant_id', 'name', 'status',
@@ -273,24 +281,22 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
         return reply.status(404).send({ error: 'Event not found' });
       }
 
-      // Get ticket statistics using a raw query for aggregations
-      // Note: This queries the events service's view of ticket stats
-      // The scanning service owns detailed scan data
-      const ticketStatsQuery = `
-        SELECT
-          COUNT(*) as total_tickets,
-          COUNT(CASE WHEN status = 'SOLD' THEN 1 END) as sold_tickets,
-          COUNT(CASE WHEN status = 'USED' THEN 1 END) as used_tickets,
-          COUNT(CASE WHEN status = 'TRANSFERRED' THEN 1 END) as transferred_tickets,
-          COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelled_tickets,
-          COUNT(CASE WHEN validated_at IS NOT NULL THEN 1 END) as validated_tickets,
-          MAX(validated_at) as last_validation_at
-        FROM tickets
-        WHERE event_id = $1 AND deleted_at IS NULL
-      `;
+      // Get ticket statistics using query builder instead of raw SQL
+      const ticketStats = await db('tickets')
+        .where('event_id', eventId)
+        .whereNull('deleted_at')
+        .select(
+          db.raw('COUNT(*) as total_tickets'),
+          db.raw("COUNT(CASE WHEN status = 'SOLD' THEN 1 END) as sold_tickets"),
+          db.raw("COUNT(CASE WHEN status = 'USED' THEN 1 END) as used_tickets"),
+          db.raw("COUNT(CASE WHEN status = 'TRANSFERRED' THEN 1 END) as transferred_tickets"),
+          db.raw("COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelled_tickets"),
+          db.raw('COUNT(CASE WHEN validated_at IS NOT NULL THEN 1 END) as validated_tickets'),
+          db.raw('MAX(validated_at) as last_validation_at')
+        )
+        .first();
 
-      const ticketStats = await db.raw(ticketStatsQuery, [eventId]);
-      const stats = ticketStats.rows[0] || {
+      const stats = ticketStats || {
         total_tickets: 0,
         sold_tickets: 0,
         used_tickets: 0,
@@ -353,11 +359,11 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
         },
         metrics: {
           entryRate,
-          capacityUtilization: event.capacity > 0 
-            ? Math.round((soldCount / event.capacity) * 100) 
+          capacityUtilization: event.capacity > 0
+            ? Math.round((soldCount / event.capacity) * 100)
             : 0,
-          availableCapacity: event.capacity > 0 
-            ? event.capacity - soldCount 
+          availableCapacity: event.capacity > 0
+            ? event.capacity - soldCount
             : null,
         },
         eventTiming,

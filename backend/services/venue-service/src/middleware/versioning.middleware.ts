@@ -18,17 +18,15 @@ const versionConfig: VersionConfig = {
 export function versionMiddleware(request: FastifyRequest, reply: FastifyReply, done: () => void) {
   // Extract version from URL path or header
   const pathMatch = request.url.match(/\/api\/(v\d+)\//);
+  const extractedPathVersion = pathMatch?.[1];
   const headerVersion = request.headers?.['api-version'] as string;
   const acceptVersion = request.headers?.['accept-version'] as string;
 
-  // Priority: URL path > api-version header > accept-version header
-  const version = pathMatch?.[1] || headerVersion || acceptVersion || versionConfig.current;
-
-  // Check if version is supported
-  if (!versionConfig.supported.includes(version)) {
+  // SECURITY FIX: Validate extracted path version immediately against whitelist before any use
+  if (extractedPathVersion && !versionConfig.supported.includes(extractedPathVersion)) {
     reply.status(400).send({
       success: false,
-      error: `API version ${version} is not supported`,
+      error: `API version ${extractedPathVersion} is not supported`,
       code: 'UNSUPPORTED_VERSION',
       details: {
         current: versionConfig.current,
@@ -37,6 +35,37 @@ export function versionMiddleware(request: FastifyRequest, reply: FastifyReply, 
     });
     return;
   }
+
+  // SECURITY FIX: Validate header versions immediately against whitelist
+  if (headerVersion && !versionConfig.supported.includes(headerVersion)) {
+    reply.status(400).send({
+      success: false,
+      error: `API version ${headerVersion} is not supported`,
+      code: 'UNSUPPORTED_VERSION',
+      details: {
+        current: versionConfig.current,
+        supported: versionConfig.supported
+      }
+    });
+    return;
+  }
+
+  if (acceptVersion && !versionConfig.supported.includes(acceptVersion)) {
+    reply.status(400).send({
+      success: false,
+      error: `API version ${acceptVersion} is not supported`,
+      code: 'UNSUPPORTED_VERSION',
+      details: {
+        current: versionConfig.current,
+        supported: versionConfig.supported
+      }
+    });
+    return;
+  }
+
+  // Priority: URL path > api-version header > accept-version header > current
+  // All versions are now validated, safe to use
+  const version = extractedPathVersion || headerVersion || acceptVersion || versionConfig.current;
 
   // Warn if using deprecated version
   if (versionConfig.deprecated.includes(version)) {

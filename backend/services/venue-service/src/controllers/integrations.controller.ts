@@ -60,7 +60,7 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const integrations = await integrationService.listVenueIntegrations(venueId);
+        const integrations = await integrationService.listVenueIntegrations(venueId, tenantId);
 
         // Mask sensitive credentials in config
         const sanitized = integrations.map((integration: any) => {
@@ -142,7 +142,8 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const accessDetails = await venueService.getAccessDetails(venueId, userId);
+        // SECURITY FIX: Pass tenantId to getAccessDetails
+        const accessDetails = await venueService.getAccessDetails(venueId, userId, tenantId);
         if (!['owner', 'manager'].includes(accessDetails?.role)) {
           throw new ForbiddenError('Insufficient permissions to create integrations');
         }
@@ -154,11 +155,12 @@ export async function integrationRoutes(fastify: FastifyInstance) {
         const integrationData = {
           type: integrationType,
           config: body.config || {},
-          encrypted_credentials: body.credentials,
+          credentials: body.credentials,
           status: 'active'
         };
 
-        const integration = await integrationService.createIntegration(venueId, integrationData);
+        // SECURITY FIX: Pass tenantId to service
+        const integration = await integrationService.createIntegration(venueId, tenantId, integrationData);
 
         logger.info({ venueId, integrationType, userId }, 'Integration created');
         venueOperations.inc({ operation: 'create_integration', status: 'success' });
@@ -201,7 +203,8 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const integration = await integrationService.getIntegration(integrationId);
+        // SECURITY FIX: Pass tenantId to service
+        const integration = await integrationService.getIntegration(integrationId, tenantId);
         if (!integration) {
           throw new NotFoundError('Integration not found');
         }
@@ -256,18 +259,21 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const accessDetails = await venueService.getAccessDetails(venueId, userId);
+        // SECURITY FIX: Pass tenantId to getAccessDetails
+        const accessDetails = await venueService.getAccessDetails(venueId, userId, tenantId);
         if (!['owner', 'manager'].includes(accessDetails?.role)) {
           throw new ForbiddenError('Insufficient permissions to update integrations');
         }
 
+        // SECURITY FIX: Pass tenantId to service
         // Verify integration belongs to venue
-        const existing = await integrationService.getIntegration(integrationId);
+        const existing = await integrationService.getIntegration(integrationId, tenantId);
         if (!existing || existing.venue_id !== venueId) {
           throw new NotFoundError('Integration not found');
         }
 
-        const updated = await integrationService.updateIntegration(integrationId, body);
+        // SECURITY FIX: Pass tenantId to service
+        const updated = await integrationService.updateIntegration(integrationId, body, tenantId);
 
         logger.info({ venueId, integrationId, userId }, 'Integration updated');
         venueOperations.inc({ operation: 'update_integration', status: 'success' });
@@ -306,18 +312,21 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const accessDetails = await venueService.getAccessDetails(venueId, userId);
+        // SECURITY FIX: Pass tenantId to getAccessDetails
+        const accessDetails = await venueService.getAccessDetails(venueId, userId, tenantId);
         if (accessDetails?.role !== 'owner') {
           throw new ForbiddenError('Only venue owner can delete integrations');
         }
 
+        // SECURITY FIX: Pass tenantId to service
         // Verify integration belongs to venue
-        const existing = await integrationService.getIntegration(integrationId);
+        const existing = await integrationService.getIntegration(integrationId, tenantId);
         if (!existing || existing.venue_id !== venueId) {
           throw new NotFoundError('Integration not found');
         }
 
-        await integrationService.deleteIntegration(integrationId);
+        // SECURITY FIX: Pass tenantId to service
+        await integrationService.deleteIntegration(integrationId, tenantId);
 
         logger.info({ venueId, integrationId, userId }, 'Integration deleted');
         venueOperations.inc({ operation: 'delete_integration', status: 'success' });
@@ -356,13 +365,15 @@ export async function integrationRoutes(fastify: FastifyInstance) {
           throw new ForbiddenError('No access to this venue');
         }
 
+        // SECURITY FIX: Pass tenantId to service
         // Verify integration belongs to venue
-        const existing = await integrationService.getIntegration(integrationId);
+        const existing = await integrationService.getIntegration(integrationId, tenantId);
         if (!existing || existing.venue_id !== venueId) {
           throw new NotFoundError('Integration not found');
         }
 
-        const result = await integrationService.testIntegration(integrationId);
+        // SECURITY FIX: Pass tenantId to service
+        const result = await integrationService.testIntegration(integrationId, tenantId);
 
         logger.info({ venueId, integrationId, userId }, 'Integration tested');
 

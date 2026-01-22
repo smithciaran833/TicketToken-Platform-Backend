@@ -27,7 +27,8 @@ export class RatingService {
     userId: string,
     targetType: UserContentTargetType,
     targetId: string,
-    data: RatingData
+    data: RatingData,
+    tenantId: string
   ): Promise<IUserContent> {
     try {
       // Check if user already rated this target
@@ -81,7 +82,7 @@ export class RatingService {
       // Invalidate rating summary cache
       await this.invalidateSummaryCache(targetType, targetId);
 
-      console.log(`[RatingService] User ${userId} rated ${targetType}:${targetId} with ${data.overall} stars`);
+      console.log(`[RatingService] User ${userId} rated ${targetType}:${targetId} with ${data.overall} stars (tenant: ${tenantId})`);
       return rating;
     } catch (error) {
       throw new Error(`Failed to submit rating: ${(error as Error).message}`);
@@ -139,7 +140,8 @@ export class RatingService {
    */
   async getRatingSummary(
     targetType: UserContentTargetType,
-    targetId: string
+    targetId: string,
+    tenantId: string
   ): Promise<RatingSummary | null> {
     try {
       // Try cache first
@@ -205,7 +207,7 @@ export class RatingService {
       // Remove null _id and filter out null values
       const { _id, ...categories } = result[0];
       const filtered: RatingCategories = {};
-      
+
       for (const [key, value] of Object.entries(categories)) {
         if (value !== null && value !== undefined) {
           filtered[key as keyof RatingCategories] = value as number;
@@ -224,7 +226,8 @@ export class RatingService {
   async getUserRating(
     userId: string,
     targetType: UserContentTargetType,
-    targetId: string
+    targetId: string,
+    tenantId: string
   ): Promise<IUserContent | null> {
     try {
       const rating = await UserContentModel.findOne({
@@ -274,7 +277,7 @@ export class RatingService {
 
           categoryAverages = {};
           for (const key in categoryTotals) {
-            categoryAverages[key as keyof RatingCategories] = 
+            categoryAverages[key as keyof RatingCategories] =
               categoryTotals[key] / categoryCounts[key];
           }
         }

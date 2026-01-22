@@ -90,6 +90,14 @@ export const config: AppConfig = {
   environment: process.env.NODE_ENV || 'development',
   database: {
     host: process.env.DB_HOST || 'postgres',
+    /**
+     * LOW FIX (Issue #7): Default port 6432 is for PgBouncer connection pooling
+     * - 6432: PgBouncer (connection pooler - RECOMMENDED for production)
+     * - 5432: Direct PostgreSQL (use only for local development)
+     * 
+     * PgBouncer provides connection pooling, reducing database load and improving
+     * performance by reusing connections across multiple application instances.
+     */
     port: parseInt(process.env.DB_PORT || '6432', 10),
     user: process.env.DB_USER || 'tickettoken_user',
     password: process.env.DB_PASSWORD || '',

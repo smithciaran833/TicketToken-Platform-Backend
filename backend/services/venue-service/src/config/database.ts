@@ -39,11 +39,11 @@ export const dbConfig: Knex.Config = {
   },
   acquireConnectionTimeout: 60000,
   migrations: {
-    directory: './migrations',
+    directory: './src/migrations',
     tableName: 'knex_migrations_venue'
   },
   seeds: {
-    directory: './seeds'
+    directory: './src/seeds'
   }
 };
 
@@ -86,8 +86,8 @@ const poolMetrics = {
 
 // SECURITY FIX (DB9/DC5): Pool error handler with proper logging
 db.client.pool.on('error', (err: Error) => {
-  log.error({ 
-    error: err.message, 
+  log.error({
+    error: err.message,
     stack: err.stack,
     poolSize: db.client.pool.numUsed?.() + db.client.pool.numFree?.() || 0,
   }, 'Database pool error');
@@ -124,7 +124,7 @@ db.client.pool.on('acquireFail', (err: Error) => {
 function updatePoolMetrics() {
   try {
     const pool = db.client.pool;
-    poolMetrics.size.set({ service: 'venue-service' }, 
+    poolMetrics.size.set({ service: 'venue-service' },
       (pool.numUsed?.() || 0) + (pool.numFree?.() || 0));
     poolMetrics.available.set({ service: 'venue-service' }, pool.numFree?.() || 0);
     poolMetrics.pending.set({ service: 'venue-service' }, pool.numPendingAcquires?.() || 0);
@@ -136,7 +136,7 @@ function updatePoolMetrics() {
 // SECURITY FIX (DC4): Pool monitoring with periodic health checks
 export function startPoolMonitoring(intervalMs = 30000) {
   log.info({ intervalMs }, 'Database pool monitoring started');
-  
+
   setInterval(() => {
     try {
       const pool = db.client.pool;
@@ -145,17 +145,17 @@ export function startPoolMonitoring(intervalMs = 30000) {
         free: pool.numFree?.() || 0,
         pending: pool.numPendingAcquires?.() || 0,
       };
-      
+
       // Update metrics
       updatePoolMetrics();
-      
+
       // Log warning if pool is near capacity
       const utilization = stats.used / (stats.used + stats.free) * 100;
       if (utilization > 80) {
-        log.warn({ ...stats, utilization: `${utilization.toFixed(1)}%` }, 
+        log.warn({ ...stats, utilization: `${utilization.toFixed(1)}%` },
           'Database pool utilization high');
       }
-      
+
       // Log warning if pending requests
       if (stats.pending > 0) {
         log.warn({ pending: stats.pending }, 'Pending database connection requests');
@@ -172,7 +172,7 @@ export async function checkDatabaseConnection(retries = 10, delay = 3000): Promi
     try {
       console.log(`Attempting database connection... (attempt ${i + 1}/${retries})`);
       console.log(`DB Config: host=${process.env.DB_HOST}, port=${process.env.DB_PORT}, db=${process.env.DB_NAME}`);
-      
+
       await db.raw('SELECT 1');
       console.log('Database connection successful!');
       return true;

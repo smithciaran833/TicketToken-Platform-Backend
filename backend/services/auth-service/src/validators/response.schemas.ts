@@ -234,9 +234,16 @@ const SessionSchema = z.object({
   user_id: z.string().uuid(),
 });
 
+// FIXED: Added pagination metadata
 const ListSessionsResponseSchema = z.object({
   success: z.boolean(),
   sessions: z.array(SessionSchema),
+  pagination: z.object({
+    page: z.number(),
+    limit: z.number(),
+    total: z.number(),
+    totalPages: z.number(),
+  }),
 });
 
 const RevokeSessionResponseSchema = SuccessMessageSchema;

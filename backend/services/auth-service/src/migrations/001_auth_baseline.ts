@@ -240,7 +240,6 @@ export async function up(knex: Knex): Promise<void> {
     table.uuid('referred_by').references('id').inTable('users');
     table.integer('referral_count').defaultTo(0);
     table.decimal('lifetime_value', 10, 2).defaultTo(0);
-    table.decimal('lifetime_value', 10, 2).defaultTo(0);
     table.decimal('total_spent', 10, 2).defaultTo(0);
     table.integer('events_attended').defaultTo(0);
     table.integer('ticket_purchase_count').defaultTo(0);
@@ -262,6 +261,8 @@ export async function up(knex: Knex): Promise<void> {
     table.string('stripe_connect_country', 2);
     table.jsonb('metadata').defaultTo('{}');
     table.specificType('tags', 'TEXT[]');
+    table.jsonb('billing_address');
+    table.string('name', 255);
     table.string('verification_token', 255);
     table.boolean('is_active').defaultTo(true);
     table.timestamp('created_at', { useTz: true }).notNullable().defaultTo(knex.fn.now());

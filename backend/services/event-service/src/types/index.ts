@@ -2,7 +2,17 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import { Knex } from 'knex';
 import Redis from 'ioredis';
 import { AwilixContainer } from 'awilix';
+import { Connection } from 'mongoose';
 import { VenueServiceClient } from '../services/venue-service.client';
+
+// Type-only imports to avoid circular dependencies (Issue #3 fix)
+import type { EventService } from '../services/event.service';
+import type { EventContentService } from '../services/event-content.service';
+import type { PricingService } from '../services/pricing.service';
+import type { CapacityService } from '../services/capacity.service';
+import type { EventBlockchainService } from '../services/blockchain.service';
+import type { EventCancellationService } from '../services/event-cancellation.service';
+import type { ReservationCleanupService } from '../services/reservation-cleanup.service';
 
 // Re-export model interfaces
 export {
@@ -37,18 +47,24 @@ export interface AppConfig {
   };
 }
 
+// Issue #3 fix: Properly type all Dependencies with import type
 export interface Dependencies {
   config: AppConfig;
   db: Knex;
   redis: Redis;
-  mongodb?: any;
+  mongodb?: Connection;
   venueServiceClient: VenueServiceClient;
-  eventContentService: any;
-  eventService: any;
-  pricingService: any;
-  capacityService: any;
+  eventContentService: EventContentService;
+  eventService: EventService;
+  pricingService: PricingService;
+  capacityService: CapacityService;
+  blockchainService: EventBlockchainService;
+  cancellationService: EventCancellationService;
+  eventCancellationService: EventCancellationService;
+  reservationCleanupService: ReservationCleanupService;
 }
 
+// Issue #1 fix: tenantId is now REQUIRED (removed ?)
 export interface AuthenticatedRequest extends FastifyRequest {
   user: {
     id: string;
@@ -56,7 +72,10 @@ export interface AuthenticatedRequest extends FastifyRequest {
     role: string;
     permissions: string[];
   };
+  tenantId: string; // ✅ REQUIRED for multi-tenant isolation
   container: AwilixContainer<Dependencies>;
+  transaction?: any; // Knex transaction for RLS context
+  tenant?: any;
 }
 
 export type AuthenticatedHandler = (
@@ -64,21 +83,7 @@ export type AuthenticatedHandler = (
   reply: FastifyReply
 ) => Promise<any>;
 
-// Legacy Event type for backward compatibility (maps to new IEvent)
-export interface Event {
-  id: string;
-  venue_id: string;
-  name: string;
-  description?: string;
-  event_date: Date;  // Legacy field - maps to first schedule
-  doors_open?: Date; // Legacy field - maps to first schedule
-  event_type: 'comedy' | 'concert' | 'theater' | 'sports' | 'conference' | 'other';
-  status: 'draft' | 'published' | 'soldout' | 'cancelled';
-  capacity: number;  // Legacy field - maps to total capacity
-  created_at: Date;
-  updated_at: Date;
-  deleted_at?: Date;
-}
+// Issue #2 fix: Legacy Event type REMOVED - use IEvent instead
 
 export interface TicketType {
   id: string;
@@ -159,5 +164,24 @@ export class UnauthorizedError extends AppError {
 export class ForbiddenError extends AppError {
   constructor(message = 'Forbidden') {
     super(message, 403, 'FORBIDDEN');
+  }
+}
+
+// Issue #4 fix: Add missing error classes
+export class BadRequestError extends AppError {
+  constructor(message = 'Bad Request') {
+    super(message, 400, 'BAD_REQUEST');
+  }
+}
+
+export class ConflictError extends AppError {
+  constructor(message = 'Resource conflict') {
+    super(message, 409, 'CONFLICT');
+  }
+}
+
+export class ServiceUnavailableError extends AppError {
+  constructor(message = 'Service temporarily unavailable') {
+    super(message, 503, 'SERVICE_UNAVAILABLE');
   }
 }

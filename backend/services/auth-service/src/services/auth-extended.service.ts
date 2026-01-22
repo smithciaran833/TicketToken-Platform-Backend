@@ -67,12 +67,12 @@ export class AuthExtendedService {
 
   async resetPassword(token: string, newPassword: string, ipAddress: string): Promise<void> {
     const redis = getRedis();
-    
+
     // Try to find token with tenant prefix (scan for pattern)
     // First try without prefix for backwards compatibility
     let tokenData = await redis.get(`password-reset:${token}`);
     let tenantId: string | undefined;
-    
+
     // If not found, scan for tenant-prefixed key
     if (!tokenData) {
       const keys = await this.scanKeys(`tenant:*:password-reset:${token}`);
@@ -114,11 +114,11 @@ export class AuthExtendedService {
     }
 
     // Invalidate all refresh tokens for this user using non-blocking SCAN
-    const refreshPattern = tenantId 
+    const refreshPattern = tenantId
       ? `tenant:${tenantId}:refresh_token:*`
       : 'refresh_token:*';
     const keys = await this.scanKeys(refreshPattern);
-    
+
     for (const key of keys) {
       const data = await redis.get(key);
       if (data) {
@@ -143,11 +143,11 @@ export class AuthExtendedService {
 
   async verifyEmail(token: string): Promise<void> {
     const redis = getRedis();
-    
+
     // Try to find token (with or without tenant prefix)
     let tokenData = await redis.get(`email-verify:${token}`);
     let tenantId: string | undefined;
-    
+
     if (!tokenData) {
       const keys = await this.scanKeys(`tenant:*:email-verify:${token}`);
       if (keys.length > 0) {
@@ -254,7 +254,8 @@ export class AuthExtendedService {
   async changePassword(
     userId: string,
     currentPassword: string,
-    newPassword: string
+    newPassword: string,
+    requestMetadata?: { ipAddress?: string; userAgent?: string; tenantId?: string }
   ): Promise<void> {
     // Get user
     const user = await db('users').withSchema('public')
@@ -302,18 +303,60 @@ export class AuthExtendedService {
       created_at: new Date()
     });
 
-    // Invalidate all user sessions after password change
-    await db('user_sessions')
-      .where({ user_id: userId })
-      .whereNull('revoked_at')
-      .update({
-        revoked_at: new Date(),
-        metadata: db.raw("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", [
-          JSON.stringify({ revoked_reason: 'password_changed' })
-        ])
-      });
+    // SECURITY FIX: Invalidate all sessions EXCEPT current one (Ticketmaster style)
+    if (requestMetadata?.ipAddress && requestMetadata?.userAgent) {
+      // Keep current session active (matched by IP + User-Agent)
+      await db('user_sessions')
+        .where({ user_id: userId })
+        .whereNull('ended_at')
+        .whereNot(function() {
+          this.where({ ip_address: requestMetadata.ipAddress })
+              .andWhere({ user_agent: requestMetadata.userAgent });
+        })
+        .update({
+          ended_at: new Date(),
+          revoked_at: new Date(),
+          metadata: db.raw("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", [
+            JSON.stringify({ revoked_reason: 'password_changed' })
+          ])
+        });
 
-    console.log('All sessions invalidated due to password change for user:', userId);
+      console.log('All sessions invalidated except current one due to password change for user:', userId);
+    } else {
+      // No request metadata = invalidate ALL sessions (strict mode)
+      await db('user_sessions')
+        .where({ user_id: userId })
+        .whereNull('ended_at')
+        .update({
+          ended_at: new Date(),
+          revoked_at: new Date(),
+          metadata: db.raw("COALESCE(metadata, '{}'::jsonb) || ?::jsonb", [
+            JSON.stringify({ revoked_reason: 'password_changed' })
+          ])
+        });
+
+      console.log('All sessions invalidated due to password change for user:', userId);
+    }
+
+    // Invalidate all refresh tokens using non-blocking SCAN
+    const redis = getRedis();
+    const tenantId = requestMetadata?.tenantId || user.tenant_id;
+    const refreshPattern = tenantId
+      ? `tenant:${tenantId}:refresh_token:*`
+      : 'refresh_token:*';
+    const keys = await this.scanKeys(refreshPattern);
+
+    for (const key of keys) {
+      const data = await redis.get(key);
+      if (data) {
+        const tokenData = JSON.parse(data);
+        if (tokenData.userId === userId) {
+          await redis.del(key);
+        }
+      }
+    }
+
+    console.log('All refresh tokens invalidated for user:', userId);
   }
 
   private validatePasswordStrength(password: string): void {

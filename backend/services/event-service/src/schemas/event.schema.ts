@@ -34,6 +34,178 @@ export const visibilityTypes = ['PUBLIC', 'PRIVATE', 'UNLISTED'] as const;
 export const eventTypes = ['single', 'recurring', 'series'] as const;
 
 // ============================================================================
+// REQUEST BODY SCHEMAS
+// ============================================================================
+
+/**
+ * Create event request body schema
+ * CRITICAL FIX: Added missing request body validation schema
+ * 
+ * User-editable fields only - excludes system-generated fields:
+ * - id, tenant_id (generated/injected)
+ * - views (system statistic)
+ * - created_at, updated_at, deleted_at (timestamps)
+ * - version (optimistic locking)
+ */
+export const createEventBodySchema = {
+  type: 'object',
+  required: ['venue_id', 'name', 'event_type', 'status', 'visibility'],
+  additionalProperties: false,
+  properties: {
+    // Core required fields
+    venue_id: { type: 'string', pattern: uuidPattern },
+    name: { type: 'string', minLength: 1, maxLength: 200 },
+    event_type: { type: 'string', enum: eventTypes },
+    status: { type: 'string', enum: eventStatuses },
+    visibility: { type: 'string', enum: visibilityTypes },
+    
+    // Optional core fields
+    slug: { type: 'string', minLength: 1, maxLength: 200 },
+    description: { type: 'string', maxLength: 10000 },
+    short_description: { type: 'string', maxLength: 500 },
+    
+    // Display & categorization
+    is_featured: { type: 'boolean' },
+    priority_score: { type: 'integer', minimum: 0, maximum: 100 },
+    primary_category_id: { type: 'string', pattern: uuidPattern },
+    tags: {
+      type: 'array',
+      maxItems: 100,
+      items: { type: 'string', maxLength: 50 }
+    },
+    
+    // Media URLs (SD3: format: uri validation)
+    banner_image_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    thumbnail_image_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    video_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    virtual_event_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    
+    // Date-time fields (SD4: format: date-time validation)
+    starts_at: { type: 'string', format: 'date-time' },
+    ends_at: { type: 'string', format: 'date-time' },
+    doors_open: { type: 'string', format: 'date-time' },
+    timezone: { type: 'string', maxLength: 100 },
+    
+    // Event details
+    age_restriction: { type: 'integer', minimum: 0, maximum: 99 },
+    dress_code: { type: 'string', maxLength: 200 },
+    capacity: { type: 'integer', minimum: 1, maximum: 1000000 },
+    
+    // Accessibility information
+    accessibility_info: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        wheelchair_accessible: { type: 'boolean' },
+        hearing_assistance: { type: 'boolean' },
+        visual_assistance: { type: 'boolean' },
+        notes: { type: 'string', maxLength: 2000 }
+      }
+    },
+    
+    // Policies
+    cancellation_policy: { type: 'string', maxLength: 5000 },
+    refund_policy: { type: 'string', maxLength: 5000 },
+    
+    // Virtual/Hybrid event support
+    is_virtual: { type: 'boolean' },
+    is_hybrid: { type: 'boolean' },
+    streaming_platform: { type: 'string', maxLength: 100 },
+    
+    // SEO fields
+    meta_title: { type: 'string', maxLength: 200 },
+    meta_description: { type: 'string', maxLength: 500 },
+    
+    // Blockchain/NFT fields
+    artist_wallet: { type: 'string', maxLength: 200 },
+    artist_percentage: { type: 'number', minimum: 0, maximum: 100 },
+    venue_percentage: { type: 'number', minimum: 0, maximum: 100 },
+    resaleable: { type: 'boolean' }
+  }
+} as const;
+
+/**
+ * Update event request body schema
+ * CRITICAL FIX: Added missing request body validation schema
+ * 
+ * All fields optional for partial updates
+ * Excludes system-generated fields (id, tenant_id, views, timestamps, version)
+ */
+export const updateEventBodySchema = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    // Core fields (all optional for updates)
+    venue_id: { type: 'string', pattern: uuidPattern },
+    name: { type: 'string', minLength: 1, maxLength: 200 },
+    slug: { type: 'string', minLength: 1, maxLength: 200 },
+    description: { type: 'string', maxLength: 10000 },
+    short_description: { type: 'string', maxLength: 500 },
+    event_type: { type: 'string', enum: eventTypes },
+    status: { type: 'string', enum: eventStatuses },
+    visibility: { type: 'string', enum: visibilityTypes },
+    
+    // Display & categorization
+    is_featured: { type: 'boolean' },
+    priority_score: { type: 'integer', minimum: 0, maximum: 100 },
+    primary_category_id: { type: 'string', pattern: uuidPattern },
+    tags: {
+      type: 'array',
+      maxItems: 100,
+      items: { type: 'string', maxLength: 50 }
+    },
+    
+    // Media URLs
+    banner_image_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    thumbnail_image_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    video_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    virtual_event_url: { type: 'string', format: 'uri', maxLength: 2000 },
+    
+    // Date-time fields
+    starts_at: { type: 'string', format: 'date-time' },
+    ends_at: { type: 'string', format: 'date-time' },
+    doors_open: { type: 'string', format: 'date-time' },
+    timezone: { type: 'string', maxLength: 100 },
+    
+    // Event details
+    age_restriction: { type: 'integer', minimum: 0, maximum: 99 },
+    dress_code: { type: 'string', maxLength: 200 },
+    capacity: { type: 'integer', minimum: 1, maximum: 1000000 },
+    
+    // Accessibility information
+    accessibility_info: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        wheelchair_accessible: { type: 'boolean' },
+        hearing_assistance: { type: 'boolean' },
+        visual_assistance: { type: 'boolean' },
+        notes: { type: 'string', maxLength: 2000 }
+      }
+    },
+    
+    // Policies
+    cancellation_policy: { type: 'string', maxLength: 5000 },
+    refund_policy: { type: 'string', maxLength: 5000 },
+    
+    // Virtual/Hybrid event support
+    is_virtual: { type: 'boolean' },
+    is_hybrid: { type: 'boolean' },
+    streaming_platform: { type: 'string', maxLength: 100 },
+    
+    // SEO fields
+    meta_title: { type: 'string', maxLength: 200 },
+    meta_description: { type: 'string', maxLength: 500 },
+    
+    // Blockchain/NFT fields
+    artist_wallet: { type: 'string', maxLength: 200 },
+    artist_percentage: { type: 'number', minimum: 0, maximum: 100 },
+    venue_percentage: { type: 'number', minimum: 0, maximum: 100 },
+    resaleable: { type: 'boolean' }
+  }
+} as const;
+
+// ============================================================================
 // RESPONSE SCHEMAS (RD5)
 // ============================================================================
 

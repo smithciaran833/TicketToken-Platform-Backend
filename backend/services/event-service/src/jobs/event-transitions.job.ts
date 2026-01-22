@@ -17,6 +17,13 @@ import { logger } from '../utils/logger';
 import { DatabaseService } from '../services/databaseService';
 import { validateTransition, EventState, EventTransition } from '../services/event-state-machine';
 import { withSystemContext } from './system-job-utils';
+import { publishSearchSync } from '@tickettoken/shared';
+import {
+  eventTransitionsTotal,
+  eventTransitionDuration,
+  scanEventsFound,
+  lockAcquisitionFailuresTotal,
+} from '../utils/metrics';
 
 // Job types
 export const JOB_TYPES = {
@@ -41,8 +48,16 @@ interface ScanJobData {
 }
 
 // Lock configuration
-const LOCK_TTL_MS = 30000; // 30 seconds
+// Issue #7 Fix: Set lock TTL to 1.5x job timeout to prevent race condition
+// where lock expires before finally block can release it
+const JOB_TIMEOUT_MS = 30000; // 30 seconds max per job attempt
+const LOCK_TTL_MS = 45000; // 45 seconds (1.5x job timeout)
 const LOCK_PREFIX = 'event-transition-lock:';
+const SCAN_LOCK_KEY = 'event-transitions:scan-lock';
+const SCAN_LOCK_TTL_MS = 60000; // 60 seconds for scan lock
+
+// Batch processing configuration
+const BATCH_SIZE = 1000; // Maximum events to process per scan
 
 /**
  * Acquire a distributed lock for an event transition
@@ -69,28 +84,67 @@ async function performTransition(
   tenantId: string,
   currentState: EventState,
   transition: EventTransition,
-  targetState: EventState
+  targetState: EventState,
+  transitionType: string
 ): Promise<{ success: boolean; error?: string }> {
+  // Start timing for metrics
+  const startTime = Date.now();
+
   // Validate transition
   const validation = validateTransition(currentState, transition);
   if (!validation.valid) {
+    // Issue #6: Change to ERROR level and add more context for invalid transitions
+    logger.error({
+      eventId,
+      tenantId,
+      currentState,
+      targetState,
+      transition,
+      reason: validation.error,
+    }, 'Invalid event state transition rejected');
+    
+    // Record metric for invalid transition
+    eventTransitionsTotal.inc({ transition_type: transitionType, result: 'invalid' });
+    
     return { success: false, error: validation.error };
   }
 
   try {
-    // Update event state in database
+    // Update event state in database within explicit transaction
     const result = await withSystemContext(async (client) => {
-      return client.query(
-        `UPDATE events
-         SET status = $1,
-             updated_at = NOW(),
-             status_changed_at = NOW()
-         WHERE id = $2
-           AND tenant_id = $3
-           AND status = $4
-         RETURNING id, status`,
-        [targetState, eventId, tenantId, currentState]
-      );
+      // Begin transaction
+      await client.query('BEGIN');
+      
+      try {
+        // Update event status with optimistic locking
+        const updateResult = await client.query(
+          `UPDATE events
+           SET status = $1,
+               updated_at = NOW(),
+               status_changed_at = NOW()
+           WHERE id = $2
+             AND tenant_id = $3
+             AND status = $4
+           RETURNING id, status`,
+          [targetState, eventId, tenantId, currentState]
+        );
+
+        // Issue #8 Fix: Insert audit trail record
+        await client.query(
+          `INSERT INTO event_status_history (event_id, tenant_id, previous_status, new_status, transition_type, changed_by)
+           VALUES ($1, $2, $3, $4, $5, 'system-job')`,
+          [eventId, tenantId, currentState, targetState, transitionType]
+        );
+        
+        // Commit transaction
+        await client.query('COMMIT');
+        
+        return updateResult;
+      } catch (txError) {
+        // Rollback on any error
+        await client.query('ROLLBACK');
+        throw txError;
+      }
     });
 
     if (result.rowCount === 0) {
@@ -107,6 +161,26 @@ async function performTransition(
       newState: targetState,
       transition,
     }, 'Event state transition completed');
+
+    // Publish event to search/message broker for other services
+    try {
+      await publishSearchSync('event.status.changed', {
+        id: eventId,
+        tenantId,
+        previousStatus: currentState,
+        newStatus: targetState,
+        changedAt: new Date().toISOString(),
+        changedBy: 'system-job'
+      });
+    } catch (publishError: any) {
+      // Don't fail the transition if publishing fails
+      logger.error({
+        error: publishError.message,
+        eventId,
+        tenantId,
+        transition,
+      }, 'Failed to publish event status change');
+    }
 
     return { success: true };
   } catch (error: any) {
@@ -176,15 +250,26 @@ async function processTransitionJob(job: Job<TransitionEventJobData>): Promise<v
         return;
     }
 
+    // Start timing for metrics
+    const startTime = Date.now();
+
     const result = await performTransition(
       eventId,
       tenantId,
       currentState,
       transition,
-      targetState
+      targetState,
+      transitionType
     );
 
-    if (!result.success) {
+    // Record metrics
+    const duration = (Date.now() - startTime) / 1000;
+    eventTransitionDuration.observe({ transition_type: transitionType }, duration);
+    
+    if (result.success) {
+      eventTransitionsTotal.inc({ transition_type: transitionType, result: 'success' });
+    } else {
+      eventTransitionsTotal.inc({ transition_type: transitionType, result: 'failed' });
       logger.warn({
         eventId,
         transitionType,
@@ -201,6 +286,16 @@ async function processTransitionJob(job: Job<TransitionEventJobData>): Promise<v
  */
 async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
   const now = new Date();
+  const redis = (await import('../config/redis')).getRedis();
+
+  // Acquire distributed lock for scan job
+  const scanLockAcquired = await redis.set(SCAN_LOCK_KEY, Date.now().toString(), 'PX', SCAN_LOCK_TTL_MS, 'NX');
+  
+  if (scanLockAcquired !== 'OK') {
+    logger.warn({ timestamp: job.data.timestamp }, 'Scan already in progress, skipping this run');
+    lockAcquisitionFailuresTotal.inc({ lock_type: 'scan' });
+    return;
+  }
 
   logger.info({ timestamp: job.data.timestamp }, 'Scanning for pending event transitions');
 
@@ -212,8 +307,10 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
          FROM events
          WHERE status = 'PUBLISHED'
            AND sales_start_date <= $1
-           AND (sales_end_date IS NULL OR sales_end_date > $1)`,
-        [now]
+           AND (sales_end_date IS NULL OR sales_end_date > $1)
+         ORDER BY sales_start_date ASC, created_at ASC
+         LIMIT $2`,
+        [now, BATCH_SIZE]
       );
     });
 
@@ -232,8 +329,10 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
         `SELECT id, tenant_id
          FROM events
          WHERE status = 'ON_SALE'
-           AND sales_end_date <= $1`,
-        [now]
+           AND sales_end_date <= $1
+         ORDER BY sales_end_date ASC, created_at ASC
+         LIMIT $2`,
+        [now, BATCH_SIZE]
       );
     });
 
@@ -252,8 +351,10 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
         `SELECT id, tenant_id
          FROM events
          WHERE status IN ('ON_SALE', 'SOLD_OUT', 'SALES_PAUSED')
-           AND start_date <= $1`,
-        [now]
+           AND start_date <= $1
+         ORDER BY start_date ASC, created_at ASC
+         LIMIT $2`,
+        [now, BATCH_SIZE]
       );
     });
 
@@ -272,8 +373,10 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
         `SELECT id, tenant_id
          FROM events
          WHERE status = 'IN_PROGRESS'
-           AND end_date <= $1`,
-        [now]
+           AND end_date <= $1
+         ORDER BY end_date ASC, created_at ASC
+         LIMIT $2`,
+        [now, BATCH_SIZE]
       );
     });
 
@@ -286,6 +389,12 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
       );
     }
 
+    // Record metrics for events found
+    scanEventsFound.set({ transition_type: 'sales_start' }, salesStartEvents.rowCount || 0);
+    scanEventsFound.set({ transition_type: 'sales_end' }, salesEndEvents.rowCount || 0);
+    scanEventsFound.set({ transition_type: 'event_start' }, eventStartEvents.rowCount || 0);
+    scanEventsFound.set({ transition_type: 'event_end' }, eventEndEvents.rowCount || 0);
+
     logger.info({
       salesStart: salesStartEvents.rowCount,
       salesEnd: salesEndEvents.rowCount,
@@ -295,6 +404,13 @@ async function scanPendingTransitions(job: Job<ScanJobData>): Promise<void> {
   } catch (error: any) {
     logger.error({ error: error.message }, 'Failed to scan for pending transitions');
     throw error;
+  } finally {
+    // Always release scan lock
+    try {
+      await redis.del(SCAN_LOCK_KEY);
+    } catch (lockError) {
+      logger.error({ error: lockError }, 'Failed to release scan lock');
+    }
   }
 }
 

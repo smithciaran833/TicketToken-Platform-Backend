@@ -7,7 +7,7 @@ import { getConfig } from '../config/index';
  * SECURITY FIX (ST8): Lock Stripe API version to prevent breaking changes
  * Update this when explicitly upgrading Stripe API compatibility
  */
-export const STRIPE_API_VERSION = '2025-12-15.clover' as const;
+export const STRIPE_API_VERSION = '2024-11-20.acacia';
 
 /**
  * SECURITY FIX (DS4): Simple circuit breaker for Stripe API calls
@@ -53,17 +53,17 @@ class StripeCircuitBreaker {
       // Check if we should open the circuit
       if (this.failures >= this.threshold) {
         this.isOpen = true;
-        logger.error({ 
-          operationName, 
-          failures: this.failures, 
-          threshold: this.threshold 
+        logger.error({
+          operationName,
+          failures: this.failures,
+          threshold: this.threshold
         }, 'Stripe circuit breaker opened after threshold reached');
       }
 
-      logger.warn({ 
-        operationName, 
+      logger.warn({
+        operationName,
         failures: this.failures,
-        error: error.message 
+        error: error.message
       }, 'Stripe operation failed');
 
       throw error;
@@ -77,6 +77,13 @@ class StripeCircuitBreaker {
       lastFailure: this.lastFailure ? new Date(this.lastFailure) : null,
     };
   }
+
+  // For testing: reset the circuit breaker state
+  reset(): void {
+    this.isOpen = false;
+    this.failures = 0;
+    this.lastFailure = 0;
+  }
 }
 
 // Shared circuit breaker instance for Stripe calls
@@ -89,7 +96,7 @@ export function createStripeClient(): Stripe {
     throw new Error('STRIPE_SECRET_KEY not configured');
   }
   return new Stripe(stripeKey, {
-    apiVersion: STRIPE_API_VERSION,
+    apiVersion: STRIPE_API_VERSION as any,
     // SECURITY: Set reasonable timeout
     timeout: 30000,
     // SECURITY: Set max network retries
@@ -118,6 +125,7 @@ interface AccountStatus {
 
 export class VenueStripeOnboardingService {
   private stripe: Stripe;
+  private db = db;
   private log = logger.child({ component: 'VenueStripeOnboardingService' });
 
   constructor() {
@@ -126,16 +134,44 @@ export class VenueStripeOnboardingService {
   }
 
   /**
+   * SECURITY FIX (TENANT1): Validate tenant context is provided
+   */
+  private validateTenantContext(tenantId?: string): void {
+    if (!tenantId) {
+      throw new Error('Tenant context required for this operation');
+    }
+  }
+
+  /**
+   * SECURITY FIX (TENANT1): Verify venue belongs to tenant
+   */
+  private async verifyVenueOwnership(venueId: string, tenantId: string): Promise<void> {
+    const venue = await this.db('venues')
+      .where({ id: venueId, tenant_id: tenantId })
+      .first();
+
+    if (!venue) {
+      throw new Error('Venue not found or access denied');
+    }
+  }
+
+  /**
    * Create Stripe Connect Express account and generate onboarding link for venue
+   * SECURITY FIX (TENANT1): Added tenantId parameter for tenant validation
    */
   async createConnectAccountAndOnboardingLink(
     venueId: string,
+    tenantId: string,
     email: string,
     returnUrl: string,
     refreshUrl: string
   ): Promise<OnboardingResult> {
     try {
-      this.log.info('Creating Stripe Connect account for venue', { venueId });
+      // SECURITY FIX (TENANT1): Validate tenant context and venue ownership
+      this.validateTenantContext(tenantId);
+      await this.verifyVenueOwnership(venueId, tenantId);
+
+      this.log.info('Creating Stripe Connect account for venue', { venueId, tenantId });
 
       // Check if venue already has a Connect account
       const existingVenue = await db('venues')
@@ -149,22 +185,27 @@ export class VenueStripeOnboardingService {
       if (!accountId) {
         // SECURITY FIX (PF4): Add idempotencyKey to prevent duplicate account creation
         const idempotencyKey = `connect-create:${venueId}`;
-        
-        const account = await this.stripe.accounts.create({
-          type: 'express',
-          country: 'US',
-          email: email,
-          capabilities: {
-            card_payments: { requested: true },
-            transfers: { requested: true },
-          },
-          business_type: 'company', // Venues are typically businesses
-          metadata: {
-            venue_id: venueId,
-          },
-        }, {
-          idempotencyKey,
-        });
+
+        // SECURITY FIX (CB1): Use circuit breaker for Stripe API call
+        const account = await stripeCircuitBreaker.execute(
+          () => this.stripe.accounts.create({
+            type: 'express',
+            country: 'US',
+            email: email,
+            capabilities: {
+              card_payments: { requested: true },
+              transfers: { requested: true },
+            },
+            business_type: 'company', // Venues are typically businesses
+            metadata: {
+              venue_id: venueId,
+              tenant_id: tenantId,
+            },
+          }, {
+            idempotencyKey,
+          }),
+          'accounts.create'
+        );
 
         accountId = account.id;
 
@@ -174,6 +215,8 @@ export class VenueStripeOnboardingService {
           .update({
             stripe_connect_account_id: accountId,
             stripe_connect_status: 'pending',
+            stripe_connect_charges_enabled: false,
+            stripe_connect_payouts_enabled: false,
             updated_at: new Date(),
           });
 
@@ -182,14 +225,18 @@ export class VenueStripeOnboardingService {
 
       // Generate account link for onboarding
       // Note: accountLinks are short-lived so we include timestamp for uniqueness
-      const accountLink = await this.stripe.accountLinks.create({
-        account: accountId,
-        refresh_url: refreshUrl,
-        return_url: returnUrl,
-        type: 'account_onboarding',
-      }, {
-        idempotencyKey: `connect-link:${venueId}:${Date.now()}`,
-      });
+      // SECURITY FIX (CB1): Use circuit breaker for Stripe API call
+      const accountLink = await stripeCircuitBreaker.execute(
+        () => this.stripe.accountLinks.create({
+          account: accountId,
+          refresh_url: refreshUrl,
+          return_url: returnUrl,
+          type: 'account_onboarding',
+        }, {
+          idempotencyKey: `connect-link:${venueId}:${Date.now()}`,
+        }),
+        'accountLinks.create'
+      );
 
       this.log.info('Generated onboarding link for venue', { venueId, accountId });
 
@@ -209,9 +256,14 @@ export class VenueStripeOnboardingService {
 
   /**
    * Get Stripe Connect account status for venue
+   * SECURITY FIX (TENANT1): Added tenantId parameter for tenant validation
    */
-  async getAccountStatus(venueId: string): Promise<AccountStatus> {
+  async getAccountStatus(venueId: string, tenantId: string): Promise<AccountStatus> {
     try {
+      // SECURITY FIX (TENANT1): Validate tenant context and venue ownership
+      this.validateTenantContext(tenantId);
+      await this.verifyVenueOwnership(venueId, tenantId);
+
       const venue = await db('venues')
         .where('id', venueId)
         .select('stripe_connect_account_id', 'stripe_connect_status')
@@ -233,8 +285,10 @@ export class VenueStripeOnboardingService {
       }
 
       // Retrieve account from Stripe
-      const account = await this.stripe.accounts.retrieve(
-        venue.stripe_connect_account_id
+      // SECURITY FIX (CB1): Use circuit breaker for Stripe API call
+      const account = await stripeCircuitBreaker.execute(
+        () => this.stripe.accounts.retrieve(venue.stripe_connect_account_id),
+        'accounts.retrieve'
       );
 
       // Update database with current status
@@ -260,13 +314,19 @@ export class VenueStripeOnboardingService {
 
   /**
    * Refresh onboarding link (if venue needs to complete additional info)
+   * SECURITY FIX (TENANT1): Added tenantId parameter for tenant validation
    */
   async refreshOnboardingLink(
     venueId: string,
+    tenantId: string,
     returnUrl: string,
     refreshUrl: string
   ): Promise<string> {
     try {
+      // SECURITY FIX (TENANT1): Validate tenant context and venue ownership
+      this.validateTenantContext(tenantId);
+      await this.verifyVenueOwnership(venueId, tenantId);
+
       const venue = await db('venues')
         .where('id', venueId)
         .select('stripe_connect_account_id')
@@ -276,14 +336,18 @@ export class VenueStripeOnboardingService {
         throw new Error('Venue does not have a Stripe Connect account');
       }
 
-      const accountLink = await this.stripe.accountLinks.create({
-        account: venue.stripe_connect_account_id,
-        refresh_url: refreshUrl,
-        return_url: returnUrl,
-        type: 'account_onboarding',
-      }, {
-        idempotencyKey: `connect-refresh:${venueId}:${Date.now()}`,
-      });
+      // SECURITY FIX (CB1): Use circuit breaker for Stripe API call
+      const accountLink = await stripeCircuitBreaker.execute(
+        () => this.stripe.accountLinks.create({
+          account: venue.stripe_connect_account_id,
+          refresh_url: refreshUrl,
+          return_url: returnUrl,
+          type: 'account_onboarding',
+        }, {
+          idempotencyKey: `connect-refresh:${venueId}:${Date.now()}`,
+        }),
+        'accountLinks.create'
+      );
 
       this.log.info('Refreshed onboarding link for venue', { venueId });
       return accountLink.url;

@@ -8,8 +8,30 @@ export class SessionController {
     const tenantId = request.user.tenant_id;
 
     try {
+      // Extract pagination params with clamping
+      const page = Math.max(1, parseInt((request.query as any).page) || 1);
+      const rawLimit = parseInt((request.query as any).limit);
+      const limit = Math.max(1, Math.min(isNaN(rawLimit) ? 20 : rawLimit, 100)); // Fixed: Handle 0 and NaN correctly
+      const offset = (page - 1) * limit;
+
+      // Get total count for pagination metadata
+      const countResult = await pool.query(
+        `SELECT COUNT(*) as total
+        FROM user_sessions s
+        JOIN users u ON s.user_id = u.id
+        WHERE s.user_id = $1
+          AND u.tenant_id = $2
+          AND s.ended_at IS NULL
+          AND s.revoked_at IS NULL`,
+        [userId, tenantId]
+      );
+
+      const total = parseInt(countResult.rows[0].total, 10);
+      const totalPages = Math.ceil(total / limit);
+
+      // Get paginated sessions
       const result = await pool.query(
-        `SELECT 
+        `SELECT
           s.id,
           s.ip_address,
           s.user_agent,
@@ -20,16 +42,24 @@ export class SessionController {
           u.id as user_id
         FROM user_sessions s
         JOIN users u ON s.user_id = u.id
-        WHERE s.user_id = $1 
-          AND u.tenant_id = $2 
+        WHERE s.user_id = $1
+          AND u.tenant_id = $2
           AND s.ended_at IS NULL
-        ORDER BY s.started_at DESC`,
-        [userId, tenantId]
+          AND s.revoked_at IS NULL
+        ORDER BY s.started_at DESC
+        LIMIT $3 OFFSET $4`,
+        [userId, tenantId, limit, offset]
       );
 
       return reply.send({
         success: true,
-        sessions: result.rows
+        sessions: result.rows,
+        pagination: {
+          page,
+          limit,
+          total,
+          totalPages
+        }
       });
     } catch (error) {
       console.error('Failed to list sessions', { error, userId });
@@ -49,13 +79,14 @@ export class SessionController {
     try {
       // Verify session belongs to user AND tenant
       const sessionResult = await pool.query(
-        `SELECT s.* 
+        `SELECT s.*
          FROM user_sessions s
          JOIN users u ON s.user_id = u.id
-         WHERE s.id = $1 
-           AND s.user_id = $2 
-           AND u.tenant_id = $3 
-           AND s.revoked_at IS NULL`,
+         WHERE s.id = $1
+           AND s.user_id = $2
+           AND u.tenant_id = $3
+           AND s.revoked_at IS NULL
+           AND s.ended_at IS NULL`,
         [sessionId, userId, tenantId]
       );
 
@@ -69,8 +100,8 @@ export class SessionController {
 
       // Revoke the session
       await pool.query(
-        `UPDATE user_sessions 
-         SET revoked_at = CURRENT_TIMESTAMP, ended_at = CURRENT_TIMESTAMP 
+        `UPDATE user_sessions
+         SET revoked_at = CURRENT_TIMESTAMP, ended_at = CURRENT_TIMESTAMP
          WHERE id = $1`,
         [sessionId]
       );
@@ -119,7 +150,7 @@ export class SessionController {
     try {
       // First verify user belongs to tenant
       const userCheck = await pool.query(
-        `SELECT id FROM users 
+        `SELECT id FROM users
          WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
         [userId, tenantId]
       );
@@ -134,8 +165,8 @@ export class SessionController {
 
       // End all active sessions for this user
       const result = await pool.query(
-        `UPDATE user_sessions 
-         SET ended_at = CURRENT_TIMESTAMP, revoked_at = CURRENT_TIMESTAMP 
+        `UPDATE user_sessions
+         SET ended_at = CURRENT_TIMESTAMP, revoked_at = CURRENT_TIMESTAMP
          WHERE user_id = $1 AND ended_at IS NULL
          RETURNING id`,
         [userId]

@@ -19,19 +19,6 @@ import internalValidationRoutes from '../routes/internal-validation.routes';
 import { brandingRoutes } from '../routes/branding.routes';
 import { domainRoutes } from '../routes/domain.routes';
 
-// Load RSA public key for JWT verification
-const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
-  path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
-
-let publicKey: string;
-try {
-  publicKey = fs.readFileSync(publicKeyPath, 'utf8');
-  logger.info('✓ JWT RS256 public key loaded successfully');
-} catch (error) {
-  logger.error('✗ Failed to load JWT public key:', error);
-  throw new Error('JWT public key not found at: ' + publicKeyPath);
-}
-
 export async function configureFastify(
   fastify: FastifyInstance,
   container: AwilixContainer
@@ -54,7 +41,7 @@ export async function configureFastify(
     const labels = {
       method: request.method,
       route: request.routerPath || request.url,
-      status_code: reply.statusCode.toString()
+      status_category: Math.floor(reply.statusCode / 100) + 'xx'
     };
 
     httpRequestDuration.observe(labels, duration);
@@ -91,18 +78,32 @@ export async function configureFastify(
     credentials: true,
   });
 
-  // Rate limiting
-  await fastify.register(rateLimit, {
-    max: config.rateLimit.max,
-    timeWindow: config.rateLimit.windowMs,
-    keyGenerator: (request): string => {
-      const apiKey = request.headers['x-api-key'] as string;
-      const venueId = request.headers['x-venue-id'] as string;
-      return apiKey || venueId || request.ip;
-    },
-  });
+  // Rate limiting - skip in test environment
+  if (process.env.DISABLE_RATE_LIMIT !== 'true') {
+    await fastify.register(rateLimit, {
+      max: config.rateLimit.max,
+      timeWindow: config.rateLimit.windowMs,
+      keyGenerator: (request): string => {
+        const apiKey = request.headers['x-api-key'] as string;
+        const venueId = request.headers['x-venue-id'] as string;
+        return apiKey || venueId || request.ip;
+      },
+    });
+  }
 
-  // JWT - RS256 with public key verification
+  // JWT - RS256 with public key verification (load at runtime for test compatibility)
+  const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
+    path.join(process.env.HOME || '/tmp', 'tickettoken-secrets', 'jwt-public.pem');
+
+  let publicKey: string;
+  try {
+    publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+    logger.info('✓ JWT RS256 public key loaded successfully', { path: publicKeyPath });
+  } catch (error) {
+    logger.error('✗ Failed to load JWT public key:', { error, path: publicKeyPath });
+    throw new Error('JWT public key not found at: ' + publicKeyPath);
+  }
+
   await fastify.register(jwt, {
     secret: {
       public: publicKey,
@@ -159,39 +160,6 @@ export async function configureFastify(
       },
     });
   }
-
-  // Error handler
-  fastify.setErrorHandler((error, request, reply) => {
-    logger.error({
-      err: error,
-      request: {
-        id: request.id,
-        method: request.method,
-        url: request.url,
-        params: request.params,
-        query: request.query,
-      },
-    }, 'Request error');
-
-    if (error.validation) {
-      return reply.status(422).send({
-        error: 'Validation failed',
-        message: error.message,
-        details: error.validation,
-      });
-    }
-
-    if (error.statusCode) {
-      return reply.status(error.statusCode).send({
-        error: error.message,
-      });
-    }
-
-    return reply.status(500).send({
-      error: 'Internal server error',
-      message: config.server.isDevelopment ? error.message : undefined,
-    });
-  });
 
   // Register routes
   await fastify.register(internalValidationRoutes, { prefix: '/' });

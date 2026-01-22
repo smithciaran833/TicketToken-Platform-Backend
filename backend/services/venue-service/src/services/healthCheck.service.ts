@@ -45,7 +45,7 @@ export class HealthCheckService {
   // Readiness probe - is the service ready to accept traffic?
   async getReadiness(): Promise<HealthCheckResult> {
     const checks: HealthCheckResult['checks'] = {};
-    
+
     // Check database
     const dbStart = Date.now();
     try {
@@ -80,7 +80,7 @@ export class HealthCheckService {
 
     // Determine overall status
     const hasErrors = Object.values(checks).some(c => c.status === 'error');
-    
+
     let status: HealthCheckResult['status'] = 'healthy';
     if (hasErrors) {
       if (checks.database.status === 'error') {
@@ -103,10 +103,10 @@ export class HealthCheckService {
   // Full health check with business logic
   async getFullHealth(): Promise<HealthCheckResult> {
     const readiness = await this.getReadiness();
-    
+
     // Add business logic checks
     const businessChecks: HealthCheckResult['checks'] = {};
-    
+
     // Check if we can query venues
     const queryStart = Date.now();
     try {
@@ -114,7 +114,7 @@ export class HealthCheckService {
       businessChecks.venueQuery = {
         status: 'ok',
         responseTime: Date.now() - queryStart,
-        details: { venueCount: count?.count || 0 }
+        details: { venueCount: Number(count?.count) || 0 }
       };
     } catch (error: any) {
       businessChecks.venueQuery = {
@@ -127,11 +127,12 @@ export class HealthCheckService {
     // Check cache operations
     const cacheStart = Date.now();
     try {
-      const testKey = 'health:check:' + Date.now();
+      // Fix 3: Use unique cache test key to prevent collision
+      const testKey = `health:check:${Date.now()}:${Math.random().toString(36).slice(2)}`;
       await this.redis.set(testKey, 'ok', 'EX', 10);
       const value = await this.redis.get(testKey);
       await this.redis.del(testKey);
-      
+
       businessChecks.cacheOperations = {
         status: value === 'ok' ? 'ok' : 'warning',
         responseTime: Date.now() - cacheStart
@@ -150,8 +151,17 @@ export class HealthCheckService {
     // Check database migrations status
     businessChecks.migrations = await this.checkMigrations();
 
+    // Fix 1: Set overall status to 'degraded' when migrations are pending
+    let overallStatus = readiness.status;
+    if (businessChecks.migrations?.status === 'warning') {
+      if (overallStatus === 'healthy') {
+        overallStatus = 'degraded';
+      }
+    }
+
     return {
       ...readiness,
+      status: overallStatus,
       checks: {
         ...readiness.checks,
         ...businessChecks
@@ -165,14 +175,14 @@ export class HealthCheckService {
    */
   private async checkMigrations(): Promise<HealthCheckResult['checks'][string]> {
     const migrationStart = Date.now();
-    
+
     try {
       // Get current migration version
       const [currentVersion] = await this.db.migrate.currentVersion();
-      
+
       // Get list of all migrations (applied and pending)
       const [, pending] = await this.db.migrate.list();
-      
+
       if (pending.length > 0) {
         return {
           status: 'warning',
@@ -198,7 +208,7 @@ export class HealthCheckService {
       };
     } catch (error: any) {
       logger.error({ error }, 'Failed to check migration status');
-      
+
       return {
         status: 'error',
         message: `Migration check failed: ${error.message}`,
@@ -217,53 +227,53 @@ export class HealthCheckService {
    */
   private async checkRabbitMQ(): Promise<HealthCheckResult['checks'][string]> {
     const now = Date.now();
-    
+
     // Return cached result if still valid
     if (this.rabbitMQCheckCache && (now - this.rabbitMQCheckCache.timestamp) < this.CACHE_TTL) {
       return this.rabbitMQCheckCache.result;
     }
 
     const rabbitStart = now;
-    
+
     // If queueService is not configured, mark as disabled
     if (!this.queueService) {
       const result = {
         status: 'warning' as const,
         message: 'RabbitMQ not configured (optional)',
         responseTime: Date.now() - rabbitStart,
-        details: { 
+        details: {
           enabled: false,
           note: 'Service can operate without RabbitMQ'
         }
       };
-      
+
       this.rabbitMQCheckCache = { status: 'warning', timestamp: now, result };
       return result;
     }
 
     try {
       // Check if queueService has an active connection
-      const isConnected = this.queueService.connection && 
+      const isConnected = this.queueService.connection &&
                          !this.queueService.connection.closed;
-      
+
       if (!isConnected) {
         const result = {
           status: 'warning' as const,
           message: 'RabbitMQ disconnected but service operational',
           responseTime: Date.now() - rabbitStart,
-          details: { 
+          details: {
             connected: false,
             note: 'Events will not be published'
           }
         };
-        
+
         this.rabbitMQCheckCache = { status: 'warning', timestamp: now, result };
         return result;
       }
 
       // Connection is active
       const channelCount = this.queueService.channel ? 1 : 0;
-      
+
       const result = {
         status: 'ok' as const,
         responseTime: Date.now() - rabbitStart,
@@ -274,22 +284,22 @@ export class HealthCheckService {
           lastCheck: new Date().toISOString()
         }
       };
-      
+
       this.rabbitMQCheckCache = { status: 'ok', timestamp: now, result };
       return result;
     } catch (error: any) {
       logger.debug({ error }, 'RabbitMQ health check error');
-      
+
       const result = {
         status: 'warning' as const,
         message: `RabbitMQ check failed: ${error.message}`,
         responseTime: Date.now() - rabbitStart,
-        details: { 
+        details: {
           error: error.message,
           note: 'Service can operate without RabbitMQ'
         }
       };
-      
+
       this.rabbitMQCheckCache = { status: 'warning', timestamp: now, result };
       return result;
     }

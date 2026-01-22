@@ -17,17 +17,17 @@ export type VenueContentStatus = 'draft' | 'published' | 'archived';
 
 export interface IVenueContent extends Document {
   _id: Types.ObjectId;
-  venueId: Types.ObjectId;
+  tenantId: string;
+  venueId: string; // FIXED: UUID string from PostgreSQL, not ObjectId
   contentType: VenueContentType;
   status: VenueContentStatus;
   content: any;
   displayOrder: number;
   featured: boolean;
   primaryImage: boolean;
-  version: number;
-  previousVersionId?: Types.ObjectId;
   publishedAt?: Date;
   archivedAt?: Date;
+  deletedAt?: Date;
   createdBy: string;
   updatedBy: string;
   createdAt: Date;
@@ -36,8 +36,14 @@ export interface IVenueContent extends Document {
 
 const venueContentSchema = new Schema<IVenueContent>(
   {
+    tenantId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
     venueId: {
-      type: Schema.Types.ObjectId,
+      type: String, // FIXED: Store as string (PostgreSQL UUID)
       required: true,
       index: true,
     },
@@ -68,7 +74,6 @@ const venueContentSchema = new Schema<IVenueContent>(
     },
 
     content: {
-      // For SEATING_CHART
       sections: [
         {
           sectionId: String,
@@ -104,7 +109,6 @@ const venueContentSchema = new Schema<IVenueContent>(
         },
       ],
 
-      // For PHOTO/VIDEO
       media: {
         url: String,
         thumbnailUrl: String,
@@ -119,7 +123,6 @@ const venueContentSchema = new Schema<IVenueContent>(
         rowId: String,
       },
 
-      // For AMENITIES
       amenities: [
         {
           type: {
@@ -144,7 +147,6 @@ const venueContentSchema = new Schema<IVenueContent>(
         },
       ],
 
-      // For ACCESSIBILITY_INFO
       accessibility: [
         {
           type: {
@@ -165,7 +167,6 @@ const venueContentSchema = new Schema<IVenueContent>(
         },
       ],
 
-      // For PARKING_INFO
       parking: [
         {
           type: {
@@ -182,7 +183,6 @@ const venueContentSchema = new Schema<IVenueContent>(
         },
       ],
 
-      // For POLICIES
       policies: {
         ageRestrictions: String,
         bagPolicy: String,
@@ -192,7 +192,6 @@ const venueContentSchema = new Schema<IVenueContent>(
         alcoholPolicy: String,
       },
 
-      // For DIRECTIONS
       directions: {
         byTransit: String,
         byCar: String,
@@ -216,15 +215,14 @@ const venueContentSchema = new Schema<IVenueContent>(
       default: false,
     },
 
-    version: {
-      type: Number,
-      default: 1,
-    },
-
-    previousVersionId: Schema.Types.ObjectId,
-
     publishedAt: Date,
     archivedAt: Date,
+
+    deletedAt: {
+      type: Date,
+      default: null,
+      index: true,
+    },
 
     createdBy: {
       type: String,
@@ -242,12 +240,10 @@ const venueContentSchema = new Schema<IVenueContent>(
   }
 );
 
-// Indexes
-venueContentSchema.index({ venueId: 1, contentType: 1, status: 1 });
-venueContentSchema.index({ venueId: 1, status: 1, displayOrder: 1 });
-venueContentSchema.index({ contentType: 1, status: 1 });
-venueContentSchema.index({ venueId: 1, 'content.media.type': 1 });
-venueContentSchema.index({ featured: 1, status: 1 });
-venueContentSchema.index({ archivedAt: 1 }, { expireAfterSeconds: 2592000 }); // 30 day TTL
+venueContentSchema.index({ tenantId: 1, venueId: 1, contentType: 1, status: 1 });
+venueContentSchema.index({ tenantId: 1, venueId: 1, status: 1, displayOrder: 1 });
+venueContentSchema.index({ tenantId: 1, contentType: 1, status: 1 });
+venueContentSchema.index({ tenantId: 1, venueId: 1, 'content.media.type': 1 });
+venueContentSchema.index({ tenantId: 1, featured: 1, status: 1 });
 
 export const VenueContentModel = model<IVenueContent>('VenueContent', venueContentSchema);

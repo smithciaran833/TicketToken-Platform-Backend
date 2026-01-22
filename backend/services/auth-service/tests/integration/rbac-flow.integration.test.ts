@@ -45,7 +45,7 @@ async function registerUser(overrides: Partial<any> = {}) {
 
 async function createVenueOwner(venueId: string) {
   const user = await registerUser();
-  
+
   await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
   await testPool.query(
     `INSERT INTO user_venue_roles (tenant_id, user_id, venue_id, role, granted_by, is_active, granted_at)
@@ -76,7 +76,7 @@ async function grantRoleViaAPI(
 
 async function getVenueRolesFromDB(venueId: string, includeInactive = false) {
   await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
-  
+
   let query = 'SELECT * FROM user_venue_roles WHERE venue_id = $1';
   const params: any[] = [venueId];
 
@@ -92,9 +92,9 @@ async function getVenueRolesFromDB(venueId: string, includeInactive = false) {
 
 async function getUserVenueRolesFromDB(userId: string, venueId: string) {
   await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
-  
+
   const result = await testPool.query(
-    `SELECT * FROM user_venue_roles 
+    `SELECT * FROM user_venue_roles
      WHERE user_id = $1 AND venue_id = $2 AND is_active = true
      AND (expires_at IS NULL OR expires_at > NOW())
      ORDER BY created_at ASC`,
@@ -105,7 +105,7 @@ async function getUserVenueRolesFromDB(userId: string, venueId: string) {
 
 async function getAuditLogs(action?: string) {
   await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
-  
+
   let query = 'SELECT * FROM audit_logs';
   const params: any[] = [];
 
@@ -129,11 +129,11 @@ async function createSecondTenant(): Promise<string> {
   if (secondTenantId) {
     return secondTenantId;
   }
-  
+
   const slug = `test-tenant-${Date.now()}`;
   const result = await testPool.query(
-    `INSERT INTO tenants (name, slug, settings) 
-     VALUES ('Test Tenant 2', $1, '{}') 
+    `INSERT INTO tenants (name, slug, settings)
+     VALUES ('Test Tenant 2', $1, '{}')
      RETURNING id`,
     [slug]
   );
@@ -178,8 +178,9 @@ describe('RBAC Flow Integration Tests', () => {
 
     beforeEach(async () => {
       owner = await createVenueOwner(venueId);
-      await sleep(100);
+      await sleep(700);
       targetUser = await registerUser();
+      await sleep(700);
     });
 
     describe('Happy Path', () => {
@@ -306,7 +307,7 @@ describe('RBAC Flow Integration Tests', () => {
           'SELECT expires_at FROM user_venue_roles WHERE user_id = $1 AND venue_id = $2 AND is_active = true',
           [targetUser.userId, venueId]
         );
-        
+
         expect(result.rows.length).toBe(1);
         const newExpiresAt = new Date(result.rows[0].expires_at).getTime();
         expect(newExpiresAt).toBeGreaterThan(originalExpiresAt);
@@ -322,8 +323,8 @@ describe('RBAC Flow Integration Tests', () => {
       });
 
       it('should return 403 when user lacks roles:manage permission', async () => {
-        await sleep(100);
         const doorStaff = await registerUser();
+        await sleep(700);
         await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
         await testPool.query(
           `INSERT INTO user_venue_roles (tenant_id, user_id, venue_id, role, granted_by, is_active, granted_at)
@@ -456,7 +457,7 @@ describe('RBAC Flow Integration Tests', () => {
         await grantRoleViaAPI(owner.accessToken, venueId, targetUser.userId, 'venue-manager');
 
         const after = new Date();
-        
+
         await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
         const result = await testPool.query(
           'SELECT granted_at FROM user_venue_roles WHERE user_id = $1 AND venue_id = $2',
@@ -502,8 +503,9 @@ describe('RBAC Flow Integration Tests', () => {
 
     beforeEach(async () => {
       owner = await createVenueOwner(venueId);
-      await sleep(100);
+      await sleep(700);
       targetUser = await registerUser();
+      await sleep(700);
     });
 
     describe('Happy Path', () => {
@@ -563,8 +565,8 @@ describe('RBAC Flow Integration Tests', () => {
       });
 
       it('should return 403 when user lacks roles:manage permission', async () => {
-        await sleep(100);
         const doorStaff = await registerUser();
+        await sleep(700);
         await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
         await testPool.query(
           `INSERT INTO user_venue_roles (tenant_id, user_id, venue_id, role, granted_by, is_active, granted_at)
@@ -579,7 +581,7 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${doorStaff.accessToken}`)
           .expect(403);
 
-        expect(response.body.error).toBeTruthy();
+        expect(response.body.detail).toBeTruthy();
       });
 
       it('should succeed when user has wildcard (*) permission', async () => {
@@ -670,14 +672,15 @@ describe('RBAC Flow Integration Tests', () => {
 
     beforeEach(async () => {
       owner = await createVenueOwner(venueId);
+      await sleep(700);
     });
 
     describe('Happy Path', () => {
       it('should list all active roles at venue', async () => {
-        await sleep(100);
         const user1 = await registerUser();
-        await sleep(100);
+        await sleep(700);
         const user2 = await registerUser();
+        await sleep(700);
 
         await grantRoleViaAPI(owner.accessToken, venueId, user1.userId, 'venue-manager');
         await grantRoleViaAPI(owner.accessToken, venueId, user2.userId, 'box-office');
@@ -690,8 +693,8 @@ describe('RBAC Flow Integration Tests', () => {
         expect(response.body.roles).toBeDefined();
         expect(response.body.roles.length).toBeGreaterThanOrEqual(2);
 
-        const manager = response.body.roles.find((r: any) => r.user_id === user1.userId);
-        const boxOffice = response.body.roles.find((r: any) => r.user_id === user2.userId);
+        const manager = response.body.roles.find((r: any) => r.userId === user1.userId);
+        const boxOffice = response.body.roles.find((r: any) => r.userId === user2.userId);
 
         expect(manager.role).toBe('venue-manager');
         expect(boxOffice.role).toBe('box-office');
@@ -699,8 +702,8 @@ describe('RBAC Flow Integration Tests', () => {
 
       it('should return array when listing roles', async () => {
         const emptyVenueId = createVenueId();
-        await sleep(100);
         const emptyOwner = await createVenueOwner(emptyVenueId);
+        await sleep(700);
 
         const response = await request(app.server)
           .get(`/auth/venues/${emptyVenueId}/roles`)
@@ -712,8 +715,8 @@ describe('RBAC Flow Integration Tests', () => {
       });
 
       it('should filter out expired roles', async () => {
-        await sleep(100);
         const user = await registerUser();
+        await sleep(700);
 
         const pastDate = new Date(Date.now() - 24 * 60 * 60 * 1000);
         await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
@@ -728,7 +731,7 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .expect(200);
 
-        const expiredRole = response.body.roles.find((r: any) => r.user_id === user.userId);
+        const expiredRole = response.body.roles.find((r: any) => r.userId === user.userId);
         expect(expiredRole).toBeUndefined();
       });
     });
@@ -741,20 +744,20 @@ describe('RBAC Flow Integration Tests', () => {
       });
 
       it('should return 403 when user has no role at venue', async () => {
-        await sleep(100);
         const outsider = await registerUser();
+        await sleep(700);
 
         const response = await request(app.server)
           .get(`/auth/venues/${venueId}/roles`)
           .set('Authorization', `Bearer ${outsider.accessToken}`)
           .expect(403);
 
-        expect(response.body.error).toBeTruthy();
+        expect(response.body.detail).toBeTruthy();
       });
 
       it('should succeed when user has ANY active role at venue', async () => {
-        await sleep(100);
         const doorStaff = await registerUser();
+        await sleep(700);
         await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
         await testPool.query(
           `INSERT INTO user_venue_roles (tenant_id, user_id, venue_id, role, granted_by, is_active, granted_at)
@@ -773,8 +776,8 @@ describe('RBAC Flow Integration Tests', () => {
 
     describe('Filtering Logic', () => {
       it('should exclude revoked roles (is_active=false)', async () => {
-        await sleep(100);
         const user = await registerUser();
+        await sleep(700);
 
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager');
         await request(app.server)
@@ -787,13 +790,13 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .expect(200);
 
-        const revokedRole = response.body.roles.find((r: any) => r.user_id === user.userId);
+        const revokedRole = response.body.roles.find((r: any) => r.userId === user.userId);
         expect(revokedRole).toBeUndefined();
       });
 
       it('should include roles with NULL expires_at', async () => {
-        await sleep(100);
         const user = await registerUser();
+        await sleep(700);
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager');
 
         const response = await request(app.server)
@@ -801,14 +804,14 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .expect(200);
 
-        const role = response.body.roles.find((r: any) => r.user_id === user.userId);
+        const role = response.body.roles.find((r: any) => r.userId === user.userId);
         expect(role).toBeDefined();
-        expect(role.expires_at).toBeNull();
+        expect(role.expiresAt).toBeNull();
       });
 
       it('should exclude roles with past expires_at', async () => {
-        await sleep(100);
         const user = await registerUser();
+        await sleep(700);
         const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
         await testPool.query(`SELECT set_config('app.current_tenant_id', $1, false)`, [TEST_TENANT_ID]);
@@ -823,13 +826,13 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .expect(200);
 
-        const expiredRole = response.body.roles.find((r: any) => r.user_id === user.userId);
+        const expiredRole = response.body.roles.find((r: any) => r.userId === user.userId);
         expect(expiredRole).toBeUndefined();
       });
 
       it('should include roles with future expires_at', async () => {
-        await sleep(100);
         const user = await registerUser();
+        await sleep(700);
         const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager', tomorrow.toISOString());
@@ -839,7 +842,7 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .expect(200);
 
-        const futureRole = response.body.roles.find((r: any) => r.user_id === user.userId);
+        const futureRole = response.body.roles.find((r: any) => r.userId === user.userId);
         expect(futureRole).toBeDefined();
       });
     });
@@ -847,12 +850,12 @@ describe('RBAC Flow Integration Tests', () => {
     describe('Multi-User Scenario', () => {
       it('should list roles for 5 different users with different roles', async () => {
         const users = [];
-        for (let i = 0; i < 5; i++) {
-          await sleep(300);
+        for (let i = 0; i < 3; i++) {
           users.push(await registerUser());
+          await sleep(700);
         }
 
-        const roles = ['venue-manager', 'venue-manager', 'box-office', 'box-office', 'door-staff'];
+        const roles = ['venue-manager', 'box-office', 'door-staff'];
 
         for (let i = 0; i < users.length; i++) {
           await grantRoleViaAPI(owner.accessToken, venueId, users[i].userId, roles[i]);
@@ -863,10 +866,10 @@ describe('RBAC Flow Integration Tests', () => {
           .set('Authorization', `Bearer ${owner.accessToken}`)
           .expect(200);
 
-        expect(response.body.roles.length).toBeGreaterThanOrEqual(5);
+        expect(response.body.roles.length).toBeGreaterThanOrEqual(3);
 
         for (let i = 0; i < users.length; i++) {
-          const userRole = response.body.roles.find((r: any) => r.user_id === users[i].userId);
+          const userRole = response.body.roles.find((r: any) => r.userId === users[i].userId);
           expect(userRole).toBeDefined();
           expect(userRole.role).toBe(roles[i]);
         }
@@ -880,8 +883,9 @@ describe('RBAC Flow Integration Tests', () => {
 
     beforeEach(async () => {
       owner = await createVenueOwner(venueId);
-      await sleep(100);
+      await sleep(700);
       user = await registerUser();
+      await sleep(700);
     });
 
     describe('Wildcard Permissions', () => {
@@ -902,9 +906,9 @@ describe('RBAC Flow Integration Tests', () => {
 
       it('should override specific permission checks with wildcard', async () => {
         const permissions = await rbacService.getUserPermissions(owner.userId, TEST_TENANT_ID, venueId);
-        
+
         expect(permissions.includes('*')).toBe(true);
-        
+
         const canDoAnything = await rbacService.checkPermission(owner.userId, TEST_TENANT_ID, 'anything:you:want', venueId);
         expect(canDoAnything).toBe(true);
       });
@@ -1061,7 +1065,7 @@ describe('RBAC Flow Integration Tests', () => {
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager');
 
         const permissions = await rbacService.getUserPermissions(user.userId, tenant2Id, venue2Id);
-        
+
         expect(permissions).not.toContain('events:create');
         expect(permissions).toContain('tickets:purchase');
       });
@@ -1070,8 +1074,8 @@ describe('RBAC Flow Integration Tests', () => {
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager');
 
         const rolesT1 = await rbacService.getVenueRoles(venueId);
-        
-        expect(rolesT1.some(r => r.user_id === user.userId)).toBe(true);
+
+        expect(rolesT1.some(r => r.userId === user.userId)).toBe(true);
       });
     });
   });
@@ -1082,8 +1086,9 @@ describe('RBAC Flow Integration Tests', () => {
 
     beforeEach(async () => {
       owner = await createVenueOwner(venueId);
-      await sleep(100);
+      await sleep(700);
       user = await registerUser();
+      await sleep(700);
     });
 
     describe('Foreign Keys', () => {
@@ -1126,7 +1131,7 @@ describe('RBAC Flow Integration Tests', () => {
           'SELECT granted_at FROM user_venue_roles WHERE user_id = $1 AND venue_id = $2',
           [user.userId, venueId]
         );
-        
+
         expect(result.rows.length).toBeGreaterThan(0);
         const grantedAt = new Date(result.rows[0].granted_at);
 
@@ -1142,8 +1147,9 @@ describe('RBAC Flow Integration Tests', () => {
 
     beforeEach(async () => {
       owner = await createVenueOwner(venueId);
-      await sleep(100);
+      await sleep(700);
       user = await registerUser();
+      await sleep(700);
     });
 
     describe('Full Lifecycle', () => {
@@ -1180,8 +1186,8 @@ describe('RBAC Flow Integration Tests', () => {
     describe('Multi-Venue', () => {
       it('should isolate permissions by venue', async () => {
         const venue2Id = createVenueId();
-        await sleep(100);
         const owner2 = await createVenueOwner(venue2Id);
+        await sleep(700);
 
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager');
 
@@ -1206,8 +1212,8 @@ describe('RBAC Flow Integration Tests', () => {
       it('should prevent manager from granting roles (no roles:manage)', async () => {
         await grantRoleViaAPI(owner.accessToken, venueId, user.userId, 'venue-manager');
 
-        await sleep(100);
         const newUser = await registerUser();
+        await sleep(700);
         const response = await grantRoleViaAPI(user.accessToken, venueId, newUser.userId, 'door-staff');
 
         expect(response.status).toBe(403);

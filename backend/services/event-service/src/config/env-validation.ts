@@ -24,6 +24,15 @@ const envSchema = Joi.object({
   REDIS_PASSWORD: Joi.string().allow('').optional(),
   REDIS_DB: Joi.number().min(0).default(0),
 
+  // MEDIUM FIX (Issue #5): MongoDB URI validation
+  MONGODB_URI: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('mongodb://localhost:27017/tickettoken_content'),
+    }),
+
   // Security
   JWT_SECRET: Joi.string().min(32).required(),
   JWT_EXPIRES_IN: Joi.string().default('15m'),
@@ -32,23 +41,121 @@ const envSchema = Joi.object({
   JWT_ISSUER: Joi.string().default('tickettoken'),
   JWT_AUDIENCE: Joi.string().default('tickettoken-platform'),
 
-  // Service URLs
-  AUTH_SERVICE_URL: Joi.string().uri().required(),
-  VENUE_SERVICE_URL: Joi.string().uri().required(),
-  EVENT_SERVICE_URL: Joi.string().uri().required(),
-  TICKET_SERVICE_URL: Joi.string().uri().required(),
-  PAYMENT_SERVICE_URL: Joi.string().uri().required(),
-  MARKETPLACE_SERVICE_URL: Joi.string().uri().required(),
-  ANALYTICS_SERVICE_URL: Joi.string().uri().required(),
-  NOTIFICATION_SERVICE_URL: Joi.string().uri().required(),
-  INTEGRATION_SERVICE_URL: Joi.string().uri().required(),
-  COMPLIANCE_SERVICE_URL: Joi.string().uri().required(),
-  QUEUE_SERVICE_URL: Joi.string().uri().required(),
-  SEARCH_SERVICE_URL: Joi.string().uri().required(),
-  FILE_SERVICE_URL: Joi.string().uri().required(),
-  MONITORING_SERVICE_URL: Joi.string().uri().required(),
-  BLOCKCHAIN_SERVICE_URL: Joi.string().uri().required(),
-  ORDER_SERVICE_URL: Joi.string().uri().required(),
+  // MEDIUM FIX (Issue #4): Service URLs - conditionally required based on NODE_ENV
+  // In production/staging: required for reliability
+  // In development/test: optional with localhost defaults for easier local development
+  AUTH_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3001'),
+    }),
+  VENUE_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3002'),
+    }),
+  EVENT_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3003'),
+    }),
+  TICKET_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3004'),
+    }),
+  PAYMENT_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3005'),
+    }),
+  MARKETPLACE_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3006'),
+    }),
+  ANALYTICS_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3007'),
+    }),
+  NOTIFICATION_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3008'),
+    }),
+  INTEGRATION_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3009'),
+    }),
+  COMPLIANCE_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3010'),
+    }),
+  QUEUE_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3011'),
+    }),
+  SEARCH_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3012'),
+    }),
+  FILE_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3013'),
+    }),
+  MONITORING_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3014'),
+    }),
+  BLOCKCHAIN_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3015'),
+    }),
+  ORDER_SERVICE_URL: Joi.string()
+    .uri()
+    .when('NODE_ENV', {
+      is: Joi.string().valid('production', 'staging'),
+      then: Joi.required(),
+      otherwise: Joi.optional().default('http://localhost:3016'),
+    }),
 
   // Logging
   LOG_LEVEL: Joi.string()

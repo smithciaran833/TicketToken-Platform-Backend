@@ -1,12 +1,12 @@
 /**
  * Saga Pattern Implementation
- * 
+ *
  * CRITICAL FIX for audit finding EC6: Compensating transactions
- * 
+ *
  * The Saga pattern provides a way to manage distributed transactions
  * where each step has a corresponding compensating action (rollback).
  * If any step fails, all previous steps are rolled back in reverse order.
- * 
+ *
  * Usage:
  * ```
  * const saga = new Saga('create-event')
@@ -20,7 +20,7 @@
  *     async (ctx) => { ... create schedule ... },
  *     async (ctx, data) => { ... delete schedule ... }
  *   );
- * 
+ *
  * const result = await saga.execute({ userId, tenantId });
  * ```
  */
@@ -74,7 +74,7 @@ const DEFAULT_OPTIONS: SagaOptions = {
 
 /**
  * Saga orchestrator class
- * 
+ *
  * Manages multi-step operations with automatic rollback on failure.
  */
 export class Saga<TContext> {
@@ -195,7 +195,7 @@ export class Saga<TContext> {
         return await step.execute(context, results);
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        
+
         // Don't retry on validation errors or non-retryable errors
         if (this.isNonRetryableError(error)) {
           throw error;
@@ -323,110 +323,110 @@ export function createEventSaga(name: string): Saga<{
 
 /**
  * Pre-built saga for event cancellation with refunds
- * 
+ *
+ * ✅ FIXED: Uses services/models instead of direct DB access
+ *
  * Steps:
  * 1. Update event status to CANCELLING
  * 2. Stop ticket sales
  * 3. Notify ticket holders (async)
- * 4. Initiate refunds (async)
- * 5. Cancel resale listings
- * 6. Update event status to CANCELLED
+ * 4. Update event status to CANCELLED
  */
 export function createEventCancellationSaga(): Saga<{
   eventId: string;
   tenantId: string;
   userId: string;
   reason: string;
-  db: any;
+  eventService: any; // ✅ FIXED: Use service instead of raw DB
+  capacityService: any; // ✅ FIXED: Use service instead of raw DB
   notificationService?: any;
-  refundService?: any;
-  resaleService?: any;
 }> {
   return new Saga<{
     eventId: string;
     tenantId: string;
     userId: string;
     reason: string;
-    db: any;
+    eventService: any;
+    capacityService: any;
     notificationService?: any;
-    refundService?: any;
-    resaleService?: any;
   }>('event-cancellation', { timeout: 120000 })
-    
+
     .addStep(
       'set-cancelling-status',
       async (ctx) => {
-        const [event] = await ctx.db('events')
-          .where({ id: ctx.eventId, tenant_id: ctx.tenantId })
-          .update({
-            status: 'CANCELLING',
-            cancellation_reason: ctx.reason,
-            updated_by: ctx.userId,
-            updated_at: new Date(),
-          })
-          .returning('*');
+        // ✅ FIXED: Use eventService instead of direct DB
+        const event = await ctx.eventService.updateStatus(
+          ctx.eventId,
+          ctx.tenantId,
+          'CANCELLING',
+          ctx.userId,
+          { cancellation_reason: ctx.reason }
+        );
         return { previousStatus: event.status };
       },
       async (ctx, data) => {
-        await ctx.db('events')
-          .where({ id: ctx.eventId, tenant_id: ctx.tenantId })
-          .update({
-            status: data.previousStatus,
-            cancellation_reason: null,
-            updated_at: new Date(),
-          });
+        // ✅ FIXED: Use eventService for compensation
+        await ctx.eventService.updateStatus(
+          ctx.eventId,
+          ctx.tenantId,
+          data.previousStatus,
+          ctx.userId,
+          { cancellation_reason: null }
+        );
       }
     )
-    
+
     .addStep(
       'stop-ticket-sales',
       async (ctx) => {
-        await ctx.db('event_capacity')
-          .where({ event_id: ctx.eventId, tenant_id: ctx.tenantId })
-          .update({ is_active: false, updated_at: new Date() });
+        // ✅ FIXED: Use capacityService instead of direct DB
+        await ctx.capacityService.deactivateCapacity(ctx.eventId, ctx.tenantId);
         return { stopped: true };
       },
       async (ctx) => {
-        await ctx.db('event_capacity')
-          .where({ event_id: ctx.eventId, tenant_id: ctx.tenantId })
-          .update({ is_active: true, updated_at: new Date() });
+        // ✅ FIXED: Use capacityService for compensation
+        await ctx.capacityService.activateCapacity(ctx.eventId, ctx.tenantId);
       }
     )
-    
+
     .addStep(
       'queue-notifications',
       async (ctx) => {
         // Queue notifications asynchronously (don't wait for completion)
         if (ctx.notificationService) {
           await ctx.notificationService.queueCancellationNotifications(ctx.eventId, ctx.tenantId);
+        } else {
+          logger.warn({ eventId: ctx.eventId }, 'Notification service not available, skipping notifications');
         }
-        return { queued: true };
+        return { queued: !!ctx.notificationService };
       },
       async () => {
         // Notifications are fire-and-forget, no compensation needed
       }
     )
-    
+
     .addStep(
       'finalize-cancellation',
       async (ctx) => {
-        await ctx.db('events')
-          .where({ id: ctx.eventId, tenant_id: ctx.tenantId })
-          .update({
-            status: 'CANCELLED',
-            cancelled_at: new Date(),
-            updated_at: new Date(),
-          });
+        // ✅ FIXED: Use eventService instead of direct DB
+        await ctx.eventService.updateStatus(
+          ctx.eventId,
+          ctx.tenantId,
+          'CANCELLED',
+          ctx.userId,
+          { cancelled_at: new Date() }
+        );
         return { completed: true };
       },
       async (ctx) => {
-        await ctx.db('events')
-          .where({ id: ctx.eventId, tenant_id: ctx.tenantId })
-          .update({
-            status: 'CANCELLING',
-            cancelled_at: null,
-            updated_at: new Date(),
-          });
+        // ✅ FIXED: Use eventService for compensation
+        await ctx.eventService.updateStatus(
+          ctx.eventId,
+          ctx.tenantId,
+          'CANCELLING',
+          ctx.userId,
+          { cancelled_at: null }
+        );
       }
     );
 }

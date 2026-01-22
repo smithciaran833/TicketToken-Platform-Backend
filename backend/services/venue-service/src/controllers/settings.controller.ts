@@ -1,15 +1,11 @@
-import { cache as serviceCache } from '../services/cache-integration';
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { authenticate, requireVenueAccess, AuthenticatedRequest } from '../middleware/auth.middleware';
+import { FastifyInstance, FastifyReply } from 'fastify';
+import { authenticate } from '../middleware/auth.middleware';
 import { validate } from '../middleware/validation.middleware';
 import { updateSettingsSchema } from '../schemas/settings.schema';
+import { SettingsModel, IVenueSettings } from '../models/settings.model';
 import { NotFoundError, ForbiddenError, UnauthorizedError } from '../utils/errors';
 import { venueOperations } from '../utils/metrics';
 import { auditService } from '@tickettoken/shared';
-
-interface VenueParams {
-  venueId: string;
-}
 
 async function addTenantContext(request: any, reply: any) {
   const tenantId = request.user?.tenant_id;
@@ -20,8 +16,9 @@ async function addTenantContext(request: any, reply: any) {
 }
 
 export async function settingsRoutes(fastify: FastifyInstance) {
-  const { db, venueService, logger } = (fastify as any).container.cradle;
+  const { db, venueService, cacheService, logger } = (fastify as any).container.cradle;
 
+  // GET /venues/:venueId/settings
   fastify.get('/',
     {
       preHandler: [authenticate, addTenantContext]
@@ -30,21 +27,32 @@ export async function settingsRoutes(fastify: FastifyInstance) {
       try {
         const { venueId } = request.params;
         const userId = request.user?.id;
+        const tenantId = request.tenantId;
 
-        const hasAccess = await venueService.checkVenueAccess(venueId, userId);
+        // Security: Check venue access with tenant context
+        const hasAccess = await venueService.checkVenueAccess(venueId, userId, tenantId);
         if (!hasAccess) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const settings = await db('venue_settings')
-          .where({ venue_id: venueId })
+        // Security: Verify venue belongs to tenant before fetching settings
+        const venue = await db('venues')
+          .where({ id: venueId, tenant_id: tenantId })
+          .whereNull('deleted_at')
           .first();
 
-        if (!settings) {
-          throw new NotFoundError('Settings not found');
+        if (!venue) {
+          throw new NotFoundError('Venue not found');
         }
 
-        return reply.send(settings);
+        // Use SettingsModel to get settings (returns nested IVenueSettings structure)
+        const settingsModel = new SettingsModel(db);
+        const settings = await settingsModel.getVenueSettings(venueId);
+
+        return reply.send({
+          venue_id: venueId,
+          ...settings
+        });
       } catch (error: any) {
         if (error instanceof ForbiddenError || error instanceof NotFoundError) {
           throw error;
@@ -55,7 +63,7 @@ export async function settingsRoutes(fastify: FastifyInstance) {
     }
   );
 
-  // SECURITY FIX (RD1): Add schema validation to PUT endpoint
+  // PUT /venues/:venueId/settings
   fastify.put('/',
     {
       preHandler: [authenticate, addTenantContext, validate(updateSettingsSchema)]
@@ -65,41 +73,59 @@ export async function settingsRoutes(fastify: FastifyInstance) {
         const { venueId } = request.params;
         const userId = request.user?.id;
         const userRole = request.user?.role;
-        const body = request.body as any;
+        const tenantId = request.tenantId;
+        const body = request.body as Partial<IVenueSettings>;
 
-        const hasAccess = await venueService.checkVenueAccess(venueId, userId);
+        // Security: Check venue access with tenant context
+        const hasAccess = await venueService.checkVenueAccess(venueId, userId, tenantId);
         if (!hasAccess) {
           throw new ForbiddenError('No access to this venue');
         }
 
-        const accessDetails = await venueService.getAccessDetails(venueId, userId);
+        // Security: Only owner/manager can update settings
+        const accessDetails = await venueService.getAccessDetails(venueId, userId, tenantId);
         if (!['owner', 'manager'].includes(accessDetails?.role)) {
           throw new ForbiddenError('Insufficient permissions to update settings');
         }
 
-        // Validate inputs
-        if (body.max_tickets_per_order !== undefined && body.max_tickets_per_order < 0) {
-          return reply.status(400).send({ error: 'max_tickets_per_order must be non-negative' });
-        }
-        if (body.service_fee_percentage !== undefined && (body.service_fee_percentage < 0 || body.service_fee_percentage > 100)) {
-          return reply.status(400).send({ error: 'service_fee_percentage must be between 0 and 100' });
-        }
-
-        const currentSettings = await db('venue_settings')
-          .where({ venue_id: venueId })
+        // Security: Verify venue belongs to tenant
+        const venue = await db('venues')
+          .where({ id: venueId, tenant_id: tenantId })
+          .whereNull('deleted_at')
           .first();
 
-        if (!currentSettings) {
-          throw new NotFoundError('Settings not found');
+        if (!venue) {
+          throw new NotFoundError('Venue not found');
         }
 
-        const updates: any = { ...body };
-        updates.updated_at = new Date();
+        // Use SettingsModel for transformation and persistence
+        const settingsModel = new SettingsModel(db);
 
-        await db('venue_settings')
-          .where({ venue_id: venueId })
-          .update(updates);
+        // Get current settings for audit log
+        const previousSettings = await settingsModel.getVenueSettings(venueId);
 
+        // Validate using model's validation method
+        const validation = await settingsModel.validateSettings(body as IVenueSettings);
+        if (!validation.valid) {
+          return reply.status(400).send({
+            error: 'Validation failed',
+            details: validation.errors
+          });
+        }
+
+        // Update settings (handles nested-to-flat transformation internally)
+        const updatedSettings = await settingsModel.updateVenueSettings(venueId, body);
+
+        // CACHE FIX: Clear venue cache after updating settings (non-blocking)
+        // If cache clear fails, log it but don't fail the request
+        try {
+          await cacheService.clearVenueCache(venueId, tenantId);
+          logger.debug({ venueId, tenantId }, 'Cache cleared after settings update');
+        } catch (cacheError: any) {
+          logger.warn({ cacheError, venueId, tenantId }, 'Failed to clear cache after settings update (non-critical)');
+        }
+
+        // Audit log
         await auditService.logAction({
           service: 'venue-service',
           action: 'update_venue_settings',
@@ -108,10 +134,10 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           userRole,
           resourceType: 'venue_settings',
           resourceId: venueId,
-          previousValue: currentSettings,
-          newValue: updates,
+          previousValue: previousSettings,
+          newValue: updatedSettings,
           metadata: {
-            settingsChanged: Object.keys(body),
+            sectionsChanged: Object.keys(body),
             role: accessDetails?.role,
           },
           ipAddress: request.ip,
@@ -119,12 +145,8 @@ export async function settingsRoutes(fastify: FastifyInstance) {
           success: true,
         });
 
-        logger.info({ venueId, userId }, 'Settings updated');
+        logger.info({ venueId, userId, tenantId }, 'Settings updated');
         venueOperations.inc({ operation: 'settings_update', status: 'success' });
-
-        const updatedSettings = await db('venue_settings')
-          .where({ venue_id: venueId })
-          .first();
 
         return reply.send(updatedSettings);
       } catch (error: any) {

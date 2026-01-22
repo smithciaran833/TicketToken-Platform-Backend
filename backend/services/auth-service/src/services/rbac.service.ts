@@ -116,6 +116,19 @@ export class RBACService {
       throw new Error(`Invalid role: ${role}`);
     }
 
+    // FIX: Validate user exists before trying to insert
+    const userExists = await db('users')
+      .where({ id: userId, tenant_id: tenantId })
+      .whereNull('deleted_at')
+      .first();
+
+    if (!userExists) {
+      const error: any = new Error(`User not found: ${userId}`);
+      error.statusCode = 404;
+      error.code = 'USER_NOT_FOUND';
+      throw error;
+    }
+
     // Check if granter has permission to grant roles
     await this.requirePermission(grantedBy, tenantId, 'roles:manage', venueId);
 
@@ -202,15 +215,15 @@ export class RBACService {
         this.where('expires_at', '>', new Date()).orWhereNull('expires_at');
       })
       .select('user_id', 'role', 'granted_at', 'expires_at', 'is_active', 'created_at');
-    
-    // Transform to camelCase for API response
+
+    // Transform to camelCase for API response (matches response schema)
     return roles.map(role => ({
-      user_id: role.user_id,
+      userId: role.user_id,
       role: role.role,
-      is_active: role.is_active,
-      created_at: role.created_at,
-      granted_at: role.granted_at,
-      expires_at: role.expires_at,
+      isActive: role.is_active,
+      createdAt: role.created_at?.toISOString?.() || role.created_at,
+      grantedAt: role.granted_at?.toISOString?.() || role.granted_at,
+      expiresAt: role.expires_at?.toISOString?.() || role.expires_at || null,
     }));
   }
 }

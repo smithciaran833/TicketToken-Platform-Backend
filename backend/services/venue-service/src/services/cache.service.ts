@@ -8,9 +8,12 @@ export class CacheService {
   private redis: Redis;
   private defaultTTL: number = 3600; // 1 hour default
   private keyPrefix: string = 'venue:';
-  
+
   // SECURITY FIX (SR1): Current tenant context for cache key prefixing
   private currentTenantId: string | null = null;
+
+  // RELIABILITY FIX: Track cache write failures
+  private cacheWriteFailures = 0;
 
   // Wrapped Redis operations with circuit breakers and retry
   private getWithBreaker: (key: string) => Promise<string | null>;
@@ -18,6 +21,7 @@ export class CacheService {
   private delWithBreaker: (key: string) => Promise<number>;
   private existsWithBreaker: (key: string) => Promise<number>;
   private scanWithBreaker: (cursor: string, pattern: string, count: number) => Promise<[string, string[]]>;
+  private ttlWithBreaker: (key: string) => Promise<number>;
 
   constructor(redis: Redis) {
     this.redis = redis;
@@ -67,6 +71,14 @@ export class CacheService {
       ),
       { name: 'redis-scan', timeout: 2000 }
     );
+
+    this.ttlWithBreaker = withCircuitBreaker(
+      (key: string) => withRetry(
+        () => this.redis.ttl(key),
+        { maxRetries: 2, initialDelay: 50 }
+      ),
+      { name: 'redis-ttl', timeout: 1000 }
+    );
   }
 
   // SECURITY FIX (SR1): Set current tenant context for cache operations
@@ -90,17 +102,33 @@ export class CacheService {
     return `${this.keyPrefix}tenant:${tenantId}:${key}`;
   }
 
+  // RELIABILITY FIX: Validate TTL values
+  private validateTtl(ttl: number): number {
+    const MIN_TTL = 1;
+    const MAX_TTL = 86400 * 7; // 7 days max
+
+    if (ttl < MIN_TTL) {
+      logger.warn({ ttl }, 'TTL too low, using minimum');
+      return MIN_TTL;
+    }
+    if (ttl > MAX_TTL) {
+      logger.warn({ ttl }, 'TTL too high, using maximum');
+      return MAX_TTL;
+    }
+    return ttl;
+  }
+
   // SECURITY FIX (SR1): Get from cache with tenant isolation
   async get(key: string, tenantId?: string): Promise<any | null> {
     try {
       const cacheKey = this.getCacheKey(key, tenantId);
       const data = await this.getWithBreaker(cacheKey);
-      
+
       if (data) {
         logger.debug({ key: cacheKey }, 'Cache hit');
         return JSON.parse(data);
       }
-      
+
       logger.debug({ key: cacheKey }, 'Cache miss');
       return null;
     } catch (error) {
@@ -113,9 +141,10 @@ export class CacheService {
   async set(key: string, value: any, ttl: number = this.defaultTTL, tenantId?: string): Promise<void> {
     try {
       const cacheKey = this.getCacheKey(key, tenantId);
+      const validatedTtl = this.validateTtl(ttl);
       const data = JSON.stringify(value);
-      await this.setWithBreaker(cacheKey, data, ttl);
-      logger.debug({ key: cacheKey, ttl }, 'Cache set');
+      await this.setWithBreaker(cacheKey, data, validatedTtl);
+      logger.debug({ key: cacheKey, ttl: validatedTtl }, 'Cache set');
     } catch (error) {
       logger.error({ error, key }, 'Cache set error');
       throw new CacheError('set', error);
@@ -138,17 +167,20 @@ export class CacheService {
   async clearVenueCache(venueId: string, tenantId?: string): Promise<void> {
     try {
       const tenant = tenantId || this.currentTenantId;
-      
+
       if (!tenant) {
         logger.warn({ venueId }, 'clearVenueCache called without tenant context - clearing global pattern');
       }
-      
+
       const patterns = tenant
         ? [
             // Tenant-scoped patterns
             `${this.keyPrefix}tenant:${tenant}:${venueId}`,
             `${this.keyPrefix}tenant:${tenant}:${venueId}:*`,
             `${this.keyPrefix}tenant:${tenant}:venues:*${venueId}*`,
+            // Also clear legacy patterns for migration support
+            `${this.keyPrefix}${venueId}`,
+            `${this.keyPrefix}${venueId}:*`,
           ]
         : [
             // Legacy patterns (for backward compatibility during migration)
@@ -224,19 +256,25 @@ export class CacheService {
 
     // Fetch from source
     const data = await fetchFn();
-    
-    // Store in cache (fire and forget)
+
+    // Store in cache (fire and forget) with failure tracking
     this.set(key, data, ttl).catch(error => {
-      logger.error({ error, key }, 'Failed to cache after fetch');
+      this.cacheWriteFailures++;
+      logger.error({
+        error,
+        key,
+        totalFailures: this.cacheWriteFailures
+      }, 'Cache write failed in getOrSet');
     });
 
     return data;
   }
 
   // Warm cache with data
-  async warmCache(entries: Array<{ key: string; value: any; ttl?: number }>): Promise<void> {
-    const promises = entries.map(entry => 
-      this.set(entry.key, entry.value, entry.ttl || this.defaultTTL)
+  // FIXED: Accept tenantId in entries
+  async warmCache(entries: Array<{ key: string; value: any; ttl?: number; tenantId?: string }>): Promise<void> {
+    const promises = entries.map(entry =>
+      this.set(entry.key, entry.value, entry.ttl || this.defaultTTL, entry.tenantId)
         .catch(error => {
           logger.error({ error, key: entry.key }, 'Failed to warm cache entry');
         })
@@ -248,7 +286,7 @@ export class CacheService {
 
   // Invalidate multiple keys
   async invalidateKeys(keys: string[]): Promise<void> {
-    const promises = keys.map(key => 
+    const promises = keys.map(key =>
       this.del(key).catch(error => {
         logger.error({ error, key }, 'Failed to invalidate key');
       })
@@ -274,11 +312,16 @@ export class CacheService {
   async ttl(key: string, tenantId?: string): Promise<number> {
     try {
       const cacheKey = this.getCacheKey(key, tenantId);
-      return await this.redis.ttl(cacheKey);
+      return await this.ttlWithBreaker(cacheKey);
     } catch (error) {
       logger.error({ error, key }, 'Failed to get TTL');
       return -1;
     }
+  }
+
+  // RELIABILITY FIX: Get cache write failure count for monitoring
+  getCacheWriteFailures(): number {
+    return this.cacheWriteFailures;
   }
 }
 

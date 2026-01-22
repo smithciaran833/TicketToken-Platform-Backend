@@ -3,19 +3,61 @@ import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
 import { verifyServiceToken, verifyApiKey, isTrustedService } from '../config/service-auth';
+import { UnauthorizedError, ForbiddenError, BadRequestError } from '../utils/errors';
 
 // Load RSA public key for token verification
 const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
   path.join(process.env.HOME!, 'tickettoken-secrets', 'jwt-public.pem');
 
 let publicKey: string;
+let keyRotationInterval: NodeJS.Timeout | null = null;
 
+/**
+ * CRITICAL FIX Issue #6: JWT Key Rotation Support
+ * Reload public key from filesystem every 5 minutes to support key rotation
+ * without service restart.
+ * 
+ * Phase 2 TODO: Migrate to JWKS endpoint for zero-downtime rotation
+ */
+async function loadPublicKey(): Promise<void> {
+  try {
+    publicKey = fs.readFileSync(publicKeyPath, 'utf8');
+    console.log('✓ Event Service: JWT public key loaded/reloaded');
+  } catch (error) {
+    console.error('✗ Event Service: Failed to load JWT public key:', error);
+    // Only throw if no key is loaded yet (startup)
+    // During rotation, log error but continue with existing key
+    if (!publicKey) {
+      throw new Error('JWT public key not found: ' + publicKeyPath);
+    }
+  }
+}
+
+// Load key on startup (synchronous for startup safety)
 try {
   publicKey = fs.readFileSync(publicKeyPath, 'utf8');
   console.log('✓ Event Service: JWT public key loaded for token verification');
 } catch (error) {
   console.error('✗ Event Service: Failed to load JWT public key:', error);
   throw new Error('JWT public key not found: ' + publicKeyPath);
+}
+
+// Reload key every 5 minutes for rotation support
+keyRotationInterval = setInterval(() => {
+  loadPublicKey().catch(err => {
+    console.error('Failed to reload JWT public key:', err);
+  });
+}, 5 * 60 * 1000);
+
+/**
+ * Cleanup function for graceful shutdown
+ */
+export function shutdownAuthMiddleware(): void {
+  if (keyRotationInterval) {
+    clearInterval(keyRotationInterval);
+    keyRotationInterval = null;
+    console.log('JWT key rotation interval cleared');
+  }
 }
 
 interface TokenPayload {
@@ -66,9 +108,9 @@ export async function authenticateFastify(
   reply: FastifyReply
 ): Promise<void> {
   const authHeader = request.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return reply.status(401).send({ error: 'Authentication required' });
+    throw new UnauthorizedError('Authentication required');
   }
 
   const token = authHeader.replace('Bearer ', '');
@@ -82,12 +124,12 @@ export async function authenticateFastify(
 
     // Validate it's an access token
     if (decoded.type !== 'access') {
-      return reply.status(401).send({ error: 'Invalid token type' });
+      throw new UnauthorizedError('Invalid token type');
     }
 
     // Validate tenant_id is present
     if (!decoded.tenant_id) {
-      return reply.status(401).send({ error: 'Invalid token - missing tenant context' });
+      throw new UnauthorizedError('Invalid token - missing tenant context');
     }
 
     // Attach user data to request
@@ -102,12 +144,15 @@ export async function authenticateFastify(
 
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
-      return reply.status(401).send({ error: 'Token expired' });
+      throw new UnauthorizedError('Token expired');
     }
     if (error instanceof jwt.JsonWebTokenError) {
-      return reply.status(401).send({ error: 'Invalid token' });
+      throw new UnauthorizedError('Invalid token');
     }
-    return reply.status(401).send({ error: 'Authentication failed' });
+    if (error instanceof UnauthorizedError) {
+      throw error;
+    }
+    throw new UnauthorizedError('Authentication failed');
   }
 }
 
@@ -123,20 +168,13 @@ export async function requireAdmin(
   reply: FastifyReply
 ): Promise<void> {
   const user = (request as any).user;
-  
+
   if (!user) {
-    return reply.status(401).send({ 
-      error: 'Authentication required',
-      code: 'UNAUTHORIZED'
-    });
+    throw new UnauthorizedError('Authentication required');
   }
-  
+
   if (user.role !== 'admin') {
-    return reply.status(403).send({ 
-      error: 'Admin access required',
-      code: 'FORBIDDEN',
-      message: 'This action requires admin privileges'
-    });
+    throw new ForbiddenError('This action requires admin privileges');
   }
 }
 
@@ -150,20 +188,13 @@ export function requireRole(allowedRoles: string[]) {
     reply: FastifyReply
   ): Promise<void> {
     const user = (request as any).user;
-    
+
     if (!user) {
-      return reply.status(401).send({ 
-        error: 'Authentication required',
-        code: 'UNAUTHORIZED'
-      });
+      throw new UnauthorizedError('Authentication required');
     }
-    
+
     if (!allowedRoles.includes(user.role)) {
-      return reply.status(403).send({ 
-        error: 'Insufficient permissions',
-        code: 'FORBIDDEN',
-        message: `This action requires one of these roles: ${allowedRoles.join(', ')}`
-      });
+      throw new ForbiddenError(`This action requires one of these roles: ${allowedRoles.join(', ')}`);
     }
   };
 }
@@ -215,6 +246,9 @@ export function getRequestSource(request: FastifyRequest): RequestSource {
  * 3. Authorization Bearer token (for user requests)
  * 
  * Sets request.user with source type for downstream code to differentiate.
+ * 
+ * TODO Phase 2 - Issue #1: Validate X-Tenant-Id against service_tenant_permissions table
+ * TODO Phase 2 - Issue #5: Replace wildcard permissions with granular scopes from database
  */
 export async function authenticateUserOrService(
   request: FastifyRequest,
@@ -227,55 +261,98 @@ export async function authenticateUserOrService(
 
   // Try service token authentication
   if (serviceToken) {
-    const result = verifyServiceToken(serviceToken);
+    const result = await verifyServiceToken(serviceToken);
     if (result.valid && result.serviceId) {
       const isTrusted = isTrustedService(result.serviceId);
+      
+      // SECURITY DECISION #2: Removed 'system' default - require explicit tenant
+      if (!tenantIdHeader) {
+        throw new BadRequestError('X-Tenant-Id header required for service requests', 'MISSING_TENANT_HEADER');
+      }
+      
+      // TODO Phase 2 - Issue #1: Query service_tenant_permissions table
+      // Validate: SELECT 1 FROM service_tenant_permissions WHERE service_id = ? AND tenant_id = ?
+      // Use Redis cache with 5min TTL for performance
+      
+      // TODO Phase 2 - Issue #11 (HIGH): Token Revocation Check
+      // Before accepting token, check Redis set: revoked_tokens:{jti}
+      // If exists, throw UnauthorizedError('Token has been revoked')
+      // Coordinate with auth-service on revocation events
       
       (request as any).user = {
         id: result.serviceId,
         sub: result.serviceId,
-        tenant_id: tenantIdHeader || 'system',
+        tenant_id: tenantIdHeader,
         source: 'service' as RequestSource,
         serviceId: result.serviceId,
-        permissions: ['*'], // Services have full permissions
-        role: 'service',
-        isInternalRequest: isTrusted,
-      } as AuthContext;
-      
-      return;
-    }
-  }
-
-  // Try API key authentication
-  if (apiKey) {
-    const result = verifyApiKey(apiKey);
-    if (result.valid && result.serviceId) {
-      const isTrusted = isTrustedService(result.serviceId);
-      
-      (request as any).user = {
-        id: result.serviceId,
-        sub: result.serviceId,
-        tenant_id: tenantIdHeader || 'system',
-        source: 'service' as RequestSource,
-        serviceId: result.serviceId,
+        // TODO Phase 2 - Issue #5 & #12 (HIGH): Granular permissions per service
+        // Query service_tenant_permissions table for actual permissions
+        // Trusted services: elevated permissions
+        // Untrusted services: restricted permissions only
+        // For now: all authenticated services get wildcard (to be refined)
         permissions: ['*'],
         role: 'service',
         isInternalRequest: isTrusted,
       } as AuthContext;
       
       return;
+    } else {
+      // Issue #9 (HIGH): Log failed service authentication attempts
+      request.log.warn({
+        ip: request.ip,
+        url: request.url,
+        method: request.method,
+        serviceToken: 'present',
+        error: result.error || 'invalid_token',
+        serviceId: result.serviceId || 'unknown'
+      }, 'Service token authentication failed');
+    }
+  }
+
+  // Try API key authentication
+  if (apiKey) {
+    const result = await verifyApiKey(apiKey);
+    if (result.valid && result.serviceId) {
+      const isTrusted = isTrustedService(result.serviceId);
+      
+      // SECURITY DECISION #2: Removed 'system' default - require explicit tenant
+      if (!tenantIdHeader) {
+        throw new BadRequestError('X-Tenant-Id header required for service requests', 'MISSING_TENANT_HEADER');
+      }
+      
+      // TODO Phase 2 - Issue #1: Query service_tenant_permissions table
+      
+      (request as any).user = {
+        id: result.serviceId,
+        sub: result.serviceId,
+        tenant_id: tenantIdHeader,
+        source: 'service' as RequestSource,
+        serviceId: result.serviceId,
+        // TODO Phase 2 - Issue #5 & #12 (HIGH): Load from service_tenant_permissions.permissions
+        permissions: ['*'],
+        role: 'service',
+        isInternalRequest: isTrusted,
+      } as AuthContext;
+      
+      return;
+    } else {
+      // Issue #9 (HIGH): Log failed service authentication attempts
+      request.log.warn({
+        ip: request.ip,
+        url: request.url,
+        method: request.method,
+        apiKey: 'present',
+        error: result.error || 'invalid_key',
+        serviceId: result.serviceId || 'unknown'
+      }, 'API key authentication failed');
     }
   }
 
   // Fall back to user JWT authentication
   const authHeader = request.headers.authorization;
-  
+
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return reply.status(401).send({ 
-      error: 'Authentication required',
-      code: 'UNAUTHORIZED',
-      message: 'Provide either Bearer token, X-Service-Token, or X-API-Key'
-    });
+    throw new UnauthorizedError('Provide either Bearer token, X-Service-Token, or X-API-Key');
   }
 
   const token = authHeader.replace('Bearer ', '');
@@ -288,11 +365,11 @@ export async function authenticateUserOrService(
     }) as TokenPayload;
 
     if (decoded.type !== 'access') {
-      return reply.status(401).send({ error: 'Invalid token type' });
+      throw new UnauthorizedError('Invalid token type');
     }
 
     if (!decoded.tenant_id) {
-      return reply.status(401).send({ error: 'Invalid token - missing tenant context' });
+      throw new UnauthorizedError('Invalid token - missing tenant context');
     }
 
     // User authentication - set source as 'user'
@@ -309,12 +386,15 @@ export async function authenticateUserOrService(
 
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
-      return reply.status(401).send({ error: 'Token expired' });
+      throw new UnauthorizedError('Token expired');
     }
     if (error instanceof jwt.JsonWebTokenError) {
-      return reply.status(401).send({ error: 'Invalid token' });
+      throw new UnauthorizedError('Invalid token');
     }
-    return reply.status(401).send({ error: 'Authentication failed' });
+    if (error instanceof UnauthorizedError) {
+      throw error;
+    }
+    throw new UnauthorizedError('Authentication failed');
   }
 }
 
@@ -327,18 +407,14 @@ export async function requireServiceAuth(
 ): Promise<void> {
   // First authenticate
   await authenticateUserOrService(request, reply);
-  
+
   // Check if response was already sent (authentication failed)
   if (reply.sent) return;
-  
+
   const user = (request as any).user as AuthContext;
-  
+
   if (user.source !== 'service') {
-    return reply.status(403).send({
-      error: 'Service authentication required',
-      code: 'FORBIDDEN',
-      message: 'This endpoint only accepts service-to-service requests'
-    });
+    throw new ForbiddenError('This endpoint only accepts service-to-service requests');
   }
 }
 
@@ -351,16 +427,12 @@ export async function requireInternalAuth(
 ): Promise<void> {
   // First authenticate
   await authenticateUserOrService(request, reply);
-  
+
   if (reply.sent) return;
-  
+
   const user = (request as any).user as AuthContext;
-  
+
   if (!user.isInternalRequest) {
-    return reply.status(403).send({
-      error: 'Internal service authentication required',
-      code: 'FORBIDDEN',
-      message: 'This endpoint only accepts requests from trusted internal services'
-    });
+    throw new ForbiddenError('This endpoint only accepts requests from trusted internal services');
   }
 }

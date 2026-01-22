@@ -17,7 +17,7 @@ import { correlationMiddleware } from './middleware/correlation.middleware';
 import { registerIdempotencyHooks } from './middleware/idempotency.middleware';
 import { registerLoadShedding } from './middleware/load-shedding.middleware';
 import { withCorrelation, logger } from './utils/logger';
-import { RateLimitError } from './errors';
+import { RateLimitError, TenantError, AuthorizationError } from './errors';
 import { swaggerOptions, swaggerUiOptions } from './config/swagger';
 import { httpRequestsTotal, httpRequestDurationSeconds } from './utils/metrics';
 
@@ -153,38 +153,41 @@ export async function buildApp(): Promise<FastifyInstance> {
     });
   }
 
-  const redis = getRedis();
-  await app.register(rateLimit, {
-    global: true,
-    max: 1000,
-    timeWindow: '1 minute',
-    redis: redis,
-    skipOnError: true,
-    keyGenerator: (request) => {
-      const userId = (request as any).user?.id;
-      return userId ? `${request.ip}:${userId}` : request.ip;
-    },
-    onExceeded: (request) => {
-      logger.warn('Global rate limit exceeded', {
-        ip: request.ip,
-        path: request.url,
-        method: request.method,
-        userId: (request as any).user?.id,
-        correlationId: request.correlationId || request.id,
-      });
-    },
-    addHeaders: {
-      'x-ratelimit-limit': true,
-      'x-ratelimit-remaining': true,
-      'x-ratelimit-reset': true,
-      'retry-after': true,
-    },
-    addHeadersOnExceeding: {
-      'x-ratelimit-limit': true,
-      'x-ratelimit-remaining': true,
-      'x-ratelimit-reset': true,
-    },
-  });
+  // Global rate limiting - disabled in test environment
+  if (env.NODE_ENV !== 'test') {
+    const redis = getRedis();
+    await app.register(rateLimit, {
+      global: true,
+      max: 1000,
+      timeWindow: '1 minute',
+      redis: redis,
+      skipOnError: true,
+      keyGenerator: (request) => {
+        const userId = (request as any).user?.id;
+        return userId ? `${request.ip}:${userId}` : request.ip;
+      },
+      onExceeded: (request) => {
+        logger.warn('Global rate limit exceeded', {
+          ip: request.ip,
+          path: request.url,
+          method: request.method,
+          userId: (request as any).user?.id,
+          correlationId: request.correlationId || request.id,
+        });
+      },
+      addHeaders: {
+        'x-ratelimit-limit': true,
+        'x-ratelimit-remaining': true,
+        'x-ratelimit-reset': true,
+        'retry-after': true,
+      },
+      addHeadersOnExceeding: {
+        'x-ratelimit-limit': true,
+        'x-ratelimit-remaining': true,
+        'x-ratelimit-reset': true,
+      },
+    });
+  }
 
   registerLoadShedding(app);
 
@@ -286,6 +289,38 @@ export async function buildApp(): Promise<FastifyInstance> {
         });
     }
 
+    // Handle TenantError (invalid tenant_id format, missing tenant, etc.)
+    if (error instanceof TenantError || error.name === 'TenantError' || error.constructor?.name === 'TenantError') {
+      return reply
+        .status(403)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/403',
+          title: 'Forbidden',
+          status: 403,
+          detail: error.message,
+          instance: request.url,
+          correlationId,
+          code: error.code || 'TENANT_ERROR',
+        });
+    }
+
+    // Handle AuthorizationError (missing permissions, access denied)
+    if (error instanceof AuthorizationError || error.name === 'AuthorizationError' || error.constructor?.name === 'AuthorizationError') {
+      return reply
+        .status(403)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: 'https://httpstatuses.com/403',
+          title: 'Forbidden',
+          status: 403,
+          detail: error.message,
+          instance: request.url,
+          correlationId,
+          code: error.code || 'ACCESS_DENIED',
+        });
+    }
+
     const errorMessage = error.message || '';
 
     if (statusCode === 422) {
@@ -299,6 +334,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           detail: error.message,
           instance: request.url,
           correlationId,
+          code: error.code,
           ...(error.errors && { errors: error.errors }),
         });
     }
@@ -314,6 +350,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           detail: error.message,
           instance: request.url,
           correlationId,
+          code: error.code || 'CONFLICT',
         });
     }
 
@@ -331,6 +368,7 @@ export async function buildApp(): Promise<FastifyInstance> {
           detail: error.message || 'Unauthorized',
           instance: request.url,
           correlationId,
+          code: error.code || 'UNAUTHORIZED',
         });
     }
 
@@ -351,8 +389,25 @@ export async function buildApp(): Promise<FastifyInstance> {
           detail,
           instance: request.url,
           correlationId,
+          code: error.code || 'BAD_REQUEST',
           ...(error.validation && { errors: error.validation }),
           ...(error.errors && { errors: error.errors }),
+        });
+    }
+
+    // Generic handler for any error with statusCode and code properties
+    if (error.isOperational && error.code) {
+      return reply
+        .status(statusCode)
+        .header('Content-Type', 'application/problem+json')
+        .send({
+          type: `https://httpstatuses.com/${statusCode}`,
+          title: statusCode === 403 ? 'Forbidden' : statusCode === 404 ? 'Not Found' : 'Error',
+          status: statusCode,
+          detail: error.message,
+          instance: request.url,
+          correlationId,
+          code: error.code,
         });
     }
 

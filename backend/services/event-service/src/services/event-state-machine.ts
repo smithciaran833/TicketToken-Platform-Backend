@@ -1,21 +1,19 @@
 /**
  * Event State Machine
- * 
+ *
  * Implements proper state transitions for events to ensure:
  * - DRAFT events cannot have tickets sold
  * - CANCELLED/COMPLETED events cannot be reactivated
  * - State transitions follow a valid path
- * 
- * NOTE: To use XState instead, run: npm install xstate
- * Then uncomment the XState implementation at the bottom of this file.
+ *
+ * CRITICAL FIX: Added notes on database persistence of state metadata
+ * CRITICAL FIX: Improved notification placeholder with implementation guide
  */
 
 import { pino } from 'pino';
 
 const logger = pino({ name: 'event-state-machine' });
 
-// Valid event states
-// AUDIT FIX (ESM-1): Added RESCHEDULED state for events that have been rescheduled
 export type EventState =
   | 'DRAFT'
   | 'REVIEW'
@@ -30,7 +28,6 @@ export type EventState =
   | 'POSTPONED'
   | 'RESCHEDULED';
 
-// Events that trigger state transitions
 export type EventTransition =
   | 'SUBMIT_FOR_REVIEW'
   | 'APPROVE'
@@ -46,14 +43,12 @@ export type EventTransition =
   | 'POSTPONE'
   | 'RESCHEDULE';
 
-// Terminal states that cannot transition
 const TERMINAL_STATES: EventState[] = ['COMPLETED', 'CANCELLED'];
 
-// Valid state transitions map
 const VALID_TRANSITIONS: Record<EventState, Partial<Record<EventTransition, EventState>>> = {
   DRAFT: {
     SUBMIT_FOR_REVIEW: 'REVIEW',
-    PUBLISH: 'PUBLISHED',  // Direct publish for authorized users
+    PUBLISH: 'PUBLISHED',
     CANCEL: 'CANCELLED'
   },
   REVIEW: {
@@ -92,31 +87,23 @@ const VALID_TRANSITIONS: Record<EventState, Partial<Record<EventTransition, Even
     END_EVENT: 'COMPLETED',
     CANCEL: 'CANCELLED'
   },
-  COMPLETED: {
-    // Terminal state - no valid transitions
-  },
-  CANCELLED: {
-    // Terminal state - no valid transitions
-  },
+  COMPLETED: {},
+  CANCELLED: {},
   POSTPONED: {
     RESCHEDULE: 'RESCHEDULED',
     CANCEL: 'CANCELLED'
   },
-  // AUDIT FIX (ESM-1): RESCHEDULED state - event has new date/time confirmed
   RESCHEDULED: {
-    PUBLISH: 'PUBLISHED',  // After rescheduling, needs to go through publishing again
-    START_SALES: 'ON_SALE', // Or directly start sales if approved
+    PUBLISH: 'PUBLISHED',
+    START_SALES: 'ON_SALE',
     CANCEL: 'CANCELLED'
   }
 };
 
-// States that allow ticket sales
 const SALES_ALLOWED_STATES: EventState[] = ['ON_SALE'];
 
-// States that allow event modifications
 const MODIFICATION_ALLOWED_STATES: EventState[] = ['DRAFT', 'REVIEW', 'APPROVED', 'PUBLISHED'];
 
-// States that allow deletion
 const DELETION_ALLOWED_STATES: EventState[] = ['DRAFT', 'CANCELLED'];
 
 export interface TransitionResult {
@@ -124,16 +111,14 @@ export interface TransitionResult {
   previousState: EventState;
   currentState: EventState;
   error?: string;
-  // AUDIT FIX (LOW-STATE-REASON): Include reason in transition result
   reason?: string;
   changedBy?: string;
   changedAt?: Date;
 }
 
-// AUDIT FIX (LOW-STATE-REASON): Options for state transitions
 export interface TransitionOptions {
-  reason?: string;      // Human-readable explanation for the transition
-  changedBy?: string;   // User ID or 'system' for automatic transitions
+  reason?: string;
+  changedBy?: string;
 }
 
 export interface EventStateMachineContext {
@@ -142,16 +127,11 @@ export interface EventStateMachineContext {
   currentState: EventState;
   salesStarted?: boolean;
   ticketsSold?: number;
-  // AUDIT FIX (LOW-STATE-REASON): Track state change metadata
   statusReason?: string;
   statusChangedBy?: string;
   statusChangedAt?: Date;
 }
 
-/**
- * Event State Machine class
- * Validates and executes state transitions for events
- */
 export class EventStateMachine {
   private context: EventStateMachineContext;
 
@@ -159,60 +139,37 @@ export class EventStateMachine {
     this.context = context;
   }
 
-  /**
-   * Get current state
-   */
   get currentState(): EventState {
     return this.context.currentState;
   }
 
-  /**
-   * Check if current state is terminal
-   */
   isTerminal(): boolean {
     return TERMINAL_STATES.includes(this.context.currentState);
   }
 
-  /**
-   * Check if sales are allowed in current state
-   */
   canSellTickets(): boolean {
     return SALES_ALLOWED_STATES.includes(this.context.currentState);
   }
 
-  /**
-   * Check if modifications are allowed in current state
-   */
   canModify(): boolean {
-    // Cannot modify after sales have started (unless specific fields)
     if (this.context.ticketsSold && this.context.ticketsSold > 0) {
       return false;
     }
     return MODIFICATION_ALLOWED_STATES.includes(this.context.currentState);
   }
 
-  /**
-   * Check if deletion is allowed in current state
-   */
   canDelete(): boolean {
-    // Cannot delete if tickets have been sold
     if (this.context.ticketsSold && this.context.ticketsSold > 0) {
       return false;
     }
     return DELETION_ALLOWED_STATES.includes(this.context.currentState);
   }
 
-  /**
-   * Get all valid transitions from current state
-   */
   getValidTransitions(): EventTransition[] {
     const transitions = VALID_TRANSITIONS[this.context.currentState];
     return Object.keys(transitions) as EventTransition[];
   }
 
-  /**
-   * Check if a specific transition is valid
-   */
   canTransition(transition: EventTransition): boolean {
     if (this.isTerminal()) {
       return false;
@@ -221,9 +178,6 @@ export class EventStateMachine {
     return transition in transitions;
   }
 
-  /**
-   * Get the target state for a transition (without executing)
-   */
   getTargetState(transition: EventTransition): EventState | null {
     const transitions = VALID_TRANSITIONS[this.context.currentState];
     return transitions[transition] || null;
@@ -232,7 +186,27 @@ export class EventStateMachine {
   /**
    * Execute a state transition
    * 
-   * AUDIT FIX (LOW-STATE-REASON): Accept optional reason and changedBy for audit trail
+   * IMPORTANT: State metadata (reason, changedBy, changedAt) is stored in memory
+   * and should be persisted to database after calling this method.
+   * 
+   * Example usage:
+   * ```typescript
+   * const machine = createEventStateMachine(eventId, tenantId, currentState);
+   * const result = machine.transition('PUBLISH', { 
+   *   reason: 'Event approved and ready for public',
+   *   changedBy: userId 
+   * });
+   * 
+   * if (result.success) {
+   *   // Persist to database
+   *   await db('events').where({ id: eventId }).update({
+   *     status: result.currentState,
+   *     status_reason: result.reason,
+   *     status_changed_by: result.changedBy,
+   *     status_changed_at: result.changedAt
+   *   });
+   * }
+   * ```
    */
   transition(event: EventTransition, options?: TransitionOptions): TransitionResult {
     const previousState = this.context.currentState;
@@ -240,7 +214,6 @@ export class EventStateMachine {
     const changedBy = options?.changedBy || 'system';
     const reason = options?.reason;
 
-    // Check if in terminal state
     if (this.isTerminal()) {
       logger.warn({
         eventId: this.context.eventId,
@@ -258,7 +231,6 @@ export class EventStateMachine {
       };
     }
 
-    // Check if transition is valid
     const targetState = this.getTargetState(event);
     if (!targetState) {
       logger.warn({
@@ -277,10 +249,7 @@ export class EventStateMachine {
       };
     }
 
-    // Execute transition
     this.context.currentState = targetState;
-    
-    // AUDIT FIX (LOW-STATE-REASON): Store state change metadata
     this.context.statusReason = reason;
     this.context.statusChangedBy = changedBy;
     this.context.statusChangedAt = changedAt;
@@ -305,9 +274,6 @@ export class EventStateMachine {
     };
   }
 
-  /**
-   * Get status reason metadata
-   */
   getStatusMetadata(): { reason?: string; changedBy?: string; changedAt?: Date } {
     return {
       reason: this.context.statusReason,
@@ -316,10 +282,6 @@ export class EventStateMachine {
     };
   }
 
-  /**
-   * Force set state (for recovery/admin only)
-   * Use with caution - bypasses transition rules
-   */
   forceState(state: EventState): void {
     const previousState = this.context.currentState;
     this.context.currentState = state;
@@ -332,10 +294,6 @@ export class EventStateMachine {
   }
 }
 
-/**
- * Validate if a state transition is allowed
- * Standalone function for quick validation without instantiating machine
- */
 export function validateTransition(
   currentState: EventState,
   transition: EventTransition
@@ -363,9 +321,6 @@ export function validateTransition(
   };
 }
 
-/**
- * Check if ticket sales are blocked for a given state
- */
 export function areSalesBlocked(state: EventState): { blocked: boolean; reason?: string } {
   if (SALES_ALLOWED_STATES.includes(state)) {
     return { blocked: false };
@@ -383,7 +338,7 @@ export function areSalesBlocked(state: EventState): { blocked: boolean; reason?:
     CANCELLED: 'Event has been cancelled',
     POSTPONED: 'Event has been postponed',
     RESCHEDULED: 'Event has been rescheduled - pending republication',
-    ON_SALE: '' // Should not reach here
+    ON_SALE: ''
   };
 
   return {
@@ -392,9 +347,6 @@ export function areSalesBlocked(state: EventState): { blocked: boolean; reason?:
   };
 }
 
-/**
- * Create an event state machine instance
- */
 export function createEventStateMachine(
   eventId: string,
   tenantId: string,
@@ -409,11 +361,73 @@ export function createEventStateMachine(
 }
 
 /**
- * AUDIT FIX (ESM-2): Notification placeholder for event modifications
- * This function should be called when significant changes are made to an event
- * that affect ticket holders (e.g., date/time/venue changes).
+ * CRITICAL FIX: Notification implementation guide
  * 
- * TODO: Implement actual notification service integration
+ * This function should integrate with the notification service when significant
+ * changes are made to events that affect ticket holders.
+ * 
+ * IMPLEMENTATION STEPS:
+ * 
+ * 1. Query ticket holders:
+ *    - Call ticket-service API to get all ticket holders for the event
+ *    - Example: GET /api/v1/tickets?eventId={eventId}&status=SOLD,USED
+ * 
+ * 2. Build notification payload:
+ *    - Email template based on modification type
+ *    - Push notification for mobile app users
+ *    - SMS for users with SMS enabled
+ * 
+ * 3. Queue notifications:
+ *    - Use message queue (RabbitMQ/SQS) for async processing
+ *    - Batch notifications to avoid overwhelming notification service
+ *    - Include retry logic for failed notifications
+ * 
+ * 4. Store notification records:
+ *    - Insert into notification_log table for audit trail
+ *    - Track delivery status (pending/sent/failed)
+ * 
+ * 5. Handle opt-outs:
+ *    - Check user notification preferences
+ *    - Respect unsubscribe requests
+ * 
+ * EXAMPLE IMPLEMENTATION:
+ * ```typescript
+ * async function notifyTicketHoldersOfModification(notification: EventModificationNotification) {
+ *   // 1. Get ticket holders from ticket-service
+ *   const tickets = await ticketServiceClient.getEventTickets(notification.eventId);
+ *   const userIds = [...new Set(tickets.map(t => t.userId))];
+ * 
+ *   // 2. Build notification
+ *   const notificationPayload = {
+ *     type: notification.modificationType,
+ *     eventId: notification.eventId,
+ *     userIds,
+ *     email: {
+ *       template: 'event-modification',
+ *       subject: getSubjectForModificationType(notification.modificationType),
+ *       data: { ...notification }
+ *     },
+ *     push: {
+ *       title: 'Event Update',
+ *       body: getBodyForModificationType(notification.modificationType)
+ *     }
+ *   };
+ * 
+ *   // 3. Queue for processing
+ *   await messageQueue.publish('notifications.events', notificationPayload);
+ * 
+ *   // 4. Log notification request
+ *   await db('notification_log').insert({
+ *     event_id: notification.eventId,
+ *     type: notification.modificationType,
+ *     recipient_count: userIds.length,
+ *     status: 'queued',
+ *     created_at: new Date()
+ *   });
+ * 
+ *   return { queued: true, count: userIds.length };
+ * }
+ * ```
  */
 export interface EventModificationNotification {
   eventId: string;
@@ -427,126 +441,29 @@ export interface EventModificationNotification {
 export async function notifyTicketHoldersOfModification(
   notification: EventModificationNotification
 ): Promise<{ queued: boolean; count: number }> {
-  // PLACEHOLDER: This should integrate with the notification service
-  // For now, just log and return success
+  // TODO: Implement actual notification service integration
+  // See implementation guide in JSDoc above
   
   logger.info({
     eventId: notification.eventId,
     tenantId: notification.tenantId,
     modificationType: notification.modificationType,
     affectedCount: notification.affectedTicketHolderCount || 0,
-  }, 'Event modification notification queued for ticket holders');
+  }, 'Event modification notification should be sent (not implemented)');
 
-  // TODO: Implement actual notification logic:
-  // 1. Query ticket holders for this event
-  // 2. Queue email/push notifications
-  // 3. Store notification record for audit
-
+  // Placeholder return
   return {
-    queued: true,
+    queued: false, // Set to true when implemented
     count: notification.affectedTicketHolderCount || 0,
   };
 }
 
-/**
- * States that require ticket holder notification when entered
- */
 export const STATES_REQUIRING_NOTIFICATION: EventState[] = [
   'RESCHEDULED',
   'POSTPONED',
   'CANCELLED'
 ];
 
-/**
- * Check if entering a state requires notifying ticket holders
- */
 export function requiresTicketHolderNotification(state: EventState): boolean {
   return STATES_REQUIRING_NOTIFICATION.includes(state);
 }
-
-// ============================================================
-// XState Implementation (uncomment after: npm install xstate)
-// ============================================================
-/*
-import { createMachine, interpret } from 'xstate';
-
-export const eventStateMachineConfig = createMachine({
-  id: 'event',
-  initial: 'draft',
-  states: {
-    draft: {
-      on: {
-        SUBMIT_FOR_REVIEW: 'review',
-        PUBLISH: 'published',
-        CANCEL: 'cancelled'
-      }
-    },
-    review: {
-      on: {
-        APPROVE: 'approved',
-        REJECT: 'draft',
-        CANCEL: 'cancelled'
-      }
-    },
-    approved: {
-      on: {
-        PUBLISH: 'published',
-        CANCEL: 'cancelled'
-      }
-    },
-    published: {
-      on: {
-        START_SALES: 'on_sale',
-        CANCEL: 'cancelled',
-        POSTPONE: 'postponed'
-      }
-    },
-    on_sale: {
-      on: {
-        PAUSE_SALES: 'sales_paused',
-        SOLD_OUT: 'sold_out',
-        START_EVENT: 'in_progress',
-        CANCEL: 'cancelled',
-        POSTPONE: 'postponed'
-      }
-    },
-    sales_paused: {
-      on: {
-        RESUME_SALES: 'on_sale',
-        START_EVENT: 'in_progress',
-        CANCEL: 'cancelled',
-        POSTPONE: 'postponed'
-      }
-    },
-    sold_out: {
-      on: {
-        START_EVENT: 'in_progress',
-        CANCEL: 'cancelled',
-        POSTPONE: 'postponed'
-      }
-    },
-    in_progress: {
-      on: {
-        END_EVENT: 'completed',
-        CANCEL: 'cancelled'
-      }
-    },
-    completed: {
-      type: 'final'
-    },
-    cancelled: {
-      type: 'final'
-    },
-    postponed: {
-      on: {
-        RESCHEDULE: 'published',
-        CANCEL: 'cancelled'
-      }
-    }
-  }
-});
-
-export function createXStateEventMachine() {
-  return interpret(eventStateMachineConfig).start();
-}
-*/

@@ -20,7 +20,48 @@ export interface CustomDomain {
 }
 
 export class DomainManagementService {
-  async addCustomDomain(venueId: string, domain: string): Promise<CustomDomain> {
+  /**
+   * SECURITY FIX: Validate tenant context
+   */
+  private validateTenantContext(tenantId?: string): void {
+    if (!tenantId) {
+      throw new Error('Tenant context required for domain operations');
+    }
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(tenantId)) {
+      throw new Error('Invalid tenant ID format');
+    }
+  }
+
+  /**
+   * SECURITY FIX: Verify venue belongs to tenant
+   */
+  private async verifyVenueOwnership(venueId: string, tenantId: string): Promise<void> {
+    const venue = await db('venues')
+      .where({ id: venueId, tenant_id: tenantId })
+      .first();
+
+    if (!venue) {
+      logger.warn({ venueId, tenantId }, 'Venue ownership verification failed');
+      throw new Error('Venue not found or access denied');
+    }
+  }
+
+  /**
+   * SECURITY FIX: Add timeout to promises to prevent hanging
+   */
+  private async withTimeout<T>(promise: Promise<T>, ms: number, errorMsg: string): Promise<T> {
+    return Promise.race([
+      promise,
+      new Promise<T>((_, reject) =>
+        setTimeout(() => reject(new Error(errorMsg)), ms)
+      )
+    ]);
+  }
+
+  async addCustomDomain(venueId: string, domain: string, tenantId?: string): Promise<CustomDomain> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
     try {
       this.validateDomainFormat(domain);
 
@@ -33,16 +74,17 @@ export class DomainManagementService {
         throw new Error('Custom domains require white-label or enterprise tier');
       }
 
+      // FIX: Count all domains that are not suspended (includes 'pending' and 'active')
       const existingDomains = await db('custom_domains')
         .where('venue_id', venueId)
-        .where('status', 'active')
+        .whereNot('status', 'suspended')
         .count('* as count');
 
       const tierConfig = await db('white_label_pricing')
         .where('tier_name', venue.pricing_tier)
         .first();
 
-      if (parseInt(existingDomains[0].count as string) >= tierConfig.max_custom_domains) {
+      if (Number(existingDomains[0].count) >= tierConfig.max_custom_domains) {
         throw new Error(`Domain limit reached for ${venue.pricing_tier} tier`);
       }
 
@@ -88,7 +130,7 @@ export class DomainManagementService {
     }
   }
 
-  async verifyDomain(domainId: string): Promise<boolean> {
+  async verifyDomain(domainId: string, tenantId?: string): Promise<boolean> {
     try {
       const customDomain = await db('custom_domains').where('id', domainId).first();
 
@@ -96,17 +138,28 @@ export class DomainManagementService {
         throw new Error('Domain not found');
       }
 
+      // Verify tenant ownership if tenantId provided
+      if (tenantId) {
+        this.validateTenantContext(tenantId);
+        await this.verifyVenueOwnership(customDomain.venue_id, tenantId);
+      }
+
       if (customDomain.is_verified) {
         return true;
       }
 
       const txtRecordName = `_tickettoken-verify.${customDomain.domain}`;
-      
+
       try {
-        const records = await dns.resolveTxt(txtRecordName);
+        // SECURITY FIX: Add timeout to DNS resolution
+        const records = await this.withTimeout(
+          dns.resolveTxt(txtRecordName),
+          10000,
+          'DNS lookup timeout'
+        );
         const flatRecords = records.flat();
-        
-        const verified = flatRecords.some(record => 
+
+        const verified = flatRecords.some(record =>
           record === customDomain.verification_token
         );
 
@@ -171,7 +224,7 @@ export class DomainManagementService {
       logger.info('SSL certificate requested', { domainId, domain: customDomain.domain });
     } catch (error) {
       logger.error('Error requesting SSL certificate:', error);
-      
+
       await db('custom_domains')
         .where('id', domainId)
         .update({
@@ -181,26 +234,40 @@ export class DomainManagementService {
     }
   }
 
-  async getDomainStatus(domainId: string): Promise<CustomDomain> {
+  async getDomainStatus(domainId: string, tenantId?: string): Promise<CustomDomain> {
     const customDomain = await db('custom_domains').where('id', domainId).first();
     if (!customDomain) {
       throw new Error('Domain not found');
     }
+
+    // Verify tenant ownership if tenantId provided
+    if (tenantId) {
+      this.validateTenantContext(tenantId);
+      await this.verifyVenueOwnership(customDomain.venue_id, tenantId);
+    }
+
     return this.mapToDomainObject(customDomain);
   }
 
-  async getVenueDomains(venueId: string): Promise<CustomDomain[]> {
+  async getVenueDomains(venueId: string, tenantId?: string): Promise<CustomDomain[]> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
+
     const domains = await db('custom_domains')
       .where('venue_id', venueId)
       .orderBy('created_at', 'desc');
     return domains.map(d => this.mapToDomainObject(d));
   }
 
-  async removeDomain(domainId: string): Promise<void> {
+  async removeDomain(domainId: string, tenantId?: string): Promise<void> {
     const customDomain = await db('custom_domains').where('id', domainId).first();
     if (!customDomain) {
       throw new Error('Domain not found');
     }
+
+    // Verify tenant ownership
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(customDomain.venue_id, tenantId!);
 
     await db('custom_domains')
       .where('id', domainId)
@@ -216,7 +283,7 @@ export class DomainManagementService {
 
   private validateDomainFormat(domain: string): void {
     const domainRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$/i;
-    
+
     if (!domainRegex.test(domain)) {
       throw new Error('Invalid domain format');
     }

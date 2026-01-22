@@ -1,12 +1,10 @@
 import { OAuth2Client } from 'google-auth-library';
-import axios from 'axios';
 import { pool } from '../config/database';
 import { JWTService } from './jwt.service';
 import { auditService } from './audit.service';
 import { AuthenticationError, ValidationError } from '../errors';
 import crypto from 'crypto';
 import { env } from '../config/env';
-import { withCircuitBreaker } from '../utils/circuit-breaker';
 
 interface OAuthProfile {
   id: string;
@@ -14,72 +12,9 @@ interface OAuthProfile {
   firstName?: string;
   lastName?: string;
   picture?: string;
-  provider: 'google' | 'github' | 'apple';
+  provider: 'google';
   verified: boolean;
 }
-
-interface OAuthTokenResponse {
-  access_token: string;
-  id_token?: string;
-  token_type: string;
-  expires_in: number;
-  refresh_token?: string;
-}
-
-// Circuit breaker wrapped HTTP calls - use any[] for args
-const githubTokenExchange = withCircuitBreaker<OAuthTokenResponse>(
-  'github-token-exchange',
-  async (code: any) => {
-    const response = await axios.post<OAuthTokenResponse>(
-      'https://github.com/login/oauth/access_token',
-      {
-        client_id: env.GITHUB_CLIENT_ID || 'your-github-client-id',
-        client_secret: env.GITHUB_CLIENT_SECRET || 'your-github-client-secret',
-        code: code as string,
-        redirect_uri: env.GITHUB_REDIRECT_URI || 'http://localhost:3001/api/v1/auth/oauth/github/callback'
-      },
-      {
-        headers: { Accept: 'application/json' },
-        timeout: 5000,
-      }
-    );
-    return response.data;
-  },
-  undefined,
-  { timeout: 5000, errorThresholdPercentage: 50, resetTimeout: 30000 }
-);
-
-const githubUserProfile = withCircuitBreaker<any>(
-  'github-user-profile',
-  async (accessToken: any) => {
-    const response = await axios.get('https://api.github.com/user', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/vnd.github.v3+json'
-      },
-      timeout: 5000,
-    });
-    return response.data;
-  },
-  undefined,
-  { timeout: 5000, errorThresholdPercentage: 50, resetTimeout: 30000 }
-);
-
-const githubUserEmails = withCircuitBreaker<any[]>(
-  'github-user-emails',
-  async (accessToken: any) => {
-    const response = await axios.get('https://api.github.com/user/emails', {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/vnd.github.v3+json'
-      },
-      timeout: 5000,
-    });
-    return response.data;
-  },
-  undefined,
-  { timeout: 5000, errorThresholdPercentage: 50, resetTimeout: 30000 }
-);
 
 export class OAuthService {
   private googleClient: OAuth2Client;
@@ -124,43 +59,6 @@ export class OAuthService {
     } catch (error: any) {
       console.error('Google OAuth error:', error);
       throw new AuthenticationError('Google authentication failed: ' + error.message);
-    }
-  }
-
-  private async exchangeGitHubCode(code: string): Promise<OAuthProfile> {
-    try {
-      const tokenData = await githubTokenExchange(code);
-      const accessToken = tokenData.access_token;
-
-      const profile = await githubUserProfile(accessToken);
-
-      let email = profile.email;
-      if (!email) {
-        const emails = await githubUserEmails(accessToken);
-        const primaryEmail = emails.find((e: any) => e.primary);
-        email = primaryEmail?.email;
-      }
-
-      if (!email) {
-        throw new AuthenticationError('No email found in GitHub profile');
-      }
-
-      const nameParts = (profile.name || profile.login).split(' ');
-      const firstName = nameParts[0];
-      const lastName = nameParts.slice(1).join(' ');
-
-      return {
-        id: profile.id.toString(),
-        email,
-        firstName,
-        lastName,
-        picture: profile.avatar_url,
-        provider: 'github',
-        verified: true
-      };
-    } catch (error: any) {
-      console.error('GitHub OAuth error:', error);
-      throw new AuthenticationError('GitHub authentication failed: ' + error.message);
     }
   }
 
@@ -269,23 +167,17 @@ export class OAuthService {
       [sessionId, userId, tenantId, ipAddress, userAgent, JSON.stringify({})]
     );
 
-    // Audit session creation
     await auditService.logSessionCreated(userId, sessionId, ipAddress, userAgent, tenantId);
 
     return sessionId;
   }
 
   async authenticate(provider: string, code: string, tenantId?: string, ipAddress?: string, userAgent?: string): Promise<any> {
-    let profile: OAuthProfile;
-
-    if (provider === 'google') {
-      profile = await this.exchangeGoogleCode(code);
-    } else if (provider === 'github') {
-      profile = await this.exchangeGitHubCode(code);
-    } else {
+    if (provider !== 'google') {
       throw new ValidationError([`Unsupported OAuth provider: ${provider}`]);
     }
 
+    const profile = await this.exchangeGoogleCode(code);
     const user = await this.findOrCreateUser(profile, tenantId);
     const sessionId = await this.createSession(user.id, user.tenant_id, ipAddress, userAgent);
     const tokens = await this.jwtService.generateTokenPair(user);
@@ -310,15 +202,11 @@ export class OAuthService {
   }
 
   async linkProvider(userId: string, provider: string, code: string): Promise<any> {
-    let profile: OAuthProfile;
-
-    if (provider === 'google') {
-      profile = await this.exchangeGoogleCode(code);
-    } else if (provider === 'github') {
-      profile = await this.exchangeGitHubCode(code);
-    } else {
+    if (provider !== 'google') {
       throw new ValidationError([`Unsupported OAuth provider: ${provider}`]);
     }
+
+    const profile = await this.exchangeGoogleCode(code);
 
     const userCheck = await pool.query(
       `SELECT tenant_id FROM users WHERE id = $1 AND deleted_at IS NULL`,
@@ -389,11 +277,11 @@ export class OAuthService {
     };
   }
 
-  async handleOAuthLogin(provider: 'google' | 'github', token: string): Promise<any> {
+  async handleOAuthLogin(provider: 'google', token: string): Promise<any> {
     return this.authenticate(provider, token);
   }
 
-  async linkOAuthProvider(userId: string, provider: 'google' | 'github', token: string): Promise<any> {
+  async linkOAuthProvider(userId: string, provider: 'google', token: string): Promise<any> {
     return this.linkProvider(userId, provider, token);
   }
 }

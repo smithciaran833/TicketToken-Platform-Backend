@@ -63,6 +63,11 @@ function getIdempotencyHeaders(
 /**
  * Validate and normalize service URL
  * Enforces HTTPS in production environment
+ * 
+ * TODO (Issue #21 - MEDIUM PRIORITY): Consider removing ALLOW_INSECURE_SERVICE_CALLS bypass
+ * The environment variable allows bypassing HTTPS enforcement in production.
+ * Recommendation: Only allow HTTPS in production, remove the bypass flag.
+ * Trade-off: Stricter security vs flexibility for unusual deployment scenarios.
  */
 function validateServiceUrl(url: string): string {
   const isProduction = process.env.NODE_ENV === 'production';
@@ -102,6 +107,11 @@ interface CachedVenue {
  * 
  * Cache key format: `${tenantId}:${venueId}`
  * This ensures tenant isolation in the cache to prevent cross-tenant data leakage.
+ * 
+ * TODO (Issue #19 - MEDIUM PRIORITY): Migrate to Redis-backed cache for multi-instance scalability
+ * Current in-memory cache doesn't scale across multiple pod instances.
+ * Recommendation: Use serviceCache.get/set with tenant prefixing.
+ * Trade-off: Adds Redis dependency but enables horizontal scaling.
  */
 const venueCache = new Map<string, CachedVenue>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
@@ -267,6 +277,12 @@ export class VenueServiceClient {
    * 
    * Uses S2S authentication to verify venue exists and tenant has access.
    * CRITICAL FIX: Falls back to cached data when venue-service is unavailable.
+   * 
+   * TODO (Issue #20 - MEDIUM PRIORITY): Degraded mode security trade-off
+   * Current behavior allows operations without strict venue verification during outages.
+   * This prioritizes availability over strict security validation.
+   * Recommendation: Consider business requirements - is strict validation always required?
+   * Trade-off: Availability (current) vs Strict Security (reject on verification failure)
    */
   async validateVenueAccess(venueId: string, tenantId: string): Promise<boolean> {
     try {

@@ -113,13 +113,13 @@ function getServiceRateLimitMultiplier(serviceName: string | undefined): number 
  * Authenticated services are exempt from rate limiting to allow
  * inter-service communication to proceed without constraints.
  */
-function isAuthenticatedService(request: FastifyRequest): boolean {
+async function isAuthenticatedService(request: FastifyRequest): Promise<boolean> {
   const serviceToken = request.headers['x-service-token'] as string | undefined;
   const apiKey = request.headers['x-api-key'] as string | undefined;
 
   // Check service token
   if (serviceToken) {
-    const result = verifyServiceToken(serviceToken);
+    const result = await verifyServiceToken(serviceToken);
     if (result.valid) {
       return true;
     }
@@ -127,7 +127,7 @@ function isAuthenticatedService(request: FastifyRequest): boolean {
 
   // Check API key
   if (apiKey) {
-    const result = verifyApiKey(apiKey);
+    const result = await verifyApiKey(apiKey);
     if (result.valid) {
       return true;
     }
@@ -179,7 +179,7 @@ export async function registerRateLimiting(app: FastifyInstance) {
     // Register global rate limiter with dynamic limits
     await app.register(rateLimit, {
       global: true,
-      max: (request: FastifyRequest, _key: string) => {
+      max: async (request: FastifyRequest, _key: string) => {
         // AUDIT FIX (BA2): Skip rate limiting for health check endpoints
         if (isExcludedPath(request.url)) {
           return 1000000; // Effectively unlimited for health/metrics
@@ -187,7 +187,7 @@ export async function registerRateLimiting(app: FastifyInstance) {
         
         // AUDIT FIX (ES7): Exempt authenticated internal services from rate limiting
         // Return very high limit effectively disabling rate limiting for S2S calls
-        if (isAuthenticatedService(request)) {
+        if (await isAuthenticatedService(request)) {
           return 1000000; // Effectively unlimited for services
         }
         const config = getRateLimitForRequest(request);

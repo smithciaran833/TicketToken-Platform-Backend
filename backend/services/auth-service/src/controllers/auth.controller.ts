@@ -16,7 +16,7 @@ export class AuthController {
 
       if (result.user.id) { await userCache.setUser(result.user.id, result.user); }
 
-      reply.status(201).send({
+      return reply.status(201).send({
         user: result.user,
         tokens: result.tokens,
       });
@@ -73,66 +73,21 @@ export class AuthController {
         password: request.body.password,
         ipAddress,
         userAgent,
+        mfaToken: request.body.mfaToken, // Pass MFA token to service
       });
 
       // Clear CAPTCHA failures on successful login
       await captchaService.clearFailures(identifier);
 
-      console.log('[LOGIN] Auth service returned:', {
-        hasUser: !!result.user,
-        hasTokens: !!result.tokens,
-        mfaEnabled: result.user?.mfa_enabled,
-        mfaTokenProvided: !!request.body.mfaToken
-      });
-
-      if (result.user.mfa_enabled) {
-        if (!request.body.mfaToken) {
-          console.log('[LOGIN] MFA required, no token provided');
-          return reply.status(200).send({
-            requiresMFA: true,
-            userId: result.user.id,
-          });
-        }
-
-        console.log('[LOGIN] Verifying MFA token...');
-        let mfaValid = false;
-        let usedBackupCode = false;
-        const tenantId = result.user.tenant_id;
-
-        try {
-          mfaValid = await this.mfaService.verifyTOTP(result.user.id!, request.body.mfaToken, tenantId);
-          console.log('[LOGIN] TOTP verification result:', mfaValid);
-
-          if (!mfaValid) {
-            console.log('[LOGIN] TOTP returned false, trying backup code');
-            mfaValid = await this.mfaService.verifyBackupCode(result.user.id!, request.body.mfaToken, tenantId);
-            usedBackupCode = mfaValid;
-            console.log('[LOGIN] Backup code verification result:', mfaValid);
-          }
-        } catch (error) {
-          console.log('[LOGIN] TOTP error, trying backup code:', error);
-          try {
-            mfaValid = await this.mfaService.verifyBackupCode(result.user.id!, request.body.mfaToken, tenantId);
-            usedBackupCode = mfaValid;
-            console.log('[LOGIN] Backup code verification result:', mfaValid);
-          } catch (backupError) {
-            console.log('[LOGIN] Backup code also failed:', backupError);
-            mfaValid = false;
-          }
-        }
-
-        if (!mfaValid) {
-          console.log('[LOGIN] Both MFA methods failed');
-          return reply.status(401).send({
-            error: 'Invalid MFA token',
-            code: 'AUTHENTICATION_FAILED',
-          });
-        }
-
-        console.log('[LOGIN] MFA verified successfully, regenerating tokens');
-        result.tokens = await this.authService.regenerateTokensAfterMFA(result.user);
+      // FIX: If tokens is null, it means MFA is required
+      if (!result.tokens && result.user.mfa_enabled) {
+        return reply.status(200).send({
+          requiresMFA: true,
+          userId: result.user.id,
+        });
       }
 
+      // If MFA was provided and verified, or MFA not enabled
       if (result.user.id) { await userCache.setUser(result.user.id, result.user); }
       if (result.tokens) {
         await sessionCache.setSession(result.tokens.accessToken, {
@@ -142,13 +97,7 @@ export class AuthController {
         });
       }
 
-      console.log('[LOGIN] Sending response with tokens:', {
-        hasTokens: !!result.tokens,
-        hasAccessToken: !!result.tokens?.accessToken,
-        hasRefreshToken: !!result.tokens?.refreshToken
-      });
-
-      reply.send({
+      return reply.send({
         user: result.user,
         tokens: result.tokens,
       });
@@ -183,7 +132,7 @@ export class AuthController {
         userAgent
       );
 
-      reply.send(result.tokens);
+      return reply.send(result.tokens);
     } catch (error: any) {
       return reply.status(401).send({
         error: error.message || 'Unauthorized',
@@ -194,13 +143,23 @@ export class AuthController {
 
   async logout(request: any, reply: any) {
     const userId = request.user.id;
+    const refreshToken = request.body?.refreshToken;
+    const tenantId = request.user.tenant_id;
+
+    // FIX Issue #3: Extract access token from Authorization header
+    const authHeader = request.headers.authorization;
+    let accessToken: string | undefined;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      accessToken = authHeader.substring(7);
+    }
 
     await userCache.deleteUser(userId);
     await sessionCache.deleteUserSessions(userId);
 
-    await this.authService.logout(userId);
+    // FIX Issue #3: Pass access token to logout service
+    await this.authService.logout(userId, refreshToken, tenantId, accessToken);
 
-    reply.send({ success: true });
+    return reply.send({ success: true });
   }
 
   async getMe(request: any, reply: any) {
@@ -223,12 +182,12 @@ export class AuthController {
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    reply.send({ user });
+    return reply.send({ user });
   }
 
   async getCacheStats(request: any, reply: any) {
     const stats = getCacheStats();
-    reply.send(stats);
+    return reply.send(stats);
   }
 
   async verifyToken(request: any, reply: any) {
@@ -243,7 +202,7 @@ export class AuthController {
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    reply.send({ valid: true, user });
+    return reply.send({ valid: true, user });
   }
 
   async getCurrentUser(request: any, reply: any) {
@@ -258,7 +217,7 @@ export class AuthController {
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    reply.send({ user });
+    return reply.send({ user });
   }
 
   async setupMFA(request: any, reply: any) {
@@ -266,7 +225,7 @@ export class AuthController {
       const userId = request.user?.id;
       const tenantId = request.user?.tenant_id;
       const result = await this.mfaService.setupTOTP(userId, tenantId);
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
       if (error.message?.includes('already enabled')) {
         return reply.status(400).send({ error: error.message });
@@ -283,7 +242,7 @@ export class AuthController {
       const { token } = request.body;
       const result = await this.mfaService.verifyAndEnableTOTP(userId, token, tenantId);
       // Add success: true to satisfy response schema
-      reply.send({ success: true, backupCodes: result.backupCodes });
+      return reply.send({ success: true, backupCodes: result.backupCodes });
     } catch (error: any) {
       if (error.message?.includes('Invalid') || error.message?.includes('expired')) {
         return reply.status(400).send({ error: error.message });
@@ -299,7 +258,7 @@ export class AuthController {
       const tenantId = request.user?.tenant_id;
       const { token } = request.body;
       const valid = await this.mfaService.verifyTOTP(userId, token, tenantId);
-      reply.send({ valid });
+      return reply.send({ valid });
     } catch (error: any) {
       console.error('MFA verification error:', error);
       return reply.status(500).send({ error: 'Failed to verify MFA' });
@@ -310,7 +269,7 @@ export class AuthController {
     try {
       const userId = request.user?.id;
       const result = await this.mfaService.regenerateBackupCodes(userId);
-      reply.send(result);
+      return reply.send(result);
     } catch (error: any) {
       if (error.message?.includes('not enabled')) {
         return reply.status(400).send({ error: error.message });
@@ -326,7 +285,7 @@ export class AuthController {
       const tenantId = request.user?.tenant_id;
       const { password, token } = request.body;
       await this.mfaService.disableTOTP(userId, password, token, tenantId);
-      reply.send({ success: true });
+      return reply.send({ success: true });
     } catch (error: any) {
       if (error.message?.includes('Invalid')) {
         return reply.status(400).send({ error: error.message });

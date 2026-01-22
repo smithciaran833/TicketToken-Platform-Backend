@@ -48,7 +48,7 @@ export async function apiKeyMiddleware(
     return;
   }
   
-  const result = verifyApiKey(apiKey);
+  const result = await verifyApiKey(apiKey);
   
   if (!result.valid) {
     logger.warn({ 
@@ -107,7 +107,7 @@ export async function serviceTokenMiddleware(
     return;
   }
   
-  const result = verifyServiceToken(serviceToken);
+  const result = await verifyServiceToken(serviceToken);
   
   if (!result.valid) {
     logger.warn({ 
@@ -170,7 +170,7 @@ export async function s2sAuthMiddleware(
   
   // Try service token first (preferred)
   if (serviceToken) {
-    const tokenResult = verifyServiceToken(serviceToken);
+    const tokenResult = await verifyServiceToken(serviceToken);
     if (tokenResult.valid) {
       (request as any).serviceContext = {
         isServiceRequest: true,
@@ -188,7 +188,7 @@ export async function s2sAuthMiddleware(
   
   // Fall back to API key
   if (apiKey) {
-    const keyResult = verifyApiKey(apiKey);
+    const keyResult = await verifyApiKey(apiKey);
     if (keyResult.valid) {
       (request as any).serviceContext = {
         isServiceRequest: true,
@@ -235,7 +235,7 @@ export async function optionalS2sMiddleware(
   
   // Check service token
   if (serviceToken) {
-    const tokenResult = verifyServiceToken(serviceToken);
+    const tokenResult = await verifyServiceToken(serviceToken);
     if (tokenResult.valid) {
       (request as any).serviceContext = {
         isServiceRequest: true,
@@ -247,7 +247,7 @@ export async function optionalS2sMiddleware(
   
   // Check API key
   if (apiKey) {
-    const keyResult = verifyApiKey(apiKey);
+    const keyResult = await verifyApiKey(apiKey);
     if (keyResult.valid) {
       (request as any).serviceContext = {
         isServiceRequest: true,

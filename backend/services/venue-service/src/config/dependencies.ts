@@ -1,4 +1,4 @@
-import { asClass, asValue, createContainer } from 'awilix';
+import { asClass, asValue, asFunction, createContainer } from 'awilix';
 import { Knex } from 'knex';
 import type Redis from 'ioredis';
 import { Connection } from 'mongoose';
@@ -41,7 +41,7 @@ export function registerDependencies(db: Knex, redis: Redis, mongodb: Connection
     mongodb: asValue(mongodb),
     logger: asValue(logger),
     queueService: asValue(null),
-    cacheService: asClass(CacheService).singleton(),
+    cacheService: asFunction(({ redis }) => new CacheService(redis)).singleton(),
     analyticsService: asClass(AnalyticsService).singleton(),
     eventPublisher: asClass(EventPublisher).singleton(),
     venueService: asClass(VenueService).singleton(),

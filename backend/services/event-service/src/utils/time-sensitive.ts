@@ -1,10 +1,11 @@
 /**
  * Time-Sensitive Operations Utilities
- * 
+ *
  * CRITICAL FIX for audit findings:
  * - Server-side cutoff enforcement (38-time-sensitive-operations.md)
  * - Deadline checks before operations
  * - Time-based state validation
+ * ✅ FIXED: Config loaded from environment variables
  */
 
 import { logger } from './logger';
@@ -24,20 +25,28 @@ export interface TimingConfig {
   eventEndBufferMinutes: number;
 }
 
+// ✅ FIXED: Load from environment with fallback defaults
 const DEFAULT_CONFIG: TimingConfig = {
-  minEventAdvanceHours: 2,
-  maxEventAdvanceDays: 365,
-  modificationCutoffHours: 24,
-  salesEndCutoffMinutes: 30,
-  eventStartBufferMinutes: 15,
-  eventEndBufferMinutes: 60,
+  minEventAdvanceHours: parseInt(process.env.MIN_EVENT_ADVANCE_HOURS || '2', 10),
+  maxEventAdvanceDays: parseInt(process.env.MAX_EVENT_ADVANCE_DAYS || '365', 10),
+  modificationCutoffHours: parseInt(process.env.MODIFICATION_CUTOFF_HOURS || '24', 10),
+  salesEndCutoffMinutes: parseInt(process.env.SALES_END_CUTOFF_MINUTES || '30', 10),
+  eventStartBufferMinutes: parseInt(process.env.EVENT_START_BUFFER_MINUTES || '15', 10),
+  eventEndBufferMinutes: parseInt(process.env.EVENT_END_BUFFER_MINUTES || '60', 10),
 };
 
 export class TimeSensitiveOperations {
   private config: TimingConfig;
 
   constructor(config: Partial<TimingConfig> = {}) {
+    // ✅ FIXED: Merge environment-loaded defaults with any overrides
     this.config = { ...DEFAULT_CONFIG, ...config };
+    
+    // Log the active configuration on initialization
+    logger.info({
+      config: this.config,
+      source: 'environment + defaults'
+    }, 'TimeSensitiveOperations initialized with config');
   }
 
   /**
@@ -260,7 +269,7 @@ export class TimeSensitiveOperations {
   getTimingCheckSQL(eventTableAlias: string = 'e', scheduleTableAlias: string = 's'): string {
     const cutoffHours = this.config.modificationCutoffHours;
     return `
-      (${scheduleTableAlias}.starts_at IS NULL 
+      (${scheduleTableAlias}.starts_at IS NULL
        OR ${scheduleTableAlias}.starts_at > NOW() + INTERVAL '${cutoffHours} hours')
     `;
   }
@@ -331,9 +340,16 @@ export class TimeSensitiveOperations {
       }, `Timing check failed for ${operation}`);
     }
   }
+
+  /**
+   * Get current configuration (useful for debugging)
+   */
+  getConfig(): TimingConfig {
+    return { ...this.config };
+  }
 }
 
-// Export singleton instance with default config
+// Export singleton instance with environment-loaded config
 export const timeSensitiveOps = new TimeSensitiveOperations();
 
 // Export factory for custom config

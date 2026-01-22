@@ -3,39 +3,40 @@ import * as Joi from 'joi';
 /**
  * SECURITY FIX (SD6): Define explicit credential schemas per provider
  * Removed .unknown(true) to prevent arbitrary properties that could be security risks
+ * SECURITY FIX: Added max length constraints to all credential fields
  */
 
 // Provider-specific credential schemas
 const stripeCredentialsSchema = Joi.object({
-  apiKey: Joi.string().required(),
-  secretKey: Joi.string().required(),
-  webhookSecret: Joi.string(),
-  accountId: Joi.string()
+  apiKey: Joi.string().max(500).required(),
+  secretKey: Joi.string().max(500).required(),
+  webhookSecret: Joi.string().max(500),
+  accountId: Joi.string().max(500)
 }).options({ stripUnknown: true });
 
 const squareCredentialsSchema = Joi.object({
-  accessToken: Joi.string().required(),
-  applicationId: Joi.string().required(),
-  locationId: Joi.string(),
+  accessToken: Joi.string().max(500).required(),
+  applicationId: Joi.string().max(500).required(),
+  locationId: Joi.string().max(500),
   environment: Joi.string().valid('sandbox', 'production')
 }).options({ stripUnknown: true });
 
 const toastCredentialsSchema = Joi.object({
-  clientId: Joi.string().required(),
-  clientSecret: Joi.string().required(),
-  restaurantGuid: Joi.string()
+  clientId: Joi.string().max(500).required(),
+  clientSecret: Joi.string().max(500).required(),
+  restaurantGuid: Joi.string().max(500)
 }).options({ stripUnknown: true });
 
 const mailchimpCredentialsSchema = Joi.object({
-  apiKey: Joi.string().required(),
-  serverPrefix: Joi.string().required(), // e.g., 'us1'
-  listId: Joi.string()
+  apiKey: Joi.string().max(500).required(),
+  serverPrefix: Joi.string().max(50).required(), // e.g., 'us1'
+  listId: Joi.string().max(500)
 }).options({ stripUnknown: true });
 
 const twilioCredentialsSchema = Joi.object({
-  accountSid: Joi.string().required(),
-  authToken: Joi.string().required(),
-  phoneNumber: Joi.string()
+  accountSid: Joi.string().max(500).required(),
+  authToken: Joi.string().max(500).required(),
+  phoneNumber: Joi.string().max(50)
 }).options({ stripUnknown: true });
 
 // Map provider to credential schema
@@ -95,9 +96,44 @@ export const updateIntegrationSchema = {
   body: Joi.object({
     config: baseConfigSchema,
     status: Joi.string().valid('active', 'inactive'),
-    // For credential updates, require full credential object for the provider
+    // SECURITY FIX: Provider-specific credential validation on updates
+    // Provider/type optional but required if updating credentials
+    provider: Joi.string().valid('square', 'stripe', 'toast', 'mailchimp', 'twilio'),
+    type: Joi.string().valid('square', 'stripe', 'toast', 'mailchimp', 'twilio'),
     credentials: Joi.object()
-  }).min(1).options({ stripUnknown: true })
+  })
+  .min(1)
+  .custom((value, helpers) => {
+    // SECURITY: If credentials are being updated, validate them based on provider
+    if (value.credentials && Object.keys(value.credentials).length > 0) {
+      const provider = value.provider || value.type;
+      
+      if (!provider) {
+        return helpers.error('any.custom', { 
+          message: 'Provider or type must be specified when updating credentials' 
+        });
+      }
+      
+      const credentialSchema = credentialSchemaMap[provider];
+      
+      if (credentialSchema) {
+        const { error, value: validatedCredentials } = credentialSchema.validate(value.credentials);
+        if (error) {
+          return helpers.error('any.custom', { 
+            message: `Invalid credentials for ${provider}: ${error.message}` 
+          });
+        }
+        // Replace with validated/stripped credentials
+        value.credentials = validatedCredentials;
+      }
+    }
+    
+    return value;
+  })
+  .messages({
+    'any.custom': '{{#message}}'
+  })
+  .options({ stripUnknown: true })
 };
 
 // Export for use in other modules

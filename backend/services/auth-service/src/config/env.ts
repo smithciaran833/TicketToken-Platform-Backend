@@ -2,10 +2,8 @@ import { config } from 'dotenv';
 import path from 'path';
 import { z } from 'zod';
 
-// Load environment variables
 config();
 
-// CM-S6: Zod schema for environment validation
 const envSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'test', 'staging', 'production']).default('development'),
@@ -32,31 +30,25 @@ const envSchema = z.object({
   JWT_PUBLIC_KEY: z.string().optional(),
   JWT_PRIVATE_KEY_PATH: z.string().optional(),
   JWT_PUBLIC_KEY_PATH: z.string().optional(),
-  // Key rotation - previous keys
   JWT_PRIVATE_KEY_PREVIOUS: z.string().optional(),
   JWT_PUBLIC_KEY_PREVIOUS: z.string().optional(),
 
-  // S2S (RS256) - Service-to-service tokens (separate from user JWT keys)
+  // S2S (RS256) - Service-to-service tokens
   S2S_PRIVATE_KEY: z.string().optional(),
   S2S_PUBLIC_KEY: z.string().optional(),
   S2S_PRIVATE_KEY_PATH: z.string().optional(),
   S2S_PUBLIC_KEY_PATH: z.string().optional(),
   S2S_TOKEN_EXPIRES_IN: z.string().regex(/^\d+[smhd]$/, 'Invalid duration format').default('24h'),
 
-  // Encryption - optional in schema, handled in validation
+  // Encryption
   ENCRYPTION_KEY: z.string().optional(),
 
-  // OAuth - Google
+  // OAuth - Google only
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
   GOOGLE_REDIRECT_URI: z.string().url().optional().or(z.literal('')),
 
-  // OAuth - GitHub
-  GITHUB_CLIENT_ID: z.string().optional(),
-  GITHUB_CLIENT_SECRET: z.string().optional(),
-  GITHUB_REDIRECT_URI: z.string().url().optional().or(z.literal('')),
-
-  // OAuth - Apple
+  // OAuth - Apple (Phase 2)
   APPLE_CLIENT_ID: z.string().optional(),
   APPLE_TEAM_ID: z.string().optional(),
   APPLE_KEY_ID: z.string().optional(),
@@ -99,20 +91,16 @@ const envSchema = z.object({
   DEFAULT_TENANT_ID: z.string().uuid().default('00000000-0000-0000-0000-000000000001'),
 });
 
-// Production-specific schema with stricter requirements
 const productionEnvSchema = envSchema.extend({
   ENCRYPTION_KEY: z.string().min(32, 'ENCRYPTION_KEY must be at least 32 characters'),
   RESEND_API_KEY: z.string().min(1, 'RESEND_API_KEY is required in production'),
   JWT_PRIVATE_KEY: z.string().min(1, 'JWT_PRIVATE_KEY is required in production'),
   JWT_PUBLIC_KEY: z.string().min(1, 'JWT_PUBLIC_KEY is required in production'),
-  // S2S keys required in production for proper isolation
   S2S_PRIVATE_KEY: z.string().min(1, 'S2S_PRIVATE_KEY is required in production'),
   S2S_PUBLIC_KEY: z.string().min(1, 'S2S_PUBLIC_KEY is required in production'),
-  // CAPTCHA required in production
   CAPTCHA_SECRET_KEY: z.string().min(1, 'CAPTCHA_SECRET_KEY is required in production'),
 });
 
-// Explicit type with ENCRYPTION_KEY as required string (we guarantee it in validateEnv)
 export interface EnvConfig {
   NODE_ENV: 'development' | 'test' | 'staging' | 'production';
   PORT: number;
@@ -134,19 +122,15 @@ export interface EnvConfig {
   JWT_PUBLIC_KEY_PATH: string;
   JWT_PRIVATE_KEY_PREVIOUS?: string;
   JWT_PUBLIC_KEY_PREVIOUS?: string;
-  // S2S keys - separate from user JWT keys
   S2S_PRIVATE_KEY?: string;
   S2S_PUBLIC_KEY?: string;
   S2S_PRIVATE_KEY_PATH: string;
   S2S_PUBLIC_KEY_PATH: string;
   S2S_TOKEN_EXPIRES_IN: string;
-  ENCRYPTION_KEY: string; // Always set (dev fallback or prod required)
+  ENCRYPTION_KEY: string;
   GOOGLE_CLIENT_ID?: string;
   GOOGLE_CLIENT_SECRET?: string;
   GOOGLE_REDIRECT_URI?: string;
-  GITHUB_CLIENT_ID?: string;
-  GITHUB_CLIENT_SECRET?: string;
-  GITHUB_REDIRECT_URI?: string;
   APPLE_CLIENT_ID?: string;
   APPLE_TEAM_ID?: string;
   APPLE_KEY_ID?: string;
@@ -177,7 +161,6 @@ function validateEnv(): EnvConfig {
   const nodeEnv = process.env.NODE_ENV || 'development';
   const isProduction = nodeEnv === 'production';
 
-  // Use stricter schema in production
   const schema = isProduction ? productionEnvSchema : envSchema;
 
   const result = schema.safeParse(process.env);
@@ -193,7 +176,6 @@ function validateEnv(): EnvConfig {
 
   const parsed = result.data;
 
-  // Handle encryption key with dev fallback - always ensure it's a string
   let encryptionKey: string = parsed.ENCRYPTION_KEY || '';
   if (!encryptionKey) {
     if (isProduction) {
@@ -203,7 +185,6 @@ function validateEnv(): EnvConfig {
     encryptionKey = 'dev-only-insecure-key-not-for-prod-32chars';
   }
 
-  // JWT key paths (development only)
   const defaultKeyPath = path.join(process.env.HOME || '/tmp', 'tickettoken-secrets');
 
   return {
@@ -227,7 +208,6 @@ function validateEnv(): EnvConfig {
     JWT_PUBLIC_KEY_PATH: parsed.JWT_PUBLIC_KEY_PATH || path.join(defaultKeyPath, 'jwt-public.pem'),
     JWT_PRIVATE_KEY_PREVIOUS: parsed.JWT_PRIVATE_KEY_PREVIOUS,
     JWT_PUBLIC_KEY_PREVIOUS: parsed.JWT_PUBLIC_KEY_PREVIOUS,
-    // S2S keys - fall back to JWT keys in dev if not set
     S2S_PRIVATE_KEY: parsed.S2S_PRIVATE_KEY,
     S2S_PUBLIC_KEY: parsed.S2S_PUBLIC_KEY,
     S2S_PRIVATE_KEY_PATH: parsed.S2S_PRIVATE_KEY_PATH || path.join(defaultKeyPath, 's2s-private.pem'),
@@ -237,9 +217,6 @@ function validateEnv(): EnvConfig {
     GOOGLE_CLIENT_ID: parsed.GOOGLE_CLIENT_ID,
     GOOGLE_CLIENT_SECRET: parsed.GOOGLE_CLIENT_SECRET,
     GOOGLE_REDIRECT_URI: parsed.GOOGLE_REDIRECT_URI || undefined,
-    GITHUB_CLIENT_ID: parsed.GITHUB_CLIENT_ID,
-    GITHUB_CLIENT_SECRET: parsed.GITHUB_CLIENT_SECRET,
-    GITHUB_REDIRECT_URI: parsed.GITHUB_REDIRECT_URI || undefined,
     APPLE_CLIENT_ID: parsed.APPLE_CLIENT_ID,
     APPLE_TEAM_ID: parsed.APPLE_TEAM_ID,
     APPLE_KEY_ID: parsed.APPLE_KEY_ID,
@@ -269,7 +246,6 @@ function validateEnv(): EnvConfig {
 
 export const env = validateEnv();
 
-// Log environment on startup (non-sensitive fields only)
 if (process.env.NODE_ENV !== 'test') {
   console.log('✅ Environment validated:', {
     NODE_ENV: env.NODE_ENV,

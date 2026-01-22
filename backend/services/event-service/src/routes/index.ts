@@ -11,14 +11,16 @@ import venueAnalyticsRoutes from './venue-analytics.routes';
 import healthRoutes from './health.routes';
 import cancellationRoutes from './cancellation.routes';
 import internalRoutes from './internal.routes';
+import eventContentRoutes from './event-content.routes';
+import eventReviewsRoutes from './event-reviews.routes';
 
 export default async function routes(app: FastifyInstance) {
   // Register health routes (no prefix, no auth)
   await app.register(healthRoutes);
-  
+
   // Register internal routes (S2S only, no user auth)
   await app.register(internalRoutes);
-  
+
   // Register all route modules
   await app.register(eventsRoutes);
   await app.register(scheduleRoutes);
@@ -30,4 +32,8 @@ export default async function routes(app: FastifyInstance) {
   await app.register(reportRoutes);
   await app.register(venueAnalyticsRoutes);
   await app.register(cancellationRoutes);
+  
+  // Register event content and reviews routes (now with proper auth)
+  await app.register(eventContentRoutes, { prefix: '/events' });
+  await app.register(eventReviewsRoutes, { prefix: '/events' });
 }

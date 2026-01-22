@@ -2,6 +2,7 @@ import { logger } from '../utils/logger';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import { trace, context, SpanContext } from '@opentelemetry/api';
+import type Redis from 'ioredis';
 
 /**
  * Service-to-Service (S2S) Authentication Configuration
@@ -100,106 +101,229 @@ export function validateTokenScopes(
 // ============================================================
 
 /**
- * In-memory revocation list for compromised tokens
- * In production, this should be backed by Redis for cluster-wide revocation
+ * Redis-backed revocation list for compromised tokens
+ * CRITICAL FIX: Cluster-wide revocation using Redis for multi-instance deployments
+ * 
+ * Redis Keys:
+ * - revoked:token:{hash} -> JSON({ revokedAt, reason })
+ * - revoked:service -> HASH { serviceId: JSON({ revokedAt, reason }) }
  */
 class TokenRevocationManager {
-  private revokedTokens: Map<string, { revokedAt: Date; reason: string; expiresAt: Date }> = new Map();
-  private revokedServices: Map<string, { revokedAt: Date; reason: string }> = new Map();
+  private redisClient: Redis | null = null;
   private cleanupInterval: NodeJS.Timeout | null = null;
+  // Fallback in-memory cache if Redis is unavailable
+  private fallbackTokens: Map<string, { revokedAt: Date; reason: string; expiresAt: Date }> = new Map();
+  private fallbackServices: Map<string, { revokedAt: Date; reason: string }> = new Map();
 
   constructor() {
-    // Clean up expired revocations every 5 minutes
+    // Cleanup will happen via Redis TTL, but keep interval for fallback cleanup
     this.cleanupInterval = setInterval(() => this.cleanup(), 5 * 60 * 1000);
-    logger.info('Token revocation manager initialized');
+    logger.info('Token revocation manager initialized (Redis-backed)');
+  }
+
+  /**
+   * Set Redis client (called after Redis initialization)
+   */
+  setRedisClient(client: Redis): void {
+    this.redisClient = client;
+    logger.info('Token revocation manager connected to Redis');
   }
 
   /**
    * Revoke a specific token
    */
-  revokeToken(tokenHash: string, reason: string, expiresAt: Date): void {
-    this.revokedTokens.set(tokenHash, {
-      revokedAt: new Date(),
-      reason,
-      expiresAt,
-    });
-    logger.warn({ tokenHash: tokenHash.substring(0, 8) + '...', reason }, 'Token revoked');
+  async revokeToken(tokenHash: string, reason: string, expiresAt: Date): Promise<void> {
+    const revokedAt = new Date();
+    const data = JSON.stringify({ revokedAt: revokedAt.toISOString(), reason });
+
+    // Calculate TTL in seconds
+    const ttlSeconds = Math.max(1, Math.floor((expiresAt.getTime() - Date.now()) / 1000));
+
+    try {
+      if (this.redisClient) {
+        // Store in Redis with TTL (auto-cleanup when token expires)
+        await this.redisClient.setex(`revoked:token:${tokenHash}`, ttlSeconds, data);
+        logger.warn({ tokenHash: tokenHash.substring(0, 8) + '...', reason, ttlSeconds }, 'Token revoked (Redis)');
+      } else {
+        // Fallback to in-memory
+        this.fallbackTokens.set(tokenHash, { revokedAt, reason, expiresAt });
+        logger.warn({ tokenHash: tokenHash.substring(0, 8) + '...', reason }, 'Token revoked (fallback)');
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message, tokenHash: tokenHash.substring(0, 8) }, 'Failed to revoke token in Redis, using fallback');
+      this.fallbackTokens.set(tokenHash, { revokedAt, reason, expiresAt });
+    }
   }
 
   /**
    * Revoke all tokens from a service (emergency)
    */
-  revokeService(serviceId: string, reason: string): void {
-    this.revokedServices.set(serviceId, {
-      revokedAt: new Date(),
-      reason,
-    });
-    logger.warn({ serviceId, reason }, 'All tokens from service revoked');
+  async revokeService(serviceId: string, reason: string): Promise<void> {
+    const revokedAt = new Date();
+    const data = JSON.stringify({ revokedAt: revokedAt.toISOString(), reason });
+
+    try {
+      if (this.redisClient) {
+        // Store in Redis HASH (no expiry - must be manually unrevoked)
+        await this.redisClient.hset('revoked:service', serviceId, data);
+        logger.warn({ serviceId, reason }, 'All tokens from service revoked (Redis)');
+      } else {
+        // Fallback to in-memory
+        this.fallbackServices.set(serviceId, { revokedAt, reason });
+        logger.warn({ serviceId, reason }, 'All tokens from service revoked (fallback)');
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message, serviceId }, 'Failed to revoke service in Redis, using fallback');
+      this.fallbackServices.set(serviceId, { revokedAt, reason });
+    }
   }
 
   /**
    * Unrevoke a service (after incident resolution)
    */
-  unrevokeService(serviceId: string): void {
-    this.revokedServices.delete(serviceId);
-    logger.info({ serviceId }, 'Service unrevoked');
+  async unrevokeService(serviceId: string): Promise<void> {
+    try {
+      if (this.redisClient) {
+        await this.redisClient.hdel('revoked:service', serviceId);
+        logger.info({ serviceId }, 'Service unrevoked (Redis)');
+      } else {
+        this.fallbackServices.delete(serviceId);
+        logger.info({ serviceId }, 'Service unrevoked (fallback)');
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message, serviceId }, 'Failed to unrevoke service in Redis, using fallback');
+      this.fallbackServices.delete(serviceId);
+    }
   }
 
   /**
    * Check if a token is revoked
    */
-  isTokenRevoked(tokenHash: string): boolean {
-    return this.revokedTokens.has(tokenHash);
+  async isTokenRevoked(tokenHash: string): Promise<boolean> {
+    try {
+      if (this.redisClient) {
+        const exists = await this.redisClient.exists(`revoked:token:${tokenHash}`);
+        return exists === 1;
+      } else {
+        return this.fallbackTokens.has(tokenHash);
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message, tokenHash: tokenHash.substring(0, 8) }, 'Failed to check token revocation in Redis, using fallback');
+      return this.fallbackTokens.has(tokenHash);
+    }
   }
 
   /**
    * Check if a service is revoked
    */
-  isServiceRevoked(serviceId: string): boolean {
-    return this.revokedServices.has(serviceId);
+  async isServiceRevoked(serviceId: string): Promise<boolean> {
+    try {
+      if (this.redisClient) {
+        const exists = await this.redisClient.hexists('revoked:service', serviceId);
+        return exists === 1;
+      } else {
+        return this.fallbackServices.has(serviceId);
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message, serviceId }, 'Failed to check service revocation in Redis, using fallback');
+      return this.fallbackServices.has(serviceId);
+    }
   }
 
   /**
    * Get revocation info for a token
    */
-  getTokenRevocationInfo(tokenHash: string): { revokedAt: Date; reason: string } | null {
-    const info = this.revokedTokens.get(tokenHash);
-    return info ? { revokedAt: info.revokedAt, reason: info.reason } : null;
+  async getTokenRevocationInfo(tokenHash: string): Promise<{ revokedAt: Date; reason: string } | null> {
+    try {
+      if (this.redisClient) {
+        const data = await this.redisClient.get(`revoked:token:${tokenHash}`);
+        if (data) {
+          const parsed = JSON.parse(data);
+          return { revokedAt: new Date(parsed.revokedAt), reason: parsed.reason };
+        }
+        return null;
+      } else {
+        const info = this.fallbackTokens.get(tokenHash);
+        return info ? { revokedAt: info.revokedAt, reason: info.reason } : null;
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Failed to get token revocation info from Redis');
+      const info = this.fallbackTokens.get(tokenHash);
+      return info ? { revokedAt: info.revokedAt, reason: info.reason } : null;
+    }
   }
 
   /**
    * Get revocation info for a service
    */
-  getServiceRevocationInfo(serviceId: string): { revokedAt: Date; reason: string } | null {
-    return this.revokedServices.get(serviceId) || null;
+  async getServiceRevocationInfo(serviceId: string): Promise<{ revokedAt: Date; reason: string } | null> {
+    try {
+      if (this.redisClient) {
+        const data = await this.redisClient.hget('revoked:service', serviceId);
+        if (data) {
+          const parsed = JSON.parse(data);
+          return { revokedAt: new Date(parsed.revokedAt), reason: parsed.reason };
+        }
+        return null;
+      } else {
+        return this.fallbackServices.get(serviceId) || null;
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Failed to get service revocation info from Redis');
+      return this.fallbackServices.get(serviceId) || null;
+    }
   }
 
   /**
    * Get revocation statistics
    */
-  getStats(): { revokedTokens: number; revokedServices: number } {
-    return {
-      revokedTokens: this.revokedTokens.size,
-      revokedServices: this.revokedServices.size,
-    };
+  async getStats(): Promise<{ revokedTokens: number; revokedServices: number }> {
+    try {
+      if (this.redisClient) {
+        // Count Redis keys with pattern
+        const tokenKeys = await this.redisClient.keys('revoked:token:*');
+        const serviceCount = await this.redisClient.hlen('revoked:service');
+        return {
+          revokedTokens: tokenKeys.length,
+          revokedServices: serviceCount,
+        };
+      } else {
+        return {
+          revokedTokens: this.fallbackTokens.size,
+          revokedServices: this.fallbackServices.size,
+        };
+      }
+    } catch (error: any) {
+      logger.error({ error: error.message }, 'Failed to get revocation stats from Redis');
+      return {
+        revokedTokens: this.fallbackTokens.size,
+        revokedServices: this.fallbackServices.size,
+      };
+    }
   }
 
   /**
-   * Clean up expired revocations
+   * Clean up expired revocations (fallback only - Redis uses TTL)
    */
   private cleanup(): void {
+    if (this.redisClient) {
+      // Redis handles cleanup via TTL
+      return;
+    }
+
+    // Clean up fallback cache
     const now = new Date();
     let cleaned = 0;
 
-    for (const [hash, info] of this.revokedTokens) {
+    for (const [hash, info] of this.fallbackTokens) {
       if (info.expiresAt < now) {
-        this.revokedTokens.delete(hash);
+        this.fallbackTokens.delete(hash);
         cleaned++;
       }
     }
 
     if (cleaned > 0) {
-      logger.debug({ cleaned }, 'Cleaned up expired token revocations');
+      logger.debug({ cleaned }, 'Cleaned up expired token revocations (fallback)');
     }
   }
 
@@ -218,7 +342,15 @@ class TokenRevocationManager {
 // Singleton revocation manager
 const revocationManager = new TokenRevocationManager();
 
-// Export revocation functions
+/**
+ * Initialize revocation manager with Redis client
+ * Call this after Redis is initialized
+ */
+export function initializeRevocationManager(redisClient: Redis): void {
+  revocationManager.setRedisClient(redisClient);
+}
+
+// Export revocation functions (async now due to Redis)
 export const revokeToken = (tokenHash: string, reason: string, expiresAt: Date) =>
   revocationManager.revokeToken(tokenHash, reason, expiresAt);
 export const revokeService = (serviceId: string, reason: string) =>
@@ -674,17 +806,17 @@ function hashToken(token: string): string {
  * TM6: Returns scopes for authorization
  * TM8: Checks revocation list
  */
-export function verifyServiceToken(token: string): {
+export async function verifyServiceToken(token: string): Promise<{
   valid: boolean;
   serviceId?: string;
   scopes?: TokenScope[];
   error?: string;
-} {
+}> {
   try {
     // TM8: Check if token is revoked
     const tokenHash = hashToken(token);
-    if (isTokenRevoked(tokenHash)) {
-      const info = revocationManager.getTokenRevocationInfo(tokenHash);
+    if (await isTokenRevoked(tokenHash)) {
+      const info = await revocationManager.getTokenRevocationInfo(tokenHash);
       logger.warn({ tokenHash: tokenHash.substring(0, 8) }, 'Revoked token used');
       return { valid: false, error: `Token revoked: ${info?.reason || 'unknown'}` };
     }
@@ -692,8 +824,8 @@ export function verifyServiceToken(token: string): {
     const decoded = JSON.parse(Buffer.from(token, 'base64').toString('utf-8'));
 
     // TM8: Check if service is revoked
-    if (isServiceRevoked(decoded.iss)) {
-      const info = revocationManager.getServiceRevocationInfo(decoded.iss);
+    if (await isServiceRevoked(decoded.iss)) {
+      const info = await revocationManager.getServiceRevocationInfo(decoded.iss);
       logger.warn({ serviceId: decoded.iss }, 'Revoked service attempted access');
       return { valid: false, error: `Service revoked: ${info?.reason || 'unknown'}` };
     }
@@ -733,7 +865,7 @@ export function verifyServiceToken(token: string): {
 /**
  * Verify an API key for inbound service requests
  */
-export function verifyApiKey(apiKey: string): { valid: boolean; serviceId?: string; error?: string } {
+export async function verifyApiKey(apiKey: string): Promise<{ valid: boolean; serviceId?: string; error?: string }> {
   if (!apiKey) {
     return { valid: false, error: 'API key required' };
   }
@@ -745,7 +877,7 @@ export function verifyApiKey(apiKey: string): { valid: boolean; serviceId?: stri
   const serviceId = SERVICE_CONFIG.apiKeys.get(apiKey);
   if (serviceId) {
     // TM8: Check if service is revoked
-    if (isServiceRevoked(serviceId)) {
+    if (await isServiceRevoked(serviceId)) {
       return { valid: false, error: 'Service revoked' };
     }
     return { valid: true, serviceId };
@@ -755,7 +887,7 @@ export function verifyApiKey(apiKey: string): { valid: boolean; serviceId?: stri
   const hashedServiceId = SERVICE_CONFIG.apiKeys.get(keyHash);
   if (hashedServiceId) {
     // TM8: Check if service is revoked
-    if (isServiceRevoked(hashedServiceId)) {
+    if (await isServiceRevoked(hashedServiceId)) {
       return { valid: false, error: 'Service revoked' };
     }
     return { valid: true, serviceId: hashedServiceId };
@@ -861,6 +993,8 @@ function timingSafeEqual(a: string, b: string): boolean {
 
 /**
  * Shutdown all managers
+ * MEDIUM FIX (Issue #6): This function should be called via the centralized shutdown manager
+ * Register with: registerShutdownHandler({ name: 'service-auth', priority: 'high', handler: shutdownServiceAuth })
  */
 export function shutdownServiceAuth(): void {
   tokenManager.shutdown();

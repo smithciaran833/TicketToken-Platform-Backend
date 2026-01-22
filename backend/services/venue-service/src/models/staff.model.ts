@@ -22,6 +22,7 @@ export interface IStaffMember {
   hourly_rate?: number;
   commission_percentage?: number;
   added_by?: string;
+  tenant_id?: string;
   created_at?: Date;
   updated_at?: Date;
 }
@@ -36,14 +37,19 @@ export interface IStaffWithUser extends IStaffMember {
 }
 
 /**
- * StaffModel - venue_staff table uses is_active for soft delete, NOT deleted_at
+ * StaffModel - venue_staff table uses is_active for soft delete (NOT deleted_at)
+ * 
+ * This model overrides BaseModel methods because venue_staff uses a different
+ * soft-delete pattern (is_active boolean) than the standard deleted_at timestamp.
  */
 export class StaffModel extends BaseModel {
   constructor(db: Knex | Knex.Transaction) {
     super('venue_staff', db);
   }
 
-  // Override: venue_staff has no deleted_at column
+  /**
+   * Override: venue_staff uses is_active, not deleted_at
+   */
   async findById(id: string, columns: string[] = ['*']) {
     return this.db(this.tableName)
       .where({ id })
@@ -51,7 +57,9 @@ export class StaffModel extends BaseModel {
       .first();
   }
 
-  // Override: venue_staff has no deleted_at column
+  /**
+   * Override: venue_staff uses is_active, not deleted_at
+   */
   async update(id: string, data: any) {
     const [record] = await this.db(this.tableName)
       .where({ id })
@@ -64,7 +72,9 @@ export class StaffModel extends BaseModel {
     return record;
   }
 
-  // Override: use is_active instead of deleted_at for soft delete
+  /**
+   * Override: venue_staff uses is_active instead of deleted_at
+   */
   async delete(id: string) {
     return this.db(this.tableName)
       .where({ id })
@@ -98,37 +108,48 @@ export class StaffModel extends BaseModel {
   }
 
   async addStaffMember(staffData: Partial<IStaffMember>): Promise<IStaffMember> {
-    const existing = await this.findByVenueAndUser(staffData.venue_id!, staffData.user_id!);
-    if (existing && existing.is_active) {
-      throw new Error('Staff member already exists for this venue');
-    }
+    return this.db.transaction(async (trx) => {
+      const existing = await trx(this.tableName)
+        .where({ venue_id: staffData.venue_id, user_id: staffData.user_id })
+        .first();
 
-    // If exists but inactive, reactivate instead of creating new
-    if (existing && !existing.is_active) {
+      // Check if exists and is active
+      if (existing && existing.is_active) {
+        throw new Error('Staff member already exists for this venue');
+      }
+
+      // If exists but inactive, reactivate instead of creating new
+      if (existing && !existing.is_active) {
+        const permissions = staffData.permissions && staffData.permissions.length > 0
+          ? staffData.permissions
+          : this.getDefaultPermissions(staffData.role!);
+
+        const [restored] = await trx(this.tableName)
+          .where({ id: existing.id })
+          .update({
+            is_active: true,
+            role: staffData.role,
+            permissions: permissions,
+            updated_at: new Date()
+          })
+          .returning('*');
+        return restored;
+      }
+
+      // Create new staff member
       const permissions = staffData.permissions && staffData.permissions.length > 0
         ? staffData.permissions
         : this.getDefaultPermissions(staffData.role!);
 
-      const [reactivated] = await this.db(this.tableName)
-        .where({ id: existing.id })
-        .update({
-          is_active: true,
-          role: staffData.role,
+      const [created] = await trx(this.tableName)
+        .insert({
+          ...staffData,
           permissions: permissions,
-          updated_at: new Date()
+          is_active: true,
         })
         .returning('*');
-      return reactivated;
-    }
 
-    const permissions = staffData.permissions && staffData.permissions.length > 0
-      ? staffData.permissions
-      : this.getDefaultPermissions(staffData.role!);
-
-    return this.create({
-      ...staffData,
-      permissions: permissions,
-      is_active: true,
+      return created;
     });
   }
 
@@ -144,26 +165,28 @@ export class StaffModel extends BaseModel {
     return this.update(id, updateData);
   }
 
-  async deactivateStaffMember(id: string): Promise<boolean> {
-    const result = await this.update(id, { is_active: false });
-    return !!result;
-  }
-
-  async reactivateStaffMember(id: string): Promise<boolean> {
-    const result = await this.update(id, { is_active: true });
-    return !!result;
-  }
-
   async updateLastLogin(id: string): Promise<void> {
     await this.db(this.tableName)
       .where({ id })
       .update({ updated_at: new Date() });
   }
 
-  async getUserVenues(userId: string): Promise<Array<{ venue_id: string; role: string }>> {
+  async getUserVenues(userId: string, tenantId: string): Promise<Array<{ venue_id: string; role: string }>> {
+    // Validate tenant ID format
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
+    // Join with venues table to filter by tenant_id
     return this.db(this.tableName)
-      .where({ user_id: userId, is_active: true })
-      .select('venue_id', 'role');
+      .join('venues', `${this.tableName}.venue_id`, 'venues.id')
+      .where({
+        [`${this.tableName}.user_id`]: userId,
+        'venues.tenant_id': tenantId
+      })
+      .where(`${this.tableName}.is_active`, true)
+      .whereNull('venues.deleted_at')
+      .select(`${this.tableName}.venue_id`, `${this.tableName}.role`);
   }
 
   async hasPermission(venueId: string, userId: string, permission: string): Promise<boolean> {
@@ -178,6 +201,36 @@ export class StaffModel extends BaseModel {
     }
 
     return staff.permissions?.includes(permission) || false;
+  }
+
+  /**
+   * Deactivate a staff member (soft delete using is_active)
+   */
+  async deactivateStaffMember(id: string): Promise<boolean> {
+    const [result] = await this.db(this.tableName)
+      .where({ id })
+      .update({
+        is_active: false,
+        updated_at: new Date()
+      })
+      .returning('*');
+
+    return !!result;
+  }
+
+  /**
+   * Reactivate a previously deactivated staff member
+   */
+  async reactivateStaffMember(id: string): Promise<boolean> {
+    const [result] = await this.db(this.tableName)
+      .where({ id })
+      .update({
+        is_active: true,
+        updated_at: new Date()
+      })
+      .returning('*');
+
+    return !!result;
   }
 
   private getDefaultPermissions(role: IStaffMember['role']): string[] {
@@ -225,7 +278,7 @@ export class StaffModel extends BaseModel {
       .first();
 
     const currentStaff = parseInt(String(result?.count || '0'), 10);
-    const limit = 50;
+    const limit = parseInt(process.env.MAX_STAFF_PER_VENUE || '50', 10);
 
     return {
       canAdd: currentStaff < limit,

@@ -4,10 +4,10 @@ import { incrementErrorMetric } from '../utils/metrics';
 
 /**
  * RFC 7807 Problem Details response format.
- * 
+ *
  * This is the standard format for HTTP API error responses as defined in:
  * https://datatracker.ietf.org/doc/html/rfc7807
- * 
+ *
  * CRITICAL FIX for audit findings:
  * - RH5: Consistent error format (RFC 7807)
  * - RH10: Don't expose internal state in errors
@@ -51,7 +51,7 @@ const ERROR_TYPES = {
 
 /**
  * Production-safe RFC 7807 error handler
- * 
+ *
  * Formats all errors according to RFC 7807 Problem Details spec
  * and sanitizes error responses to prevent information leakage.
  */
@@ -94,7 +94,8 @@ export async function errorHandler(
 
   // Track error metric for monitoring and alerting
   const errorType = getErrorTypeFromStatus(rfc7807Response.status, error);
-  incrementErrorMetric(errorType, rfc7807Response.status, request.url);
+  const tenantId = (request as any).user?.tenant_id; // ✅ FIXED: Extract tenantId from request
+  incrementErrorMetric(errorType, rfc7807Response.status, request.url, tenantId); // ✅ FIXED: Pass tenantId
 
   // Set headers for RFC 7807 response
   reply.header('Content-Type', 'application/problem+json');
@@ -114,7 +115,7 @@ function getErrorTypeFromStatus(statusCode: number, error: FastifyError): string
   if (errorName === 'UnauthorizedError') return 'unauthorized';
   if (errorName === 'ForbiddenError') return 'forbidden';
   if (errorName === 'ConflictError') return 'conflict';
-  
+
   // Fall back to status code mapping
   if (statusCode === 400) return 'bad_request';
   if (statusCode === 401) return 'unauthorized';
@@ -127,7 +128,7 @@ function getErrorTypeFromStatus(statusCode: number, error: FastifyError): string
   if (statusCode === 503) return 'service_unavailable';
   if (statusCode === 504) return 'timeout';
   if (statusCode >= 500) return 'internal';
-  
+
   return 'other';
 }
 
@@ -142,10 +143,10 @@ function buildRFC7807Response(
 ): RFC7807Error {
   const statusCode = error.statusCode || (error as any).status || 500;
   const errorCode = (error as any).code || getDefaultErrorCode(statusCode);
-  
+
   // Build instance URI (unique to this occurrence)
   const instance = `urn:uuid:${requestId}`;
-  
+
   // Handle PostgreSQL-specific errors
   if (errorCode === '23503') {
     return {
@@ -196,7 +197,7 @@ function buildRFC7807Response(
       detail: getSafeDetail(error, 'The request contains invalid data.', isProduction),
       instance,
       code: 'VALIDATION_ERROR',
-      errors: Array.isArray(validationErrors) 
+      errors: Array.isArray(validationErrors)
         ? validationErrors.map((e: any) => ({
             field: e.field || e.path || 'unknown',
             message: e.message || 'Invalid value',

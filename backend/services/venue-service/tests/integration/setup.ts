@@ -1,3 +1,9 @@
+import path from 'path';
+import dotenv from 'dotenv';
+
+// Load test environment FIRST
+dotenv.config({ path: path.join(__dirname, '../../.env.test') });
+
 import { startAllContainers, setContainerEnvVars, stopAllContainers } from './helpers/containers';
 import { getTestDb, runMigrations, truncateAllTables, closeDb } from './helpers/db';
 import { getTestRedis, flushRedis, closeRedis } from './helpers/redis';
@@ -7,15 +13,15 @@ beforeAll(async () => {
   console.log('[Setup] Starting test containers...');
   await startAllContainers();
   setContainerEnvVars();
-  
+
   // Initialize connections
   await getTestMongoDB();
   getTestDb();
   getTestRedis();
-  
+
   // Run migrations
   await runMigrations();
-  
+
   console.log('[Setup] Test environment ready');
 }, 120000);
 

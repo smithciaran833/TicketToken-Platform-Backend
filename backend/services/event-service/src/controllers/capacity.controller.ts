@@ -1,6 +1,4 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
-import { db } from '../config/database';
-import { CapacityService } from '../services/capacity.service';
 import { createProblemError } from '../middleware/error-handler';
 
 /**
@@ -8,6 +6,8 @@ import { createProblemError } from '../middleware/error-handler';
  * 
  * CRITICAL FIX for RH5: All errors use createProblemError() 
  * to ensure consistent RFC 7807 format via the global error handler.
+ * 
+ * HIGH PRIORITY FIX for Issue #6: Use DI container instead of direct instantiation
  */
 
 export async function getEventCapacity(
@@ -17,7 +17,9 @@ export async function getEventCapacity(
   const { eventId } = request.params;
   const tenantId = (request as any).tenantId;
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const sections = await capacityService.getEventCapacity(eventId, tenantId);
 
   return reply.send({ capacity: sections });
@@ -30,10 +32,12 @@ export async function getTotalCapacity(
   const { eventId } = request.params;
   const tenantId = (request as any).tenantId;
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const sections = await capacityService.getEventCapacity(eventId, tenantId);
 
-  const totals = sections.reduce((acc, section) => ({
+  const totals = sections.reduce((acc: any, section: any) => ({
     total_capacity: acc.total_capacity + (section.total_capacity || 0),
     available_capacity: acc.available_capacity + (section.available_capacity || 0),
     reserved_capacity: acc.reserved_capacity + (section.reserved_capacity || 0),
@@ -55,7 +59,9 @@ export async function getCapacityById(
   const { id } = request.params;
   const tenantId = (request as any).tenantId;
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const capacity = await capacityService.getCapacityById(id, tenantId);
 
   if (!capacity) {
@@ -82,7 +88,9 @@ export async function createCapacity(
   const authToken = request.headers.authorization || '';
   const data = request.body;
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const capacity = await capacityService.createCapacity(
     { ...data, event_id: eventId },
     tenantId,
@@ -107,7 +115,9 @@ export async function updateCapacity(
   const tenantId = (request as any).tenantId;
   const data = request.body;
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const capacity = await capacityService.updateCapacity(id, data, tenantId);
 
   if (!capacity) {
@@ -132,7 +142,9 @@ export async function checkAvailability(
     throw createProblemError(400, 'INVALID_QUANTITY', 'Quantity must be at least 1');
   }
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const available = await capacityService.checkAvailability(id, quantity, tenantId);
 
   return reply.send({ available, quantity });
@@ -158,7 +170,9 @@ export async function reserveCapacity(
     throw createProblemError(400, 'INVALID_QUANTITY', 'Quantity must be at least 1');
   }
 
-  const capacityService = new CapacityService(db);
+  // HIGH PRIORITY FIX for Issue #6: Use DI container
+  const container = (request as any).container;
+  const capacityService = container.resolve('capacityService');
   const capacity = await capacityService.reserveCapacity(
     id,
     quantity,

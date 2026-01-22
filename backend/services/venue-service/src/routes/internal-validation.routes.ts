@@ -46,8 +46,8 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
     // SECURITY FIX (HM18): Use constant-time comparison to prevent timing attacks
     const signatureBuffer = Buffer.from(signature, 'hex');
     const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-    
-    if (signatureBuffer.length !== expectedBuffer.length || 
+
+    if (signatureBuffer.length !== expectedBuffer.length ||
         !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
       return reply.status(401).send({ error: 'Invalid signature' });
     }
@@ -57,7 +57,7 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get('/internal/venues/:venueId/validate-ticket/:ticketId', async (request, reply) => {
     const { venueId, ticketId } = request.params as { venueId: string; ticketId: string };
-    
+
     // Pino logger format: object first, message second
     fastify.log.info({
       venueId,
@@ -119,15 +119,15 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
 
     try {
       const result = await db.raw(`
-        SELECT 
+        SELECT
           v.id, v.tenant_id, v.name, v.slug, v.description,
-          v.address, v.city, v.state, v.country, v.postal_code,
+          v.address_line1, v.city, v.state_province, v.country_code, v.postal_code,
           v.latitude, v.longitude, v.timezone,
-          v.capacity, v.status, v.is_verified,
-          v.wallet_address, v.owner_email, v.owner_name,
-          v.logo_url, v.banner_image_url,
-          v.contact_email, v.contact_phone, v.website_url,
-          v.created_at, v.updated_at
+          v.max_capacity, v.status, v.is_verified,
+          v.wallet_address,
+          v.logo_url, v.cover_image_url,
+          v.email, v.phone, v.website,
+          v.created_by, v.created_at, v.updated_at
         FROM venues v
         WHERE v.id = ? AND v.deleted_at IS NULL
       `, [venueId]);
@@ -152,29 +152,28 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
           name: venue.name,
           slug: venue.slug,
           description: venue.description,
-          address: venue.address,
+          addressLine1: venue.address_line1,
           city: venue.city,
-          state: venue.state,
-          country: venue.country,
+          state: venue.state_province,
+          country: venue.country_code,
           postalCode: venue.postal_code,
           latitude: venue.latitude,
           longitude: venue.longitude,
           timezone: venue.timezone,
-          capacity: venue.capacity,
+          capacity: venue.max_capacity,
           status: venue.status,
           isVerified: venue.is_verified,
           // Blockchain fields - critical for blockchain-service
           walletAddress: venue.wallet_address,
-          // Contact/owner info - for compliance
-          ownerEmail: venue.owner_email,
-          ownerName: venue.owner_name,
-          contactEmail: venue.contact_email,
-          contactPhone: venue.contact_phone,
-          websiteUrl: venue.website_url,
+          // Contact info
+          contactEmail: venue.email,
+          contactPhone: venue.phone,
+          websiteUrl: venue.website,
           // Media
           logoUrl: venue.logo_url,
-          bannerImageUrl: venue.banner_image_url,
+          bannerImageUrl: venue.cover_image_url,
           // Timestamps
+          createdBy: venue.created_by,
           createdAt: venue.created_at,
           updatedAt: venue.updated_at,
         },
@@ -211,9 +210,8 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       // Get venue with bank information
       const venueResult = await db.raw(`
-        SELECT 
+        SELECT
           v.id, v.tenant_id, v.name, v.status, v.is_verified,
-          v.owner_email, v.owner_name,
           vbi.bank_name, vbi.account_type, vbi.account_last_four,
           vbi.routing_number_last_four, vbi.bank_verified,
           vbi.bank_verified_at, vbi.bank_verification_method,
@@ -248,8 +246,6 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
           name: venue.name,
           status: venue.status,
           isVerified: venue.is_verified,
-          ownerEmail: venue.owner_email,
-          ownerName: venue.owner_name,
         },
         bankInfo: hasBankInfo ? {
           bankName: venue.bank_name,
@@ -302,7 +298,7 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
     try {
       // Get venue basic info
       const venueResult = await db.raw(`
-        SELECT 
+        SELECT
           id, tenant_id, name, status, is_verified, created_at
         FROM venues
         WHERE id = ? AND deleted_at IS NULL
@@ -332,7 +328,7 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         const chargebackQuery = `
-          SELECT 
+          SELECT
             COALESCE(SUM(chargeback_count), 0) as total_chargebacks,
             COALESCE(SUM(CASE WHEN period_end > $2 THEN chargeback_count ELSE 0 END), 0) as chargebacks_in_period,
             COALESCE(SUM(chargeback_amount_cents), 0) as total_chargeback_amount_cents,
@@ -343,18 +339,18 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
           WHERE venue_id = $1
         `;
         const chargebackResult = await db.raw(chargebackQuery, [venueId, cutoffDate.toISOString()]);
-        
+
         if (chargebackResult.rows.length > 0) {
           const row = chargebackResult.rows[0];
           const totalCB = parseInt(row.total_chargebacks || '0');
           const totalTx = parseInt(row.total_transactions || '0');
           const totalCBAmount = parseInt(row.total_chargeback_amount_cents || '0');
           const totalTxAmount = parseInt(row.total_transaction_amount_cents || '0');
-          
+
           // Calculate rates (as percentages)
           const cbRate = totalTx > 0 ? (totalCB / totalTx) * 100 : 0;
           const cbAmountRate = totalTxAmount > 0 ? (totalCBAmount / totalTxAmount) * 100 : 0;
-          
+
           // Determine risk level based on chargeback rate
           let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
           if (cbRate > 2.0) riskLevel = 'critical';
@@ -404,7 +400,7 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
         periodMonths: months,
         // Reserve recommendation based on risk level
         reserveRecommendation: {
-          recommendedReservePercent: 
+          recommendedReservePercent:
             chargebackMetrics.riskLevel === 'critical' ? 20 :
             chargebackMetrics.riskLevel === 'high' ? 15 :
             chargebackMetrics.riskLevel === 'medium' ? 10 : 5,

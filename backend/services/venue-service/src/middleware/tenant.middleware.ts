@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UnauthorizedError, ForbiddenError } from '../utils/errors';
 import { logger } from '../utils/logger';
+import { db } from '../config/database';
 
 const log = logger.child({ component: 'TenantMiddleware' });
 
@@ -73,11 +74,93 @@ export async function requireTenant(
     throw new UnauthorizedError('Invalid tenant context');
   }
 
-  // Set tenant context on request
+  // SECURITY FIX: Verify user belongs to the claimed tenant
+  const server = request.server as any;
+  const redis = server.container?.cradle?.redis;
+  
+  if (redis) {
+    // Check cache first
+    const cacheKey = `user_tenant:${user.id}`;
+    const cachedTenantId = await redis.get(cacheKey);
+    
+    if (cachedTenantId) {
+      if (cachedTenantId !== tenantId) {
+        log.error({
+          userId: user.id,
+          claimedTenantId: tenantId,
+          actualTenantId: cachedTenantId,
+          requestId: request.id,
+        }, 'User-tenant association mismatch (cached)');
+        throw new ForbiddenError('Invalid tenant access');
+      }
+    } else {
+      // Verify user-tenant association in database
+      const userRecord = await db('users')
+        .where({ id: user.id })
+        .select('tenant_id')
+        .first();
+      
+      if (!userRecord || userRecord.tenant_id !== tenantId) {
+        log.error({
+          userId: user.id,
+          claimedTenantId: tenantId,
+          actualTenantId: userRecord?.tenant_id,
+          requestId: request.id,
+        }, 'User-tenant association mismatch');
+        throw new ForbiddenError('Invalid tenant access');
+      }
+      
+      // Cache the validated association for 60 seconds
+      await redis.setex(cacheKey, 60, tenantId);
+    }
+  }
+
+  // SECURITY FIX: Verify tenant exists
+  if (redis) {
+    const tenantCacheKey = `tenant:${tenantId}`;
+    const cachedTenant = await redis.get(tenantCacheKey);
+    
+    if (!cachedTenant) {
+      const tenant = await db('tenants').where({ id: tenantId }).first();
+      if (!tenant) {
+        log.error({
+          userId: user.id,
+          tenantId,
+          requestId: request.id,
+        }, 'Tenant does not exist');
+        throw new UnauthorizedError('Invalid tenant');
+      }
+      // Cache tenant existence for 5 minutes
+      await redis.setex(tenantCacheKey, 300, JSON.stringify({ id: tenant.id, name: tenant.name }));
+    }
+  }
+
+  // Set RLS context in database for this request
+  try {
+    await db.raw("SELECT set_config('app.current_tenant_id', ?, true)", [tenantId]);
+  } catch (error) {
+    log.error({
+      userId: user.id,
+      tenantId,
+      error,
+      requestId: request.id,
+    }, 'Failed to set RLS context');
+    
+    // SECURITY FIX: Attempt to reset RLS context on error
+    try {
+      await db.raw("SELECT set_config('app.current_tenant_id', '', true)");
+    } catch (resetError) {
+      log.error({ resetError }, 'Failed to reset RLS context after error');
+    }
+    
+    throw new UnauthorizedError('Failed to establish tenant context');
+  }
+
+  // SECURITY FIX: Set tenant context with defensive coding
   const tenantContext: TenantContext = {
     tenantId,
-    tenantName: user.tenant_name,
-    tenantType: user.tenant_type,
+    tenantName: (typeof user.tenant_name === 'string' && user.tenant_name) ? user.tenant_name : undefined,
+    tenantType: (typeof user.tenant_type === 'string' && user.tenant_type) ? user.tenant_type : undefined,
   };
 
   request.tenantContext = tenantContext;

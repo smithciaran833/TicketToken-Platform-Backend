@@ -50,6 +50,10 @@ export const createCapacityBodySchema = {
     reserved_capacity: { type: 'integer', minimum: 0, maximum: 1000000 },
     buffer_capacity: { type: 'integer', minimum: 0, maximum: 1000000 },
     schedule_id: { type: 'string', pattern: uuidPattern },
+    // LOW PRIORITY ISSUE #16: Row Configuration Math
+    // TODO: Add service-layer validation in capacity.service.ts to ensure:
+    // rows × seats_per_row = total_capacity (when row_config is provided)
+    // This is a business logic validation that cannot be expressed in JSON Schema
     row_config: {
       type: 'object',
       additionalProperties: false,
@@ -68,7 +72,40 @@ export const createCapacityBodySchema = {
       additionalProperties: false,
       properties: {
         type: { type: 'string', enum: ['grid', 'custom', 'ga'] },
-        data: { type: 'object' }
+        data: {
+          type: 'object',
+          required: ['version', 'layout_type'],
+          additionalProperties: true,
+          properties: {
+            version: { type: 'string', pattern: '^[0-9]+\\.[0-9]+\\.[0-9]+$' },
+            layout_type: { 
+              type: 'string', 
+              enum: ['theater', 'stadium', 'general_admission', 'custom'] 
+            },
+            sections: {
+              type: 'array',
+              maxItems: 1000,
+              items: {
+                type: 'object',
+                additionalProperties: true,
+                properties: {
+                  id: { type: 'string', maxLength: 50 },
+                  name: { type: 'string', maxLength: 100 },
+                  rows: { type: 'integer', minimum: 0, maximum: 1000 },
+                  seats_per_row: { type: 'integer', minimum: 0, maximum: 1000 }
+                }
+              }
+            },
+            coordinates: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                width: { type: 'number', minimum: 0 },
+                height: { type: 'number', minimum: 0 }
+              }
+            }
+          }
+        }
       }
     },
     is_active: { type: 'boolean' },
@@ -108,7 +145,40 @@ export const updateCapacityBodySchema = {
       additionalProperties: false,
       properties: {
         type: { type: 'string', enum: ['grid', 'custom', 'ga'] },
-        data: { type: 'object' }
+        data: {
+          type: 'object',
+          required: ['version', 'layout_type'],
+          additionalProperties: true,
+          properties: {
+            version: { type: 'string', pattern: '^[0-9]+\\.[0-9]+\\.[0-9]+$' },
+            layout_type: { 
+              type: 'string', 
+              enum: ['theater', 'stadium', 'general_admission', 'custom'] 
+            },
+            sections: {
+              type: 'array',
+              maxItems: 1000,
+              items: {
+                type: 'object',
+                additionalProperties: true,
+                properties: {
+                  id: { type: 'string', maxLength: 50 },
+                  name: { type: 'string', maxLength: 100 },
+                  rows: { type: 'integer', minimum: 0, maximum: 1000 },
+                  seats_per_row: { type: 'integer', minimum: 0, maximum: 1000 }
+                }
+              }
+            },
+            coordinates: {
+              type: 'object',
+              additionalProperties: true,
+              properties: {
+                width: { type: 'number', minimum: 0 },
+                height: { type: 'number', minimum: 0 }
+              }
+            }
+          }
+        }
       }
     },
     is_active: { type: 'boolean' },
@@ -208,6 +278,14 @@ export const capacityResponseSchema = {
 /**
  * Capacity list response schema
  * RD5: Response schema for list endpoints
+ * 
+ * NAMING CONVENTION (Issue #12):
+ * Uses "capacities" (PLURAL) because a single event typically has MULTIPLE
+ * capacity configurations - one for each section/tier (e.g., VIP, General Admission,
+ * Balcony, Floor). Each capacity record represents a distinct seating section.
+ * 
+ * This differs from pricing which uses singular form, as pricing typically
+ * represents a single configuration per event (though with multiple tiers within it).
  */
 export const capacityListResponseSchema = {
   type: 'object',

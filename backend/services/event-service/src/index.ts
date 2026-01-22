@@ -7,6 +7,7 @@ validateEnv();
 
 // SI4: Validate service identity at startup (fail fast if invalid)
 import { validateServiceIdentity, getServiceIdentity, shutdownServiceAuth } from './config/service-auth';
+import { shutdownAuthMiddleware } from './middleware/auth';
 validateServiceIdentity();
 
 import Fastify from 'fastify';
@@ -18,7 +19,7 @@ import { initRedis, getRedis, closeRedisConnections } from './config/redis';
 import { initializeMongoDB, closeMongoDB } from './config/mongodb';
 import { createDependencyContainer } from './config/dependencies';
 import { ReservationCleanupService } from './services/reservation-cleanup.service';
-import { db, connectDatabase } from './config/database';
+import { getDb, connectDatabase } from './config/database';
 import routes from './routes';
 import healthRoutes from './routes/health.routes';
 import { register } from './utils/metrics';
@@ -166,6 +167,61 @@ async function start(): Promise<void> {
     registerResponseMiddleware(app);
     logger.info('Response middleware enabled (X-Request-ID, Cache-Control)');
 
+    // CRITICAL FIX Issue #4 & #8: Transaction wrapper for RLS safety
+    // Wrap ALL requests in a transaction to ensure SET LOCAL works correctly
+    // and doesn't leak between pooled connections
+    app.addHook('onRequest', async (request, reply) => {
+      try {
+        const db = getDb();
+        const trx = await db.transaction();
+        (request as any).transaction = trx;
+        request.log.debug({ requestId: request.id }, 'Transaction started for request');
+      } catch (error) {
+        logger.error({ error, requestId: request.id }, 'Failed to start transaction');
+        // Don't fail the request - let it proceed without transaction
+        // (will fall back to connection-level SET LOCAL)
+      }
+    });
+
+    // CRITICAL FIX Issue #4 & #8: Commit transaction on successful response
+    app.addHook('onResponse', async (request, reply) => {
+      const trx = (request as any).transaction;
+      if (trx) {
+        try {
+          await trx.commit();
+          request.log.debug({ requestId: request.id, statusCode: reply.statusCode }, 'Transaction committed');
+        } catch (error) {
+          logger.error({ error, requestId: request.id }, 'Failed to commit transaction');
+          // Transaction already complete or errored - safe to ignore
+        }
+      }
+    });
+
+    // CRITICAL FIX Issue #8: Rollback transaction and clean up RLS on error
+    app.addHook('onError', async (request, reply, error) => {
+      const trx = (request as any).transaction;
+      if (trx) {
+        try {
+          await trx.rollback();
+          request.log.debug({ requestId: request.id, error: error.message }, 'Transaction rolled back due to error');
+        } catch (rollbackError) {
+          logger.error({ error: rollbackError, requestId: request.id }, 'Failed to rollback transaction');
+          // Best effort - transaction might already be rolled back
+        }
+      }
+      
+      // Additional safety: Reset RLS context on error (belt and suspenders approach)
+      try {
+        const db = getDb();
+        await db.raw('RESET app.current_tenant_id');
+        request.log.debug({ requestId: request.id }, 'RLS context reset after error');
+      } catch (resetError) {
+        // Ignore - this is best-effort cleanup
+      }
+    });
+
+    logger.info('Transaction wrapper enabled for RLS safety (Issues #4, #8)');
+
     // Register health and metrics routes (no prefix, no auth)
     app.get('/health', async (_request, reply) => {
       const health: any = {
@@ -184,6 +240,7 @@ async function start(): Promise<void> {
 
       // Check database connectivity
       try {
+        const db = getDb();
         await db.raw('SELECT 1');
         health.checks.database = 'healthy';
       } catch (error) {
@@ -233,6 +290,7 @@ async function start(): Promise<void> {
 
     // Start reservation cleanup background job
     const cleanupIntervalMinutes = parseInt(process.env.RESERVATION_CLEANUP_INTERVAL_MINUTES || '1', 10);
+    const db = getDb();
     cleanupService = new ReservationCleanupService(db, cleanupIntervalMinutes);
     cleanupService.start();
     logger.info({ intervalMinutes: cleanupIntervalMinutes }, 'Reservation cleanup job started');
@@ -296,6 +354,10 @@ const gracefulShutdown = async (signal: string) => {
     // 3. Shutdown service auth (token manager, revocation manager)
     shutdownServiceAuth();
     logger.info('Service auth shutdown');
+    
+    // 3.5. Shutdown auth middleware (JWT key rotation)
+    shutdownAuthMiddleware();
+    logger.info('Auth middleware shutdown');
 
     // 4. Close database connections
     const pool = DatabaseService.getPool();
@@ -305,9 +367,13 @@ const gracefulShutdown = async (signal: string) => {
     }
 
     // 5. Close Knex connection
-    if (db) {
+    try {
+      const db = getDb();
       await db.destroy();
       logger.info('Knex database connection closed');
+    } catch (error) {
+      // Database might not be initialized, skip
+      logger.debug('Knex database not initialized or already closed');
     }
 
     // 6. Close MongoDB connection

@@ -16,7 +16,6 @@ export class CapacityService {
     this.capacityModel = new EventCapacityModel(db);
   }
 
-  // Helper to parse locked price data decimals
   private parseLockedPriceData(lockedPriceData: any): any {
     if (!lockedPriceData) return null;
 
@@ -35,6 +34,56 @@ export class CapacityService {
         ? parseFloat(lockedPriceData.tax_rate)
         : lockedPriceData.tax_rate
     };
+  }
+
+  /**
+   * HIGH PRIORITY FIX #3: Validate capacity math
+   * Ensures available + reserved + sold <= total_capacity
+   */
+  private validateCapacityMath(data: Partial<IEventCapacity>): void {
+    const totalCapacity = data.total_capacity ?? 0;
+    const availableCapacity = data.available_capacity ?? 0;
+    const reservedCapacity = data.reserved_capacity ?? 0;
+    const soldCount = data.sold_count ?? 0;
+
+    const allocated = availableCapacity + reservedCapacity + soldCount;
+
+    if (allocated > totalCapacity) {
+      throw new ValidationError([{
+        field: 'total_capacity',
+        message: `Capacity allocation (${allocated}) exceeds total capacity (${totalCapacity}). ` +
+                 `Available: ${availableCapacity}, Reserved: ${reservedCapacity}, Sold: ${soldCount}`
+      }]);
+    }
+
+    // Validate buffer capacity if provided
+    if (data.buffer_capacity !== undefined) {
+      const bufferCapacity = data.buffer_capacity;
+      if (bufferCapacity > availableCapacity) {
+        throw new ValidationError([{
+          field: 'buffer_capacity',
+          message: `Buffer capacity (${bufferCapacity}) cannot exceed available capacity (${availableCapacity})`
+        }]);
+      }
+    }
+  }
+
+  /**
+   * HIGH PRIORITY FIX #5: Validate purchase limits
+   * Ensures minimum_purchase <= maximum_purchase
+   */
+  private validatePurchaseLimits(data: Partial<IEventCapacity>): void {
+    const minPurchase = data.minimum_purchase;
+    const maxPurchase = data.maximum_purchase;
+
+    if (minPurchase !== undefined && maxPurchase !== undefined) {
+      if (minPurchase > maxPurchase) {
+        throw new ValidationError([{
+          field: 'minimum_purchase',
+          message: `Minimum purchase (${minPurchase}) cannot exceed maximum purchase (${maxPurchase})`
+        }]);
+      }
+    }
   }
 
   async getEventCapacity(eventId: string, tenantId: string): Promise<IEventCapacity[]> {
@@ -58,7 +107,6 @@ export class CapacityService {
   }
 
   async createCapacity(data: Partial<IEventCapacity>, tenantId: string, authToken: string): Promise<IEventCapacity> {
-    // Validate required fields
     if (!data.section_name || !data.total_capacity) {
       throw new ValidationError([
         { field: 'section_name', message: 'Section name is required' },
@@ -72,7 +120,6 @@ export class CapacityService {
       ]);
     }
 
-    // Before creating, validate total won't exceed venue capacity (if venue client available)
     if (data.event_id && this.venueClient) {
       await this.validateVenueCapacity(data.event_id, tenantId, authToken, data.total_capacity);
     }
@@ -88,6 +135,10 @@ export class CapacityService {
       is_visible: data.is_visible !== undefined ? data.is_visible : true,
     };
 
+    // HIGH PRIORITY FIX #3 & #5: Validate capacity math and purchase limits
+    this.validateCapacityMath(capacityData);
+    this.validatePurchaseLimits(capacityData);
+
     const [capacity] = await this.db('event_capacity')
       .insert(capacityData)
       .returning('*');
@@ -100,7 +151,6 @@ export class CapacityService {
   async updateCapacity(capacityId: string, data: Partial<IEventCapacity>, tenantId: string, authToken?: string): Promise<IEventCapacity> {
     const existing = await this.getCapacityById(capacityId, tenantId);
 
-    // If updating total_capacity, validate against venue
     if (data.total_capacity !== undefined && data.total_capacity !== existing.total_capacity) {
       if (data.total_capacity < 0) {
         throw new ValidationError([
@@ -108,7 +158,6 @@ export class CapacityService {
         ]);
       }
 
-      // Validate new total won't exceed venue capacity (if venue client available)
       if (authToken && this.venueClient) {
         const capacityDiff = data.total_capacity - existing.total_capacity;
         await this.validateVenueCapacity(existing.event_id, tenantId, authToken, capacityDiff);
@@ -141,7 +190,6 @@ export class CapacityService {
     pricingId?: string,
     authToken?: string
   ): Promise<IEventCapacity> {
-    // Validate quantity is positive
     if (quantity <= 0) {
       throw new ValidationError([{
         field: 'quantity',
@@ -149,9 +197,7 @@ export class CapacityService {
       }]);
     }
 
-    // Use transaction with row locking to prevent race conditions
     return await this.db.transaction(async (trx) => {
-      // Lock the row for update to prevent concurrent reservations
       const capacity = await trx('event_capacity')
         .where({ id: capacityId, tenant_id: tenantId })
         .forUpdate()
@@ -161,7 +207,6 @@ export class CapacityService {
         throw new NotFoundError('Capacity section');
       }
 
-      // Check availability after lock is acquired
       if (capacity.available_capacity < quantity) {
         throw new ValidationError([{
           field: 'quantity',
@@ -172,7 +217,6 @@ export class CapacityService {
       const reservedExpiresAt = new Date();
       reservedExpiresAt.setMinutes(reservedExpiresAt.getMinutes() + reservationMinutes);
 
-      // Lock price if pricing_id provided
       let lockedPriceData = null;
       if (pricingId && authToken) {
         const pricing = await trx('event_pricing')
@@ -180,7 +224,6 @@ export class CapacityService {
           .first();
 
         if (pricing) {
-          // Parse decimals to numbers for locked price
           const currentPrice = typeof pricing.current_price === 'string'
             ? parseFloat(pricing.current_price)
             : pricing.current_price;
@@ -208,7 +251,6 @@ export class CapacityService {
         }
       }
 
-      // Update with the locked row
       const [updated] = await trx('event_capacity')
         .where({ id: capacityId, tenant_id: tenantId })
         .update({
@@ -229,7 +271,6 @@ export class CapacityService {
         tenantId
       }, 'Capacity reserved with row lock');
 
-      // Parse locked_price_data before returning
       if (updated.locked_price_data) {
         updated.locked_price_data = this.parseLockedPriceData(updated.locked_price_data);
       }
@@ -274,42 +315,52 @@ export class CapacityService {
     return updated;
   }
 
+  /**
+   * CRITICAL FIX: Wrapped in transaction for atomicity
+   * Releases all expired reservations back to available capacity
+   */
   async releaseExpiredReservations(): Promise<number> {
     const now = new Date();
 
-    const expiredSections = await this.db('event_capacity')
-      .where('reserved_expires_at', '<=', now)
-      .whereNotNull('reserved_expires_at')
-      .where('reserved_capacity', '>', 0)
-      .select('*');
+    // CRITICAL FIX: Use transaction to ensure atomicity
+    return await this.db.transaction(async (trx) => {
+      // Find all expired sections with row locking
+      const expiredSections = await trx('event_capacity')
+        .where('reserved_expires_at', '<=', now)
+        .whereNotNull('reserved_expires_at')
+        .where('reserved_capacity', '>', 0)
+        .forUpdate()
+        .select('*');
 
-    if (expiredSections.length === 0) {
-      return 0;
-    }
+      if (expiredSections.length === 0) {
+        return 0;
+      }
 
-    let totalReleased = 0;
+      let totalReleased = 0;
 
-    for (const section of expiredSections) {
-      await this.db('event_capacity')
-        .where({ id: section.id })
-        .update({
-          available_capacity: this.db.raw('available_capacity + reserved_capacity'),
-          reserved_capacity: 0,
-          reserved_at: null,
-          reserved_expires_at: null,
-          locked_price_data: null,
-          updated_at: new Date()
-        });
+      // Update each section within the transaction
+      for (const section of expiredSections) {
+        await trx('event_capacity')
+          .where({ id: section.id })
+          .update({
+            available_capacity: trx.raw('available_capacity + reserved_capacity'),
+            reserved_capacity: 0,
+            reserved_at: null,
+            reserved_expires_at: null,
+            locked_price_data: null,
+            updated_at: new Date()
+          });
 
-      totalReleased += section.reserved_capacity;
-    }
+        totalReleased += section.reserved_capacity;
+      }
 
-    logger.info({
-      releasedCount: totalReleased,
-      expiredSections: expiredSections.length
-    }, 'Expired reservations released');
+      logger.info({
+        releasedCount: totalReleased,
+        expiredSections: expiredSections.length
+      }, 'Expired reservations released in transaction');
 
-    return totalReleased;
+      return totalReleased;
+    });
   }
 
   async getTotalEventCapacity(eventId: string, tenantId: string): Promise<{
@@ -334,28 +385,21 @@ export class CapacityService {
     };
   }
 
-  /**
-   * Validate that total section capacity doesn't exceed venue max capacity
-   * Skips validation if venueClient is not configured
-   */
   async validateVenueCapacity(
     eventId: string,
     tenantId: string,
     authToken: string,
     additionalCapacity: number = 0
   ): Promise<void> {
-    // Skip validation if venue client not configured
     if (!this.venueClient) {
       logger.debug({ eventId }, 'Skipping venue capacity validation - no venue client configured');
       return;
     }
 
-    // Get all sections for this event
     const sections = await this.getEventCapacity(eventId, tenantId);
     const currentTotalCapacity = sections.reduce((sum, s) => sum + s.total_capacity, 0);
     const newTotalCapacity = currentTotalCapacity + additionalCapacity;
 
-    // Get the event to find venue_id
     const event = await this.db('events')
       .where({ id: eventId, tenant_id: tenantId })
       .first();
@@ -388,18 +432,13 @@ export class CapacityService {
         venueMaxCapacity: venue.max_capacity
       }, 'Venue capacity validation passed');
     } catch (error: any) {
-      // If it's a validation error, rethrow it
       if (error instanceof ValidationError) {
         throw error;
       }
-      // For other errors (network, etc.), log and skip validation
       logger.warn({ eventId, error: error.message }, 'Could not validate venue capacity - skipping');
     }
   }
 
-  /**
-   * Get locked price for a reservation
-   */
   async getLockedPrice(capacityId: string, tenantId: string): Promise<any> {
     const capacity = await this.getCapacityById(capacityId, tenantId);
     return this.parseLockedPriceData(capacity.locked_price_data);

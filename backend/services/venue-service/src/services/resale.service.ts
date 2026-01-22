@@ -20,14 +20,14 @@ const JURISDICTION_RULES: Record<string, JurisdictionRule> = {
   'US-MI': { maxMultiplier: 1.0, notes: 'Michigan: Face value only for some events' },
   'US-MN': { maxMultiplier: 1.0, notes: 'Minnesota: Face value + service fee cap' },
   'US-NC': { maxMultiplier: null, notes: 'North Carolina: No price caps but disclosure required' },
-  
+
   // EU Countries with consumer protection
   'FR': { maxMultiplier: 1.0, notes: 'France: Face value only for sports/cultural events' },
   'DE': { maxMultiplier: null, notes: 'Germany: Platform-specific rules' },
   'UK': { maxMultiplier: 1.1, notes: 'UK: Face value + 10% for major events' },
   'IT': { maxMultiplier: 1.0, notes: 'Italy: Face value for major events' },
   'BE': { maxMultiplier: 1.0, notes: 'Belgium: Face value only' },
-  
+
   // Default - no restriction
   'DEFAULT': { maxMultiplier: null, notes: 'No jurisdiction-specific restrictions' },
 };
@@ -71,6 +71,20 @@ export class ResaleService {
   constructor(private readonly db: Knex) {}
 
   /**
+   * SECURITY FIX: Validate tenant context (copied from onboarding.service.ts)
+   */
+  private validateTenantContext(tenantId: string): void {
+    if (!tenantId) {
+      throw new Error('Tenant context required for resale operations');
+    }
+    // UUID format validation
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(tenantId)) {
+      throw new Error('Invalid tenant ID format');
+    }
+  }
+
+  /**
    * SECURITY FIX: Detect jurisdiction from buyer/seller location or event venue
    */
   detectJurisdiction(
@@ -82,11 +96,11 @@ export class ResaleService {
     // Priority: Event venue location > Buyer location
     const country = venueCountry || countryCode;
     const state = venueState || stateCode;
-    
+
     if (country === 'US' && state) {
       return `US-${state.toUpperCase()}`;
     }
-    
+
     return country?.toUpperCase() || 'DEFAULT';
   }
 
@@ -106,6 +120,8 @@ export class ResaleService {
     tenantId: string,
     jurisdiction: string
   ): Promise<ResalePolicy> {
+    this.validateTenantContext(tenantId);
+
     // Try to get event-specific policy first
     let policy = await this.db('resale_policies')
       .where({
@@ -173,16 +189,30 @@ export class ResaleService {
 
   /**
    * SECURITY FIX: Get transfer count for a ticket
+   * PHASE 4 FIX: Can optionally use FOR UPDATE lock within a transaction
    */
-  async getTransferCount(ticketId: string, tenantId: string): Promise<number> {
-    const result = await this.db('transfer_history')
+  async getTransferCount(
+    ticketId: string,
+    tenantId: string,
+    trx?: Knex.Transaction,
+    forUpdate: boolean = false
+  ): Promise<number> {
+    this.validateTenantContext(tenantId);
+
+    const db = trx || this.db;
+    let query = db('transfer_history')
       .where({
         ticket_id: ticketId,
         tenant_id: tenantId,
       })
-      .whereIn('transfer_type', ['resale', 'transfer'])
-      .count('* as count')
-      .first();
+      .whereIn('transfer_type', ['resale', 'transfer']);
+
+    // PHASE 4 FIX: Apply FOR UPDATE lock if requested (prevents race conditions)
+    if (forUpdate && trx) {
+      query = query.forUpdate();
+    }
+
+    const result = await query.count('* as count').first();
 
     return parseInt(result?.count as string || '0', 10);
   }
@@ -201,6 +231,8 @@ export class ResaleService {
     eventStartTime: Date,
     buyerJurisdiction: string
   ): Promise<TransferValidationResult> {
+    this.validateTenantContext(tenantId);
+
     // Get resale policy
     const policy = await this.getResalePolicy(venueId, eventId, tenantId, buyerJurisdiction);
 
@@ -224,7 +256,7 @@ export class ResaleService {
     if (policy.resaleCutoffHours !== null) {
       const cutoffTime = new Date(eventStartTime);
       cutoffTime.setHours(cutoffTime.getHours() - policy.resaleCutoffHours);
-      
+
       if (now > cutoffTime) {
         return {
           allowed: false,
@@ -371,7 +403,161 @@ export class ResaleService {
   }
 
   /**
+   * PHASE 4 FIX: Atomic validate and record transfer operation
+   * Combines getTransferCount(), validateTransfer(), and recordTransfer() in a single transaction
+   * with FOR UPDATE lock to prevent race conditions
+   */
+  async validateAndRecordTransfer(
+    ticketId: string,
+    eventId: string,
+    venueId: string,
+    tenantId: string,
+    sellerId: string,
+    buyerId: string,
+    transferType: 'purchase' | 'transfer' | 'resale' | 'gift' | 'refund',
+    requestedPrice: number,
+    faceValue: number,
+    eventStartTime: Date,
+    buyerJurisdiction: string,
+    sellerVerified: boolean = false,
+    verificationMethod: string | null = null,
+    metadata?: any
+  ): Promise<{ success: boolean; transferId?: string; error?: string; validation?: TransferValidationResult }> {
+    this.validateTenantContext(tenantId);
+
+    return this.db.transaction(async (trx) => {
+      // PHASE 4 FIX: Get transfer count with FOR UPDATE lock
+      const transferCount = await this.getTransferCount(ticketId, tenantId, trx, true);
+
+      // Get resale policy
+      const policy = await this.getResalePolicy(venueId, eventId, tenantId, buyerJurisdiction);
+
+      // Check if resale is allowed
+      if (!policy.resaleAllowed) {
+        return {
+          success: false,
+          error: 'Resale is not allowed for this event',
+          validation: { allowed: false, reason: 'Resale is not allowed for this event' }
+        };
+      }
+
+      // Check transfer count limit
+      if (policy.maxTransfers !== null && transferCount >= policy.maxTransfers) {
+        return {
+          success: false,
+          error: `Maximum transfer limit reached (${policy.maxTransfers} transfers allowed)`,
+          validation: {
+            allowed: false,
+            reason: `Maximum transfer limit reached (${policy.maxTransfers} transfers allowed)`,
+            currentTransferCount: transferCount,
+          }
+        };
+      }
+
+      // Check cutoff time
+      const now = new Date();
+      if (policy.resaleCutoffHours !== null) {
+        const cutoffTime = new Date(eventStartTime);
+        cutoffTime.setHours(cutoffTime.getHours() - policy.resaleCutoffHours);
+
+        if (now > cutoffTime) {
+          return {
+            success: false,
+            error: `Resale window closed ${policy.resaleCutoffHours} hours before event start`,
+            validation: {
+              allowed: false,
+              reason: `Resale window closed ${policy.resaleCutoffHours} hours before event start`,
+            }
+          };
+        }
+      }
+
+      // Check seller verification
+      if (policy.sellerVerificationRequired) {
+        const isVerified = await this.isSellerVerified(sellerId, venueId, tenantId);
+        if (!isVerified) {
+          return {
+            success: false,
+            error: 'Seller verification required for resale',
+            validation: {
+              allowed: false,
+              reason: 'Seller verification required for resale',
+              requiresVerification: true,
+            }
+          };
+        }
+      }
+
+      // Validate price
+      const priceValidation = await this.validatePrice(
+        requestedPrice,
+        faceValue,
+        policy,
+        buyerJurisdiction
+      );
+
+      if (!priceValidation.valid) {
+        return {
+          success: false,
+          error: priceValidation.reason,
+          validation: {
+            allowed: false,
+            reason: priceValidation.reason,
+            maxAllowedPrice: priceValidation.maxAllowedPrice || undefined,
+            jurisdictionRule: policy.jurisdictionRule || undefined,
+          }
+        };
+      }
+
+      // All validations passed - record the transfer
+      const [result] = await trx('transfer_history')
+        .insert({
+          ticket_id: ticketId,
+          event_id: eventId,
+          venue_id: venueId,
+          tenant_id: tenantId,
+          from_user_id: sellerId,
+          to_user_id: buyerId,
+          transfer_type: transferType,
+          price: requestedPrice,
+          original_face_value: faceValue,
+          currency: 'USD',
+          transfer_number: transferCount + 1,
+          jurisdiction: buyerJurisdiction,
+          seller_verified: sellerVerified,
+          verification_method: verificationMethod,
+          metadata: metadata ? JSON.stringify(metadata) : null,
+          transferred_at: new Date(),
+        })
+        .returning('id');
+
+      log.info({
+        ticketId,
+        eventId,
+        venueId,
+        transferType,
+        transferNumber: transferCount + 1,
+        price: requestedPrice,
+        jurisdiction: buyerJurisdiction,
+      }, 'Transfer validated and recorded atomically');
+
+      return {
+        success: true,
+        transferId: result.id,
+        validation: {
+          allowed: true,
+          maxAllowedPrice: priceValidation.maxAllowedPrice || undefined,
+          currentTransferCount: transferCount,
+          jurisdictionRule: policy.jurisdictionRule || undefined,
+          requiresVerification: false,
+        }
+      };
+    });
+  }
+
+  /**
    * SECURITY FIX: Record transfer in history
+   * NOTE: For backwards compatibility. New code should use validateAndRecordTransfer() for atomicity.
    */
   async recordTransfer(
     ticketId: string,
@@ -543,8 +729,9 @@ export class ResaleService {
     let riskScore = 0;
 
     // Check 1: High volume purchases for same event
+    // FIXED: Use ticket_transactions instead of ticket_purchases
     if (eventId) {
-      const ticketCount = await this.db('ticket_purchases')
+      const ticketCount = await this.db('ticket_transactions')
         .where({
           user_id: userId,
           event_id: eventId,
@@ -724,8 +911,9 @@ export class ResaleService {
     let riskScore = 0;
 
     // Signal 1: Seller/buyer same device
+    // FIXED: Use trusted_devices instead of user_devices
     if (buyerDeviceFingerprint) {
-      const sellerDevices = await this.db('user_devices')
+      const sellerDevices = await this.db('trusted_devices')
         .where({
           user_id: sellerId,
           tenant_id: tenantId,
@@ -765,7 +953,7 @@ export class ResaleService {
     if (sellerAccount) {
       const accountAge = Date.now() - new Date(sellerAccount.created_at).getTime();
       const daysSinceCreation = accountAge / (1000 * 60 * 60 * 24);
-      
+
       if (daysSinceCreation < 7) {
         signals.push({
           type: 'new_account',
@@ -798,28 +986,35 @@ export class ResaleService {
     }
 
     // Signal 5: IP reputation (if we have data)
+    // FIXED: Use ip_reputation instead of suspicious_ips
     if (buyerIp) {
-      const suspiciousIp = await this.db('suspicious_ips')
-        .where({ ip_address: buyerIp, active: true })
+      const ipReputation = await this.db('ip_reputation')
+        .where('ip_address', buyerIp)
+        .whereNotNull('blocked_at')
         .first();
 
-      if (suspiciousIp) {
+      if (ipReputation) {
         signals.push({
           type: 'suspicious_ip',
           severity: 'high',
-          description: `Transaction from flagged IP: ${suspiciousIp.reason}`,
+          description: `Transaction from flagged IP: ${ipReputation.blocked_reason || 'suspicious activity'}`,
         });
         riskScore += 40;
       }
     }
 
     // Signal 6: Cross-check with known fraud patterns
-    const fraudPattern = await this.db('fraud_patterns')
-      .where({ tenant_id: tenantId, active: true })
-      .whereRaw(`
-        (seller_pattern IS NULL OR ? ~ seller_pattern) AND
-        (buyer_pattern IS NULL OR ? ~ buyer_pattern)
-      `, [sellerId, buyerId])
+    // FIXED: Use fraud_rules instead of fraud_patterns
+    const fraudPattern = await this.db('fraud_rules')
+      .where({ tenant_id: tenantId, is_active: true })
+      .where(function() {
+        this.whereNull('seller_pattern')
+          .orWhereRaw('? ~ seller_pattern', [sellerId]);
+      })
+      .where(function() {
+        this.whereNull('buyer_pattern')
+          .orWhereRaw('? ~ buyer_pattern', [buyerId]);
+      })
       .first();
 
     if (fraudPattern) {

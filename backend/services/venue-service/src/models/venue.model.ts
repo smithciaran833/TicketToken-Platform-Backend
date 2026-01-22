@@ -1,21 +1,15 @@
 import { BaseModel } from './base.model';
 import { Knex } from 'knex';
 
-// Complete interface matching database schema (63 fields)
 export interface IVenue {
-  // Core Identity
   id?: string;
   tenant_id: string;
   name: string;
   slug: string;
   description?: string;
-
-  // Contact Information
   email: string;
   phone?: string;
   website?: string;
-
-  // Address - Flat columns for database querying
   address_line1: string;
   address_line2?: string;
   city: string;
@@ -25,38 +19,26 @@ export interface IVenue {
   latitude?: number;
   longitude?: number;
   timezone?: string;
-
-  // Venue Classification
   venue_type: 'general' | 'stadium' | 'arena' | 'theater' | 'convention_center' |
               'concert_hall' | 'amphitheater' | 'comedy_club' | 'nightclub' | 'bar' |
               'lounge' | 'cabaret' | 'park' | 'festival_grounds' | 'outdoor_venue' |
               'sports_complex' | 'gymnasium' | 'museum' | 'gallery' | 'restaurant' |
               'hotel' | 'other';
-
-  // Capacity
   max_capacity: number;
   standing_capacity?: number;
   seated_capacity?: number;
   vip_capacity?: number;
-
-  // Media
   logo_url?: string;
   cover_image_url?: string;
   image_gallery?: string[];
   virtual_tour_url?: string;
-
-  // Business Information
   business_name?: string;
   business_registration?: string;
   tax_id?: string;
   business_type?: string;
-
-  // Blockchain
   wallet_address?: string;
   collection_address?: string;
   royalty_percentage?: number;
-
-  // Stripe Connect
   stripe_connect_account_id?: string;
   stripe_connect_status?: string;
   stripe_connect_charges_enabled?: boolean;
@@ -65,44 +47,31 @@ export interface IVenue {
   stripe_connect_capabilities?: Record<string, any>;
   stripe_connect_country?: string;
   stripe_connect_onboarded_at?: Date;
-
-  // Status & Verification
-  status?: 'PENDING' | 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'CLOSED';
+  status?: 'pending' | 'active' | 'inactive' | 'suspended';
   is_verified?: boolean;
   verified_at?: Date;
   verification_level?: string;
-
-  // Features & Amenities
   features?: string[];
   amenities?: Record<string, any>;
   accessibility_features?: string[];
-
-  // Policies
   age_restriction?: number;
   dress_code?: string;
   prohibited_items?: string[];
   cancellation_policy?: string;
   refund_policy?: string;
-
-  // Social & Ratings
   social_media?: Record<string, any>;
   average_rating?: number;
   total_reviews?: number;
   total_events?: number;
   total_tickets_sold?: number;
-
-  // Metadata
   metadata?: Record<string, any>;
   tags?: string[];
-
-  // Audit Trail
   created_by?: string;
   updated_by?: string;
   created_at?: Date;
   updated_at?: Date;
   deleted_at?: Date;
-
-  // Legacy/Compatibility Fields (for backward compatibility with old API)
+  version?: number;
   address?: {
     street: string;
     city: string;
@@ -110,8 +79,8 @@ export interface IVenue {
     zipCode: string;
     country?: string;
   };
-  type?: string; // Maps to venue_type
-  capacity?: number; // Maps to max_capacity
+  type?: string;
+  capacity?: number;
   settings?: Record<string, any>;
   onboarding?: Record<string, boolean>;
   onboarding_status?: 'pending' | 'in_progress' | 'completed';
@@ -123,9 +92,17 @@ export class VenueModel extends BaseModel {
     super('venues', db);
   }
 
-  async findBySlug(slug: string): Promise<IVenue | null> {
+  /**
+   * SECURITY FIX: Find venue by ID with required tenant validation
+   * This is the primary method that should be used for tenant-scoped lookups
+   */
+  async findByIdWithTenant(id: string, tenantId: string): Promise<IVenue | null> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
     const venue = await this.db('venues')
-      .where({ slug })
+      .where({ id, tenant_id: tenantId })
       .whereNull('deleted_at')
       .first();
 
@@ -135,6 +112,27 @@ export class VenueModel extends BaseModel {
     return null;
   }
 
+  async findBySlug(slug: string, tenantId: string): Promise<IVenue | null> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
+    const venue = await this.db('venues')
+      .where({ slug, tenant_id: tenantId })
+      .whereNull('deleted_at')
+      .first();
+
+    if (venue) {
+      return this.transformFromDb(venue);
+    }
+    return null;
+  }
+
+  /**
+   * DEPRECATED: Use findByIdWithTenant for tenant-scoped lookups
+   * This method is kept for backward compatibility but should be avoided
+   * It relies on RLS for tenant isolation which may not always be active
+   */
   async findById(id: string): Promise<IVenue | null> {
     const venue = await super.findById(id);
     if (venue) {
@@ -150,7 +148,7 @@ export class VenueModel extends BaseModel {
       ...venueData,
       slug,
       timezone: venueData.timezone || 'UTC',
-      status: venueData.status || 'ACTIVE',
+      status: venueData.status || 'active',
       is_verified: venueData.is_verified || false,
       average_rating: 0.00,
       total_reviews: 0,
@@ -164,7 +162,6 @@ export class VenueModel extends BaseModel {
     return this.transformFromDb(created);
   }
 
-  // Override update to use transformation
   async update(id: string, data: Partial<IVenue>): Promise<IVenue> {
     const dbData = this.transformForDb(data);
     const [record] = await this.db(this.tableName)
@@ -179,31 +176,67 @@ export class VenueModel extends BaseModel {
     return this.transformFromDb(record);
   }
 
-  async updateOnboardingStatus(venueId: string, status: 'pending' | 'in_progress' | 'completed'): Promise<boolean> {
-    const result = await this.update(venueId, {
-      metadata: { onboarding_status: status }
-    });
-    return !!result;
+  /**
+   * SECURITY FIX: Update with tenant validation
+   */
+  async updateWithTenant(id: string, tenantId: string, data: Partial<IVenue>): Promise<IVenue> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
+    const dbData = this.transformForDb(data);
+    const [record] = await this.db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .whereNull('deleted_at')
+      .update({
+        ...dbData,
+        updated_at: new Date()
+      })
+      .returning('*');
+
+    if (!record) {
+      throw new Error('Venue not found or access denied');
+    }
+
+    return this.transformFromDb(record);
   }
 
-  /**
-   * Check if venue can receive payments via Stripe Connect
-   */
+  async updateOnboardingStatus(venueId: string, status: 'pending' | 'in_progress' | 'completed'): Promise<boolean> {
+    return this.db.transaction(async (trx) => {
+      const withTrx = this.withTransaction(trx);
+      const result = await withTrx.update(venueId, {
+        metadata: { onboarding_status: status }
+      });
+      return !!result;
+    });
+  }
+
   canReceivePayments(venue: IVenue): boolean {
     return !!(venue.stripe_connect_charges_enabled && venue.stripe_connect_payouts_enabled);
   }
 
-  async getActiveVenues(options: any = {}): Promise<IVenue[]> {
-    const venues = await this.findAll({ status: 'ACTIVE' }, options);
+  async getActiveVenues(tenantId: string, options: any = {}): Promise<IVenue[]> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
+    const venues = await this.findAll({ tenant_id: tenantId, status: 'active' }, options);
     return venues.map((v: any) => this.transformFromDb(v));
   }
 
-  async getVenuesByType(venueType: IVenue['venue_type'], options: any = {}): Promise<IVenue[]> {
-    const venues = await this.findAll({ venue_type: venueType, status: 'ACTIVE' }, options);
+  async getVenuesByType(tenantId: string, venueType: IVenue['venue_type'], options: any = {}): Promise<IVenue[]> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
+    const venues = await this.findAll({ tenant_id: tenantId, venue_type: venueType, status: 'active' }, options);
     return venues.map((v: any) => this.transformFromDb(v));
   }
 
-  async searchVenues(searchTerm: string, options: any = {}): Promise<IVenue[]> {
+  async searchVenues(tenantId: string, searchTerm: string, options: any = {}): Promise<IVenue[]> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
     const {
       limit = 20,
       offset = 0,
@@ -215,8 +248,9 @@ export class VenueModel extends BaseModel {
     } = options;
 
     let query = this.db('venues')
+      .where({ tenant_id: tenantId })
       .whereNull('deleted_at')
-      .where('status', 'ACTIVE');
+      .where('status', 'active');
 
     if (searchTerm) {
       query = query.where(function(this: any) {
@@ -247,12 +281,19 @@ export class VenueModel extends BaseModel {
     return venues.map((v: any) => this.transformFromDb(v));
   }
 
-  async getVenueStats(venueId: string): Promise<any> {
-    const venue = await this.findById(venueId);
+  async getVenueStats(venueId: string, tenantId?: string): Promise<any> {
+    let query = this.db('venues').where({ id: venueId });
+
+    if (tenantId) {
+      query = query.where({ tenant_id: tenantId });
+    }
+
+    const venue = await query.whereNull('deleted_at').first();
+
     if (!venue) return null;
 
     return {
-      venue,
+      venue: this.transformFromDb(venue),
       stats: {
         totalEvents: venue.total_events || 0,
         totalTicketsSold: venue.total_tickets_sold || 0,
@@ -262,6 +303,22 @@ export class VenueModel extends BaseModel {
         totalReviews: venue.total_reviews || 0,
       },
     };
+  }
+
+  /**
+   * SECURITY FIX: Soft delete with tenant validation
+   */
+  async softDeleteWithTenant(id: string, tenantId: string): Promise<boolean> {
+    if (!tenantId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tenantId)) {
+      throw new Error('Invalid tenant context');
+    }
+
+    const result = await this.db(this.tableName)
+      .where({ id, tenant_id: tenantId })
+      .whereNull('deleted_at')
+      .update({ deleted_at: new Date() });
+
+    return result > 0;
   }
 
   private transformForDb(venueData: Partial<IVenue>): any {
@@ -307,7 +364,7 @@ export class VenueModel extends BaseModel {
 
     if (venueData.logo_url !== undefined) dbData.logo_url = venueData.logo_url;
     if (venueData.cover_image_url !== undefined) dbData.cover_image_url = venueData.cover_image_url;
-    if (venueData.image_gallery !== undefined) dbData.image_gallery = JSON.stringify(venueData.image_gallery);
+    if (venueData.image_gallery !== undefined) dbData.image_gallery = venueData.image_gallery;
     if (venueData.virtual_tour_url !== undefined) dbData.virtual_tour_url = venueData.virtual_tour_url;
 
     if (venueData.business_name !== undefined) dbData.business_name = venueData.business_name;
@@ -319,7 +376,6 @@ export class VenueModel extends BaseModel {
     if (venueData.collection_address !== undefined) dbData.collection_address = venueData.collection_address;
     if (venueData.royalty_percentage !== undefined) dbData.royalty_percentage = venueData.royalty_percentage;
 
-    // Stripe Connect fields
     if (venueData.stripe_connect_account_id !== undefined) dbData.stripe_connect_account_id = venueData.stripe_connect_account_id;
     if (venueData.stripe_connect_status !== undefined) dbData.stripe_connect_status = venueData.stripe_connect_status;
     if (venueData.stripe_connect_charges_enabled !== undefined) dbData.stripe_connect_charges_enabled = venueData.stripe_connect_charges_enabled;
@@ -331,7 +387,7 @@ export class VenueModel extends BaseModel {
 
     if (venueData.status !== undefined) dbData.status = venueData.status;
     if (venueData.is_active !== undefined) {
-      dbData.status = venueData.is_active ? 'ACTIVE' : 'INACTIVE';
+      dbData.status = venueData.is_active ? 'active' : 'inactive';
     }
     if (venueData.is_verified !== undefined) dbData.is_verified = venueData.is_verified;
     if (venueData.verified_at !== undefined) dbData.verified_at = venueData.verified_at;
@@ -359,6 +415,8 @@ export class VenueModel extends BaseModel {
     if (venueData.created_by !== undefined) dbData.created_by = venueData.created_by;
     if (venueData.updated_by !== undefined) dbData.updated_by = venueData.updated_by;
 
+    if (venueData.version !== undefined) dbData.version = venueData.version;
+
     return dbData;
   }
 
@@ -369,6 +427,7 @@ export class VenueModel extends BaseModel {
       try {
         dbVenue.image_gallery = JSON.parse(dbVenue.image_gallery);
       } catch (e) {
+        console.error('Failed to parse venue image_gallery JSON:', e);
         dbVenue.image_gallery = [];
       }
     }
@@ -447,10 +506,11 @@ export class VenueModel extends BaseModel {
       created_at: dbVenue.created_at,
       updated_at: dbVenue.updated_at,
       deleted_at: dbVenue.deleted_at,
+      version: dbVenue.version || 1,
       address: addressObject,
       type: dbVenue.venue_type,
       capacity: dbVenue.max_capacity,
-      is_active: dbVenue.status === 'ACTIVE',
+      is_active: dbVenue.status === 'active',
       onboarding_status: (dbVenue.metadata?.onboarding_status || 'pending') as 'pending' | 'in_progress' | 'completed',
     };
   }

@@ -1,5 +1,6 @@
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
+import { CacheIntegration } from './cache-integration';
 
 export interface BrandingConfig {
   venueId: string;
@@ -61,20 +62,114 @@ function toSnakeCase(obj: Record<string, any>): Record<string, any> {
 }
 
 export class BrandingService {
+  private cache?: CacheIntegration;
+
+  constructor(cache?: CacheIntegration) {
+    this.cache = cache;
+  }
+
+  /**
+   * SECURITY FIX: Validate tenant context
+   */
+  private validateTenantContext(tenantId?: string): void {
+    if (!tenantId) {
+      throw new Error('Tenant context required for branding operations');
+    }
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuidRegex.test(tenantId)) {
+      throw new Error('Invalid tenant ID format');
+    }
+  }
+
+  /**
+   * SECURITY FIX: Verify venue belongs to tenant
+   */
+  private async verifyVenueOwnership(venueId: string, tenantId: string): Promise<void> {
+    const venue = await db('venues')
+      .where({ id: venueId, tenant_id: tenantId })
+      .first();
+    
+    if (!venue) {
+      logger.warn({ venueId, tenantId }, 'Venue ownership verification failed');
+      throw new Error('Venue not found or access denied');
+    }
+  }
+
+  /**
+   * SECURITY FIX: Sanitize custom CSS to prevent injection attacks
+   */
+  private sanitizeCustomCss(css: string): string {
+    if (!css) return '';
+    
+    // Remove dangerous patterns
+    const dangerous = [
+      /@import/gi,
+      /url\s*\(/gi,
+      /expression\s*\(/gi,
+      /javascript:/gi,
+      /behavior:/gi,
+      /vbscript:/gi,
+      /-moz-binding/gi,
+    ];
+    
+    let sanitized = css;
+    dangerous.forEach(pattern => {
+      sanitized = sanitized.replace(pattern, '/* blocked */');
+    });
+    
+    // Limit length
+    return sanitized.slice(0, 50000);
+  }
+
+  /**
+   * SECURITY FIX: Validate URL format and protocol
+   */
+  private validateUrl(url: string, fieldName: string): void {
+    if (!url) return;
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) {
+        throw new Error(`${fieldName} must use HTTP or HTTPS`);
+      }
+    } catch {
+      throw new Error(`Invalid ${fieldName}: ${url}`);
+    }
+  }
+
   /**
    * Get branding configuration for a venue
    */
-  async getBrandingByVenueId(venueId: string): Promise<any> {
+  async getBrandingByVenueId(venueId: string, tenantId?: string): Promise<any> {
+    if (tenantId) {
+      this.validateTenantContext(tenantId);
+      await this.verifyVenueOwnership(venueId, tenantId);
+    }
+
+    // Check cache first (5 min TTL)
+    const cacheKey = `branding:${tenantId || 'global'}:${venueId}`;
+    if (this.cache) {
+      const cached = await this.cache.get(cacheKey);
+      if (cached) {
+        logger.debug({ venueId, tenantId }, 'Branding served from cache');
+        return cached;
+      }
+    }
+
     try {
       const branding = await db('venue_branding')
         .where('venue_id', venueId)
         .first();
 
-      if (!branding) {
-        return this.getDefaultBranding();
+      const result = branding || this.getDefaultBranding();
+
+      // Cache for 5 minutes
+      if (this.cache) {
+        await this.cache.set(cacheKey, result, 300).catch(err => {
+          logger.warn({ err, venueId }, 'Failed to cache branding');
+        });
       }
 
-      return branding;
+      return result;
     } catch (error) {
       logger.error('Error getting branding by venue ID:', error);
       throw error;
@@ -113,7 +208,10 @@ export class BrandingService {
   /**
    * Create or update branding configuration
    */
-  async upsertBranding(config: BrandingConfig): Promise<any> {
+  async upsertBranding(config: BrandingConfig, tenantId?: string): Promise<any> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(config.venueId, tenantId!);
+
     try {
       const { venueId, ...brandingData } = config;
 
@@ -126,6 +224,19 @@ export class BrandingService {
       // Check if venue has white-label tier
       if (venue.pricing_tier === 'standard') {
         throw new Error('Branding customization requires white-label or enterprise tier');
+      }
+
+      // SECURITY FIX: Validate URLs
+      this.validateUrl(brandingData.logoUrl || '', 'logoUrl');
+      this.validateUrl(brandingData.logoDarkUrl || '', 'logoDarkUrl');
+      this.validateUrl(brandingData.faviconUrl || '', 'faviconUrl');
+      this.validateUrl(brandingData.emailHeaderImage || '', 'emailHeaderImage');
+      this.validateUrl(brandingData.ticketBackgroundImage || '', 'ticketBackgroundImage');
+      this.validateUrl(brandingData.ogImageUrl || '', 'ogImageUrl');
+
+      // SECURITY FIX: Sanitize custom CSS
+      if (brandingData.customCss) {
+        brandingData.customCss = this.sanitizeCustomCss(brandingData.customCss);
       }
 
       // Validate colors
@@ -144,35 +255,28 @@ export class BrandingService {
       if (brandingData.backgroundColor) {
         this.validateHexColor(brandingData.backgroundColor);
       }
-
       // Convert camelCase to snake_case for database
       const dbData = toSnakeCase(brandingData);
-
-      // Check if branding exists
-      const existing = await db('venue_branding')
-        .where('venue_id', venueId)
-        .first();
-
-      let result;
-      if (existing) {
-        // Update
-        result = await db('venue_branding')
-          .where('venue_id', venueId)
-          .update({
-            ...dbData,
-            updated_at: new Date()
-          })
-          .returning('*');
-      } else {
-        // Insert
-        result = await db('venue_branding')
-          .insert({
-            venue_id: venueId,
-            ...dbData
-          })
-          .returning('*');
+      // Atomic upsert using ON CONFLICT to handle concurrent updates
+      const result = await db('venue_branding')
+        .insert({
+          venue_id: venueId,
+          ...dbData,
+          created_at: new Date(),
+          updated_at: new Date()
+        })
+        .onConflict('venue_id')
+        .merge({
+          ...dbData,
+          updated_at: new Date()
+        })
+        .returning('*');
+      // Invalidate cache after update
+      if (this.cache) {
+        await this.cache.delete(`branding:${tenantId || 'global'}:${venueId}`).catch(err => {
+          logger.warn({ err, venueId }, 'Failed to invalidate branding cache');
+        });
       }
-
       logger.info('Branding updated', { venueId });
       return result[0];
     } catch (error) {
@@ -214,63 +318,83 @@ export class BrandingService {
 
   /**
    * Upgrade/downgrade venue tier
+   * SECURITY FIX: Added tenant isolation and transaction wrapping
    */
-  async changeTier(venueId: string, newTier: string, changedBy: string, reason?: string): Promise<void> {
-    try {
-      // Validate new tier exists
-      const tierConfig = await this.getPricingTier(newTier);
-      if (!tierConfig) {
-        throw new Error('Invalid pricing tier');
-      }
+  async changeTier(venueId: string, newTier: string, changedBy: string, reason?: string, tenantId?: string): Promise<void> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
 
-      // Get current tier
-      const venue = await db('venues').where('id', venueId).first();
-      if (!venue) {
-        throw new Error('Venue not found');
-      }
+    // SECURITY FIX: Wrap in transaction
+    await db.transaction(async (trx) => {
+      try {
+        // Validate new tier exists
+        const tierConfig = await trx('white_label_pricing')
+          .where('tier_name', newTier)
+          .first();
+        
+        if (!tierConfig) {
+          throw new Error('Invalid pricing tier');
+        }
 
-      const oldTier = venue.pricing_tier;
+        // Get current tier
+        const venue = await trx('venues').where('id', venueId).first();
+        if (!venue) {
+          throw new Error('Venue not found');
+        }
 
-      // Update venue tier
-      await db('venues')
-        .where('id', venueId)
-        .update({
-          pricing_tier: newTier,
-          hide_platform_branding: tierConfig.hide_platform_branding,
-          updated_at: new Date()
+        const oldTier = venue.pricing_tier;
+
+        // Update venue tier
+        await trx('venues')
+          .where('id', venueId)
+          .update({
+            pricing_tier: newTier,
+            hide_platform_branding: tierConfig.hide_platform_branding,
+            updated_at: new Date()
+          });
+
+        // Record in history
+        await trx('venue_tier_history').insert({
+          venue_id: venueId,
+          from_tier: oldTier,
+          to_tier: newTier,
+          reason,
+          changed_by: changedBy
         });
 
-      // Record in history
-      await db('venue_tier_history').insert({
-        venue_id: venueId,
-        from_tier: oldTier,
-        to_tier: newTier,
-        reason,
-        changed_by: changedBy
-      });
+        // If downgrading from white-label, remove custom domain
+        if (oldTier !== 'standard' && newTier === 'standard') {
+          await trx('venues')
+            .where('id', venueId)
+            .update({ custom_domain: null });
 
-      // If downgrading from white-label, remove custom domain
-      if (oldTier !== 'standard' && newTier === 'standard') {
-        await db('venues')
-          .where('id', venueId)
-          .update({ custom_domain: null });
+          await trx('custom_domains')
+            .where('venue_id', venueId)
+            .update({ status: 'suspended' });
+        }
 
-        await db('custom_domains')
-          .where('venue_id', venueId)
-          .update({ status: 'suspended' });
+        logger.info('Venue tier changed', { venueId, oldTier, newTier, changedBy });
+      } catch (error) {
+        logger.error('Error changing venue tier:', error);
+        throw error;
       }
+    });
 
-      logger.info('Venue tier changed', { venueId, oldTier, newTier, changedBy });
-    } catch (error) {
-      logger.error('Error changing venue tier:', error);
-      throw error;
+    // Invalidate branding cache (tier affects branding)
+    if (this.cache) {
+      await this.cache.delete(`branding:${tenantId || 'global'}:${venueId}`).catch(err => {
+        logger.warn({ err, venueId }, 'Failed to invalidate branding cache on tier change');
+      });
     }
   }
 
   /**
    * Get tier history for a venue
    */
-  async getTierHistory(venueId: string): Promise<any[]> {
+  async getTierHistory(venueId: string, tenantId?: string): Promise<any[]> {
+    this.validateTenantContext(tenantId);
+    await this.verifyVenueOwnership(venueId, tenantId!);
+
     try {
       const history = await db('venue_tier_history')
         .where('venue_id', venueId)

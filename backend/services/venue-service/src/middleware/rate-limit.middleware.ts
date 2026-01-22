@@ -1,6 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import Redis from 'ioredis';
-import { RateLimitError } from '../utils/errors';
+import { RateLimitError, ServiceUnavailableError } from '../utils/errors';
 import { logger } from '../utils/logger';
 
 interface RateLimitOptions {
@@ -10,7 +10,9 @@ interface RateLimitOptions {
   skipSuccessfulRequests?: boolean;
   skipFailedRequests?: boolean;
   message?: string;
-  skipOnError?: boolean;  // FC6: Continue if Redis fails
+  skipOnError?: boolean;  // FC6: Continue if Redis fails (default true)
+  failClosed?: boolean;  // SECURITY FIX: Fail closed on Redis errors (overrides skipOnError)
+  criticalEndpoints?: string[];  // SECURITY FIX: Always fail closed for these endpoints
   banThreshold?: number;  // FC10: Number of violations before banning
   banDurationMs?: number; // FC10: Duration of ban in milliseconds
 }
@@ -113,36 +115,79 @@ export class RateLimiter {
     this.config = { ...defaultConfig, ...config };
   }
 
-  // SECURITY FIX (SR7): Include tenant ID in rate limit key for tenant isolation
-  private async checkLimit(key: string, options: RateLimitOptions, tenantId?: string): Promise<{
+  // SECURITY FIX: Improved rate limiting with sliding window and fail-closed option
+  private async checkLimit(
+    key: string,
+    options: RateLimitOptions,
+    tenantId?: string,
+    request?: FastifyRequest
+  ): Promise<{
     allowed: boolean;
     remaining: number;
     resetTime: number;
   }> {
     const now = Date.now();
-    const window = Math.floor(now / options.windowMs);
+    const windowStart = now - options.windowMs;
+
     // Include tenant ID in key to prevent cross-tenant rate limit interference
-    const redisKey = tenantId 
-      ? `rate_limit:tenant:${tenantId}:${key}:${window}`
-      : `rate_limit:global:${key}:${window}`;
+    const redisKey = tenantId
+      ? `rate_limit:tenant:${tenantId}:${key}`
+      : `rate_limit:global:${key}`;
 
     try {
-      // Use Redis pipeline for atomic operations
+      // SECURITY FIX: Check per-tenant key count limits (max 10000 keys per tenant)
+      if (tenantId) {
+        const keyCountKey = `rate_limit:keycount:${tenantId}`;
+        const keyCount = await this.redis.incr(keyCountKey);
+
+        if (keyCount === 1) {
+          // First key for this tenant, set 1 hour expiry on counter
+          await this.redis.expire(keyCountKey, 3600);
+        }
+
+        if (keyCount > 10000) {
+          logger.warn({ tenantId, keyCount }, 'Tenant rate limit key quota exceeded');
+          throw new ServiceUnavailableError('rate-limiter', 60);
+        }
+      }
+
+      // SECURITY FIX: Implement sliding window using Redis sorted set (ZSET)
       const pipeline = this.redis.pipeline();
-      pipeline.incr(redisKey);
-      pipeline.expire(redisKey, Math.ceil(options.windowMs / 1000));
+
+      // Remove old entries outside the window
+      pipeline.zremrangebyscore(redisKey, 0, windowStart);
+
+      // Count current entries in window
+      pipeline.zcard(redisKey);
+
+      // Add current request with timestamp as score
+      const requestId = `${now}-${Math.random()}`;
+      pipeline.zadd(redisKey, now, requestId);
+
+      // Set expiry on the key
+      pipeline.expire(redisKey, Math.ceil(options.windowMs / 1000) + 1);
 
       const results = await pipeline.exec();
-      const count = results?.[0]?.[1] as number || 1;
+      const count = (results?.[1]?.[1] as number) || 0;
 
-      const allowed = count <= options.max;
+      const allowed = count < options.max;
       const remaining = Math.max(0, options.max - count);
-      const resetTime = (window + 1) * options.windowMs;
+      const resetTime = now + options.windowMs;
 
       return { allowed, remaining, resetTime };
     } catch (error) {
-      // On Redis error, fail open (allow request) but log
-      logger.error({ error, key }, 'Rate limit check failed');
+      logger.error({ error, key, tenantId }, 'Rate limit check failed');
+
+      // SECURITY FIX: Fail closed if configured
+      const endpoint = request ? `${request.method}:${request.url}` : '';
+      const shouldFailClosed = options.failClosed ||
+                              (options.criticalEndpoints && options.criticalEndpoints.includes(endpoint));
+
+      if (shouldFailClosed) {
+        throw new ServiceUnavailableError('rate-limiter', 30);
+      }
+
+      // Default: fail open (backwards compatible)
       return { allowed: true, remaining: options.max, resetTime: now + options.windowMs };
     }
   }
@@ -152,7 +197,7 @@ export class RateLimiter {
     return async (request: FastifyRequest, reply: FastifyReply) => {
       let key: string;
       let options: RateLimitOptions;
-      
+
       // SECURITY FIX (SR7): Get tenant ID from request for tenant-scoped rate limiting
       const tenantId = (request as any).user?.tenant_id || (request as any).tenantId;
 
@@ -195,11 +240,22 @@ export class RateLimiter {
           return;
       }
 
+      // FIX: Set rate limit headers BEFORE checking if disabled
+      const now = Date.now();
+      const resetTime = now + options.windowMs;
+      reply.header('X-RateLimit-Limit', options.max.toString());
+      reply.header('X-RateLimit-Reset', new Date(resetTime).toISOString());
+
+      // Skip rate limiting check in tests, but headers are already set
+      if (process.env.DISABLE_RATE_LIMIT === 'true') {
+        reply.header('X-RateLimit-Remaining', options.max.toString());
+        return;
+      }
+
       // SECURITY FIX (SR7): Pass tenant ID for tenant-scoped keys
       const result = await this.checkLimit(key, options, tenantId);
 
-      // Set rate limit headers
-      reply.header('X-RateLimit-Limit', options.max.toString());
+      // Update remaining header with actual value
       reply.header('X-RateLimit-Remaining', result.remaining.toString());
       reply.header('X-RateLimit-Reset', new Date(result.resetTime).toISOString());
 
@@ -218,12 +274,12 @@ export class RateLimiter {
           resetTime: new Date(result.resetTime).toISOString(),
           retryAfter: Math.ceil((result.resetTime - Date.now()) / 1000),
         };
-        
+
         logger.warn(requestInfo, 'Rate limit exceeded');
-        
+
         // Emit metric for rate limit hits
         // This allows alerting on potential abuse patterns
-        
+
         reply.header('Retry-After', Math.ceil((result.resetTime - Date.now()) / 1000).toString());
         throw new RateLimitError(type, Math.ceil((result.resetTime - Date.now()) / 1000));
       }
@@ -270,7 +326,7 @@ export class RateLimiter {
     const pattern = tenantId
       ? `rate_limit:tenant:${tenantId}:${type}:${identifier}:*`
       : `rate_limit:*:${type}:${identifier}:*`;
-    
+
     // Use SCAN instead of KEYS for production safety
     let cursor = '0';
     const keysToDelete: string[] = [];

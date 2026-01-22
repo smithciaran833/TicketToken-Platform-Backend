@@ -1,7 +1,21 @@
 import { AuthenticatedHandler } from '../types';
 import { CancellationService } from '../services/cancellation.service';
 import { logger } from '../utils/logger';
+import { createProblemError } from '../middleware/error-handler';
+import {
+  NotFoundError,
+  BadRequestError,
+  ConflictError,
+  ForbiddenError,
+  ValidationError,
+  hasErrorCode
+} from '../utils/errors';
 
+/**
+ * HIGH PRIORITY FIX for Issue #3:
+ * Replaced string-matching error handling with typed error classes
+ * Uses instanceof checks and createProblemError for RFC 7807 responses
+ */
 export const cancelEvent: AuthenticatedHandler = async (request, reply) => {
   try {
     const { eventId } = request.params as { eventId: string };
@@ -10,36 +24,31 @@ export const cancelEvent: AuthenticatedHandler = async (request, reply) => {
     const { userId, tenantId } = (request as any).auth;
 
     if (!cancellation_reason || cancellation_reason.trim().length === 0) {
-      return reply.status(400).send({
-        success: false,
-        error: 'Cancellation reason is required'
-      });
+      throw createProblemError(400, 'VALIDATION_ERROR', 'Cancellation reason is required');
     }
 
-    const cancellationService = new CancellationService(db);
+    // HIGH PRIORITY FIX for Issue #6: Use DI container instead of direct instantiation
+    const cancellationService = request.container.resolve('cancellationService');
 
-    // Validate permission
-    const hasPermission = await cancellationService.validateCancellationPermission(
-      eventId,
-      userId,
-      tenantId
-    );
+    // Validate permission - use canCancelEvent instead of validateCancellationPermission
+    const permissionCheck = await cancellationService.canCancelEvent(eventId, tenantId);
 
-    if (!hasPermission) {
-      return reply.status(403).send({
-        success: false,
-        error: 'You do not have permission to cancel this event'
-      });
+    if (!permissionCheck.canCancel) {
+      throw createProblemError(403, 'FORBIDDEN', permissionCheck.reason || 'You do not have permission to cancel this event');
     }
 
+    // cancelEvent expects: eventId, tenantId, options
     const result = await cancellationService.cancelEvent(
+      eventId,
+      tenantId,
       {
-        event_id: eventId,
-        cancelled_by: userId,
-        cancellation_reason,
-        trigger_refunds
-      },
-      tenantId
+        reason: cancellation_reason,
+        refundPolicy: trigger_refunds ? 'full' : 'none',
+        notifyHolders: true,
+        cancelResales: true,
+        generateReport: true,
+        cancelledBy: userId
+      }
     );
 
     logger.info({
@@ -61,13 +70,26 @@ export const cancelEvent: AuthenticatedHandler = async (request, reply) => {
       userId: (request as any).auth?.userId
     }, 'Event cancellation failed');
 
-    const statusCode = error.message.includes('not found') ? 404 :
-                      error.message.includes('deadline') ? 400 :
-                      error.message.includes('already cancelled') ? 409 : 500;
-
-    return reply.status(statusCode).send({
-      success: false,
-      error: error.message || 'Failed to cancel event'
-    });
+    // HIGH PRIORITY FIX for Issue #3: Use instanceof checks instead of string matching
+    if (error instanceof NotFoundError) {
+      throw createProblemError(404, 'NOT_FOUND', error.message);
+    }
+    if (error instanceof BadRequestError || error instanceof ValidationError) {
+      throw createProblemError(400, error.code, error.message);
+    }
+    if (error instanceof ConflictError) {
+      throw createProblemError(409, 'CONFLICT', error.message);
+    }
+    if (error instanceof ForbiddenError) {
+      throw createProblemError(403, 'FORBIDDEN', error.message);
+    }
+    
+    // Check if error already has proper format from createProblemError
+    if (hasErrorCode(error)) {
+      throw createProblemError(error.statusCode, error.code, error.message);
+    }
+    
+    // Unknown error - return 500
+    throw createProblemError(500, 'INTERNAL_ERROR', error.message || 'Failed to cancel event');
   }
 };

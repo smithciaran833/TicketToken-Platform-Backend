@@ -61,6 +61,7 @@ export async function initiateConnect(
   try {
     const { venueId } = req.params;
     const { email, returnUrl, refreshUrl } = req.body;
+    const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
     // Validate inputs
     if (!email || !returnUrl || !refreshUrl) {
@@ -93,8 +94,10 @@ export async function initiateConnect(
       });
     }
 
+    // SECURITY FIX (TENANT1): Pass tenantId as 2nd parameter to service
     const result = await venueStripeOnboardingService.createConnectAccountAndOnboardingLink(
       venueId,
+      tenantId,
       email,
       returnUrl,
       refreshUrl
@@ -127,8 +130,10 @@ export async function getConnectStatus(
 ): Promise<void> {
   try {
     const { venueId } = req.params;
+    const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
-    const status = await venueStripeOnboardingService.getAccountStatus(venueId);
+    // SECURITY FIX: Pass tenantId to service
+    const status = await venueStripeOnboardingService.getAccountStatus(venueId, tenantId);
 
     log.info('Retrieved venue Stripe Connect status', { venueId, status: status.status });
 
@@ -158,6 +163,7 @@ export async function refreshConnect(
   try {
     const { venueId } = req.params;
     const { returnUrl, refreshUrl } = req.body;
+    const tenantId = (req as any).tenantId; // SECURITY FIX: Extract tenantId
 
     // Validate inputs
     if (!returnUrl || !refreshUrl) {
@@ -166,8 +172,10 @@ export async function refreshConnect(
       });
     }
 
+    // SECURITY FIX (TENANT1): Pass tenantId as 2nd parameter to service
     const onboardingUrl = await venueStripeOnboardingService.refreshOnboardingLink(
       venueId,
+      tenantId,
       returnUrl,
       refreshUrl
     );

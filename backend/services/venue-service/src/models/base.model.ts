@@ -1,5 +1,24 @@
 import { Knex } from 'knex';
+import { randomUUID } from 'crypto';
 
+/**
+ * Base model class providing common CRUD operations with soft delete support.
+ * 
+ * **SCHEMA REQUIREMENTS:**
+ * All tables using this base model MUST have the following columns:
+ * - id: string (UUID primary key)
+ * - created_at: timestamp (auto-set on insert)
+ * - updated_at: timestamp (auto-updated)
+ * - deleted_at: timestamp (nullable, for soft deletes)
+ * 
+ * Child classes are responsible for ensuring their table schema
+ * meets these requirements. No runtime validation is performed.
+ * 
+ * **SOFT DELETE PATTERN:**
+ * All queries automatically filter out soft-deleted records using
+ * `whereNull('deleted_at')`. Use the `delete()` or `softDelete()`
+ * methods to mark records as deleted instead of removing them.
+ */
 export abstract class BaseModel {
   protected tableName: string;
   protected db: Knex | Knex.Transaction;
@@ -89,7 +108,6 @@ export abstract class BaseModel {
   }
 
   generateId(): string {
-    const prefix = this.tableName.substring(0, 3);
-    return `${prefix}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return randomUUID();
   }
 }
