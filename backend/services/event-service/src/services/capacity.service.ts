@@ -2,7 +2,7 @@ import { Knex } from 'knex';
 import { EventCapacityModel, IEventCapacity } from '../models';
 import { NotFoundError, ValidationError } from '../types';
 import { pino } from 'pino';
-import { VenueServiceClient } from './venue-service.client';
+import { venueServiceClient, createRequestContext } from '@tickettoken/shared';
 
 const logger = pino({ name: 'capacity-service' });
 
@@ -10,8 +10,7 @@ export class CapacityService {
   private capacityModel: EventCapacityModel;
 
   constructor(
-    private db: Knex,
-    private venueClient?: VenueServiceClient
+    private db: Knex
   ) {
     this.capacityModel = new EventCapacityModel(db);
   }
@@ -120,7 +119,8 @@ export class CapacityService {
       ]);
     }
 
-    if (data.event_id && this.venueClient) {
+    // PHASE 5c REFACTORED: Always validate venue capacity using shared client
+    if (data.event_id) {
       await this.validateVenueCapacity(data.event_id, tenantId, authToken, data.total_capacity);
     }
 
@@ -158,7 +158,8 @@ export class CapacityService {
         ]);
       }
 
-      if (authToken && this.venueClient) {
+      // PHASE 5c REFACTORED: Always validate venue capacity using shared client
+      if (authToken) {
         const capacityDiff = data.total_capacity - existing.total_capacity;
         await this.validateVenueCapacity(existing.event_id, tenantId, authToken, capacityDiff);
       }
@@ -391,10 +392,8 @@ export class CapacityService {
     authToken: string,
     additionalCapacity: number = 0
   ): Promise<void> {
-    if (!this.venueClient) {
-      logger.debug({ eventId }, 'Skipping venue capacity validation - no venue client configured');
-      return;
-    }
+    // PHASE 5c REFACTORED: Using shared venueServiceClient with standardized S2S auth
+    const ctx = createRequestContext(tenantId);
 
     const sections = await this.getEventCapacity(eventId, tenantId);
     const currentTotalCapacity = sections.reduce((sum, s) => sum + s.total_capacity, 0);
@@ -409,18 +408,17 @@ export class CapacityService {
     }
 
     try {
-      const venueData = await this.venueClient.getVenue(event.venue_id, authToken);
-      const venue = venueData.venue || venueData;
+      const venue = await venueServiceClient.getVenueInternal(event.venue_id, ctx);
 
-      if (!venue.max_capacity) {
-        logger.warn({ venueId: event.venue_id }, 'Venue has no max_capacity set');
+      if (!venue.capacity) {
+        logger.warn({ venueId: event.venue_id }, 'Venue has no capacity set');
         return;
       }
 
-      if (newTotalCapacity > venue.max_capacity) {
+      if (newTotalCapacity > venue.capacity) {
         throw new ValidationError([{
           field: 'total_capacity',
-          message: `Total section capacity (${newTotalCapacity}) would exceed venue maximum (${venue.max_capacity})`
+          message: `Total section capacity (${newTotalCapacity}) would exceed venue maximum (${venue.capacity})`
         }]);
       }
 
@@ -429,7 +427,7 @@ export class CapacityService {
         currentTotalCapacity,
         additionalCapacity,
         newTotalCapacity,
-        venueMaxCapacity: venue.max_capacity
+        venueMaxCapacity: venue.capacity
       }, 'Venue capacity validation passed');
     } catch (error: any) {
       if (error instanceof ValidationError) {

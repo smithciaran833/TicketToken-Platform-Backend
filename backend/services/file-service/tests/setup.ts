@@ -1,7 +1,67 @@
 // Global test setup
 // This file runs once before all tests
 
-// MUST BE FIRST - Mock logger before any imports that use it
+// MUST BE FIRST - Mock pino before any imports (including Fastify which uses pino internally)
+jest.mock('pino', () => {
+  const mockLogger: any = {
+    info: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+    debug: jest.fn(),
+    trace: jest.fn(),
+    fatal: jest.fn(),
+    level: 'info',
+    levels: { labels: {}, values: {} },
+    isLevelEnabled: jest.fn().mockReturnValue(true),
+    bindings: jest.fn().mockReturnValue({}),
+  };
+  mockLogger.child = jest.fn().mockReturnValue(mockLogger);
+  const pino: any = jest.fn(() => mockLogger);
+  (pino as any).transport = jest.fn(() => ({}));
+  (pino as any).destination = jest.fn(() => ({}));
+  (pino as any).stdSerializers = {
+    err: (err: any) => ({ message: err?.message, stack: err?.stack }),
+    req: jest.fn(),
+    res: jest.fn(),
+  };
+  (pino as any).stdTimeFunctions = {
+    isoTime: jest.fn(() => ',"time":"2026-01-01T00:00:00.000Z"'),
+    epochTime: jest.fn(() => ',"time":1704067200000'),
+    unixTime: jest.fn(() => ',"time":1704067200'),
+    nullTime: jest.fn(() => ''),
+  };
+  // CRITICAL: Fastify's logger.js requires pino.symbols
+  (pino as any).symbols = {
+    serializersSym: Symbol('pino.serializers'),
+    redactFmtSym: Symbol('pino.redactFmt'),
+    streamSym: Symbol('pino.stream'),
+    stringifySym: Symbol('pino.stringify'),
+    stringifiersSym: Symbol('pino.stringifiers'),
+    needsMetadataGsym: Symbol('pino.needsMetadata'),
+    chindingsSym: Symbol('pino.chindings'),
+    formatOptsSym: Symbol('pino.formatOpts'),
+    messageKeySym: Symbol('pino.messageKey'),
+    nestedKeySym: Symbol('pino.nestedKey'),
+    wildcardFirstSym: Symbol('pino.wildcardFirst'),
+    levelCompSym: Symbol('pino.levelComp'),
+    useLevelLabelsSym: Symbol('pino.useLevelLabels'),
+    changeLevelNameSym: Symbol('pino.changeLevelName'),
+    useOnlyCustomLevelsSym: Symbol('pino.useOnlyCustomLevels'),
+    mixinSym: Symbol('pino.mixin'),
+    lsCacheSym: Symbol('pino.lsCache'),
+    levelValSym: Symbol('pino.levelVal'),
+    setLevelSym: Symbol('pino.setLevel'),
+    getLevelSym: Symbol('pino.getLevel'),
+    isLevelEnabledSym: Symbol('pino.isLevelEnabled'),
+    endSym: Symbol('pino.end'),
+    writeSym: Symbol('pino.write'),
+    formattersSym: Symbol('pino.formatters'),
+    hooksSym: Symbol('pino.hooks'),
+  };
+  return pino;
+});
+
+// Mock logger before any imports that use it
 jest.mock('../src/utils/logger', () => ({
   logger: {
     info: jest.fn(),

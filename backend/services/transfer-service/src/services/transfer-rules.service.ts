@@ -1,7 +1,6 @@
 import { Pool } from 'pg';
 import logger from '../utils/logger';
-import { ticketServiceClient, authServiceClient } from '@tickettoken/shared/clients';
-import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { ticketServiceClient, authServiceClient, RequestContext } from '@tickettoken/shared';
 
 /**
  * TRANSFER RULES SERVICE

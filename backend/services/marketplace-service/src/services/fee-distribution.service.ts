@@ -1,3 +1,11 @@
+/**
+ * Fee Distribution Service - marketplace-service
+ *
+ * Handles platform fee calculation and distribution.
+ * Note: emitFeeCollectionEvent still uses axios for payment-service analytics
+ * endpoint as this is a public API call, not internal S2S.
+ */
+
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
 import axios from 'axios';

@@ -1,19 +1,20 @@
-import { logger } from '../utils/logger';
-import { createSecureServiceClient, executeWithRetry, getServiceUrl } from '../utils/http-client.util';
-import { AxiosInstance } from 'axios';
-import { publishEvent } from '../config/rabbitmq';
-
 /**
- * HIGH: Royalty handling service for order-service
- * Wraps payment-service royalty functionality for refund scenarios
- * 
- * On refunds:
- * - Query royalty distributions for the order
- * - Request royalty reversals from payment-service
- * - Notify creators/venues of reversed royalties
+ * Royalty Service - order-service
+ *
+ * PHASE 5c REFACTORED:
+ * Extends BaseServiceClient from @tickettoken/shared for standardized
+ * HMAC auth, circuit breaker, retry, and tracing.
+ *
+ * Handles royalty distributions and reversals for refund scenarios.
  */
 
-const PAYMENT_SERVICE_URL = getServiceUrl('payment-service', 'http://tickettoken-payment:3006');
+import {
+  BaseServiceClient,
+  RequestContext,
+  ServiceClientError,
+} from '@tickettoken/shared';
+import { logger } from '../utils/logger';
+import { publishEvent } from '../config/rabbitmq';
 
 export interface RoyaltyDistribution {
   id: string;
@@ -48,18 +49,15 @@ export interface RoyaltyReversalResult {
   errors?: string[];
 }
 
-interface RequestContext {
-  requestId?: string;
-  tenantId?: string;
-  userId?: string;
-}
-
-export class RoyaltyService {
-  private client: AxiosInstance;
-
+/**
+ * Royalty client for order-service
+ *
+ * Wraps payment-service royalty functionality for refund scenarios.
+ */
+export class RoyaltyService extends BaseServiceClient {
   constructor() {
-    this.client = createSecureServiceClient({
-      baseUrl: PAYMENT_SERVICE_URL,
+    super({
+      baseURL: process.env.PAYMENT_SERVICE_URL || 'http://payment-service:3005',
       serviceName: 'payment-service',
       timeout: 10000,
     });
@@ -70,13 +68,13 @@ export class RoyaltyService {
    */
   async getRoyaltiesForOrder(
     orderId: string,
-    context?: RequestContext
+    ctx?: RequestContext
   ): Promise<RoyaltyDistribution[]> {
     try {
-      const response = await executeWithRetry(
-        () => this.client.get(`/internal/royalties/order/${orderId}`, { context } as any),
-        2,
-        'payment-service'
+      const context = ctx || { tenantId: 'system' };
+      const response = await this.get<{ distributions: RoyaltyDistribution[] }>(
+        `/internal/royalties/order/${orderId}`,
+        context
       );
       return response.data.distributions || [];
     } catch (error) {
@@ -87,11 +85,10 @@ export class RoyaltyService {
 
   /**
    * Process royalty reversals for a refund
-   * Called when a refund is processed
    */
   async processReversals(
     request: RoyaltyReversalRequest,
-    context?: RequestContext
+    ctx?: RequestContext
   ): Promise<RoyaltyReversalResult> {
     logger.info('Processing royalty reversals', {
       orderId: request.orderId,
@@ -101,7 +98,7 @@ export class RoyaltyService {
 
     try {
       // Get existing royalty distributions
-      const distributions = await this.getRoyaltiesForOrder(request.orderId, context);
+      const distributions = await this.getRoyaltiesForOrder(request.orderId, ctx);
 
       if (distributions.length === 0) {
         logger.info('No royalties to reverse for order', { orderId: request.orderId });
@@ -117,6 +114,7 @@ export class RoyaltyService {
       const reversals: RoyaltyReversalResult['reversals'] = [];
       let totalReversed = 0;
       const errors: string[] = [];
+      const context = ctx || { tenantId: 'system' };
 
       for (const distribution of distributions) {
         // Skip already reversed distributions
@@ -137,16 +135,16 @@ export class RoyaltyService {
 
         try {
           // Request reversal from payment service
-          const reversalResponse = await executeWithRetry(
-            () => this.client.post('/internal/royalties/reverse', {
+          const reversalResponse = await this.post<{ reversalId: string }>(
+            '/internal/royalties/reverse',
+            context,
+            {
               distributionId: distribution.id,
               orderId: request.orderId,
               refundId: request.refundId,
               reversalAmount,
               reason: request.reason,
-            }, { context } as any),
-            2,
-            'payment-service'
+            }
           );
 
           reversals.push({
@@ -202,7 +200,7 @@ export class RoyaltyService {
     reversalAmount: number,
     request: RoyaltyReversalRequest
   ): Promise<void> {
-    const eventType = distribution.recipientType === 'venue' 
+    const eventType = distribution.recipientType === 'venue'
       ? 'notification.venue.royalty_reversed'
       : 'notification.artist.royalty_reversed';
 
@@ -226,23 +224,22 @@ export class RoyaltyService {
 
   /**
    * Check if order has royalties that would need reversal
-   * Useful for refund eligibility checks
    */
-  async hasRoyalties(orderId: string, context?: RequestContext): Promise<boolean> {
-    const distributions = await this.getRoyaltiesForOrder(orderId, context);
+  async hasRoyalties(orderId: string, ctx?: RequestContext): Promise<boolean> {
+    const distributions = await this.getRoyaltiesForOrder(orderId, ctx);
     return distributions.some(d => d.recipientType !== 'platform' && !d.reversedAt);
   }
 
   /**
    * Get total royalty amount for an order
    */
-  async getTotalRoyalties(orderId: string, context?: RequestContext): Promise<{
+  async getTotalRoyalties(orderId: string, ctx?: RequestContext): Promise<{
     total: number;
     venue: number;
     artist: number;
     platform: number;
   }> {
-    const distributions = await this.getRoyaltiesForOrder(orderId, context);
+    const distributions = await this.getRoyaltiesForOrder(orderId, ctx);
 
     return {
       total: distributions.reduce((sum, d) => sum + d.amount, 0),

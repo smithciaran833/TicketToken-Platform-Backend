@@ -1,8 +1,10 @@
 /**
  * Order Service Client
- * 
+ *
  * Client for communicating with order-service internal APIs.
  * Extends BaseServiceClient for circuit breaker, retry, and tracing support.
+ *
+ * PHASE 5c: Added createOrder, cancelOrder for ticket-service integration
  */
 
 import { BaseServiceClient, RequestContext } from '../http-client/base-service-client';
@@ -16,6 +18,57 @@ import {
   OrdersWithoutTicketsOptions,
   GetOrderForPaymentResponse,
 } from './types';
+
+// =============================================================================
+// Request/Response Types for Order Creation (Phase 5c)
+// =============================================================================
+
+/**
+ * Order item in create order request
+ */
+export interface CreateOrderItemRequest {
+  ticketTypeId: string;
+  quantity: number;
+  unitPriceCents: number;
+}
+
+/**
+ * Request to create a new order
+ */
+export interface CreateOrderRequest {
+  userId: string;
+  eventId: string;
+  items: CreateOrderItemRequest[];
+  currency?: string;
+  idempotencyKey?: string;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Response from creating an order
+ */
+export interface CreateOrderResponse {
+  orderId: string;
+  orderNumber: string;
+  status: string;
+  totalCents: number;
+  currency: string;
+  items: Array<{
+    id: string;
+    ticketTypeId: string;
+    quantity: number;
+    unitPriceCents: number;
+    totalPriceCents: number;
+  }>;
+  createdAt: string;
+}
+
+/**
+ * Request to cancel an order
+ */
+export interface CancelOrderRequest {
+  reason: string;
+}
 
 /**
  * Client for order-service internal APIs
@@ -141,13 +194,92 @@ export class OrderServiceClient extends BaseServiceClient {
 
   /**
    * Check for orphaned orders (helper method)
-   * 
+   *
    * @param ctx - Request context with tenant info
    * @returns true if there are orphaned orders needing attention
    */
   async hasOrphanedOrders(ctx: RequestContext): Promise<boolean> {
     const result = await this.getOrdersWithoutTickets(ctx, { limit: 1 });
     return result.count > 0;
+  }
+
+  // ==========================================================================
+  // PHASE 5c NEW METHODS - Order creation and cancellation for sagas
+  // ==========================================================================
+
+  /**
+   * Create a new order
+   *
+   * Used by ticket-service PurchaseSaga to create orders as part of
+   * the distributed transaction.
+   *
+   * @param request - Order creation request
+   * @param ctx - Request context with tenant info
+   * @param idempotencyKey - Optional idempotency key for safe retries
+   * @returns Created order details
+   */
+  async createOrder(
+    request: CreateOrderRequest,
+    ctx: RequestContext,
+    idempotencyKey?: string
+  ): Promise<CreateOrderResponse> {
+    const key = idempotencyKey || request.idempotencyKey;
+    const config = key ? { headers: { 'Idempotency-Key': key } } : undefined;
+    const response = await this.post<CreateOrderResponse>(
+      '/internal/orders',
+      ctx,
+      request,
+      config
+    );
+    return response.data;
+  }
+
+  /**
+   * Cancel an order
+   *
+   * Used for saga compensation when ticket creation fails after
+   * order creation. This rolls back the order.
+   *
+   * @param orderId - The order ID to cancel
+   * @param reason - Reason for cancellation
+   * @param ctx - Request context with tenant info
+   * @returns void (throws on error)
+   */
+  async cancelOrder(
+    orderId: string,
+    reason: string,
+    ctx: RequestContext
+  ): Promise<void> {
+    const idempotencyKey = `cancel-${orderId}-${Date.now()}`;
+    await this.post<void>(
+      `/internal/orders/${orderId}/cancel`,
+      ctx,
+      { reason },
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    );
+  }
+
+  /**
+   * Update order status
+   *
+   * Used to mark orders as paid, fulfilled, etc.
+   *
+   * @param orderId - The order ID
+   * @param status - New status
+   * @param ctx - Request context with tenant info
+   * @returns Updated order
+   */
+  async updateOrderStatus(
+    orderId: string,
+    status: string,
+    ctx: RequestContext
+  ): Promise<Order> {
+    const response = await this.patch<GetOrderResponse>(
+      `/internal/orders/${orderId}/status`,
+      ctx,
+      { status }
+    );
+    return response.data.order;
   }
 }
 

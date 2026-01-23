@@ -4,8 +4,13 @@ import amqp, { Channel, Connection as AMQPConnection } from 'amqplib';
 import { logger } from '../utils/logger';
 import MetaplexService from '../services/MetaplexService';
 import TransactionConfirmationService from '../services/TransactionConfirmationService';
-import { ticketServiceClient, venueServiceClient, orderServiceClient, eventServiceClient } from '@tickettoken/shared/clients';
-import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import {
+  ticketServiceClient,
+  venueServiceClient,
+  orderServiceClient,
+  eventServiceClient,
+  RequestContext,
+} from '@tickettoken/shared';
 import { withSystemContextPool } from './system-job-utils';
 
 /**

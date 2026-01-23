@@ -11,9 +11,7 @@ import { OrderEventPayload } from '../events/event-types';
 import { logger } from '../utils/logger';
 import { orderConfig } from '../config';
 import { orderMetrics } from '../utils/metrics';
-import { withLock, LockKeys } from '@tickettoken/shared';
-import { CircuitBreaker } from '../utils/circuit-breaker';
-import { retry } from '../utils/retry';
+import { withLock, LockKeys, createRequestContext } from '@tickettoken/shared';
 import {
   OrderUpdateData,
   Order,
@@ -30,6 +28,12 @@ import {
   RefundOrderRequest,
 } from '../types/order.types';
 
+/**
+ * PHASE 5c REFACTORED:
+ * Service clients now extend BaseServiceClient from @tickettoken/shared,
+ * which provides built-in circuit breaker, retry, and HMAC auth.
+ * Removed redundant local circuit breakers.
+ */
 export class OrderService {
   private orderModel: OrderModel;
   private orderItemModel: OrderItemModel;
@@ -39,11 +43,6 @@ export class OrderService {
   private paymentClient: PaymentClient;
   private eventClient: EventClient;
 
-  // Circuit breakers for external services
-  private ticketCircuitBreaker: CircuitBreaker;
-  private paymentCircuitBreaker: CircuitBreaker;
-  private eventCircuitBreaker: CircuitBreaker;
-
   constructor(pool: Pool) {
     this.orderModel = new OrderModel(pool);
     this.orderItemModel = new OrderItemModel(pool);
@@ -52,28 +51,6 @@ export class OrderService {
     this.ticketClient = new TicketClient();
     this.paymentClient = new PaymentClient();
     this.eventClient = new EventClient();
-
-    // Initialize circuit breakers
-    this.ticketCircuitBreaker = new CircuitBreaker('ticket-service', {
-      failureThreshold: 5,
-      successThreshold: 2,
-      timeout: 10000, // 10 seconds
-      resetTimeout: 30000, // 30 seconds
-    });
-
-    this.paymentCircuitBreaker = new CircuitBreaker('payment-service', {
-      failureThreshold: 5,
-      successThreshold: 2,
-      timeout: 15000, // 15 seconds (longer for payment operations)
-      resetTimeout: 60000, // 60 seconds (longer cooldown for payment)
-    });
-
-    this.eventCircuitBreaker = new CircuitBreaker('event-service', {
-      failureThreshold: 5,
-      successThreshold: 2,
-      timeout: 5000, // 5 seconds
-      resetTimeout: 30000, // 30 seconds
-    });
   }
 
   private createEventPayload(order: Order, items: OrderItem[]): OrderEventPayload {
@@ -96,23 +73,18 @@ export class OrderService {
 
   async createOrder(tenantId: string, request: CreateOrderRequest): Promise<{ order: Order; items: OrderItem[] }> {
     const endTimer = orderMetrics.orderCreationDuration.startTimer();
-    
+    const ctx = createRequestContext(tenantId, request.userId);
+
     try {
-      // 1. Validate event exists (with circuit breaker + retry)
-      const event = await retry(
-        () => this.eventCircuitBreaker.execute(() => this.eventClient.getEvent(request.eventId)),
-        { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-      );
+      // 1. Validate event exists (BaseServiceClient handles retry + circuit breaker)
+      const event = await this.eventClient.getEvent(request.eventId, ctx);
       if (!event) {
         throw new Error('Event not found');
       }
 
-      // 2. Check ticket availability (with circuit breaker + retry)
+      // 2. Check ticket availability (BaseServiceClient handles retry + circuit breaker)
       const ticketTypeIds = request.items.map(item => item.ticketTypeId);
-      const availability = await retry(
-        () => this.ticketCircuitBreaker.execute(() => this.ticketClient.checkAvailability(ticketTypeIds)),
-        { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-      );
+      const availability = await this.ticketClient.checkAvailability(ticketTypeIds, ctx);
 
       for (const item of request.items) {
         const available = availability[item.ticketTypeId];
@@ -121,11 +93,8 @@ export class OrderService {
         }
       }
 
-      // 3. Validate prices against ticket service (CRITICAL SECURITY - with circuit breaker + retry)
-      const actualPrices = await retry(
-        () => this.ticketCircuitBreaker.execute(() => this.ticketClient.getPrices(ticketTypeIds)),
-        { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-      );
+      // 3. Validate prices against ticket service (CRITICAL SECURITY)
+      const actualPrices = await this.ticketClient.getPrices(ticketTypeIds, ctx);
       
       for (const item of request.items) {
         const actualPrice = actualPrices[item.ticketTypeId];
@@ -221,32 +190,28 @@ export class OrderService {
         throw new Error(`Cannot reserve order in ${order.status} status`);
       }
 
-      // 1. Reserve tickets (with circuit breaker + retry)
+      const ctx = createRequestContext(tenantId, order.userId);
+
+      // 1. Reserve tickets (BaseServiceClient handles retry + circuit breaker)
       const items = await this.orderItemModel.findByOrderId(order.id, tenantId);
-      await retry(
-        () => this.ticketCircuitBreaker.execute(() =>
-          this.ticketClient.reserveTickets(
-            order.id,
-            items.map(item => ({
-              ticketTypeId: item.ticketTypeId,
-              quantity: item.quantity,
-            }))
-          )
-        ),
-        { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+      await this.ticketClient.reserveTickets(
+        order.id,
+        items.map(item => ({
+          ticketTypeId: item.ticketTypeId,
+          quantity: item.quantity,
+        })),
+        ctx
       );
 
-      // 2. Create payment intent (with circuit breaker + retry)
-      const paymentIntent = await retry(
-        () => this.paymentCircuitBreaker.execute(() =>
-          this.paymentClient.createPaymentIntent({
-            orderId: order.id,
-            amountCents: order.totalCents,
-            currency: order.currency,
-            userId: order.userId,
-          })
-        ),
-        { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+      // 2. Create payment intent (BaseServiceClient handles retry + circuit breaker)
+      const paymentIntent = await this.paymentClient.createPaymentIntent(
+        {
+          orderId: order.id,
+          amountCents: order.totalCents,
+          currency: order.currency,
+          userId: order.userId,
+        },
+        ctx
       );
 
       // 3. Update order to RESERVED
@@ -307,21 +272,13 @@ export class OrderService {
             throw new Error(`Cannot confirm order in ${order.status} status`);
           }
 
-          // 1. Confirm payment (with circuit breaker + retry)
-          await retry(
-            () => this.paymentCircuitBreaker.execute(() =>
-              this.paymentClient.confirmPayment(request.paymentIntentId)
-            ),
-            { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
-          );
+          const ctx = createRequestContext(tenantId, order.userId);
 
-          // 2. Confirm ticket allocation (with circuit breaker + retry)
-          await retry(
-            () => this.ticketCircuitBreaker.execute(() =>
-              this.ticketClient.confirmAllocation(order.id)
-            ),
-            { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
-          );
+          // 1. Confirm payment (BaseServiceClient handles retry + circuit breaker)
+          await this.paymentClient.confirmPayment(request.paymentIntentId, ctx);
+
+          // 2. Confirm ticket allocation (BaseServiceClient handles retry + circuit breaker)
+          await this.ticketClient.confirmAllocation(order.id, ctx);
 
           // 3. Update order to CONFIRMED
           const updatedOrder = await this.orderModel.update(order.id, tenantId, {
@@ -382,31 +339,25 @@ export class OrderService {
             throw new Error(`Cannot cancel order in ${order.status} status`);
           }
 
+          const ctx = createRequestContext(tenantId, request.userId);
           let refund: OrderRefund | undefined;
           let refundAmountCents = 0;
 
-          // 1. Release tickets (with circuit breaker + retry)
-          await retry(
-            () => this.ticketCircuitBreaker.execute(() =>
-              this.ticketClient.releaseTickets(order.id)
-            ),
-            { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-          );
+          // 1. Release tickets (BaseServiceClient handles retry + circuit breaker)
+          await this.ticketClient.releaseTickets(order.id, ctx);
 
           // 2. Handle payment refund if payment was made
           if (order.status === OrderStatus.CONFIRMED && order.paymentIntentId) {
             refundAmountCents = order.totalCents;
 
-            const refundResult = await retry(
-              () => this.paymentCircuitBreaker.execute(() =>
-                this.paymentClient.initiateRefund({
-                  orderId: order.id,
-                  paymentIntentId: order.paymentIntentId,
-                  amountCents: refundAmountCents,
-                  reason: request.reason,
-                })
-              ),
-              { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+            const refundResult = await this.paymentClient.initiateRefund(
+              {
+                orderId: order.id,
+                paymentIntentId: order.paymentIntentId,
+                amountCents: refundAmountCents,
+                reason: request.reason,
+              },
+              ctx
             );
 
             refund = await this.orderRefundModel.create({
@@ -419,12 +370,7 @@ export class OrderService {
               initiatedBy: request.userId,
             });
           } else if (order.status === OrderStatus.RESERVED && order.paymentIntentId) {
-            await retry(
-              () => this.paymentCircuitBreaker.execute(() =>
-                this.paymentClient.cancelPaymentIntent(order.paymentIntentId)
-              ),
-              { maxAttempts: 3, delayMs: 100, maxDelayMs: 1000 }
-            );
+            await this.paymentClient.cancelPaymentIntent(order.paymentIntentId, ctx);
           }
 
           // 3. Update order to CANCELLED
@@ -491,27 +437,19 @@ export class OrderService {
         throw new Error('Order not in RESERVED status');
       }
 
-      // 1. Release tickets (with circuit breaker + retry, but don't fail expiration if this fails)
+      const ctx = createRequestContext(tenantId, order.userId);
+
+      // 1. Release tickets (don't fail expiration if this fails)
       try {
-        await retry(
-          () => this.ticketCircuitBreaker.execute(() =>
-            this.ticketClient.releaseTickets(order.id)
-          ),
-          { maxAttempts: 2, delayMs: 100, maxDelayMs: 500 }
-        );
+        await this.ticketClient.releaseTickets(order.id, ctx);
       } catch (error) {
         logger.error('Failed to release tickets during expiration', { orderId, error });
       }
 
-      // 2. Cancel payment intent if exists (with circuit breaker + retry, but don't fail expiration if this fails)
+      // 2. Cancel payment intent if exists (don't fail expiration if this fails)
       if (order.paymentIntentId) {
         try {
-          await retry(
-            () => this.paymentCircuitBreaker.execute(() =>
-              this.paymentClient.cancelPaymentIntent(order.paymentIntentId)
-            ),
-            { maxAttempts: 2, delayMs: 100, maxDelayMs: 500 }
-          );
+          await this.paymentClient.cancelPaymentIntent(order.paymentIntentId, ctx);
         } catch (error) {
           logger.error('Failed to cancel payment intent during expiration', { orderId, error });
         }
@@ -571,17 +509,17 @@ export class OrderService {
             throw new Error('No payment intent found for order');
           }
 
-          // 1. Initiate refund with payment service (with circuit breaker + retry)
-          const refundResult = await retry(
-            () => this.paymentCircuitBreaker.execute(() =>
-              this.paymentClient.initiateRefund({
-                orderId: order.id,
-                paymentIntentId: order.paymentIntentId,
-                amountCents: request.amountCents,
-                reason: request.reason,
-              })
-            ),
-            { maxAttempts: 3, delayMs: 200, maxDelayMs: 2000 }
+          const ctx = createRequestContext(tenantId, request.userId);
+
+          // 1. Initiate refund with payment service (BaseServiceClient handles retry + circuit breaker)
+          const refundResult = await this.paymentClient.initiateRefund(
+            {
+              orderId: order.id,
+              paymentIntentId: order.paymentIntentId,
+              amountCents: request.amountCents,
+              reason: request.reason,
+            },
+            ctx
           );
 
           // 2. Create refund record

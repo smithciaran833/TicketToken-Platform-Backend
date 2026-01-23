@@ -1,10 +1,9 @@
 import { Knex } from 'knex';
 import { NotFoundError, ValidationError, ForbiddenError } from '../types';
-import { VenueServiceClient } from './venue-service.client';
 import { EventSecurityValidator, EventValidationOptions } from '../validations/event-security';
 import { isAdmin } from '../middleware/auth';
 import { EventAuditLogger } from '../utils/audit-logger';
-import { publishSearchSync } from '@tickettoken/shared';
+import { publishSearchSync, venueServiceClient, createRequestContext } from '@tickettoken/shared';
 import { pino } from 'pino';
 import Redis from 'ioredis';
 import { validateTimezoneOrThrow } from '../utils/timezone-validator';
@@ -54,7 +53,6 @@ export class EventService {
 
   constructor(
     private db: Knex,
-    private venueServiceClient: VenueServiceClient,
     private redis?: Redis
   ) {
     this.eventModel = new EventModel(db);
@@ -163,16 +161,19 @@ export class EventService {
   }
 
   async createEvent(data: any, authToken: string, userId: string, tenantId: string, requestInfo?: any): Promise<any> {
-    // TODO: Add circuit breaker pattern for venue service calls
-    // Consider using: https://www.npmjs.com/package/opossum
-    const hasAccess = await this.venueServiceClient.validateVenueAccess(data.venue_id, authToken);
-    if (!hasAccess) {
+    // PHASE 5c REFACTORED: Using shared venueServiceClient with standardized S2S auth
+    const ctx = createRequestContext(tenantId, userId);
+
+    const venueExists = await venueServiceClient.venueExists(data.venue_id, ctx);
+    if (!venueExists) {
       throw new ValidationError([{ field: 'venue_id', message: 'Invalid venue or no access' }]);
     }
 
-    const venueDetails = await this.venueServiceClient.getVenue(data.venue_id, authToken);
+    const venueDetails = await venueServiceClient.getVenueInternal(data.venue_id, ctx);
+    // Map capacity field for backward compatibility
+    const venueWithMaxCapacity = { ...venueDetails, max_capacity: venueDetails.capacity };
 
-    const timezone = data.timezone || venueDetails?.timezone || 'UTC';
+    const timezone = data.timezone || venueWithMaxCapacity?.timezone || 'UTC';
     try {
       validateTimezoneOrThrow(timezone);
     } catch (error) {
@@ -215,10 +216,10 @@ export class EventService {
       is_visible: true
     } : null;
 
-    if (capacityData && venueDetails) {
+    if (capacityData && venueWithMaxCapacity) {
       await this.securityValidator.validateVenueCapacity(
         capacityData.total_capacity!,
-        venueDetails.max_capacity
+        venueWithMaxCapacity.max_capacity
       );
     }
 
@@ -545,8 +546,10 @@ export class EventService {
       throw new ForbiddenError('You do not have permission to update this event');
     }
 
-    const hasAccess = await this.venueServiceClient.validateVenueAccess(event.venue_id, authToken);
-    if (!hasAccess) {
+    // PHASE 5c REFACTORED: Using shared venueServiceClient with standardized S2S auth
+    const ctx = createRequestContext(tenantId, userId);
+    const venueExists = await venueServiceClient.venueExists(event.venue_id, ctx);
+    if (!venueExists) {
       throw new ValidationError([{ field: 'venue_id', message: 'No access to this venue' }]);
     }
 
@@ -680,8 +683,10 @@ export class EventService {
       throw new ForbiddenError('You do not have permission to delete this event');
     }
 
-    const hasAccess = await this.venueServiceClient.validateVenueAccess(event.venue_id, authToken);
-    if (!hasAccess) {
+    // PHASE 5c REFACTORED: Using shared venueServiceClient with standardized S2S auth
+    const ctx = createRequestContext(tenantId, userId);
+    const venueExistsCheck = await venueServiceClient.venueExists(event.venue_id, ctx);
+    if (!venueExistsCheck) {
       throw new ValidationError([{ field: 'venue_id', message: 'No access to this venue' }]);
     }
 

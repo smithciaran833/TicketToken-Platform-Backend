@@ -7,6 +7,7 @@ import { v4 as uuidv4 } from 'uuid';
 import logger from './utils/logger';
 import { register } from './utils/metrics';
 import { transferRoutes } from './routes/transfer.routes';
+import { internalRoutes } from './routes/internal.routes';
 import { setTenantContext } from './middleware/tenant-context';
 import { rateLimitMiddleware } from './middleware/rate-limit';
 import { idempotencyMiddleware } from './middleware/idempotency';
@@ -272,6 +273,11 @@ export async function createApp(pool: Pool) {
   // API ROUTES (After all middleware)
   // =============================================================================
   await transferRoutes(app, pool);
+
+  // =============================================================================
+  // INTERNAL ROUTES (Service-to-service communication)
+  // =============================================================================
+  await app.register(internalRoutes, { prefix: '/internal' });
 
   // =============================================================================
   // RESPONSE LOGGING

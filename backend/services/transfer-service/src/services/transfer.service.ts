@@ -2,8 +2,7 @@ import { Pool, PoolClient } from 'pg';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
 import logger from '../utils/logger';
-import { ticketServiceClient, authServiceClient } from '@tickettoken/shared/clients';
-import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { ticketServiceClient, authServiceClient, RequestContext } from '@tickettoken/shared';
 import {
   Transfer,
   CreateGiftTransferRequest,

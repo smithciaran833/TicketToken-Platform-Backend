@@ -5,14 +5,15 @@ import { IdempotencyService } from '../../services/idempotency.service';
 import { RateLimiterService } from '../../services/rate-limiter.service';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
+import { mintingServiceClient, createRequestContext } from '@tickettoken/shared';
 
 // Solana configuration
 const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || 'https://api.mainnet-beta.solana.com';
 const SOLANA_PRIVATE_KEY = process.env.SOLANA_PRIVATE_KEY;
 const MERKLE_TREE_ADDRESS = process.env.MERKLE_TREE_ADDRESS;
 const COLLECTION_MINT = process.env.COLLECTION_MINT_ADDRESS;
-const MINTING_SERVICE_URL = process.env.MINTING_SERVICE_URL || 'http://minting-service:3000';
-const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY;
+// PHASE 5c: mintingServiceClient is now used from shared library
+const USE_SHARED_MINTING_CLIENT = process.env.USE_SHARED_MINTING_CLIENT !== 'false';
 
 interface NFTMintJobData {
   eventId: string;
@@ -168,12 +169,14 @@ export class NFTMintProcessor extends BaseWorker<NFTMintJobData, JobResult> {
 
   /**
    * Mint NFT - delegates to minting service or mints directly
+   *
+   * PHASE 5c REFACTORED: Uses shared mintingServiceClient with standardized S2S auth
    */
   private async mintNFT(data: NFTMintJobData): Promise<MintResult> {
-    // Try minting service first (preferred for production)
-    if (MINTING_SERVICE_URL && INTERNAL_SERVICE_KEY) {
+    // Try shared minting service client first (preferred for production)
+    if (USE_SHARED_MINTING_CLIENT) {
       try {
-        return await this.mintViaMintingService(data);
+        return await this.mintViaSharedClient(data);
       } catch (error: any) {
         // If minting service unavailable, try direct minting
         if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
@@ -192,6 +195,51 @@ export class NFTMintProcessor extends BaseWorker<NFTMintJobData, JobResult> {
     // Mock mode
     logger.warn('Solana not configured - using mock mode');
     return await this.mockMint(data);
+  }
+
+  /**
+   * PHASE 5c: Mint via shared mintingServiceClient with standardized S2S auth
+   */
+  private async mintViaSharedClient(data: NFTMintJobData): Promise<MintResult> {
+    const { ticketId, eventId, ownerWallet, metadata, tenantId, venueId, seatId } = data;
+    const ctx = createRequestContext(tenantId || venueId || 'system');
+
+    try {
+      const response = await mintingServiceClient.queueMint({
+        ticketId,
+        eventId,
+        ownerWallet,
+        metadata: {
+          name: metadata.name,
+          symbol: metadata.symbol,
+          description: metadata.description,
+          image: metadata.image,
+          externalUrl: metadata.externalUrl,
+          attributes: [
+            ...metadata.attributes,
+            { trait_type: 'Ticket ID', value: ticketId },
+            { trait_type: 'Event ID', value: eventId },
+            { trait_type: 'Venue ID', value: venueId },
+            ...(seatId ? [{ trait_type: 'Seat', value: seatId }] : [])
+          ],
+        },
+      }, ctx);
+
+      return {
+        success: true,
+        mintAddress: response.mintAddress,
+        assetId: response.assetId,
+        transactionSignature: response.signature,
+        metadataUri: response.metadataUri,
+      };
+    } catch (error: any) {
+      logger.error('Shared minting client call failed:', {
+        error: error.message,
+        statusCode: error.statusCode,
+        ticketId,
+      });
+      throw error;
+    }
   }
 
   /**

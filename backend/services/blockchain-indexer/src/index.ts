@@ -10,6 +10,7 @@ import BlockchainIndexer from './indexer';
 import config from './config';
 import logger from './utils/logger';
 import queryRoutes from './routes/query.routes';
+import internalRoutes from './routes/internal.routes';
 import { register, isHealthy } from './utils/metrics';
 import db from './utils/database';
 import { validateConfigOrExit, testAllConnections, getConfigSummary } from './config/validate';
@@ -265,6 +266,10 @@ async function startService(): Promise<void> {
     // Register query routes
     await app.register(queryRoutes);
     logger.info('Query routes registered');
+
+    // Register internal routes for service-to-service communication
+    await app.register(internalRoutes, { prefix: '/internal' });
+    logger.info('Internal routes registered at /internal');
 
     // AUDIT FIX: RL-9 - Protect metrics endpoint
     // Metrics endpoint with optional basic auth for Prometheus

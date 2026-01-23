@@ -21,12 +21,14 @@ import {
   CreateEventResult,
   BlockchainError,
   deriveVenuePDA,
+  venueServiceClient,
+  createRequestContext,
+  ServiceClientError,
 } from '@tickettoken/shared';
 import { PublicKey } from '@solana/web3.js';
 import { pino } from 'pino';
 import path from 'path';
 import CircuitBreaker from 'opossum';
-import { venueServiceClient } from './venue-service.client';
 import { ForbiddenError } from '../types';
 import { withRetry } from '../utils/retry';
 
@@ -306,27 +308,19 @@ export class EventBlockchainService {
   /**
    * CRITICAL SECURITY: Validate that venue belongs to the tenant
    * Prevents cross-tenant blockchain event creation
-   * 
+   *
+   * PHASE 5c REFACTORED: Using shared venueServiceClient with standardized S2S auth
+   *
    * @param venueId - Venue identifier to validate
    * @param tenantId - Tenant identifier
    * @throws ForbiddenError if venue doesn't belong to tenant
    */
   private async validateVenueTenant(venueId: string, tenantId: string): Promise<void> {
+    const ctx = createRequestContext(tenantId);
+
     try {
-      // Attempt to get venue with tenant context
-      const venue = await venueServiceClient.getVenue(venueId, tenantId);
-      
-      // If venue service is in degraded mode, we got a default response
-      if (venue._degraded) {
-        logger.error({
-          venueId,
-          tenantId,
-          degraded: true,
-        }, 'Cannot validate venue ownership for blockchain operation - venue service unavailable');
-        throw new ForbiddenError(
-          'Cannot create blockchain event - venue service unavailable for validation'
-        );
-      }
+      // Attempt to get venue with tenant context using shared client
+      const venue = await venueServiceClient.getVenueInternal(venueId, ctx);
 
       // Verify venue exists and is accessible
       if (!venue || !venue.id) {
@@ -347,6 +341,18 @@ export class EventBlockchainService {
     } catch (error) {
       if (error instanceof ForbiddenError) {
         throw error;
+      }
+
+      // Handle service client errors (404, 403, etc.)
+      if (error instanceof ServiceClientError) {
+        if (error.statusCode === 404) {
+          logger.error({ venueId, tenantId }, 'Venue not found for tenant');
+          throw new ForbiddenError('Venue does not exist or you do not have access to it');
+        }
+        if (error.statusCode === 403) {
+          logger.error({ venueId, tenantId }, 'Forbidden access to venue');
+          throw new ForbiddenError('You do not have access to this venue');
+        }
       }
 
       logger.error({

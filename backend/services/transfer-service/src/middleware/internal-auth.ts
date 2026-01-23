@@ -267,29 +267,10 @@ export function buildInternalHeaders(body: any, requestId?: string): Record<stri
 }
 
 /**
- * Create an authenticated fetch function for internal service calls
- */
-export function createInternalFetch(baseUrl: string) {
-  return async (
-    path: string,
-    options: RequestInit = {},
-    requestId?: string
-  ): Promise<Response> => {
-    const body = options.body ? JSON.parse(options.body as string) : {};
-    const headers = buildInternalHeaders(body, requestId);
-    
-    return fetch(`${baseUrl}${path}`, {
-      ...options,
-      headers: {
-        ...headers,
-        ...(options.headers || {})
-      }
-    });
-  };
-}
-
-/**
  * Validate internal auth configuration at startup
+ *
+ * NOTE: For outgoing service calls, use the shared library clients instead:
+ * import { ticketServiceClient, authServiceClient } from '@tickettoken/shared';
  */
 export function validateInternalAuthConfig(): void {
   const secret = process.env.INTERNAL_SERVICE_SECRET;
@@ -315,7 +296,6 @@ export default {
   validateInternalRequest,
   generateInternalSignature,
   buildInternalHeaders,
-  createInternalFetch,
   validateInternalAuthConfig,
   ALLOWED_SERVICES
 };

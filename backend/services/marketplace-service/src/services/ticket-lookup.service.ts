@@ -1,4 +1,17 @@
-import axios from 'axios';
+/**
+ * Ticket Lookup Service - marketplace-service
+ *
+ * PHASE 5c REFACTORED:
+ * Uses shared library's ticketServiceClient and eventServiceClient
+ * for standardized S2S auth with circuit breaker and retry.
+ */
+
+import {
+  ticketServiceClient,
+  eventServiceClient,
+  createRequestContext,
+  ServiceClientError,
+} from '@tickettoken/shared';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 import { cache } from '../config/redis';
@@ -21,45 +34,39 @@ export class TicketLookupService {
   private readonly CACHE_TTL = 300; // 5 minutes
 
   /**
-   * Get ticket information from event service
+   * Get ticket information from ticket service
+   *
+   * PHASE 5c: Uses shared library ticketServiceClient
    */
-  async getTicketInfo(ticketId: string): Promise<TicketInfo | null> {
+  async getTicketInfo(ticketId: string, tenantId?: string): Promise<TicketInfo | null> {
     try {
       // Check cache first
       const cacheKey = `ticket:${ticketId}`;
       const cached = await cache.get<string>(cacheKey);
-      
+
       if (cached) {
         this.log.debug('Ticket info retrieved from cache', { ticketId });
         return JSON.parse(cached);
       }
 
-      // Fetch from event service
-      this.log.info('Fetching ticket info from event service', { ticketId });
-      
-      const response = await axios.get(
-        `${config.ticketServiceUrl}/api/v1/tickets/${ticketId}`,
-        {
-          headers: {
-            'X-Service-Name': 'marketplace-service',
-            'X-Internal-Request': 'true'
-          },
-          timeout: 5000
-        }
-      );
+      // Fetch from ticket service using shared client
+      this.log.info('Fetching ticket info from ticket service', { ticketId });
 
-      if (response.status === 200 && response.data) {
+      const ctx = createRequestContext(tenantId || 'system');
+      const ticket = await ticketServiceClient.getTicketFull(ticketId, ctx);
+
+      if (ticket) {
         const ticketInfo: TicketInfo = {
-          ticketId: response.data.id,
-          eventId: response.data.event_id,
-          venueId: response.data.venue_id,
-          faceValue: response.data.face_value || response.data.price,
-          section: response.data.section,
-          row: response.data.row,
-          seat: response.data.seat,
-          eventDate: new Date(response.data.event_date),
-          eventName: response.data.event_name,
-          venueName: response.data.venue_name
+          ticketId: ticket.id,
+          eventId: ticket.eventId,
+          venueId: ticket.event?.venueId || '',
+          faceValue: ticket.priceCents,
+          section: ticket.seat?.section || '',
+          row: ticket.seat?.row || '',
+          seat: ticket.seat?.number || '',
+          eventDate: new Date(ticket.event?.startsAt || Date.now()),
+          eventName: ticket.event?.name || '',
+          venueName: ticket.event?.venueName || '',
         };
 
         // Cache the result
@@ -70,7 +77,7 @@ export class TicketLookupService {
 
       return null;
     } catch (error: any) {
-      if (error.response?.status === 404) {
+      if (error instanceof ServiceClientError && error.statusCode === 404) {
         this.log.warn('Ticket not found', { ticketId });
         return null;
       }
@@ -78,7 +85,7 @@ export class TicketLookupService {
       this.log.error('Failed to fetch ticket info', {
         error: error.message,
         ticketId,
-        status: error.response?.status
+        statusCode: error instanceof ServiceClientError ? error.statusCode : undefined,
       });
 
       // Return null instead of throwing to allow graceful degradation
@@ -88,8 +95,13 @@ export class TicketLookupService {
 
   /**
    * Get event information
+   *
+   * PHASE 5c: Uses shared library eventServiceClient
    */
-  async getEventInfo(eventId: string): Promise<{
+  async getEventInfo(
+    eventId: string,
+    tenantId?: string
+  ): Promise<{
     eventId: string;
     name: string;
     date: Date;
@@ -99,29 +111,21 @@ export class TicketLookupService {
     try {
       const cacheKey = `event:${eventId}`;
       const cached = await cache.get<string>(cacheKey);
-      
+
       if (cached) {
         return JSON.parse(cached);
       }
 
-      const response = await axios.get(
-        `${config.ticketServiceUrl}/api/v1/events/${eventId}`,
-        {
-          headers: {
-            'X-Service-Name': 'marketplace-service',
-            'X-Internal-Request': 'true'
-          },
-          timeout: 5000
-        }
-      );
+      const ctx = createRequestContext(tenantId || 'system');
+      const event = await eventServiceClient.getEventInternal(eventId, ctx);
 
-      if (response.status === 200 && response.data) {
+      if (event) {
         const eventInfo = {
-          eventId: response.data.id,
-          name: response.data.name,
-          date: new Date(response.data.date),
-          venueId: response.data.venue_id,
-          venueName: response.data.venue_name
+          eventId: event.id,
+          name: event.name,
+          date: new Date(event.startsAt || Date.now()),
+          venueId: event.venueId,
+          venueName: '', // EventWithBlockchain doesn't include venueName, need separate lookup if required
         };
 
         await cache.set(cacheKey, JSON.stringify(eventInfo), this.CACHE_TTL);
@@ -132,7 +136,7 @@ export class TicketLookupService {
     } catch (error: any) {
       this.log.error('Failed to fetch event info', {
         error: error.message,
-        eventId
+        eventId,
       });
       return null;
     }
@@ -141,16 +145,19 @@ export class TicketLookupService {
   /**
    * Validate ticket is eligible for marketplace listing
    */
-  async validateTicketEligibility(ticketId: string): Promise<{
+  async validateTicketEligibility(
+    ticketId: string,
+    tenantId?: string
+  ): Promise<{
     eligible: boolean;
     reason?: string;
   }> {
-    const ticket = await this.getTicketInfo(ticketId);
+    const ticket = await this.getTicketInfo(ticketId, tenantId);
 
     if (!ticket) {
       return {
         eligible: false,
-        reason: 'Ticket not found'
+        reason: 'Ticket not found',
       };
     }
 
@@ -158,7 +165,7 @@ export class TicketLookupService {
     if (ticket.eventDate < new Date()) {
       return {
         eligible: false,
-        reason: 'Event has already occurred'
+        reason: 'Event has already occurred',
       };
     }
 
@@ -167,7 +174,7 @@ export class TicketLookupService {
     if (ticket.eventDate < oneHourFromNow) {
       return {
         eligible: false,
-        reason: 'Event is too close to start time'
+        reason: 'Event is too close to start time',
       };
     }
 
@@ -177,28 +184,31 @@ export class TicketLookupService {
   /**
    * Calculate suggested price range based on historical data
    */
-  async getSuggestedPriceRange(ticketId: string): Promise<{
+  async getSuggestedPriceRange(
+    ticketId: string,
+    tenantId?: string
+  ): Promise<{
     min: number;
     max: number;
     average: number;
   } | null> {
     try {
-      const ticket = await this.getTicketInfo(ticketId);
+      const ticket = await this.getTicketInfo(ticketId, tenantId);
       if (!ticket) return null;
 
       // For now, use simple calculation based on face value
       // In production, this would query historical sales data
       const faceValue = ticket.faceValue;
-      
+
       return {
         min: Math.round(faceValue * 0.8), // 80% of face value
         max: Math.round(faceValue * 3.0), // 300% cap
-        average: Math.round(faceValue * 1.2) // 120% average markup
+        average: Math.round(faceValue * 1.2), // 120% average markup
       };
     } catch (error) {
       this.log.error('Failed to calculate suggested price range', {
         error,
-        ticketId
+        ticketId,
       });
       return null;
     }

@@ -19,6 +19,7 @@ import qrRoutes from './routes/qr';
 import deviceRoutes from './routes/devices';
 import offlineRoutes from './routes/offline';
 import policyRoutes from './routes/policies';
+import internalRoutes from './routes/internal.routes';
 
 // Import metrics
 import { register } from './utils/metrics';
@@ -165,6 +166,10 @@ async function startService(): Promise<void> {
     await app.register(deviceRoutes, { prefix: '/api/devices' });
     await app.register(offlineRoutes, { prefix: '/api/offline' });
     await app.register(policyRoutes, { prefix: '/api/policies' });
+
+    // Internal routes (service-to-service communication)
+    await app.register(internalRoutes, { prefix: '/internal' });
+    logger.info('Internal routes registered at /internal');
 
     // Global error handler
     app.setErrorHandler((error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {

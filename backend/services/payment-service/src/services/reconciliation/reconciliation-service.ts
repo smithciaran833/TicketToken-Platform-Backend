@@ -2,8 +2,11 @@ import { Pool } from 'pg';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
 import crypto from 'crypto';
-import { orderServiceClient, ticketServiceClient } from '@tickettoken/shared/clients';
-import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import {
+  orderServiceClient,
+  ticketServiceClient,
+  RequestContext,
+} from '@tickettoken/shared';
 
 const WEBHOOK_SECRET = process.env.INTERNAL_WEBHOOK_SECRET || 'internal-webhook-secret-change-in-production';
 

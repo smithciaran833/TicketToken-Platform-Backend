@@ -1,6 +1,9 @@
 /**
  * Notification Service
- * 
+ *
+ * PHASE 5c REFACTORED:
+ * Uses shared library's notificationServiceClient for standardized S2S auth.
+ *
  * MEDIUM FIXES:
  * - COMM-1: Refund confirmation email
  * - COMM-2: Timeline communication
@@ -8,7 +11,11 @@
 
 import { logger } from '../utils/logger';
 import { config } from '../config';
-import { serviceClients } from '../utils/http-client.util';
+import {
+  notificationServiceClient,
+  createRequestContext,
+  ServiceClientError,
+} from '@tickettoken/shared';
 
 const log = logger.child({ component: 'NotificationService' });
 
@@ -93,6 +100,8 @@ class NotificationService {
 
   /**
    * Send notification via notification service
+   *
+   * PHASE 5c: Uses shared library notificationServiceClient
    */
   private async sendNotification(request: NotificationRequest): Promise<boolean> {
     if (!this.enabled) {
@@ -101,28 +110,43 @@ class NotificationService {
     }
 
     try {
-      // Queue notification via notification service
-      const response = await serviceClients.auth.post('/api/notifications/send', {
-        ...request,
-        source: 'payment-service',
-        priority: this.getPriority(request.type),
-        timestamp: new Date().toISOString(),
-      });
+      const ctx = createRequestContext(request.tenantId, request.recipientUserId);
+
+      // Queue notification via notification service (using shared library)
+      await notificationServiceClient.sendNotification(
+        {
+          userId: request.recipientUserId,
+          templateId: request.type,
+          channels: ['email'],
+          priority: this.getPriority(request.type) === 'high' ? 'high' : 'normal',
+          data: Object.fromEntries(
+            Object.entries({
+              ...request.templateData,
+              source: 'payment-service',
+              timestamp: new Date().toISOString(),
+            }).map(([k, v]) => [k, String(v)])
+          ) as Record<string, string | number | boolean>,
+        },
+        ctx
+      );
 
       log.info({
         type: request.type,
         recipient: request.recipientEmail,
-        status: response.status,
       }, 'Notification sent');
 
-      return response.status === 200 || response.status === 202;
+      return true;
     } catch (error) {
+      const errorMessage = error instanceof ServiceClientError
+        ? error.message
+        : error instanceof Error ? error.message : 'Unknown error';
+
       log.error({
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
         type: request.type,
         recipient: request.recipientEmail,
       }, 'Failed to send notification');
-      
+
       // Don't throw - notification failures shouldn't break the main flow
       return false;
     }

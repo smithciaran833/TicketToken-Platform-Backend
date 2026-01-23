@@ -3,8 +3,7 @@ import { nftService } from './nft.service';
 import logger from '../utils/logger';
 import { retryBlockchainOperation, pollForConfirmation } from '../utils/blockchain-retry';
 import { blockchainMetrics } from '../utils/blockchain-metrics';
-import { ticketServiceClient } from '@tickettoken/shared/clients';
-import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { ticketServiceClient, RequestContext } from '@tickettoken/shared';
 
 /**
  * BLOCKCHAIN TRANSFER SERVICE

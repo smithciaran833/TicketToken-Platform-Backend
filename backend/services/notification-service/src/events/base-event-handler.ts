@@ -1,8 +1,11 @@
 import Bull from 'bull';
 import { logger } from '../config/logger';
 import { db } from '../config/database';
-import { getAuthServiceClient, getEventServiceClient } from '../clients';
-import { createRequestContext } from '@tickettoken/shared';
+import {
+  authServiceClient,
+  eventServiceClient,
+  createRequestContext,
+} from '@tickettoken/shared';
 
 export abstract class BaseEventHandler {
   protected queue: Bull.Queue;
@@ -25,10 +28,9 @@ export abstract class BaseEventHandler {
    * Create request context for HMAC-authenticated service calls
    */
   protected createServiceContext(tenantId?: string): ReturnType<typeof createRequestContext> {
-    return createRequestContext({
-      tenantId: tenantId || process.env.DEFAULT_TENANT_ID,
-      serviceName: 'notification-service',
-    });
+    return createRequestContext(
+      tenantId || process.env.DEFAULT_TENANT_ID || 'default'
+    );
   }
 
   protected async getUserDetails(userId: string, tenantId?: string): Promise<any> {
@@ -40,9 +42,9 @@ export abstract class BaseEventHandler {
 
       if (!result) {
         // Fallback to auth service API with HMAC authentication
-        const authClient = getAuthServiceClient();
+        // Uses shared authServiceClient singleton
         const ctx = this.createServiceContext(tenantId);
-        const user = await authClient.getUserById(userId, ctx);
+        const user = await authServiceClient.getUser(userId, ctx);
 
         if (!user) {
           throw new Error(`User not found: ${userId}`);
@@ -71,9 +73,9 @@ export abstract class BaseEventHandler {
 
       if (!result) {
         // Fallback to event service API with HMAC authentication
-        const eventClient = getEventServiceClient();
+        // Uses shared eventServiceClient singleton
         const ctx = this.createServiceContext(tenantId);
-        const event = await eventClient.getEventById(eventId, ctx);
+        const event = await eventServiceClient.getEventInternal(eventId, ctx);
 
         if (!event) {
           throw new Error(`Event not found: ${eventId}`);

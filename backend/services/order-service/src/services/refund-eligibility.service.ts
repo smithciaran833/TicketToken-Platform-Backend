@@ -4,6 +4,7 @@ import { TicketClient } from './ticket.client';
 import { PaymentClient } from './payment.client';
 import { EventClient } from './event.client';
 import { disputeService } from './dispute.service';
+import { RequestContext, createRequestContext } from '@tickettoken/shared';
 
 /**
  * CRITICAL: Refund eligibility service with transfer check
@@ -40,12 +41,6 @@ export interface RefundEligibilityResult {
   };
   // MEDIUM: Currency info
   currency?: string;
-}
-
-interface RequestContext {
-  requestId?: string;
-  tenantId?: string;
-  userId?: string;
 }
 
 interface PolicyResult {
@@ -95,6 +90,9 @@ export class RefundEligibilityService {
       };
     }
 
+    // Create proper context for S2S calls if not provided
+    const ctx = context || createRequestContext(order.tenant_id, userId);
+
     // Verify user owns the order
     if (order.user_id !== userId) {
       return {
@@ -137,7 +135,7 @@ export class RefundEligibilityService {
     }
 
     // CRITICAL: Check if tickets have been transferred (DOUBLE SPEND PREVENTION)
-    const transferCheck = await this.checkTicketTransfers(orderId, order.user_id, context);
+    const transferCheck = await this.checkTicketTransfers(orderId, order.user_id, ctx);
     if (!transferCheck.allValid) {
       blockers.push('TICKETS_TRANSFERRED');
       return {
@@ -150,7 +148,7 @@ export class RefundEligibilityService {
     }
 
     // HIGH: Check event status (cancelled/postponed/rescheduled)
-    const eventStatusCheck = await this.checkEventStatus(order.event_id, context);
+    const eventStatusCheck = await this.checkEventStatus(order.event_id, ctx);
     if (eventStatusCheck.autoApprove) {
       autoApprove = true;
       warnings.push(eventStatusCheck.reason || 'Event status allows auto-approval');
@@ -160,7 +158,7 @@ export class RefundEligibilityService {
     }
 
     // HIGH: Check payout status (seller already paid out)
-    const payoutCheck = await this.checkPayoutStatus(orderId, order.stripe_payment_intent_id, context);
+    const payoutCheck = await this.checkPayoutStatus(orderId, order.stripe_payment_intent_id, ctx);
     if (payoutCheck.payoutCompleted) {
       requiresManualReview = true;
       manualReviewReason = `Seller payout already completed (${payoutCheck.payoutAmountCents} cents). Manual review required.`;
@@ -171,7 +169,7 @@ export class RefundEligibilityService {
     if (order.stripe_payment_intent_id) {
       const paymentCheck = await this.checkPaymentRefundable(
         order.stripe_payment_intent_id,
-        context
+        ctx
       );
       if (!paymentCheck.refundable) {
         blockers.push('PAYMENT_NOT_REFUNDABLE');

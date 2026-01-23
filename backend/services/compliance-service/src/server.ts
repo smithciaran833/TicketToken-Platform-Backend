@@ -26,6 +26,7 @@ import { adminRoutes } from './routes/admin.routes';
 import { batchRoutes } from './routes/batch.routes';
 import { webhookRoutes } from './routes/webhook.routes';
 import { gdprRoutes } from './routes/gdpr.routes';
+import { internalRoutes } from './routes/internal.routes';
 
 // Middleware
 import { authenticate, requireAdmin, requireComplianceOfficer } from './middleware/auth.middleware';
@@ -100,6 +101,9 @@ export async function createServer(): Promise<FastifyInstance> {
 
   // Webhook routes (special auth - handled internally)
   await app.register(webhookRoutes);
+
+  // Internal routes (service-to-service communication - HMAC auth handled internally)
+  await app.register(internalRoutes, { prefix: '/internal' });
 
   // API routes - ALL REQUIRE AUTHENTICATION
   await app.register(async (fastify) => {

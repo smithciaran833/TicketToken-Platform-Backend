@@ -1,8 +1,14 @@
 /**
  * Service Clients - notification-service
  *
- * Centralized exports for all internal service clients with HMAC authentication.
+ * Re-exports from @tickettoken/shared for backwards compatibility.
+ * New code should import directly from '@tickettoken/shared'.
  */
 
-export { AuthServiceClient, getAuthServiceClient } from './auth-service.client';
-export { EventServiceClient, getEventServiceClient } from './event-service.client';
+// Re-export shared library clients for any legacy imports
+export {
+  authServiceClient,
+  AuthServiceClient,
+  eventServiceClient,
+  EventServiceClient,
+} from '@tickettoken/shared';

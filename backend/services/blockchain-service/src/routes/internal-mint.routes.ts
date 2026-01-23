@@ -1,6 +1,9 @@
 import { FastifyInstance, FastifyPluginOptions } from 'fastify';
-import axios from 'axios';
-import crypto from 'crypto';
+import {
+  mintingServiceClient,
+  createRequestContext,
+  ServiceClientError,
+} from '@tickettoken/shared';
 import { logger } from '../utils/logger';
 import { internalAuthMiddleware } from '../middleware/internal-auth';
 import { validateMintRequest } from '../middleware/validation';
@@ -12,8 +15,6 @@ async function internalMintRoutes(
   fastify.post('/internal/mint-tickets', {
     preHandler: [internalAuthMiddleware, validateMintRequest]
   }, async (request, reply) => {
-    const mintingUrl = process.env.MINTING_SERVICE_URL || 'http://tickettoken-minting:3018';
-    
     try {
       const body = request.body as {
         ticketIds: string[];
@@ -22,45 +23,38 @@ async function internalMintRoutes(
         queue?: string;
       };
 
-      // Forward to minting service with proper authentication
-      
-      // Prepare the request body
-      const requestBody = {
+      // Extract tenant context from headers
+      const tenantId = request.headers['x-tenant-id'] as string || 'default';
+      const traceId = request.headers['x-trace-id'] as string;
+      const ctx = createRequestContext(tenantId, body.userId, traceId);
+
+      // Forward to minting service using shared client
+      // HMAC authentication is handled automatically by the client
+      const response = await mintingServiceClient.queueMint({
         ticketIds: body.ticketIds,
         eventId: body.eventId,
         userId: body.userId,
-        queue: body.queue || 'ticket.mint'
-      };
+        queue: body.queue || 'ticket.mint',
+      }, ctx);
 
-      // Add internal service authentication headers
-      const timestamp = Date.now().toString();
-      const secret = process.env.INTERNAL_SERVICE_SECRET || 'internal-service-secret-key-minimum-32-chars';
-      const payload = `blockchain-service:${timestamp}:${JSON.stringify(requestBody)}`;
-      const signature = crypto
-        .createHmac('sha256', secret)
-        .update(payload)
-        .digest('hex');
-
-      const response = await axios.post(`${mintingUrl}/internal/mint`, requestBody, {
-        headers: {
-          'x-internal-service': 'blockchain-service',
-          'x-timestamp': timestamp,
-          'x-internal-signature': signature,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      return response.data;
+      return response;
     } catch (error: any) {
-      logger.error('Minting proxy error', { 
-        error: error.message,
-        responseData: error.response?.data,
-        status: error.response?.status,
-        url: mintingUrl
-      });
-      return reply.status(error.response?.status || 500).send({
-        error: error.response?.data?.error || 'Minting request failed',
-        message: error.response?.data?.message || error.message
+      if (error instanceof ServiceClientError) {
+        logger.error('Minting proxy error', {
+          error: error.message,
+          statusCode: error.statusCode,
+          responseData: error.responseData,
+        });
+        return reply.status(error.statusCode || 500).send({
+          error: error.responseData?.error || 'Minting request failed',
+          message: error.message,
+        });
+      }
+
+      logger.error('Minting proxy error', { error: error.message });
+      return reply.status(500).send({
+        error: 'Minting request failed',
+        message: error.message,
       });
     }
   });

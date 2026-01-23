@@ -7,7 +7,7 @@ import { Dependencies } from '../types';
 import { EventService } from '../services/event.service';
 import { PricingService } from '../services/pricing.service';
 import { CapacityService } from '../services/capacity.service';
-import { VenueServiceClient } from '../services/venue-service.client';
+// PHASE 5c REFACTORED: VenueServiceClient now imported from @tickettoken/shared in services
 import { EventContentService } from '../services/event-content.service';
 import { EventBlockchainService } from '../services/blockchain.service';
 import { CancellationService } from '../services/cancellation.service';
@@ -28,22 +28,21 @@ export const createDependencyContainer = (): AwilixContainer<Dependencies> => {
     redis: asFunction(() => getRedis()).singleton(),
     mongodb: asFunction(async () => await initializeMongoDB()).singleton(),
 
-    // External service clients
-    venueServiceClient: asFunction(() => new VenueServiceClient()).singleton(),
+    // PHASE 5c REFACTORED: venueServiceClient now used directly from @tickettoken/shared
 
     // Core Services
     eventContentService: asFunction(() => new EventContentService()).singleton(),
-    
-    eventService: asFunction(({ db, venueServiceClient, redis }) =>
-      new EventService(db, venueServiceClient, redis)
+
+    eventService: asFunction(({ db, redis }) =>
+      new EventService(db, redis)
     ).singleton(),
 
     pricingService: asFunction(({ db }) =>
       new PricingService(db)
     ).singleton(),
 
-    capacityService: asFunction(({ db, venueServiceClient }) =>
-      new CapacityService(db, venueServiceClient)
+    capacityService: asFunction(({ db }) =>
+      new CapacityService(db)
     ).singleton(),
 
     // CRITICAL FIX: Register missing services (Issue #3)

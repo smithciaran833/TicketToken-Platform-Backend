@@ -11,8 +11,7 @@ import { RPCFailoverService } from '../services/RPCFailoverService';
 import { withLock, createMintLockKey } from '../utils/distributed-lock';
 import { withCircuitBreaker, configureCircuit } from '../utils/circuit-breaker';
 import { blockchainMetrics } from '../utils/blockchain-metrics';
-import { ticketServiceClient } from '@tickettoken/shared/clients';
-import { RequestContext } from '@tickettoken/shared/http-client/base-service-client';
+import { ticketServiceClient, RequestContext } from '@tickettoken/shared';
 import { 
   SolanaError, 
   MintingError, 

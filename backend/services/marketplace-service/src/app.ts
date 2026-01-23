@@ -4,6 +4,7 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import routes from './routes';
+import internalRoutes from './routes/internal.routes';
 import { errorHandler } from './middleware/error.middleware';
 import { setTenantContext } from './middleware/tenant-context';
 import knex from './config/database';
@@ -174,7 +175,13 @@ export async function buildApp(): Promise<FastifyInstance> {
     reply.header('X-Request-Id', request.id);
   });
 
-  // Register routes
+  // Register internal routes at root level (no prefix)
+  // These endpoints are called directly by other services:
+  // - payment-service calls POST /internal/events
+  // - transfer-service calls GET/POST /internal/escrow/*
+  await app.register(internalRoutes, { prefix: '/internal' });
+
+  // Register public routes with API prefix
   await app.register(routes, { prefix: '/api/v1/marketplace' });
 
   // Set error handler

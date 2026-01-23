@@ -8,6 +8,7 @@ import path from 'path';
 import { logger as _logger } from './utils/logger';
 import { errorHandler } from './middleware/error.middleware';
 import { setupRoutes } from './routes';
+import { internalRoutes } from './routes/internal.routes';
 import { registerRateLimiting } from './middleware/rate-limit.middleware';
 
 export async function createApp(): Promise<FastifyInstance> {
@@ -62,6 +63,9 @@ export async function createApp(): Promise<FastifyInstance> {
   
   // Setup routes (includes health check)
   await setupRoutes(app);
-  
+
+  // Internal routes (service-to-service communication)
+  await app.register(internalRoutes, { prefix: '/internal' });
+
   return app;
 }

@@ -5,12 +5,11 @@ import { IdempotencyService } from '../../services/idempotency.service';
 import { RateLimiterService } from '../../services/rate-limiter.service';
 import { logger } from '../../utils/logger';
 import axios from 'axios';
+import { analyticsServiceClient, createRequestContext } from '@tickettoken/shared';
 
-// Analytics provider configurations
+// Analytics provider configurations (for external providers)
 const SEGMENT_WRITE_KEY = process.env.SEGMENT_WRITE_KEY;
 const MIXPANEL_TOKEN = process.env.MIXPANEL_TOKEN;
-const INTERNAL_ANALYTICS_URL = process.env.ANALYTICS_SERVICE_URL || 'http://analytics-service:3000';
-const INTERNAL_SERVICE_KEY = process.env.INTERNAL_SERVICE_KEY;
 
 interface AnalyticsJobData {
   eventType: string;
@@ -268,45 +267,31 @@ export class AnalyticsProcessor extends BaseWorker<AnalyticsJobData, JobResult> 
 
   /**
    * Send event to internal analytics service
+   *
+   * PHASE 5c REFACTORED: Using shared analyticsServiceClient with standardized S2S auth
    */
   private async sendToInternalAnalytics(event: AnalyticsJobData): Promise<boolean> {
     const { eventType, userId, venueId, eventId, tenantId, data, timestamp } = event;
 
-    // Build internal analytics payload
-    const payload = {
-      eventType,
-      timestamp: timestamp || new Date().toISOString(),
-      userId,
-      venueId,
-      eventId,
-      tenantId,
-      properties: data,
-      source: 'queue-service'
-    };
-
     try {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
+      const ctx = createRequestContext(tenantId || 'system', userId);
 
-      // Add internal service authentication if configured
-      if (INTERNAL_SERVICE_KEY) {
-        headers['X-Internal-Service-Key'] = INTERNAL_SERVICE_KEY;
-      }
-      if (tenantId) {
-        headers['X-Tenant-ID'] = tenantId;
-      }
+      await analyticsServiceClient.trackEvent({
+        eventType: eventType as any,
+        eventName: eventType,
+        userId,
+        entityType: eventId ? 'event' : (venueId ? 'venue' : undefined),
+        entityId: eventId || venueId,
+        properties: {
+          ...data,
+          venueId: venueId || null,
+          eventId: eventId || null,
+        },
+        timestamp: timestamp || new Date().toISOString(),
+        source: 'queue-service',
+      }, ctx);
 
-      const response = await axios.post(
-        `${INTERNAL_ANALYTICS_URL}/api/v1/events/track`,
-        payload,
-        {
-          headers,
-          timeout: 10000
-        }
-      );
-
-      return response.status === 200 || response.status === 201;
+      return true;
     } catch (error: any) {
       // If internal analytics service is unavailable, log but don't fail
       if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
@@ -319,12 +304,12 @@ export class AnalyticsProcessor extends BaseWorker<AnalyticsJobData, JobResult> 
 
       logger.error('Internal analytics tracking failed:', {
         eventType,
-        status: error.response?.status,
+        statusCode: error.statusCode,
         message: error.message
       });
 
       // For 4xx errors, don't retry (bad data)
-      if (error.response?.status >= 400 && error.response?.status < 500) {
+      if (error.statusCode >= 400 && error.statusCode < 500) {
         return false;
       }
 

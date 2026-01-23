@@ -46,6 +46,13 @@ export {
 } from './http-client';
 
 // ============================================================================
+// SERVICE CLIENTS (NEW - Phase 3 Standardization)
+// ============================================================================
+
+// Pre-built service clients for service-to-service communication
+export * from './clients';
+
+// ============================================================================
 // INTERNAL AUTH MIDDLEWARE (NEW - Phase 1 Remediation)
 // ============================================================================
 

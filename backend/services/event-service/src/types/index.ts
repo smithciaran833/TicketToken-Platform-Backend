@@ -3,7 +3,7 @@ import { Knex } from 'knex';
 import Redis from 'ioredis';
 import { AwilixContainer } from 'awilix';
 import { Connection } from 'mongoose';
-import { VenueServiceClient } from '../services/venue-service.client';
+// PHASE 5c REFACTORED: VenueServiceClient now used directly from @tickettoken/shared
 
 // Type-only imports to avoid circular dependencies (Issue #3 fix)
 import type { EventService } from '../services/event.service';
@@ -48,12 +48,12 @@ export interface AppConfig {
 }
 
 // Issue #3 fix: Properly type all Dependencies with import type
+// PHASE 5c REFACTORED: venueServiceClient removed - now used directly from @tickettoken/shared
 export interface Dependencies {
   config: AppConfig;
   db: Knex;
   redis: Redis;
   mongodb?: Connection;
-  venueServiceClient: VenueServiceClient;
   eventContentService: EventContentService;
   eventService: EventService;
   pricingService: PricingService;

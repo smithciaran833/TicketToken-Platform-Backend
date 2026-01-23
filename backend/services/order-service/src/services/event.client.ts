@@ -1,25 +1,21 @@
-import { AxiosInstance } from 'axios';
-import { logger } from '../utils/logger';
-import { createCircuitBreaker } from '../utils/circuit-breaker';
-import { createSecureServiceClient, executeWithRetry, getServiceUrl } from '../utils/http-client.util';
-
 /**
- * SC1, SC2, OR1-OR4: Secure Event Service Client
- * Uses HTTPS, authentication headers, and correlation ID propagation
- * HIGH: Includes fallback responses when circuit breaker is open
+ * Event Service Client - order-service
+ *
+ * PHASE 5c REFACTORED:
+ * Extends BaseServiceClient from @tickettoken/shared for standardized
+ * HMAC auth, circuit breaker, retry, and tracing.
+ *
+ * Uses public event API for read operations with graceful fallbacks.
  */
 
-const EVENT_SERVICE_URL = getServiceUrl('event-service', 'http://tickettoken-event:3003');
+import {
+  BaseServiceClient,
+  RequestContext,
+  ServiceClientError,
+} from '@tickettoken/shared';
+import { logger } from '../utils/logger';
 
-interface RequestContext {
-  requestId?: string;
-  tenantId?: string;
-  userId?: string;
-  traceId?: string;
-  spanId?: string;
-}
-
-// HIGH: Default fallback responses when event service is unavailable
+// Default fallback responses when event service is unavailable
 const DEFAULT_EVENT_STATUS = {
   status: 'unknown',
   isCancelled: false,
@@ -29,86 +25,61 @@ const DEFAULT_EVENT_STATUS = {
   newDate: undefined,
 };
 
-export class EventClient {
-  private client: AxiosInstance;
-  private getEventBreaker;
-  private getEventStatusBreaker;
-
+/**
+ * Event client for order-service
+ *
+ * Uses internal endpoints with graceful fallbacks for read operations.
+ */
+export class EventClient extends BaseServiceClient {
   constructor() {
-    // Create secure client with S2S authentication
-    this.client = createSecureServiceClient({
-      baseUrl: EVENT_SERVICE_URL,
+    super({
+      baseURL: process.env.EVENT_SERVICE_URL || 'http://event-service:3004',
       serviceName: 'event-service',
       timeout: 5000,
     });
-
-    // HIGH: Circuit breaker with fallback for getEvent
-    this.getEventBreaker = createCircuitBreaker(
-      this._getEvent.bind(this),
-      { 
-        name: 'event-service-get-event', 
-        timeout: 3000,
-        fallback: (eventId: string) => {
-          logger.warn('Event service unavailable - returning null for getEvent', { eventId });
-          return null;
-        },
-      }
-    );
-
-    // HIGH: Circuit breaker with fallback for getEventStatus
-    this.getEventStatusBreaker = createCircuitBreaker(
-      this._getEventStatus.bind(this),
-      {
-        name: 'event-service-get-status',
-        timeout: 3000,
-        fallback: (eventId: string) => {
-          logger.warn('Event service unavailable - returning default status', { eventId });
-          return DEFAULT_EVENT_STATUS;
-        },
-      }
-    );
   }
 
-  private async _getEvent(eventId: string, context?: RequestContext): Promise<any> {
-    const response = await executeWithRetry(
-      () => this.client.get(`/api/v1/events/${eventId}`, { context } as any),
-      2,
-      'event-service'
-    );
-    return response.data;
-  }
-
-  async getEvent(eventId: string, context?: RequestContext): Promise<any> {
+  /**
+   * Get event details
+   *
+   * @param eventId - Event ID
+   * @param ctx - Request context with tenant info
+   * @returns Event details or null if unavailable
+   */
+  async getEvent(eventId: string, ctx?: RequestContext): Promise<any | null> {
     try {
-      return await this.getEventBreaker.fire(eventId, context);
+      const context = ctx || { tenantId: 'system' };
+      const response = await this.get<{ event: any }>(
+        `/internal/events/${eventId}`,
+        context
+      );
+      return response.data.event;
     } catch (error) {
-      logger.error('Error fetching event', { error, eventId });
-      // HIGH: Return null instead of throwing when service unavailable
+      if (error instanceof ServiceClientError) {
+        logger.warn('Event service unavailable - returning null for getEvent', {
+          eventId,
+          statusCode: error.statusCode,
+        });
+      } else {
+        logger.error('Error fetching event', { error, eventId });
+      }
       return null;
     }
   }
 
-  private async _getEventStatus(eventId: string, context?: RequestContext): Promise<{
-    status: string;
-    isCancelled: boolean;
-    isPostponed: boolean;
-    isRescheduled: boolean;
-    originalDate?: string;
-    newDate?: string;
-  }> {
-    const response = await executeWithRetry(
-      () => this.client.get(`/api/v1/events/${eventId}/status`, { context } as any),
-      2,
-      'event-service'
-    );
-    return response.data;
-  }
-
   /**
    * Get event status - useful for refund eligibility (cancelled/postponed events)
-   * HIGH: Returns safe default when service is unavailable
+   *
+   * Returns safe default when service is unavailable.
+   *
+   * @param eventId - Event ID
+   * @param ctx - Request context with tenant info
+   * @returns Event status with cancellation/postponement info
    */
-  async getEventStatus(eventId: string, context?: RequestContext): Promise<{
+  async getEventStatus(
+    eventId: string,
+    ctx?: RequestContext
+  ): Promise<{
     status: string;
     isCancelled: boolean;
     isPostponed: boolean;
@@ -117,10 +88,25 @@ export class EventClient {
     newDate?: string;
   }> {
     try {
-      return await this.getEventStatusBreaker.fire(eventId, context);
+      const context = ctx || { tenantId: 'system' };
+      const response = await this.get<{
+        status: string;
+        isCancelled: boolean;
+        isPostponed: boolean;
+        isRescheduled: boolean;
+        originalDate?: string;
+        newDate?: string;
+      }>(`/internal/events/${eventId}/status`, context);
+      return response.data;
     } catch (error) {
-      logger.error('Error fetching event status', { error, eventId });
-      // HIGH: Return safe default instead of throwing
+      if (error instanceof ServiceClientError) {
+        logger.warn('Event service unavailable - returning default status', {
+          eventId,
+          statusCode: error.statusCode,
+        });
+      } else {
+        logger.error('Error fetching event status', { error, eventId });
+      }
       return DEFAULT_EVENT_STATUS;
     }
   }

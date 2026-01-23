@@ -1,4 +1,8 @@
-import { orderServiceClient, OrderServiceError } from '../clients/OrderServiceClient';
+import {
+  orderServiceClient,
+  createRequestContext,
+  ServiceClientError,
+} from '@tickettoken/shared';
 import knex from 'knex';
 import { v4 as uuidv4 } from 'uuid';
 import { percentOfCents, addCents } from '@tickettoken/shared';
@@ -142,13 +146,13 @@ export class PurchaseSaga {
 
     } catch (error) {
       log.error('Purchase saga failed, starting compensation', { error });
-      
+
       // ROLLBACK: Compensate for any completed steps
-      await this.compensate(request.userId);
-      
+      await this.compensate(request.userId, request.tenantId);
+
       // Rollback DB transaction
       await trx.rollback();
-      
+
       throw error;
     }
   }
@@ -209,34 +213,42 @@ export class PurchaseSaga {
 
   /**
    * STEP 2: Create order via order-service API
+   *
+   * PHASE 5c REFACTORED: Using shared orderServiceClient with standardized S2S auth
    */
   private async createOrder(
     request: PurchaseRequest,
     items: Array<{ ticketTypeId: string; quantity: number; unitPriceCents: number }>,
     totalAmountCents: number
   ) {
+    const ctx = createRequestContext(request.tenantId, request.userId);
+
     try {
-      const orderResponse = await orderServiceClient.createOrder({
-        userId: request.userId,
-        eventId: request.eventId,
-        items: items.map(item => ({
-          ticketTypeId: item.ticketTypeId,
-          quantity: item.quantity,
-          unitPriceCents: item.unitPriceCents,
-        })),
-        currency: 'USD',
-        idempotencyKey: request.idempotencyKey,
-        metadata: {
-          tenantId: request.tenantId,
-          discountCodes: request.discountCodes,
+      const orderResponse = await orderServiceClient.createOrder(
+        {
+          userId: request.userId,
+          eventId: request.eventId,
+          items: items.map(item => ({
+            ticketTypeId: item.ticketTypeId,
+            quantity: item.quantity,
+            unitPriceCents: item.unitPriceCents,
+          })),
+          currency: 'USD',
+          idempotencyKey: request.idempotencyKey,
+          metadata: {
+            tenantId: request.tenantId,
+            discountCodes: request.discountCodes,
+          },
         },
-      });
+        ctx,
+        request.idempotencyKey
+      );
 
       return orderResponse;
 
     } catch (error) {
-      if (error instanceof OrderServiceError) {
-        log.error('Order service error', { message: error.message });
+      if (error instanceof ServiceClientError) {
+        log.error('Order service error', { message: error.message, statusCode: error.statusCode });
       }
       throw error;
     }
@@ -285,7 +297,7 @@ export class PurchaseSaga {
   /**
    * COMPENSATION: Rollback all completed steps
    */
-  private async compensate(userId: string) {
+  private async compensate(userId: string, tenantId?: string) {
     const compensations = [];
 
     // Compensate Step 3: Delete created tickets
@@ -298,7 +310,7 @@ export class PurchaseSaga {
     // Compensate Step 2: Cancel order in order-service
     if (this.state.orderCreated && this.state.orderId) {
       compensations.push(
-        this.compensateOrder(userId)
+        this.compensateOrder(userId, tenantId)
       );
     }
 
@@ -311,7 +323,7 @@ export class PurchaseSaga {
 
     // Execute all compensations
     const results = await Promise.allSettled(compensations);
-    
+
     results.forEach((result, index) => {
       if (result.status === 'rejected') {
         log.error(`Compensation ${index + 1} failed`, { reason: result.reason });
@@ -336,18 +348,22 @@ export class PurchaseSaga {
     }
   }
 
-  private async compensateOrder(userId: string) {
+  /**
+   * PHASE 5c REFACTORED: Using shared orderServiceClient with standardized S2S auth
+   */
+  private async compensateOrder(userId: string, tenantId?: string) {
     if (!this.state.orderId) return;
 
     log.info('Compensating: Cancelling order in order-service', { orderId: this.state.orderId });
-    
+
     try {
-      await orderServiceClient.cancelOrder({
-        orderId: this.state.orderId,
-        userId,
-        reason: 'Saga compensation - ticket creation failed',
-      });
-      
+      const ctx = createRequestContext(tenantId || 'system', userId);
+      await orderServiceClient.cancelOrder(
+        this.state.orderId,
+        'Saga compensation - ticket creation failed',
+        ctx
+      );
+
       log.info('Order cancelled during compensation');
     } catch (error) {
       log.error('Failed to cancel order during compensation', { error });
