@@ -32,8 +32,8 @@ const ALLOWED_SERVICES = new Set(
 const hmacValidator = INTERNAL_HMAC_SECRET
   ? createHmacValidator({
       secret: INTERNAL_HMAC_SECRET,
+      serviceName: 'notification-service',
       replayWindowMs: 60000, // 60 seconds
-      allowedServices: Array.from(ALLOWED_SERVICES),
     })
   : null;
 
@@ -95,28 +95,25 @@ export async function internalAuthMiddleware(
       });
     }
 
-    // Validate HMAC signature
-    const result: HmacValidationResult = await hmacValidator.validate({
-      serviceName: headers['x-internal-service'],
-      timestamp: headers['x-internal-timestamp'],
-      nonce: headers['x-internal-nonce'],
-      signature: headers['x-internal-signature'],
-      bodyHash: headers['x-internal-body-hash'],
-      method: request.method,
-      path: request.url,
-      body: request.body,
-    });
+    // Validate HMAC signature using shared library - correct API
+    const result: HmacValidationResult = await hmacValidator.validate(
+      request.headers as Record<string, string | string[] | undefined>,
+      request.method,
+      request.url,
+      request.body
+    );
 
     if (!result.valid) {
       log.warn({
         service: headers['x-internal-service'],
         path: request.url,
-        reason: result.reason,
+        error: result.error,
+        errorCode: result.errorCode,
       }, 'HMAC validation failed');
 
       return reply.status(401).send({
         error: 'Unauthorized',
-        message: result.reason || 'Invalid signature',
+        message: result.error || 'Invalid signature',
       });
     }
 
@@ -136,6 +133,9 @@ export async function internalAuthMiddleware(
       isInternal: true,
       authenticatedAt: Date.now(),
     };
+
+    // Backward compatibility - also set as string
+    (request as any).internalServiceName = serviceName;
 
     log.debug({ serviceName, path: request.url }, 'Internal service authenticated');
   } catch (error) {

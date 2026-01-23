@@ -5,7 +5,7 @@
  * These endpoints provide ticket data to other services
  * (scanning-service, payment-service, transfer-service, etc.)
  *
- * Phase A HMAC Standardization - Decision #2 Implementation
+ * Phase B HMAC Standardization - Routes now use shared middleware
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
@@ -15,177 +15,15 @@ import { DatabaseService } from '../services/databaseService';
 import { RedisService } from '../services/redisService';
 import { setTenantContext } from '../utils/tenant-db';
 import { logger } from '../utils/logger';
-import * as crypto from 'crypto';
+import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
 
 const log = logger.child({ component: 'InternalRoutes' });
 const ticketService = new TicketService();
 const transferService = new TransferService();
 
-// Internal authentication configuration
-const INTERNAL_HMAC_SECRET = process.env.INTERNAL_HMAC_SECRET || process.env.INTERNAL_SERVICE_SECRET;
-const USE_NEW_HMAC = process.env.USE_NEW_HMAC === 'true';
-
-// CRITICAL: Fail hard in production if secret is not set
-if (!INTERNAL_HMAC_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('INTERNAL_HMAC_SECRET must be set in production');
-}
-
-if (!INTERNAL_HMAC_SECRET) {
-  log.warn('INTERNAL_HMAC_SECRET not set - internal routes will be disabled');
-}
-
-// Allowed services that can call internal endpoints
-const ALLOWED_SERVICES = new Set(
-  (process.env.ALLOWED_INTERNAL_SERVICES || 'api-gateway,payment-service,order-service,event-service,venue-service,notification-service,transfer-service,minting-service,blockchain-service,marketplace-service,scanning-service,compliance-service,analytics-service,file-service,blockchain-indexer')
-    .split(',')
-    .map(s => s.trim().toLowerCase())
-);
-
-/**
- * Verify internal service authentication using HMAC-SHA256 signature
- *
- * Expected headers:
- * - x-internal-service: Service name
- * - x-internal-timestamp: Unix timestamp (ms)
- * - x-internal-nonce: Unique nonce for replay protection
- * - x-internal-signature: HMAC-SHA256 signature
- * - x-internal-body-hash: SHA256 hash of request body (for POST/PUT)
- */
-async function verifyInternalService(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  // Skip validation if feature flag is disabled
-  if (!USE_NEW_HMAC) {
-    log.debug('HMAC validation disabled (USE_NEW_HMAC=false)');
-    return;
-  }
-
-  const serviceName = request.headers['x-internal-service'] as string;
-  const timestamp = request.headers['x-internal-timestamp'] as string;
-  const nonce = request.headers['x-internal-nonce'] as string;
-  const signature = request.headers['x-internal-signature'] as string;
-  const bodyHash = request.headers['x-internal-body-hash'] as string;
-
-  // Check required headers
-  if (!serviceName || !timestamp || !signature) {
-    log.warn({
-      path: request.url,
-      hasService: !!serviceName,
-      hasTimestamp: !!timestamp,
-      hasSignature: !!signature,
-    }, 'Internal request missing required headers');
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Missing required authentication headers',
-    });
-  }
-
-  // Validate timestamp (60-second window per Audit #16)
-  const requestTime = parseInt(timestamp);
-  const now = Date.now();
-  const timeDiff = Math.abs(now - requestTime);
-
-  if (isNaN(requestTime) || timeDiff > 60000) {
-    log.warn({
-      timeDiff: timeDiff / 1000,
-      service: serviceName,
-      path: request.url,
-    }, 'Internal request with expired timestamp');
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Request timestamp expired or invalid',
-    });
-  }
-
-  // Validate service name
-  const normalizedService = serviceName.toLowerCase();
-  if (!ALLOWED_SERVICES.has(normalizedService)) {
-    log.warn({
-      serviceName,
-      path: request.url,
-    }, 'Unknown service attempted internal access');
-    return reply.status(403).send({
-      error: 'Forbidden',
-      message: 'Service not authorized',
-    });
-  }
-
-  // Verify HMAC signature
-  if (!INTERNAL_HMAC_SECRET) {
-    log.error('INTERNAL_HMAC_SECRET not configured');
-    return reply.status(500).send({
-      error: 'Internal server error',
-      message: 'Service authentication not configured',
-    });
-  }
-
-  // Build signature payload
-  // Format: serviceName:timestamp:nonce:method:path[:bodyHash]
-  let signaturePayload = `${serviceName}:${timestamp}:${nonce || ''}:${request.method}:${request.url}`;
-  if (bodyHash) {
-    signaturePayload += `:${bodyHash}`;
-  }
-
-  const expectedSignature = crypto
-    .createHmac('sha256', INTERNAL_HMAC_SECRET)
-    .update(signaturePayload)
-    .digest('hex');
-
-  // Timing-safe comparison to prevent timing attacks
-  try {
-    const signatureBuffer = Buffer.from(signature, 'hex');
-    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-    if (signatureBuffer.length !== expectedBuffer.length ||
-        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
-      log.warn({
-        service: serviceName,
-        path: request.url,
-      }, 'Invalid internal service signature');
-      return reply.status(401).send({
-        error: 'Unauthorized',
-        message: 'Invalid signature',
-      });
-    }
-  } catch (error) {
-    log.warn({
-      service: serviceName,
-      path: request.url,
-      error: (error as Error).message,
-    }, 'Signature verification error');
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Invalid signature format',
-    });
-  }
-
-  // Verify body hash if present (for POST/PUT requests)
-  if (request.body && bodyHash) {
-    const actualBodyHash = crypto
-      .createHash('sha256')
-      .update(JSON.stringify(request.body))
-      .digest('hex');
-
-    if (actualBodyHash !== bodyHash) {
-      log.warn({
-        service: serviceName,
-        path: request.url,
-      }, 'Body hash mismatch');
-      return reply.status(401).send({
-        error: 'Unauthorized',
-        message: 'Body hash mismatch',
-      });
-    }
-  }
-
-  log.debug({
-    serviceName,
-    path: request.url,
-    method: request.method,
-  }, 'Internal service authenticated');
-}
-
 export default async function internalRoutes(fastify: FastifyInstance) {
   fastify.get('/internal/tickets/:ticketId/status', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     try {
       const { ticketId } = request.params as any;
@@ -237,7 +75,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/internal/tickets/cancel-batch', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     try {
       const { ticketIds, reason, refundId } = request.body as any;
@@ -299,7 +137,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   });
 
   fastify.post('/internal/tickets/calculate-price', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     try {
       const { ticketIds } = request.body as any;
@@ -369,7 +207,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: scanning-service, venue-service, payment-service
    */
   fastify.get('/internal/tickets/:ticketId/full', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -469,7 +307,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: scanning-service
    */
   fastify.get('/internal/tickets/by-event/:eventId', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -573,7 +411,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: blockchain-indexer
    */
   fastify.get('/internal/tickets/by-token/:tokenId', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     
@@ -640,7 +478,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: transfer-service
    */
   fastify.post('/internal/tickets/:ticketId/transfer', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -744,7 +582,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: payment-service (reconciliation)
    */
   fastify.get('/internal/orders/:orderId/tickets/count', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -799,7 +637,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: scanning-service
    */
   fastify.post('/internal/tickets/:ticketId/record-scan', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -879,7 +717,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: blockchain-indexer, transfer-service
    */
   fastify.post('/internal/tickets/:ticketId/update-nft', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -1003,7 +841,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: blockchain-indexer (for batch reconciliation)
    */
   fastify.post('/internal/tickets/batch-by-token', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     
@@ -1080,7 +918,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: scanning-service (optimized for validation workflow)
    */
   fastify.get('/internal/tickets/:ticketId/for-validation', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;
@@ -1184,7 +1022,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    * Used by: payment-service (refund workflow)
    */
   fastify.get('/internal/tickets/:ticketId/for-refund', {
-    preHandler: [verifyInternalService]
+    preHandler: [internalAuthMiddlewareNew]
   }, async (request, reply) => {
     const traceId = request.headers['x-trace-id'] as string;
     const tenantId = request.headers['x-tenant-id'] as string;

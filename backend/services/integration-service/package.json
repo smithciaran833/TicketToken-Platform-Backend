@@ -22,7 +22,6 @@
     "@fastify/rate-limit": "^10.3.0",
     "@mailchimp/mailchimp_marketing": "^3.0.80",
     "@tickettoken/shared": "file:../../shared",
-    "amqplib": "^0.10.3",
     "axios": "^1.4.0",
     "bcryptjs": "^2.4.3",
     "bull": "^4.16.5",
@@ -47,7 +46,6 @@
     "zod": "^4.3.5"
   },
   "devDependencies": {
-    "@types/amqplib": "^0.10.1",
     "@types/axios": "^0.9.36",
     "@types/bcryptjs": "^2.4.2",
     "@types/bs58": "^4.0.4",

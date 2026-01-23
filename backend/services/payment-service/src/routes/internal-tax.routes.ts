@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { TaxCalculatorService } from '../services/compliance/tax-calculator.service';
-import { internalAuth } from '../middleware/internal-auth';
+import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'InternalTaxRoutes' });
@@ -10,7 +10,7 @@ export default async function internalTaxRoutes(fastify: FastifyInstance) {
 
   fastify.post(
     '/internal/calculate-tax',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const { amount, venueAddress, customerAddress } = request.body as any;

@@ -1,72 +1,19 @@
 /**
  * Internal Routes - For service-to-service communication only
  *
- * These endpoints are protected by internal API key authentication
+ * These endpoints are protected by HMAC-based internal authentication
  * and are not accessible to end users.
+ *
+ * Phase B HMAC Standardization - Routes now use shared middleware
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDatabase } from '../config/database';
-import * as crypto from 'crypto';
-
-// Internal authentication configuration
-const INTERNAL_SECRET = process.env.INTERNAL_SERVICE_SECRET;
-
-if (!INTERNAL_SECRET) {
-  console.error('WARNING: INTERNAL_SERVICE_SECRET not set - internal routes will reject all requests in production');
-}
-
-/**
- * Verify internal service authentication using HMAC signature
- */
-async function verifyInternalService(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  const serviceName = request.headers['x-internal-service'] as string;
-  const timestamp = request.headers['x-internal-timestamp'] as string;
-  const signature = request.headers['x-internal-signature'] as string;
-
-  if (!serviceName || !timestamp || !signature) {
-    request.log.warn('Internal request missing required headers');
-    return reply.status(401).send({ error: 'Missing required headers' });
-  }
-
-  const requestTime = parseInt(timestamp);
-  const now = Date.now();
-  const timeDiff = Math.abs(now - requestTime);
-
-  if (isNaN(requestTime) || timeDiff > 5 * 60 * 1000) {
-    request.log.warn({ timeDiff: timeDiff / 1000 }, 'Internal request with expired timestamp');
-    return reply.status(401).send({ error: 'Request expired' });
-  }
-
-  // Accept temp-signature in development
-  if (signature === 'temp-signature' && process.env.NODE_ENV !== 'production') {
-    request.log.info({ service: serviceName }, 'Internal request accepted with temp signature');
-    return;
-  }
-
-  if (!INTERNAL_SECRET) {
-    return reply.status(401).send({ error: 'Internal authentication not configured' });
-  }
-
-  const expectedSignature = crypto
-    .createHmac('sha256', INTERNAL_SECRET)
-    .update(`${serviceName}:${timestamp}:${request.url}`)
-    .digest('hex');
-
-  // Timing-safe comparison
-  const signatureBuffer = Buffer.from(signature, 'hex');
-  const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-  if (signatureBuffer.length !== expectedBuffer.length ||
-      !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
-    request.log.warn({ service: serviceName }, 'Invalid internal service signature');
-    return reply.status(401).send({ error: 'Invalid signature' });
-  }
-}
+import { internalAuthMiddleware } from '../middleware/internal-auth.middleware';
 
 export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
-  // Apply internal authentication to all routes
-  fastify.addHook('preHandler', verifyInternalService);
+  // Apply internal authentication to all routes using standardized middleware
+  fastify.addHook('preHandler', internalAuthMiddleware);
 
   /**
    * GET /internal/orders/:orderId

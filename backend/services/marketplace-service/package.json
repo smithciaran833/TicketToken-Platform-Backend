@@ -24,6 +24,7 @@
   "author": "TicketToken Team",
   "license": "MIT",
   "dependencies": {
+    "amqplib": "^0.10.9",
     "@coral-xyz/anchor": "^0.31.1",
     "@fastify/cors": "^8.5.0",
     "@fastify/formbody": "^7.4.0",
@@ -54,6 +55,7 @@
     "winston": "^3.11.0"
   },
   "devDependencies": {
+    "@types/amqplib": "^0.10.7",
     "@faker-js/faker": "^10.0.0",
     "@types/bcryptjs": "^2.4.6",
     "@types/bull": "^3.15.9",

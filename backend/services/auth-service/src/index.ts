@@ -22,6 +22,8 @@ console.log('[BOOT] 9. Importing secrets...');
 import { loadSecrets } from './config/secrets';
 console.log('[BOOT] 10. Importing monitoring...');
 import { markStartupComplete, markStartupFailed } from './services/monitoring.service';
+console.log('[BOOT] 10.5. Importing RabbitMQ...');
+import { initializeRabbitMQ, shutdownRabbitMQ } from './config/rabbitmq';
 console.log('[BOOT] 11. All imports complete');
 
 const LB_DRAIN_DELAY = parseInt(process.env.LB_DRAIN_DELAY || '5', 10) * 1000;
@@ -68,6 +70,11 @@ async function start() {
     logger.info('Redis connected');
     console.log('[BOOT] 18. Redis ping successful');
 
+    console.log('[BOOT] 18.5. Initializing RabbitMQ...');
+    await initializeRabbitMQ();
+    logger.info('RabbitMQ publisher initialized');
+    console.log('[BOOT] 18.6. RabbitMQ initialized');
+
     console.log('[BOOT] 19. About to buildApp()...');
     const app = await buildApp();
     console.log('[BOOT] 20. buildApp() complete');
@@ -106,6 +113,9 @@ async function start() {
 
         await closeRedisConnections();
         logger.info('Redis connections closed');
+
+        await shutdownRabbitMQ();
+        logger.info('RabbitMQ disconnected');
 
         await shutdownTracing();
         logger.info('Tracing shutdown complete');

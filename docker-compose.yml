@@ -215,6 +215,9 @@ services:
       SERVICE_NAME: api-gateway
       HOST: 0.0.0.0
       LOG_LEVEL: debug
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       REDIS_PASSWORD: ${REDIS_PASSWORD}
@@ -243,6 +246,9 @@ services:
       PORT: 3001
       SERVICE_NAME: auth-service
       LOG_LEVEL: debug
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -290,6 +296,9 @@ services:
       NODE_ENV: development
       PORT: 3002
       SERVICE_NAME: venue-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -331,6 +340,9 @@ services:
       NODE_ENV: development
       PORT: 3003
       SERVICE_NAME: event-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -385,6 +397,9 @@ services:
       NODE_ENV: development
       PORT: 3004
       SERVICE_NAME: ticket-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -432,6 +447,9 @@ services:
       PORT: 3005
       SERVICE_NAME: order-service
       HOST: 0.0.0.0
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -471,6 +489,9 @@ services:
       NODE_ENV: development
       PORT: 3006
       SERVICE_NAME: payment-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -513,6 +534,9 @@ services:
       NODE_ENV: development
       PORT: 3007
       SERVICE_NAME: notification-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -559,6 +583,9 @@ services:
       NODE_ENV: development
       PORT: 3008
       SERVICE_NAME: queue-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -592,6 +619,9 @@ services:
       NODE_ENV: development
       PORT: 3009
       SERVICE_NAME: scanning-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -622,6 +652,9 @@ services:
       NODE_ENV: development
       PORT: 3010
       SERVICE_NAME: analytics-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       ANALYTICS_DB_HOST: pgbouncer
@@ -674,6 +707,9 @@ services:
       PORT: 3011
       SERVICE_NAME: blockchain-service
       HOST: 0.0.0.0
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -715,6 +751,9 @@ services:
       NODE_ENV: development
       PORT: 3012
       SERVICE_NAME: blockchain-indexer
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -753,6 +792,9 @@ services:
       NODE_ENV: development
       PORT: 3013
       SERVICE_NAME: file-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -802,6 +844,9 @@ services:
       NODE_ENV: development
       PORT: 3014
       SERVICE_NAME: compliance-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -832,6 +877,9 @@ services:
       NODE_ENV: development
       PORT: 3015
       SERVICE_NAME: integration-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -865,6 +913,9 @@ services:
       NODE_ENV: development
       PORT: 3016
       SERVICE_NAME: marketplace-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -902,6 +953,9 @@ services:
       NODE_ENV: development
       PORT: 3017
       SERVICE_NAME: monitoring-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -938,6 +992,9 @@ services:
       PORT: 3018
       MINTING_SERVICE_PORT: 3018
       SERVICE_NAME: minting-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -976,6 +1033,9 @@ services:
       NODE_ENV: development
       PORT: 3019
       SERVICE_NAME: transfer-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432
@@ -1015,6 +1075,9 @@ services:
       NODE_ENV: development
       PORT: 3020
       SERVICE_NAME: search-service
+      # HMAC Authentication
+      INTERNAL_HMAC_SECRET: ${INTERNAL_HMAC_SECRET}
+      USE_NEW_HMAC: ${USE_NEW_HMAC:-false}
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@pgbouncer:6432/${POSTGRES_DB}
       DB_HOST: pgbouncer
       DB_PORT: 6432

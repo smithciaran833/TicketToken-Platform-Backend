@@ -9,6 +9,7 @@ import Redis from 'ioredis';
 import { validateTimezoneOrThrow } from '../utils/timezone-validator';
 import { EventBlockchainService, EventBlockchainData } from './blockchain.service';
 import { validateTransition, EventState, EventTransition } from './event-state-machine';
+import { EventLifecyclePublisher } from '../config/rabbitmq';
 import {
   EventModel,
   IEvent,
@@ -377,6 +378,20 @@ export class EventService {
       isFeatured: result.event.is_featured,
     });
 
+    // Publish event.created to RabbitMQ for inter-service communication
+    EventLifecyclePublisher.eventCreated(
+      {
+        id: result.event.id!,
+        name: result.event.name,
+        organizerId: result.event.organizer_id,
+        venueId: result.event.venue_id,
+        startDate: result.schedule?.starts_at,
+        endDate: result.schedule?.ends_at,
+        status: result.event.status
+      },
+      { userId, tenantId }
+    ).catch(err => logger.warn({ error: err.message }, 'Failed to publish event.created to RabbitMQ'));
+
     return this.enrichEventWithRelations(result.event, result.schedule, result.capacity);
   }
 
@@ -657,6 +672,19 @@ export class EventService {
       }
     });
 
+    // Publish event.updated to RabbitMQ for inter-service communication
+    EventLifecyclePublisher.eventUpdated(
+      eventId,
+      {
+        name: data.name,
+        description: data.short_description || data.description,
+        status: data.status,
+        tags: data.tags,
+        isFeatured: data.is_featured,
+      },
+      { userId, tenantId }
+    ).catch(err => logger.warn({ error: err.message }, 'Failed to publish event.updated to RabbitMQ'));
+
     return this.getEvent(eventId, tenantId);
   }
 
@@ -735,6 +763,10 @@ export class EventService {
     logger.info({ eventId, tenantId }, 'Event deleted');
 
     await publishSearchSync('event.deleted', { id: eventId });
+
+    // Publish event.deleted to RabbitMQ for inter-service communication
+    EventLifecyclePublisher.eventDeleted(eventId, { userId, tenantId })
+      .catch(err => logger.warn({ error: err.message }, 'Failed to publish event.deleted to RabbitMQ'));
   }
 
   async publishEvent(eventId: string, userId: string, tenantId: string): Promise<any> {
@@ -761,6 +793,13 @@ export class EventService {
       id: eventId,
       changes: { status: 'PUBLISHED' }
     });
+
+    // Publish event.published to RabbitMQ for inter-service communication
+    EventLifecyclePublisher.eventPublished(
+      eventId,
+      { name: event.name, startDate: event.starts_at, venueId: event.venue_id },
+      { userId, tenantId }
+    ).catch(err => logger.warn({ error: err.message }, 'Failed to publish event.published to RabbitMQ'));
 
     return this.getEvent(eventId, tenantId);
   }

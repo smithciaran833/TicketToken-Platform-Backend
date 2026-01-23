@@ -5,7 +5,7 @@
  * These endpoints handle internal events from other services
  * (payment-service, order-service, etc.)
  *
- * Phase A HMAC Standardization - Decision #2 Implementation
+ * Phase B HMAC Standardization - Routes now use shared middleware
  *
  * Endpoints:
  * - POST /internal/events - Handle events from payment-service
@@ -15,173 +15,11 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import knex from '../config/database';
+import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
 
 const log = logger.child({ component: 'InternalRoutes' });
-
-// Internal authentication configuration
-const INTERNAL_HMAC_SECRET = process.env.INTERNAL_HMAC_SECRET || process.env.INTERNAL_SERVICE_SECRET;
-const USE_NEW_HMAC = process.env.USE_NEW_HMAC === 'true';
-
-// CRITICAL: Fail hard in production if secret is not set
-if (!INTERNAL_HMAC_SECRET && process.env.NODE_ENV === 'production') {
-  throw new Error('INTERNAL_HMAC_SECRET must be set in production');
-}
-
-if (!INTERNAL_HMAC_SECRET) {
-  log.warn('INTERNAL_HMAC_SECRET not set - internal routes will be disabled');
-}
-
-// Allowed services that can call internal endpoints
-const ALLOWED_SERVICES = new Set(
-  (process.env.ALLOWED_INTERNAL_SERVICES || 'api-gateway,payment-service,order-service,event-service,ticket-service,venue-service,notification-service,transfer-service,minting-service,blockchain-service,scanning-service,compliance-service,analytics-service')
-    .split(',')
-    .map(s => s.trim().toLowerCase())
-);
-
-/**
- * Verify internal service authentication using HMAC-SHA256 signature
- *
- * Expected headers:
- * - x-internal-service: Service name
- * - x-internal-timestamp: Unix timestamp (ms)
- * - x-internal-nonce: Unique nonce for replay protection
- * - x-internal-signature: HMAC-SHA256 signature
- * - x-internal-body-hash: SHA256 hash of request body (for POST/PUT)
- */
-async function verifyInternalService(request: FastifyRequest, reply: FastifyReply): Promise<void> {
-  // Skip validation if feature flag is disabled
-  if (!USE_NEW_HMAC) {
-    log.debug('HMAC validation disabled (USE_NEW_HMAC=false)');
-    return;
-  }
-
-  const serviceName = request.headers['x-internal-service'] as string;
-  const timestamp = request.headers['x-internal-timestamp'] as string;
-  const nonce = request.headers['x-internal-nonce'] as string;
-  const signature = request.headers['x-internal-signature'] as string;
-  const bodyHash = request.headers['x-internal-body-hash'] as string;
-
-  // Check required headers
-  if (!serviceName || !timestamp || !signature) {
-    log.warn('Internal request missing required headers', {
-      path: request.url,
-      hasService: !!serviceName,
-      hasTimestamp: !!timestamp,
-      hasSignature: !!signature,
-    });
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Missing required authentication headers',
-    });
-  }
-
-  // Validate timestamp (60-second window per Audit #16)
-  const requestTime = parseInt(timestamp);
-  const now = Date.now();
-  const timeDiff = Math.abs(now - requestTime);
-
-  if (isNaN(requestTime) || timeDiff > 60000) {
-    log.warn('Internal request with expired timestamp', {
-      timeDiff: timeDiff / 1000,
-      service: serviceName,
-      path: request.url,
-    });
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Request timestamp expired or invalid',
-    });
-  }
-
-  // Validate service name
-  const normalizedService = serviceName.toLowerCase();
-  if (!ALLOWED_SERVICES.has(normalizedService)) {
-    log.warn('Unknown service attempted internal access', {
-      serviceName,
-      path: request.url,
-    });
-    return reply.status(403).send({
-      error: 'Forbidden',
-      message: 'Service not authorized',
-    });
-  }
-
-  // Verify HMAC signature
-  if (!INTERNAL_HMAC_SECRET) {
-    log.error('INTERNAL_HMAC_SECRET not configured');
-    return reply.status(500).send({
-      error: 'Internal server error',
-      message: 'Service authentication not configured',
-    });
-  }
-
-  // Build signature payload
-  // Format: serviceName:timestamp:nonce:method:path[:bodyHash]
-  let signaturePayload = `${serviceName}:${timestamp}:${nonce || ''}:${request.method}:${request.url}`;
-  if (bodyHash) {
-    signaturePayload += `:${bodyHash}`;
-  }
-
-  const expectedSignature = crypto
-    .createHmac('sha256', INTERNAL_HMAC_SECRET)
-    .update(signaturePayload)
-    .digest('hex');
-
-  // Timing-safe comparison to prevent timing attacks
-  try {
-    const signatureBuffer = Buffer.from(signature, 'hex');
-    const expectedBuffer = Buffer.from(expectedSignature, 'hex');
-
-    if (signatureBuffer.length !== expectedBuffer.length ||
-        !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)) {
-      log.warn('Invalid internal service signature', {
-        service: serviceName,
-        path: request.url,
-      });
-      return reply.status(401).send({
-        error: 'Unauthorized',
-        message: 'Invalid signature',
-      });
-    }
-  } catch (error) {
-    log.warn('Signature verification error', {
-      service: serviceName,
-      path: request.url,
-      error: (error as Error).message,
-    });
-    return reply.status(401).send({
-      error: 'Unauthorized',
-      message: 'Invalid signature format',
-    });
-  }
-
-  // Verify body hash if present (for POST/PUT requests)
-  if (request.body && bodyHash) {
-    const actualBodyHash = crypto
-      .createHash('sha256')
-      .update(JSON.stringify(request.body))
-      .digest('hex');
-
-    if (actualBodyHash !== bodyHash) {
-      log.warn('Body hash mismatch', {
-        service: serviceName,
-        path: request.url,
-      });
-      return reply.status(401).send({
-        error: 'Unauthorized',
-        message: 'Body hash mismatch',
-      });
-    }
-  }
-
-  log.debug('Internal service authenticated', {
-    serviceName,
-    path: request.url,
-    method: request.method,
-  });
-}
 
 /**
  * Event type handlers for internal events from payment-service
@@ -264,8 +102,8 @@ async function handleRefundProcessed(data: any, traceId?: string): Promise<{ suc
 }
 
 export default async function internalRoutes(fastify: FastifyInstance): Promise<void> {
-  // Apply internal authentication to all routes
-  fastify.addHook('preHandler', verifyInternalService);
+  // Apply standardized HMAC authentication to all routes
+  fastify.addHook('preHandler', internalAuthMiddlewareNew);
 
   /**
    * POST /internal/events

@@ -29,6 +29,7 @@ import { registerErrorHandler } from './middleware/error-handler';
 import { registerResponseMiddleware } from './middleware/response.middleware';
 import { closeAllQueues, getQueueStats, QUEUE_NAMES } from './jobs';
 import { initializeEventTransitionsProcessor } from './jobs/event-transitions.job';
+import { initializeRabbitMQ, shutdownRabbitMQ } from './config/rabbitmq';
 
 // ============================================================
 // Configuration Constants
@@ -109,6 +110,10 @@ async function start(): Promise<void> {
     // Initialize MongoDB
     await initializeMongoDB();
     logger.info('MongoDB connected');
+
+    // Initialize RabbitMQ for event publishing
+    await initializeRabbitMQ();
+    logger.info('RabbitMQ publisher initialized');
 
     // Create dependency injection container
     const container = createDependencyContainer();
@@ -379,6 +384,10 @@ const gracefulShutdown = async (signal: string) => {
     // 6. Close MongoDB connection
     await closeMongoDB();
     logger.info('MongoDB connection closed');
+
+    // 6.5. Close RabbitMQ connection
+    await shutdownRabbitMQ();
+    logger.info('RabbitMQ publisher disconnected');
 
     // 7. Close Redis connections
     await closeRedisConnections();

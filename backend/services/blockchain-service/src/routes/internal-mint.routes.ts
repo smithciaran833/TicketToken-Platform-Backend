@@ -5,7 +5,7 @@ import {
   ServiceClientError,
 } from '@tickettoken/shared';
 import { logger } from '../utils/logger';
-import { internalAuthMiddleware } from '../middleware/internal-auth';
+import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
 import { validateMintRequest } from '../middleware/validation';
 
 async function internalMintRoutes(
@@ -13,7 +13,7 @@ async function internalMintRoutes(
   options: FastifyPluginOptions
 ) {
   fastify.post('/internal/mint-tickets', {
-    preHandler: [internalAuthMiddleware, validateMintRequest]
+    preHandler: [internalAuthMiddlewareNew, validateMintRequest]
   }, async (request, reply) => {
     try {
       const body = request.body as {

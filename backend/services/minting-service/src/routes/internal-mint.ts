@@ -1,7 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply, RouteShorthandOptions } from 'fastify';
 import logger from '../utils/logger';
 import { MintingOrchestrator } from '../services/MintingOrchestrator';
-import { validateInternalRequest } from '../middleware/internal-auth';
+import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
 import { authMiddleware } from '../middleware/admin-auth';
 import { internalMintSchema, InternalMintRequest } from '../validators/mint.schemas';
 
@@ -83,7 +83,7 @@ export default async function internalMintRoutes(
     '/internal/mint',
     {
       ...SINGLE_MINT_RATE_LIMIT,
-      preHandler: [validateInternalRequest, authMiddleware]
+      preHandler: [internalAuthMiddlewareNew, authMiddleware]
     } as RouteShorthandOptions,
     async (request: FastifyRequest<{ Body: InternalMintRequest }>, reply: FastifyReply) => {
       try {
@@ -223,7 +223,7 @@ export default async function internalMintRoutes(
     '/internal/mint/batch',
     {
       ...BATCH_MINT_RATE_LIMIT,
-      preHandler: [validateInternalRequest, authMiddleware]
+      preHandler: [internalAuthMiddlewareNew, authMiddleware]
     } as RouteShorthandOptions,
     async (request: FastifyRequest<{ Body: BatchMintBody }>, reply: FastifyReply) => {
       const { tickets } = request.body;
@@ -338,7 +338,7 @@ export default async function internalMintRoutes(
     '/internal/mint/status/:ticketId',
     {
       ...STATUS_RATE_LIMIT,
-      preHandler: [validateInternalRequest, authMiddleware]
+      preHandler: [internalAuthMiddlewareNew, authMiddleware]
     } as RouteShorthandOptions,
     async (request, reply) => {
       const { ticketId } = request.params;

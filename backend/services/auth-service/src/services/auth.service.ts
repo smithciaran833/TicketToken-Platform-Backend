@@ -8,6 +8,7 @@ import { logger } from '../utils/logger';
 import * as crypto from 'crypto';
 import { stripHtml } from '../utils/sanitize';
 import { normalizeEmail, normalizePhone, normalizeText } from '../utils/normalize';
+import { AuthEventPublisher } from '../config/rabbitmq';
 
 // Idempotency window for password reset (15 minutes)
 const PASSWORD_RESET_IDEMPOTENCY_WINDOW = 15 * 60 * 1000;
@@ -115,6 +116,17 @@ export class AuthService {
       await auditService.logSessionCreated(user.id, sessionId, data.ipAddress, data.userAgent, user.tenant_id);
 
       await this.emailService.sendVerificationEmail(user.id, user.email, user.first_name, user.tenant_id);
+
+      // Publish user.registered event to RabbitMQ
+      AuthEventPublisher.userRegistered(
+        {
+          id: user.id,
+          email: user.email,
+          firstName: user.first_name,
+          lastName: user.last_name
+        },
+        { tenantId: user.tenant_id }
+      ).catch(err => this.log.warn('Failed to publish user.registered event', { error: err.message }));
 
       return {
         user: {
@@ -354,6 +366,17 @@ export class AuthService {
         tenantId: user.tenant_id
       });
 
+      // Publish user.login event to RabbitMQ
+      AuthEventPublisher.userLogin(
+        user.id,
+        {
+          ipAddress: data.ipAddress,
+          userAgent: data.userAgent,
+          method: user.mfa_enabled ? 'mfa' : 'password'
+        },
+        { tenantId: user.tenant_id }
+      ).catch(err => this.log.warn('Failed to publish user.login event', { error: err.message }));
+
       return {
         user: {
           id: user.id,
@@ -583,6 +606,11 @@ export class AuthService {
           this.sendPasswordResetEmail(user.email, resetToken).catch(err =>
             this.log.error('Failed to send password reset email', err)
           );
+
+          // Publish password reset requested event
+          AuthEventPublisher.passwordResetRequested(user.id, user.email).catch(err =>
+            this.log.warn('Failed to publish password_reset_requested event', { error: err.message })
+          );
         }
       }
 
@@ -649,6 +677,11 @@ export class AuthService {
       await client.query('COMMIT');
 
       this.log.info('Password reset successful', { userId: user.id });
+
+      // Publish password reset completed event
+      AuthEventPublisher.passwordResetCompleted(user.id).catch(err =>
+        this.log.warn('Failed to publish password_reset_completed event', { error: err.message })
+      );
 
       return { success: true };
     } catch (error) {

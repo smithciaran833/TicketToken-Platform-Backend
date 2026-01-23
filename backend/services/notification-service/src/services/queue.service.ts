@@ -1,4 +1,12 @@
-import { Queue, Worker, Job, QueueEvents } from 'bullmq';
+/**
+ * Queue Service for Notification Service
+ *
+ * Decision #4 Standardization: Migrated from BullMQ to Bull
+ * - Bull is the standard for internal background jobs
+ * - Uses Redis for job storage
+ */
+
+import Bull, { Queue, Job, JobOptions } from 'bull';
 import { redis } from '../config/redis';
 import { logger } from '../config/logger';
 import { metricsService } from './metrics.service';
@@ -26,65 +34,81 @@ export enum QueueName {
   DEAD_LETTER = 'dead-letter',
 }
 
+// Default job options for Bull queues
+const DEFAULT_JOB_OPTIONS: JobOptions = {
+  attempts: 3,
+  backoff: {
+    type: 'exponential',
+    delay: 1000,
+  },
+  removeOnComplete: 1000,
+  removeOnFail: 5000,
+};
+
 class QueueService {
   private queues: Map<string, Queue> = new Map();
-  private queueEvents: Map<string, QueueEvents> = new Map();
 
   async initialize(): Promise<void> {
-    logger.info('Initializing queue service');
+    logger.info('Initializing queue service (Bull)');
 
-    this.createQueue(QueueName.NOTIFICATIONS);
-    this.createQueue(QueueName.BATCH_NOTIFICATIONS);
-    this.createQueue(QueueName.WEBHOOK_PROCESSING);
-    this.createQueue(QueueName.RETRY);
-    this.createQueue(QueueName.DEAD_LETTER);
+    // Get Redis connection options
+    const redisOptions = this.getRedisOptions();
+
+    this.createQueue(QueueName.NOTIFICATIONS, redisOptions);
+    this.createQueue(QueueName.BATCH_NOTIFICATIONS, redisOptions);
+    this.createQueue(QueueName.WEBHOOK_PROCESSING, redisOptions);
+    this.createQueue(QueueName.RETRY, redisOptions);
+    this.createQueue(QueueName.DEAD_LETTER, redisOptions);
 
     this.startMetricsTracking();
 
-    logger.info('Queue service initialized');
+    logger.info('Queue service initialized (Bull)');
   }
 
-  private createQueue(name: string): Queue {
-    const queue = new Queue(name, {
-      connection: redis,
-      defaultJobOptions: {
-        attempts: 3,
-        backoff: {
-          type: 'exponential',
-          delay: 1000,
-        },
-        removeOnComplete: {
-          count: 1000,
-          age: 24 * 3600,
-        },
-        removeOnFail: {
-          count: 5000,
-          age: 7 * 24 * 3600,
-        },
-      },
+  private getRedisOptions(): Bull.QueueOptions['redis'] {
+    // Extract Redis connection info
+    const redisHost = process.env.REDIS_HOST || 'redis';
+    const redisPort = parseInt(process.env.REDIS_PORT || '6379', 10);
+    const redisPassword = process.env.REDIS_PASSWORD;
+    const redisDb = parseInt(process.env.REDIS_DB || '0', 10);
+
+    return {
+      host: redisHost,
+      port: redisPort,
+      password: redisPassword,
+      db: redisDb,
+    };
+  }
+
+  private createQueue(name: string, redisOptions: Bull.QueueOptions['redis']): Queue {
+    const queue = new Bull(name, {
+      redis: redisOptions,
+      defaultJobOptions: DEFAULT_JOB_OPTIONS,
     });
 
-    const events = new QueueEvents(name, { connection: redis });
-
-    events.on('completed', ({ jobId }: { jobId: string }) => {
-      logger.debug(`Job ${jobId} completed in queue ${name}`);
+    // Set up event listeners
+    queue.on('completed', (job: Job) => {
+      logger.debug(`Job ${job.id} completed in queue ${name}`);
       metricsService.incrementCounter('queue_jobs_completed_total', { queue: name });
     });
 
-    events.on('failed', ({ jobId, failedReason }: { jobId: string; failedReason: string }) => {
-      logger.error(`Job ${jobId} failed in queue ${name}`, { reason: failedReason });
+    queue.on('failed', (job: Job, err: Error) => {
+      logger.error(`Job ${job.id} failed in queue ${name}`, { reason: err.message });
       metricsService.incrementCounter('queue_jobs_failed_total', { queue: name });
     });
 
-    events.on('stalled', ({ jobId }: { jobId: string }) => {
-      logger.warn(`Job ${jobId} stalled in queue ${name}`);
+    queue.on('stalled', (job: Job) => {
+      logger.warn(`Job ${job.id} stalled in queue ${name}`);
       metricsService.incrementCounter('queue_jobs_stalled_total', { queue: name });
     });
 
-    this.queues.set(name, queue);
-    this.queueEvents.set(name, events);
+    queue.on('error', (err: Error) => {
+      logger.error(`Queue ${name} error`, { error: err.message });
+    });
 
-    logger.info(`Queue '${name}' created`);
+    this.queues.set(name, queue);
+
+    logger.info(`Queue '${name}' created (Bull)`);
     return queue;
   }
 
@@ -121,6 +145,98 @@ class QueueService {
     return job;
   }
 
+  async addBatchNotificationJob(
+    data: BatchNotificationJobData,
+    options: { priority?: number; delay?: number } = {}
+  ): Promise<Job> {
+    const queue = this.getQueue(QueueName.BATCH_NOTIFICATIONS);
+    const job = await queue.add('send-batch-notification', data, {
+      priority: options.priority || 5,
+      delay: options.delay,
+    });
+
+    logger.info('Batch notification job added to queue', {
+      jobId: job.id,
+      batchId: data.batchId,
+      count: data.notifications.length,
+    });
+
+    metricsService.incrementCounter('queue_jobs_added_total', {
+      queue: QueueName.BATCH_NOTIFICATIONS,
+      type: 'batch',
+    });
+
+    return job;
+  }
+
+  async addWebhookJob(
+    data: any,
+    options: { priority?: number; delay?: number } = {}
+  ): Promise<Job> {
+    const queue = this.getQueue(QueueName.WEBHOOK_PROCESSING);
+    const job = await queue.add('process-webhook', data, {
+      priority: options.priority || 5,
+      delay: options.delay,
+    });
+
+    logger.info('Webhook job added to queue', {
+      jobId: job.id,
+    });
+
+    metricsService.incrementCounter('queue_jobs_added_total', {
+      queue: QueueName.WEBHOOK_PROCESSING,
+      type: 'webhook',
+    });
+
+    return job;
+  }
+
+  async addRetryJob(
+    data: NotificationJobData,
+    options: { delay?: number; attempts?: number } = {}
+  ): Promise<Job> {
+    const queue = this.getQueue(QueueName.RETRY);
+    const job = await queue.add('retry-notification', data, {
+      delay: options.delay || 60000, // Default 1 minute delay
+      attempts: options.attempts || 3,
+    });
+
+    logger.info('Retry job added to queue', {
+      jobId: job.id,
+      notificationId: data.notificationId,
+    });
+
+    metricsService.incrementCounter('queue_jobs_added_total', {
+      queue: QueueName.RETRY,
+      type: 'retry',
+    });
+
+    return job;
+  }
+
+  async addToDeadLetter(
+    data: any,
+    reason: string
+  ): Promise<Job> {
+    const queue = this.getQueue(QueueName.DEAD_LETTER);
+    const job = await queue.add('dead-letter', {
+      ...data,
+      failureReason: reason,
+      movedAt: new Date().toISOString(),
+    });
+
+    logger.warn('Job added to dead letter queue', {
+      jobId: job.id,
+      reason,
+    });
+
+    metricsService.incrementCounter('queue_jobs_dead_letter_total', {
+      queue: QueueName.DEAD_LETTER,
+    });
+
+    return job;
+  }
+
   async getQueueStats(queueName: string): Promise<{
     waiting: number;
     active: number;
@@ -138,6 +254,38 @@ class QueueService {
     ]);
 
     return { waiting, active, completed, failed, delayed };
+  }
+
+  async getJob(queueName: string, jobId: string): Promise<Job | null> {
+    const queue = this.getQueue(queueName);
+    return queue.getJob(jobId);
+  }
+
+  async removeJob(queueName: string, jobId: string): Promise<void> {
+    const job = await this.getJob(queueName, jobId);
+    if (job) {
+      await job.remove();
+      logger.info('Job removed from queue', { queueName, jobId });
+    }
+  }
+
+  async pauseQueue(queueName: string): Promise<void> {
+    const queue = this.getQueue(queueName);
+    await queue.pause();
+    logger.info(`Queue '${queueName}' paused`);
+  }
+
+  async resumeQueue(queueName: string): Promise<void> {
+    const queue = this.getQueue(queueName);
+    await queue.resume();
+    logger.info(`Queue '${queueName}' resumed`);
+  }
+
+  async cleanQueue(queueName: string, grace: number = 1000): Promise<void> {
+    const queue = this.getQueue(queueName);
+    await queue.clean(grace, 'completed');
+    await queue.clean(grace, 'failed');
+    logger.info(`Queue '${queueName}' cleaned`);
   }
 
   private startMetricsTracking(): void {
@@ -158,15 +306,10 @@ class QueueService {
 
   async close(): Promise<void> {
     logger.info('Closing queue service');
-    for (const [name, events] of this.queueEvents) {
-      await events.close();
-      logger.info(`Events for queue '${name}' closed`);
-    }
     for (const [name, queue] of this.queues) {
       await queue.close();
       logger.info(`Queue '${name}' closed`);
     }
-    this.queueEvents.clear();
     this.queues.clear();
     logger.info('Queue service closed');
   }

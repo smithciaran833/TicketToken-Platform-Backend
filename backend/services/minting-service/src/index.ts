@@ -12,6 +12,7 @@ import { initializeSolana } from './config/solana';
 import { startMintingWorker } from './workers/mintingWorker';
 import { initializeQueues, getMintQueue, getRetryQueue, getDLQ } from './queues/mintQueue';
 import { startBalanceMonitoring, stopBalanceMonitoring } from './services/BalanceMonitor';
+import { initializeRabbitMQConsumer, shutdownRabbitMQConsumer } from './config/rabbitmq';
 import { registerRequestIdMiddleware } from './middleware/request-id';
 import { registerRequestLogger } from './middleware/request-logger';
 import {
@@ -150,6 +151,15 @@ async function gracefulShutdown(signal: string): Promise<void> {
     // 2. Stop balance monitoring
     logger.info('Stopping balance monitoring...');
     stopBalanceMonitoring();
+
+    // 2.5. Close RabbitMQ consumer (PHASE 1 FIX)
+    logger.info('Closing RabbitMQ consumer...');
+    try {
+      await shutdownRabbitMQConsumer();
+      logger.info('RabbitMQ consumer closed');
+    } catch (rabbitError) {
+      logger.warn('Error closing RabbitMQ consumer', { error: (rabbitError as Error).message });
+    }
 
     // 3. Close queue workers (stop processing new jobs)
     try {
@@ -359,6 +369,11 @@ async function main(): Promise<void> {
 
     // Start worker
     await startMintingWorker();
+
+    // PHASE 1 FIX: Initialize RabbitMQ consumer to bridge messages to Bull queue
+    // This fixes the queue mismatch where blockchain-service publishes to RabbitMQ
+    // but minting-service was only listening on Bull
+    await initializeRabbitMQConsumer();
 
     // Start balance monitoring
     startBalanceMonitoring();

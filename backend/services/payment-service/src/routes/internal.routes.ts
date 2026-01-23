@@ -19,7 +19,7 @@
  */
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { internalAuth } from '../middleware/internal-auth';
+import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
 import { db } from '../config/database';
 import { logger } from '../utils/logger';
 import Stripe from 'stripe';
@@ -39,7 +39,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    */
   fastify.post(
     '/internal/payment-complete',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request: FastifyRequest, reply: FastifyReply) => {
       const { orderId, paymentId } = request.body as any;
       const traceId = request.headers['x-trace-id'] as string;
@@ -76,7 +76,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     };
   }>(
     '/internal/payment-intents',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { amount, currency, orderId, customerId, metadata } = request.body;
       const traceId = request.headers['x-trace-id'] as string;
@@ -152,7 +152,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     Body: { paymentMethodId?: string };
   }>(
     '/internal/payment-intents/:paymentIntentId/confirm',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { paymentIntentId } = request.params;
       const { paymentMethodId } = request.body;
@@ -218,7 +218,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     Body: { cancellationReason?: string };
   }>(
     '/internal/payment-intents/:paymentIntentId/cancel',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { paymentIntentId } = request.params;
       const { cancellationReason } = request.body;
@@ -275,7 +275,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    */
   fastify.get<{ Params: { paymentIntentId: string } }>(
     '/internal/payment-intents/:paymentIntentId/status',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { paymentIntentId } = request.params;
       const traceId = request.headers['x-trace-id'] as string;
@@ -341,7 +341,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     };
   }>(
     '/internal/refunds',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { paymentIntentId, amount, reason, metadata } = request.body;
       const traceId = request.headers['x-trace-id'] as string;
@@ -427,7 +427,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
    */
   fastify.get<{ Params: { orderId: string } }>(
     '/internal/royalties/order/:orderId',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { orderId } = request.params;
       const traceId = request.headers['x-trace-id'] as string;
@@ -493,7 +493,7 @@ export default async function internalRoutes(fastify: FastifyInstance) {
     };
   }>(
     '/internal/royalties/reverse',
-    { preHandler: [internalAuth] },
+    { preHandler: [internalAuthMiddlewareNew] },
     async (request, reply) => {
       const { orderId, refundId, refundAmount, reason } = request.body;
       const traceId = request.headers['x-trace-id'] as string;

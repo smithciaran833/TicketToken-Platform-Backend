@@ -11,6 +11,7 @@ import { logger } from '../utils/logger';
 import { getDb } from '../config/database';
 import * as crypto from 'crypto';
 import { Knex } from 'knex';
+import { EventLifecyclePublisher } from '../config/rabbitmq';
 
 export interface CancellationResult {
   eventId: string;
@@ -207,6 +208,18 @@ export class EventCancellationService {
         result,
         durationMs: Date.now() - startTime.getTime(),
       }, 'Event cancellation workflow completed');
+
+      // Publish event.cancelled to RabbitMQ for inter-service communication
+      EventLifecyclePublisher.eventCancelled(
+        eventId,
+        {
+          reason: options.reason,
+          cancelledBy: options.cancelledBy,
+          affectedTickets: result.ticketsInvalidated,
+          refundPolicy: options.refundPolicy
+        },
+        { userId: options.cancelledBy, tenantId }
+      ).catch(err => logger.warn({ error: err.message }, 'Failed to publish event.cancelled to RabbitMQ'));
 
       return result;
     } catch (error: any) {

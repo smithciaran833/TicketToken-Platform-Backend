@@ -1,8 +1,10 @@
 /**
- * Internal Auth Middleware - order-service
+ * Internal Auth Middleware (Fastify) - compliance-service
  *
  * Uses shared library HMAC validation for service-to-service authentication.
- * Replaces the custom in-memory nonce store with Redis-backed nonce validation.
+ * This provides standardized HMAC-SHA256 authentication with replay attack prevention.
+ *
+ * Phase B HMAC Standardization - Fastify version for internal routes
  */
 
 import { FastifyRequest, FastifyReply } from 'fastify';
@@ -21,7 +23,7 @@ const INTERNAL_HMAC_SECRET = process.env.INTERNAL_HMAC_SECRET || process.env.INT
 const USE_NEW_HMAC = process.env.USE_NEW_HMAC === 'true';
 
 const ALLOWED_SERVICES = new Set(
-  (process.env.ALLOWED_INTERNAL_SERVICES || 'payment-service,ticket-service,event-service,venue-service,notification-service')
+  (process.env.ALLOWED_INTERNAL_SERVICES || 'api-gateway,auth-service,payment-service,order-service,event-service,ticket-service,venue-service,notification-service,transfer-service,minting-service,blockchain-service,marketplace-service,scanning-service,analytics-service,file-service')
     .split(',')
     .map(s => s.trim().toLowerCase())
 );
@@ -29,8 +31,8 @@ const ALLOWED_SERVICES = new Set(
 const hmacValidator = INTERNAL_HMAC_SECRET
   ? createHmacValidator({
       secret: INTERNAL_HMAC_SECRET,
+      serviceName: 'compliance-service',
       replayWindowMs: 60000, // 60 seconds
-      allowedServices: Array.from(ALLOWED_SERVICES),
     })
   : null;
 
@@ -42,20 +44,20 @@ export interface InternalServiceClaims {
 
 declare module 'fastify' {
   interface FastifyRequest {
-    internalService?: InternalServiceClaims;
+    internalService?: InternalServiceClaims | string;
   }
 }
 
 /**
- * New HMAC-based internal authentication using shared library
+ * HMAC-based internal authentication using shared library (Fastify middleware)
  */
-export async function internalAuthMiddlewareNew(
+export async function internalAuthMiddlewareFastify(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  // Skip new HMAC validation if feature flag is disabled
+  // Skip HMAC validation if feature flag is disabled
   if (!USE_NEW_HMAC) {
-    log.debug('New HMAC validation disabled (USE_NEW_HMAC=false)');
+    log.debug('HMAC validation disabled (USE_NEW_HMAC=false)');
     return;
   }
 
@@ -68,21 +70,16 @@ export async function internalAuthMiddlewareNew(
   }
 
   try {
-    // Extract new HMAC headers
-    const headers = {
-      'x-internal-service': request.headers['x-internal-service'] as string,
-      'x-internal-timestamp': request.headers['x-internal-timestamp'] as string,
-      'x-internal-nonce': request.headers['x-internal-nonce'] as string,
-      'x-internal-signature': request.headers['x-internal-signature'] as string,
-      'x-internal-body-hash': request.headers['x-internal-body-hash'] as string,
-    };
+    // Check for required headers first
+    const serviceName = request.headers['x-internal-service'] as string;
+    const signature = request.headers['x-internal-signature'] as string;
 
-    if (!headers['x-internal-service'] || !headers['x-internal-signature']) {
+    if (!serviceName || !signature) {
       log.warn({
         path: request.url,
         method: request.method,
-        hasService: !!headers['x-internal-service'],
-        hasSignature: !!headers['x-internal-signature'],
+        hasService: !!serviceName,
+        hasSignature: !!signature,
       }, 'Missing required HMAC headers');
 
       return reply.status(401).send({
@@ -91,46 +88,41 @@ export async function internalAuthMiddlewareNew(
       });
     }
 
-    const result: HmacValidationResult = await hmacValidator.validate({
-      serviceName: headers['x-internal-service'],
-      timestamp: headers['x-internal-timestamp'],
-      nonce: headers['x-internal-nonce'],
-      signature: headers['x-internal-signature'],
-      bodyHash: headers['x-internal-body-hash'],
-      method: request.method,
-      path: request.url,
-      body: request.body,
-    });
+    // Validate using the shared library - correct API
+    const result: HmacValidationResult = await hmacValidator.validate(
+      request.headers as Record<string, string | string[] | undefined>,
+      request.method,
+      request.url,
+      request.body
+    );
 
     if (!result.valid) {
       log.warn({
-        service: headers['x-internal-service'],
+        service: serviceName,
         path: request.url,
-        reason: result.reason,
+        error: result.error,
+        errorCode: result.errorCode,
       }, 'HMAC validation failed');
 
       return reply.status(401).send({
         error: 'Unauthorized',
-        message: result.reason || 'Invalid signature',
+        message: result.error || 'Invalid signature',
       });
     }
 
-    const serviceName = headers['x-internal-service'].toLowerCase();
-    if (!ALLOWED_SERVICES.has(serviceName)) {
-      log.warn({ serviceName, path: request.url }, 'Unknown service attempted access');
+    const normalizedServiceName = serviceName.toLowerCase();
+    if (!ALLOWED_SERVICES.has(normalizedServiceName)) {
+      log.warn({ serviceName: normalizedServiceName, path: request.url }, 'Unknown service attempted access');
       return reply.status(403).send({
         error: 'Forbidden',
         message: 'Service not authorized',
       });
     }
 
-    request.internalService = {
-      serviceName,
-      isInternal: true,
-      authenticatedAt: Date.now(),
-    };
+    // Set both formats for backward compatibility
+    request.internalService = normalizedServiceName;
 
-    log.debug({ serviceName, path: request.url }, 'Internal service authenticated');
+    log.debug({ serviceName: normalizedServiceName, path: request.url }, 'Internal service authenticated');
   } catch (error) {
     if (error instanceof ReplayAttackError) {
       log.warn({ error: error.message }, 'Replay attack detected');
@@ -164,4 +156,4 @@ export async function internalAuthMiddlewareNew(
   }
 }
 
-export default internalAuthMiddlewareNew;
+export default internalAuthMiddlewareFastify;
