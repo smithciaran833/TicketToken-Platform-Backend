@@ -1,25 +1,43 @@
-// src/validators/response.schemas.ts
-// RD5: Fastify response schemas to prevent accidental data leakage
+/**
+ * RESPONSE SCHEMAS - TypeScript Types Only
+ *
+ * IMPORTANT: zodToJsonSchema() calls have been REMOVED to fix TypeScript OOM issues.
+ *
+ * Previously this file had 47 zodToJsonSchema() calls that were executed at module
+ * load time, causing TypeScript to run out of memory during type checking.
+ *
+ * SECURITY NOTE:
+ * Response validation is now handled by the user.serializer.ts module, which provides:
+ * 1. SAFE_USER_SELECT - Explicit field selection for SQL queries
+ * 2. serializeUser() - Runtime serialization that strips sensitive fields
+ *
+ * These Zod schemas are kept for:
+ * - TypeScript type inference (z.infer<typeof Schema>)
+ * - Documentation of expected response shapes
+ * - Optional runtime validation if needed in specific cases
+ *
+ * DO NOT re-add zodToJsonSchema() calls. If you need JSON Schema for OpenAPI/Swagger,
+ * generate it at build time, not at runtime.
+ */
 
 import { z } from 'zod';
-import { zodToJsonSchema } from 'zod-to-json-schema';
 
 // ============================================
 // SHARED SCHEMAS
 // ============================================
 
-const ErrorResponseSchema = z.object({
+export const ErrorResponseSchema = z.object({
   success: z.boolean().optional(),
   error: z.string(),
   code: z.string().optional(),
   requiresCaptcha: z.boolean().optional(),
 });
 
-const MessageResponseSchema = z.object({
+export const MessageResponseSchema = z.object({
   message: z.string(),
 });
 
-const SuccessMessageSchema = z.object({
+export const SuccessMessageSchema = z.object({
   success: z.boolean(),
   message: z.string(),
 });
@@ -28,14 +46,19 @@ const SuccessMessageSchema = z.object({
 // USER & TOKEN SCHEMAS
 // ============================================
 
-const SafeUserSchema = z.object({
+/**
+ * SafeUserSchema - Defines the shape of user data safe to return to clients.
+ *
+ * This schema should match the fields in SAFE_USER_FIELDS from user.serializer.ts.
+ * If you add/remove fields here, also update the serializer.
+ */
+export const SafeUserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   username: z.string().nullable().optional(),
   display_name: z.string().nullable().optional(),
   first_name: z.string().nullable().optional(),
   last_name: z.string().nullable().optional(),
-  phone: z.string().nullable().optional(),
   email_verified: z.boolean(),
   phone_verified: z.boolean().nullable().optional(),
   mfa_enabled: z.boolean(),
@@ -45,12 +68,10 @@ const SafeUserSchema = z.object({
   created_at: z.string().or(z.date()),
   updated_at: z.string().or(z.date()),
   last_login_at: z.string().or(z.date()).nullable().optional(),
-  password_changed_at: z.string().or(z.date()).nullable().optional(),
 });
 
 // Wallet user schema - simpler version for wallet auth responses
-// Wallet service returns fewer fields than standard auth
-const WalletUserSchema = z.object({
+export const WalletUserSchema = z.object({
   id: z.string().uuid(),
   email: z.string().email(),
   email_verified: z.boolean(),
@@ -58,7 +79,7 @@ const WalletUserSchema = z.object({
   tenant_id: z.string().uuid(),
 });
 
-const TokensSchema = z.object({
+export const TokensSchema = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
   expiresIn: z.number().optional(),
@@ -68,37 +89,37 @@ const TokensSchema = z.object({
 // AUTH RESPONSES
 // ============================================
 
-const RegisterResponseSchema = z.object({
+export const RegisterResponseSchema = z.object({
   user: SafeUserSchema,
   tokens: TokensSchema,
 });
 
-const LoginSuccessSchema = z.object({
+export const LoginSuccessSchema = z.object({
   user: SafeUserSchema,
   tokens: TokensSchema,
 });
 
-const LoginMFARequiredSchema = z.object({
+export const LoginMFARequiredSchema = z.object({
   requiresMFA: z.boolean(),
   userId: z.string().uuid(),
 });
 
-const RefreshResponseSchema = z.object({
+export const RefreshResponseSchema = z.object({
   accessToken: z.string(),
   refreshToken: z.string(),
   expiresIn: z.number().optional(),
 });
 
-const VerifyTokenResponseSchema = z.object({
+export const VerifyTokenResponseSchema = z.object({
   valid: z.boolean(),
   user: SafeUserSchema,
 });
 
-const GetCurrentUserResponseSchema = z.object({
+export const GetCurrentUserResponseSchema = z.object({
   user: SafeUserSchema,
 });
 
-const LogoutResponseSchema = z.object({
+export const LogoutResponseSchema = z.object({
   success: z.boolean(),
   message: z.string().optional(),
 });
@@ -107,26 +128,26 @@ const LogoutResponseSchema = z.object({
 // MFA RESPONSES
 // ============================================
 
-const SetupMFAResponseSchema = z.object({
+export const SetupMFAResponseSchema = z.object({
   secret: z.string(),
   qrCode: z.string(),
   backupCodes: z.array(z.string()).optional(),
 });
 
-const VerifyMFASetupResponseSchema = z.object({
+export const VerifyMFASetupResponseSchema = z.object({
   success: z.boolean(),
   backupCodes: z.array(z.string()),
 });
 
-const VerifyMFAResponseSchema = z.object({
+export const VerifyMFAResponseSchema = z.object({
   valid: z.boolean(),
 });
 
-const RegenerateBackupCodesResponseSchema = z.object({
+export const RegenerateBackupCodesResponseSchema = z.object({
   backupCodes: z.array(z.string()),
 });
 
-const DisableMFAResponseSchema = z.object({
+export const DisableMFAResponseSchema = z.object({
   success: z.boolean(),
 });
 
@@ -134,15 +155,13 @@ const DisableMFAResponseSchema = z.object({
 // WALLET RESPONSES
 // ============================================
 
-// Fixed: Added 'message' field that service returns
-const WalletNonceResponseSchema = z.object({
+export const WalletNonceResponseSchema = z.object({
   nonce: z.string(),
   message: z.string(),
   expiresAt: z.string().optional(),
 });
 
-// Fixed: Use WalletUserSchema instead of SafeUserSchema
-const WalletAuthResponseSchema = z.object({
+export const WalletAuthResponseSchema = z.object({
   success: z.boolean().optional(),
   user: WalletUserSchema,
   tokens: TokensSchema,
@@ -153,8 +172,7 @@ const WalletAuthResponseSchema = z.object({
   }).optional(),
 });
 
-// Fixed: Match what service actually returns
-const WalletLinkResponseSchema = z.object({
+export const WalletLinkResponseSchema = z.object({
   success: z.boolean(),
   message: z.string().optional(),
   wallet: z.object({
@@ -164,7 +182,7 @@ const WalletLinkResponseSchema = z.object({
   }).optional(),
 });
 
-const WalletUnlinkResponseSchema = z.object({
+export const WalletUnlinkResponseSchema = z.object({
   success: z.boolean(),
   message: z.string().optional(),
 });
@@ -173,22 +191,21 @@ const WalletUnlinkResponseSchema = z.object({
 // BIOMETRIC RESPONSES
 // ============================================
 
-const BiometricChallengeResponseSchema = z.object({
+export const BiometricChallengeResponseSchema = z.object({
   challenge: z.string(),
 });
 
-const BiometricAuthResponseSchema = z.object({
+export const BiometricAuthResponseSchema = z.object({
   success: z.boolean(),
   tokens: TokensSchema,
 });
 
-const BiometricRegisterResponseSchema = z.object({
+export const BiometricRegisterResponseSchema = z.object({
   success: z.boolean(),
   credentialId: z.string(),
 });
 
-// FIXED: Removed lastUsedAt since service doesn't return it
-const BiometricDevicesResponseSchema = z.object({
+export const BiometricDevicesResponseSchema = z.object({
   devices: z.array(z.object({
     credentialId: z.string(),
     deviceId: z.string(),
@@ -197,7 +214,7 @@ const BiometricDevicesResponseSchema = z.object({
   })),
 });
 
-const DeleteBiometricDeviceResponseSchema = z.object({
+export const DeleteBiometricDeviceResponseSchema = z.object({
   success: z.boolean(),
 });
 
@@ -205,17 +222,17 @@ const DeleteBiometricDeviceResponseSchema = z.object({
 // OAUTH RESPONSES
 // ============================================
 
-const OAuthCallbackResponseSchema = z.object({
+export const OAuthCallbackResponseSchema = z.object({
   user: SafeUserSchema,
   tokens: TokensSchema,
 });
 
-const OAuthLinkResponseSchema = z.object({
+export const OAuthLinkResponseSchema = z.object({
   success: z.boolean(),
   provider: z.string(),
 });
 
-const OAuthUnlinkResponseSchema = z.object({
+export const OAuthUnlinkResponseSchema = z.object({
   success: z.boolean(),
 });
 
@@ -223,7 +240,7 @@ const OAuthUnlinkResponseSchema = z.object({
 // SESSION RESPONSES
 // ============================================
 
-const SessionSchema = z.object({
+export const SessionSchema = z.object({
   id: z.string().uuid(),
   ip_address: z.string().nullable().optional(),
   user_agent: z.string().nullable().optional(),
@@ -234,8 +251,7 @@ const SessionSchema = z.object({
   user_id: z.string().uuid(),
 });
 
-// FIXED: Added pagination metadata
-const ListSessionsResponseSchema = z.object({
+export const ListSessionsResponseSchema = z.object({
   success: z.boolean(),
   sessions: z.array(SessionSchema),
   pagination: z.object({
@@ -246,9 +262,9 @@ const ListSessionsResponseSchema = z.object({
   }),
 });
 
-const RevokeSessionResponseSchema = SuccessMessageSchema;
+export const RevokeSessionResponseSchema = SuccessMessageSchema;
 
-const InvalidateAllSessionsResponseSchema = z.object({
+export const InvalidateAllSessionsResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   sessions_revoked: z.number(),
@@ -258,12 +274,12 @@ const InvalidateAllSessionsResponseSchema = z.object({
 // PROFILE RESPONSES
 // ============================================
 
-const GetProfileResponseSchema = z.object({
+export const GetProfileResponseSchema = z.object({
   success: z.boolean(),
   user: SafeUserSchema,
 });
 
-const UpdateProfileResponseSchema = z.object({
+export const UpdateProfileResponseSchema = z.object({
   success: z.boolean(),
   user: SafeUserSchema,
 });
@@ -272,7 +288,7 @@ const UpdateProfileResponseSchema = z.object({
 // GDPR / CONSENT RESPONSES
 // ============================================
 
-const ExportDataResponseSchema = z.object({
+export const ExportDataResponseSchema = z.object({
   exportedAt: z.string(),
   exportFormat: z.string(),
   user: z.any(),
@@ -284,7 +300,7 @@ const ExportDataResponseSchema = z.object({
   activityLog: z.array(z.any()),
 });
 
-const GetConsentResponseSchema = z.object({
+export const GetConsentResponseSchema = z.object({
   success: z.boolean(),
   consent: z.object({
     marketing: z.object({
@@ -302,7 +318,7 @@ const GetConsentResponseSchema = z.object({
   }),
 });
 
-const UpdateConsentResponseSchema = z.object({
+export const UpdateConsentResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   consent: z.object({
@@ -311,7 +327,7 @@ const UpdateConsentResponseSchema = z.object({
   }),
 });
 
-const RequestDeletionResponseSchema = z.object({
+export const RequestDeletionResponseSchema = z.object({
   success: z.boolean(),
   message: z.string(),
   details: z.object({
@@ -325,9 +341,9 @@ const RequestDeletionResponseSchema = z.object({
 // VENUE ROLE RESPONSES
 // ============================================
 
-const VenueRoleResponseSchema = SuccessMessageSchema;
+export const VenueRoleResponseSchema = SuccessMessageSchema;
 
-const GetVenueRolesResponseSchema = z.object({
+export const GetVenueRolesResponseSchema = z.object({
   roles: z.array(z.object({
     userId: z.string().uuid(),
     role: z.string(),
@@ -341,7 +357,7 @@ const GetVenueRolesResponseSchema = z.object({
 // INTERNAL S2S RESPONSES
 // ============================================
 
-const ValidatePermissionsResponseSchema = z.object({
+export const ValidatePermissionsResponseSchema = z.object({
   valid: z.boolean(),
   reason: z.string().optional(),
   userId: z.string().uuid().optional(),
@@ -350,7 +366,7 @@ const ValidatePermissionsResponseSchema = z.object({
   tenantId: z.string().uuid().optional(),
 });
 
-const ValidateUsersResponseSchema = z.object({
+export const ValidateUsersResponseSchema = z.object({
   users: z.array(z.object({
     id: z.string().uuid(),
     email: z.string().email(),
@@ -364,96 +380,71 @@ const ValidateUsersResponseSchema = z.object({
   error: z.string().optional(),
 });
 
-const UserTenantResponseSchema = z.object({
+export const UserTenantResponseSchema = z.object({
   id: z.string().uuid(),
   tenant_id: z.string().uuid(),
   tenant_name: z.string(),
   tenant_slug: z.string(),
 });
 
-const InternalHealthResponseSchema = z.object({
+export const InternalHealthResponseSchema = z.object({
   status: z.string(),
   service: z.string(),
   timestamp: z.string(),
 });
 
 // ============================================
-// CONVERT TO JSON SCHEMA & EXPORT
+// TYPESCRIPT TYPES (inferred from Zod schemas)
 // ============================================
 
-export const responseSchemas = {
-  // Auth
-  register: { 201: zodToJsonSchema(RegisterResponseSchema) },
-  login: {
-    200: zodToJsonSchema(z.union([LoginSuccessSchema, LoginMFARequiredSchema])),
-  },
-  refresh: { 200: zodToJsonSchema(RefreshResponseSchema) },
-  verifyToken: { 200: zodToJsonSchema(VerifyTokenResponseSchema) },
-  getCurrentUser: { 200: zodToJsonSchema(GetCurrentUserResponseSchema) },
-  logout: { 200: zodToJsonSchema(LogoutResponseSchema) },
+export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
+export type MessageResponse = z.infer<typeof MessageResponseSchema>;
+export type SuccessMessage = z.infer<typeof SuccessMessageSchema>;
+export type SafeUser = z.infer<typeof SafeUserSchema>;
+export type WalletUser = z.infer<typeof WalletUserSchema>;
+export type Tokens = z.infer<typeof TokensSchema>;
+export type RegisterResponse = z.infer<typeof RegisterResponseSchema>;
+export type LoginSuccess = z.infer<typeof LoginSuccessSchema>;
+export type LoginMFARequired = z.infer<typeof LoginMFARequiredSchema>;
+export type RefreshResponse = z.infer<typeof RefreshResponseSchema>;
+export type VerifyTokenResponse = z.infer<typeof VerifyTokenResponseSchema>;
+export type GetCurrentUserResponse = z.infer<typeof GetCurrentUserResponseSchema>;
+export type LogoutResponse = z.infer<typeof LogoutResponseSchema>;
+export type SetupMFAResponse = z.infer<typeof SetupMFAResponseSchema>;
+export type VerifyMFASetupResponse = z.infer<typeof VerifyMFASetupResponseSchema>;
+export type VerifyMFAResponse = z.infer<typeof VerifyMFAResponseSchema>;
+export type RegenerateBackupCodesResponse = z.infer<typeof RegenerateBackupCodesResponseSchema>;
+export type DisableMFAResponse = z.infer<typeof DisableMFAResponseSchema>;
+export type Session = z.infer<typeof SessionSchema>;
+export type ListSessionsResponse = z.infer<typeof ListSessionsResponseSchema>;
+export type RevokeSessionResponse = z.infer<typeof RevokeSessionResponseSchema>;
+export type InvalidateAllSessionsResponse = z.infer<typeof InvalidateAllSessionsResponseSchema>;
+export type GetProfileResponse = z.infer<typeof GetProfileResponseSchema>;
+export type UpdateProfileResponse = z.infer<typeof UpdateProfileResponseSchema>;
+export type ExportDataResponse = z.infer<typeof ExportDataResponseSchema>;
+export type GetConsentResponse = z.infer<typeof GetConsentResponseSchema>;
+export type UpdateConsentResponse = z.infer<typeof UpdateConsentResponseSchema>;
+export type RequestDeletionResponse = z.infer<typeof RequestDeletionResponseSchema>;
+export type VenueRoleResponse = z.infer<typeof VenueRoleResponseSchema>;
+export type GetVenueRolesResponse = z.infer<typeof GetVenueRolesResponseSchema>;
+export type ValidatePermissionsResponse = z.infer<typeof ValidatePermissionsResponseSchema>;
+export type ValidateUsersResponse = z.infer<typeof ValidateUsersResponseSchema>;
+export type UserTenantResponse = z.infer<typeof UserTenantResponseSchema>;
+export type InternalHealthResponse = z.infer<typeof InternalHealthResponseSchema>;
 
-  // Password
-  forgotPassword: { 200: zodToJsonSchema(MessageResponseSchema) },
-  resetPassword: { 200: zodToJsonSchema(MessageResponseSchema) },
-  changePassword: { 200: zodToJsonSchema(MessageResponseSchema) },
+// ============================================
+// LEGACY EXPORT (for backward compatibility)
+// ============================================
 
-  // Email verification
-  verifyEmail: { 200: zodToJsonSchema(MessageResponseSchema) },
-  resendVerification: { 200: zodToJsonSchema(MessageResponseSchema) },
-
-  // MFA
-  setupMFA: { 200: zodToJsonSchema(SetupMFAResponseSchema) },
-  verifyMFASetup: { 200: zodToJsonSchema(VerifyMFASetupResponseSchema) },
-  verifyMFA: { 200: zodToJsonSchema(VerifyMFAResponseSchema) },
-  regenerateBackupCodes: { 200: zodToJsonSchema(RegenerateBackupCodesResponseSchema) },
-  disableMFA: { 200: zodToJsonSchema(DisableMFAResponseSchema) },
-
-  // Wallet
-  walletNonce: { 200: zodToJsonSchema(WalletNonceResponseSchema) },
-  walletRegister: { 201: zodToJsonSchema(WalletAuthResponseSchema) },
-  walletLogin: { 200: zodToJsonSchema(WalletAuthResponseSchema) },
-  walletLink: { 200: zodToJsonSchema(WalletLinkResponseSchema) },
-  walletUnlink: { 200: zodToJsonSchema(WalletUnlinkResponseSchema) },
-
-  // Biometric
-  biometricChallenge: { 200: zodToJsonSchema(BiometricChallengeResponseSchema) },
-  biometricAuthenticate: { 200: zodToJsonSchema(BiometricAuthResponseSchema) },
-  biometricRegister: { 201: zodToJsonSchema(BiometricRegisterResponseSchema) },
-  biometricDevices: { 200: zodToJsonSchema(BiometricDevicesResponseSchema) },
-  deleteBiometricDevice: { 204: zodToJsonSchema(DeleteBiometricDeviceResponseSchema) },
-
-  // OAuth
-  oauthCallback: { 200: zodToJsonSchema(OAuthCallbackResponseSchema) },
-  oauthLink: { 200: zodToJsonSchema(OAuthLinkResponseSchema) },
-  oauthUnlink: { 200: zodToJsonSchema(OAuthUnlinkResponseSchema) },
-
-  // Sessions
-  listSessions: { 200: zodToJsonSchema(ListSessionsResponseSchema) },
-  revokeSession: { 200: zodToJsonSchema(RevokeSessionResponseSchema) },
-  invalidateAllSessions: { 200: zodToJsonSchema(InvalidateAllSessionsResponseSchema) },
-
-  // Profile
-  getProfile: { 200: zodToJsonSchema(GetProfileResponseSchema) },
-  updateProfile: { 200: zodToJsonSchema(UpdateProfileResponseSchema) },
-
-  // GDPR / Consent
-  exportData: { 200: zodToJsonSchema(ExportDataResponseSchema) },
-  getConsent: { 200: zodToJsonSchema(GetConsentResponseSchema) },
-  updateConsent: { 200: zodToJsonSchema(UpdateConsentResponseSchema) },
-  requestDeletion: { 200: zodToJsonSchema(RequestDeletionResponseSchema) },
-
-  // Venue Roles
-  grantVenueRole: { 200: zodToJsonSchema(VenueRoleResponseSchema) },
-  revokeVenueRole: { 200: zodToJsonSchema(VenueRoleResponseSchema) },
-  getVenueRoles: { 200: zodToJsonSchema(GetVenueRolesResponseSchema) },
-
-  // Internal S2S
-  validatePermissions: { 200: zodToJsonSchema(ValidatePermissionsResponseSchema) },
-  validateUsers: { 200: zodToJsonSchema(ValidateUsersResponseSchema) },
-  userTenant: { 200: zodToJsonSchema(UserTenantResponseSchema) },
-  internalHealth: { 200: zodToJsonSchema(InternalHealthResponseSchema) },
-
-  // Common
-  error: zodToJsonSchema(ErrorResponseSchema),
-  message: zodToJsonSchema(MessageResponseSchema),
-};
+/**
+ * DEPRECATED: responseSchemas object
+ *
+ * This was previously used for Fastify route schema validation.
+ * It has been removed because:
+ * 1. zodToJsonSchema() calls caused TypeScript OOM
+ * 2. Fastify's schema validation is passive (only validates, doesn't strip fields)
+ * 3. The user.serializer.ts provides active security (strips sensitive fields)
+ *
+ * If you need JSON Schema for OpenAPI/Swagger documentation, generate it at build time.
+ */
+export const responseSchemas: Record<string, any> = {};

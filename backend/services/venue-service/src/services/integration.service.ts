@@ -177,29 +177,81 @@ export class IntegrationService {
     }
   }
 
-  private testStripeIntegration(credentials: any): { success: boolean; message: string } {
+  /**
+   * Test Stripe integration credentials
+   *
+   * TODO: Implement API connection testing
+   *
+   * WHAT: Add live API call to Stripe to verify credentials work
+   *       - Call GET /v1/account to validate API key
+   *       - Verify account is in good standing
+   *       - Check required capabilities (payments, transfers)
+   *
+   * WHY NOT DONE: Requires handling test mode vs production mode safely
+   *               Test keys (sk_test_*) vs live keys (sk_live_*) need different handling
+   *               Also need rate limiting to prevent abuse
+   *
+   * IMPACT: Currently we only validate credentials format, not actual connectivity
+   *         Users may save invalid keys and only discover issues during checkout
+   *
+   * EFFORT: ~2 hours
+   *         - Add stripe SDK call to /v1/account
+   *         - Handle test vs live mode detection
+   *         - Add timeout and retry logic
+   *
+   * PRIORITY: Medium - would improve integration setup UX
+   */
+  private testStripeIntegration(credentials: { api_key?: string }): { success: boolean; message: string } {
     try {
-      // TODO: Implement actual Stripe API test call
       if (!credentials || !credentials.api_key) {
         return { success: false, message: 'Stripe API key missing' };
       }
-      // In production, would call Stripe API to validate key
+      // MOCK: In production, would call Stripe API to validate key
+      // const stripe = new Stripe(credentials.api_key);
+      // await stripe.accounts.retrieve();
       return { success: true, message: 'Stripe connection successful' };
-    } catch (error: any) {
-      return { success: false, message: `Failed to connect to Stripe: ${error.message}` };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, message: `Failed to connect to Stripe: ${message}` };
     }
   }
 
-  private testSquareIntegration(credentials: any): { success: boolean; message: string } {
+  /**
+   * Test Square integration credentials
+   *
+   * TODO: Implement API connection testing
+   *
+   * WHAT: Add live API call to Square to verify access token works
+   *       - Call GET /v2/merchants to validate token
+   *       - Verify merchant account is active
+   *       - Check OAuth scopes are sufficient
+   *
+   * WHY NOT DONE: Requires OAuth token refresh handling
+   *               Square tokens expire and need automatic refresh
+   *               Also need to handle sandbox vs production environments
+   *
+   * IMPACT: Currently we only validate token format, not actual connectivity
+   *         Users may save expired tokens without realizing
+   *
+   * EFFORT: ~2 hours
+   *         - Add Square SDK call to /v2/merchants
+   *         - Handle token refresh if expired
+   *         - Add timeout and retry logic
+   *
+   * PRIORITY: Medium - would improve integration setup UX
+   */
+  private testSquareIntegration(credentials: { access_token?: string }): { success: boolean; message: string } {
     try {
-      // TODO: Implement actual Square API test call
       if (!credentials || !credentials.access_token) {
         return { success: false, message: 'Square access token missing' };
       }
-      // In production, would call Square API to validate token
+      // MOCK: In production, would call Square API to validate token
+      // const client = new Client({ accessToken: credentials.access_token });
+      // await client.merchantsApi.listMerchants();
       return { success: true, message: 'Square connection successful' };
-    } catch (error: any) {
-      return { success: false, message: `Failed to connect to Square: ${error.message}` };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      return { success: false, message: `Failed to connect to Square: ${message}` };
     }
   }
 
@@ -237,6 +289,28 @@ export class IntegrationService {
     // Use integration_type instead of type
     this.logger.info({ integrationId, type: integration.integration_type }, 'Syncing with external system');
 
-    // TODO: Implement actual sync logic with external system
+    /**
+     * TODO: Implement external system sync logic
+     *
+     * WHAT: Sync venue data with external ticketing/POS systems
+     *       - Stripe: Sync products, prices, inventory
+     *       - Square: Sync catalog items, locations
+     *       - Eventbrite: Sync events, ticket types
+     *
+     * WHY NOT DONE: Each integration type requires custom sync logic
+     *               Need to handle conflicts, rate limits, webhooks
+     *               Bidirectional sync is complex (which system is source of truth?)
+     *
+     * IMPACT: Currently integrations are one-way (credentials stored but not used)
+     *         Venues must manually keep systems in sync
+     *
+     * EFFORT: ~1-2 days per integration type
+     *         - Define sync strategy (push/pull/bidirectional)
+     *         - Implement data mapping
+     *         - Add conflict resolution
+     *         - Set up webhook handlers
+     *
+     * PRIORITY: Low - most venues use single system, sync is nice-to-have
+     */
   }
 }

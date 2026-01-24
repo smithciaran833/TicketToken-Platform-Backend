@@ -14,7 +14,6 @@ jest.mock('../../../src/routes/tickets.routes', () => jest.fn((app: any, opts: a
 jest.mock('../../../src/routes/schedules.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
 jest.mock('../../../src/routes/cancellation.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
 jest.mock('../../../src/routes/health.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
-jest.mock('../../../src/routes/notifications.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
 jest.mock('../../../src/routes/customers.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
 jest.mock('../../../src/routes/venue-analytics.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
 jest.mock('../../../src/routes/reports.routes', () => jest.fn((app: any, opts: any, done: any) => done()));
@@ -106,14 +105,6 @@ describe('Routes Index (Aggregator)', () => {
       await app.ready();
       
       expect(cancellationRoutes).toHaveBeenCalled();
-    });
-
-    it('should import and register notifications routes', async () => {
-      const notificationsRoutes = require('../../../src/routes/notifications.routes');
-      await app.register(registerRoutes);
-      await app.ready();
-      
-      expect(notificationsRoutes).toHaveBeenCalled();
     });
 
     it('should import and register customers routes', async () => {

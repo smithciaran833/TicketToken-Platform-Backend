@@ -24,14 +24,14 @@ export function createDependencyContainer() {
   container.register({
     // Config
     env: asValue(env),
-    
+
     // Database
     db: asValue(db),
-    
+
     // Core Services
     jwtService: asClass(JWTService).singleton(),
-    authService: asClass(AuthService).singleton().inject(() => ({ 
-      jwtService: container.resolve('jwtService') 
+    authService: asClass(AuthService).singleton().inject(() => ({
+      jwtService: container.resolve('jwtService')
     })),
     authExtendedService: asClass(AuthExtendedService).singleton().inject(() => ({
       emailService: container.resolve('emailService')
@@ -43,7 +43,7 @@ export function createDependencyContainer() {
     deviceTrustService: asClass(DeviceTrustService).singleton(),
     biometricService: asClass(BiometricService).singleton(),
     oauthService: asClass(OAuthService).singleton(),
-    
+
     // Supporting Services
     emailService: asClass(EmailService).singleton(),
     lockoutService: asClass(LockoutService).singleton(),
@@ -54,5 +54,5 @@ export function createDependencyContainer() {
   return container;
 }
 
+// Export container type for route files
 export type Container = ReturnType<typeof createDependencyContainer>;
-export type Cradle = Container extends { cradle: infer C } ? C : never;

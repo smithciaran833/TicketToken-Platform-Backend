@@ -4,9 +4,13 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 import { secretsManager } from '../../../../shared/utils/secrets-manager';
 import { SECRETS_CONFIG } from '../../../../shared/config/secrets.config';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'Secrets' });
+
 export async function loadSecrets() {
   const serviceName = process.env.SERVICE_NAME || 'unknown-service';
-  console.log(`[${serviceName}] Loading secrets...`);
+  log.info('Loading secrets...', { serviceName });
   try {
     // Common secrets needed by most services
     const commonSecrets = [
@@ -16,10 +20,10 @@ export async function loadSecrets() {
       SECRETS_CONFIG.REDIS_PASSWORD,
     ];
     const secrets = await secretsManager.getSecrets(commonSecrets);
-    console.log(`[${serviceName}] ✅ Secrets loaded successfully`);
+    log.info('Secrets loaded successfully', { serviceName });
     return secrets;
   } catch (error: any) {
-    console.error(`[${serviceName}] ❌ Failed to load secrets:`, error.message);
+    log.error('Failed to load secrets', { serviceName, error: error.message });
     throw new Error('Cannot start service without required secrets');
   }
 }

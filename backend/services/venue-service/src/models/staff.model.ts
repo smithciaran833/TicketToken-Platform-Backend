@@ -84,14 +84,46 @@ export class StaffModel extends BaseModel {
       });
   }
 
+  /**
+   * SECURITY FIX (H5): Safe column list for staff queries - excludes sensitive data
+   * Excludes: pin_code, hourly_rate, commission_percentage, emergency_contact
+   */
+  private static readonly SAFE_STAFF_COLUMNS = [
+    'id',
+    'venue_id',
+    'tenant_id',
+    'user_id',
+    'role',
+    'permissions',
+    'department',
+    'job_title',
+    'employment_type',
+    'start_date',
+    'end_date',
+    'is_active',
+    'access_areas',
+    'shift_schedule',
+    'contact_email',
+    'contact_phone',
+    'added_by',
+    'created_at',
+    'updated_at',
+    // NOTE: Excluded: pin_code, hourly_rate, commission_percentage, emergency_contact
+  ];
+
   async findByVenueAndUser(venueId: string, userId: string): Promise<IStaffMember | null> {
     return this.db(this.tableName)
+      .select(StaffModel.SAFE_STAFF_COLUMNS)
       .where({ venue_id: venueId, user_id: userId })
       .first();
   }
 
+  /**
+   * SECURITY FIX (H5): Use explicit column selection to prevent data leakage
+   */
   async getVenueStaff(venueId: string, includeInactive = false): Promise<IStaffMember[]> {
     let query = this.db(this.tableName)
+      .select(StaffModel.SAFE_STAFF_COLUMNS)
       .where({ venue_id: venueId });
 
     if (!includeInactive) {
@@ -101,8 +133,12 @@ export class StaffModel extends BaseModel {
     return query.orderBy('created_at', 'asc');
   }
 
+  /**
+   * SECURITY FIX (H5): Use explicit column selection to prevent data leakage
+   */
   async getStaffByRole(venueId: string, role: IStaffMember['role']): Promise<IStaffMember[]> {
     return this.db(this.tableName)
+      .select(StaffModel.SAFE_STAFF_COLUMNS)
       .where({ venue_id: venueId, role, is_active: true })
       .orderBy('created_at', 'asc');
   }

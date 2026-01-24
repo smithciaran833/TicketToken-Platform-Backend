@@ -286,6 +286,164 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
   });
 
   /**
+   * POST /internal/listings/cancel-by-event
+   * Cancel all active listings for a cancelled event
+   * Used by: event-service (when cancelling an event)
+   */
+  fastify.post<{
+    Body: {
+      eventId: string;
+      tenantId: string;
+      reason: string;
+      notifySellers?: boolean;
+    };
+  }>('/listings/cancel-by-event', {
+    schema: {
+      body: {
+        type: 'object',
+        required: ['eventId', 'tenantId', 'reason'],
+        properties: {
+          eventId: { type: 'string' },
+          tenantId: { type: 'string' },
+          reason: { type: 'string' },
+          notifySellers: { type: 'boolean', default: true },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { eventId, tenantId, reason, notifySellers = true } = request.body;
+    const traceId = request.headers['x-trace-id'] as string;
+    const callingService = request.headers['x-internal-service'] as string;
+
+    if (!eventId || !tenantId) {
+      return reply.status(400).send({ error: 'eventId and tenantId are required' });
+    }
+
+    try {
+      log.info({
+        eventId,
+        tenantId,
+        reason,
+        notifySellers,
+        callingService,
+        traceId,
+      }, 'Processing listings cancellation for event');
+
+      // Check for in-progress transactions first
+      const inProgressTransactions = await knex('marketplace_transactions')
+        .join('listings', 'marketplace_transactions.listing_id', 'listings.id')
+        .where('listings.event_id', eventId)
+        .where('listings.tenant_id', tenantId)
+        .whereIn('marketplace_transactions.status', ['PENDING', 'PROCESSING', 'ESCROW_HELD'])
+        .select(
+          'marketplace_transactions.id',
+          'marketplace_transactions.status',
+          'listings.id as listing_id',
+          'listings.seller_id'
+        );
+
+      const warnings: string[] = [];
+      if (inProgressTransactions.length > 0) {
+        warnings.push(`${inProgressTransactions.length} transactions in progress - manual review required`);
+        log.warn({
+          eventId,
+          inProgressCount: inProgressTransactions.length,
+          transactionIds: inProgressTransactions.map(t => t.id),
+          traceId,
+        }, 'In-progress transactions found during event cancellation');
+      }
+
+      // Get all active listings for the event
+      const activeListings = await knex('listings')
+        .where('event_id', eventId)
+        .where('tenant_id', tenantId)
+        .whereIn('status', ['ACTIVE', 'RESERVED'])
+        .whereNull('deleted_at')
+        .select('id', 'seller_id', 'ticket_id', 'price', 'status');
+
+      if (activeListings.length === 0) {
+        log.info({ eventId, traceId }, 'No active listings to cancel');
+        return reply.send({
+          success: true,
+          cancelledListings: 0,
+          inProgressTransactions: inProgressTransactions.length,
+          warnings,
+          message: 'No active listings found for this event',
+        });
+      }
+
+      // Cancel all active listings
+      const listingIds = activeListings.map(l => l.id);
+      const now = new Date();
+
+      await knex('listings')
+        .whereIn('id', listingIds)
+        .update({
+          status: 'CANCELLED',
+          cancellation_reason: reason,
+          cancelled_at: now,
+          updated_at: now,
+        });
+
+      // Collect unique seller IDs for notifications
+      const sellerIds = Array.from(new Set(activeListings.map(l => l.seller_id)));
+
+      // Log cancellation details
+      log.info({
+        eventId,
+        cancelledCount: activeListings.length,
+        sellerCount: sellerIds.length,
+        inProgressCount: inProgressTransactions.length,
+        callingService,
+        traceId,
+      }, 'Listings cancelled for event');
+
+      // If notifySellers is true, we could publish a notification event
+      // In production, this would be a RabbitMQ message to notification-service
+      if (notifySellers && sellerIds.length > 0) {
+        log.info({
+          eventId,
+          sellerIds,
+          traceId,
+        }, 'Seller notification queued (implementation pending)');
+        // TODO: Publish notification event to RabbitMQ
+        // await rabbitmq.publish('notifications', 'listing.cancelled_batch', {
+        //   eventId,
+        //   sellerIds,
+        //   reason,
+        //   cancelledAt: now.toISOString()
+        // });
+      }
+
+      return reply.send({
+        success: true,
+        cancelledListings: activeListings.length,
+        affectedSellers: sellerIds.length,
+        inProgressTransactions: inProgressTransactions.length,
+        warnings,
+        details: {
+          listingIds,
+          sellerIds,
+          reason,
+          cancelledAt: now.toISOString(),
+        },
+      });
+    } catch (error: any) {
+      log.error({
+        error: error.message,
+        eventId,
+        tenantId,
+        traceId,
+      }, 'Failed to cancel listings for event');
+
+      return reply.status(500).send({
+        error: 'Failed to cancel listings',
+        message: error.message,
+      });
+    }
+  });
+
+  /**
    * POST /internal/escrow/release
    * Release escrow funds to seller
    * Used by: transfer-service (after successful transfer)

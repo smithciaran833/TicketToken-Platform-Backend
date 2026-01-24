@@ -41,6 +41,8 @@ import {
   CheckTokenExistsResponse,
   // Phase 5c metrics types
   TicketMetricsResponse,
+  // Phase 5d types (event cancellation)
+  GetTicketsByUserResponse,
 } from './types';
 
 /**
@@ -518,6 +520,42 @@ export class TicketServiceClient extends BaseServiceClient {
     const path = `/internal/tickets/metrics${queryString ? `?${queryString}` : ''}`;
     
     const response = await this.get<TicketMetricsResponse>(path, ctx);
+    return response.data;
+  }
+
+  // ==========================================================================
+  // PHASE 5d METHODS - Event Cancellation Workflow Support
+  // ==========================================================================
+
+  /**
+   * Get all tickets for a specific user
+   * Used for event cancellation to notify ticket holders
+   *
+   * @param userId - The user ID
+   * @param ctx - Request context with tenant info
+   * @param options - Query options for filtering and pagination
+   * @returns List of tickets owned by the user
+   */
+  async getTicketsByUser(
+    userId: string,
+    ctx: RequestContext,
+    options?: {
+      status?: string;
+      eventId?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<GetTicketsByUserResponse> {
+    const params = new URLSearchParams();
+    if (options?.status) params.append('status', options.status);
+    if (options?.eventId) params.append('eventId', options.eventId);
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.offset) params.append('offset', options.offset.toString());
+
+    const queryString = params.toString();
+    const path = `/internal/tickets/user/${userId}${queryString ? `?${queryString}` : ''}`;
+
+    const response = await this.get<GetTicketsByUserResponse>(path, ctx);
     return response.data;
   }
 

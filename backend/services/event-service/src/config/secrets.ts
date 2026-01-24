@@ -6,6 +6,7 @@ dotenv.config({ path: path.resolve(__dirname, '../../../../.env') });
 
 import { secretsManager } from '@tickettoken/shared/utils/secrets-manager';
 import { SECRETS_CONFIG } from '@tickettoken/shared/config/secrets.config';
+import { logger } from '../utils/logger';
 
 /**
  * LOW FIX (Issue #8): Expanded secrets loading
@@ -21,8 +22,8 @@ import { SECRETS_CONFIG } from '@tickettoken/shared/config/secrets.config';
  */
 export async function loadSecrets() {
   const serviceName = process.env.SERVICE_NAME || 'unknown-service';
-  console.log(`[${serviceName}] Loading secrets from secrets manager...`);
-  
+  logger.info({ serviceName }, 'Loading secrets from secrets manager');
+
   try {
     // LOW FIX (Issue #8): Expanded secret list to include JWT and service authentication
     const requiredSecrets: string[] = [
@@ -39,9 +40,9 @@ export async function loadSecrets() {
       // Service secret rotation support (optional - may not exist)
       'SERVICE_SECRET_PREVIOUS',
     ];
-    
+
     const secrets = await secretsManager.getSecrets(requiredSecrets);
-    
+
     // Map loaded secrets to environment variables for consistent access
     // This allows the rest of the application to use process.env.* as usual
     if (secrets.POSTGRES_PASSWORD) process.env.DB_PASSWORD = secrets.POSTGRES_PASSWORD;
@@ -54,17 +55,19 @@ export async function loadSecrets() {
     if (secrets.SERVICE_SECRET_PREVIOUS) {
       process.env.SERVICE_SECRET_PREVIOUS = secrets.SERVICE_SECRET_PREVIOUS;
     }
-    
-    console.log(`[${serviceName}] ✅ Secrets loaded and mapped to environment variables`);
-    console.log(`[${serviceName}]    - Database credentials: ✓`);
-    console.log(`[${serviceName}]    - Redis credentials: ✓`);
-    console.log(`[${serviceName}]    - JWT secret: ${secrets.JWT_SECRET ? '✓' : '✗'}`);
-    console.log(`[${serviceName}]    - Service secret: ${secrets.SERVICE_SECRET ? '✓' : '✗'}`);
-    console.log(`[${serviceName}]    - Service secret (previous): ${secrets.SERVICE_SECRET_PREVIOUS ? '✓' : '✗ (not in rotation)'}`);
-    
+
+    logger.info({
+      serviceName,
+      databaseCredentials: true,
+      redisCredentials: true,
+      jwtSecret: !!secrets.JWT_SECRET,
+      serviceSecret: !!secrets.SERVICE_SECRET,
+      serviceSecretPrevious: !!secrets.SERVICE_SECRET_PREVIOUS,
+    }, 'Secrets loaded and mapped to environment variables');
+
     return secrets;
   } catch (error: any) {
-    console.error(`[${serviceName}] ❌ Failed to load secrets:`, error.message);
+    logger.error({ serviceName, error: error.message }, 'Failed to load secrets');
     throw new Error('Cannot start service without required secrets');
   }
 }

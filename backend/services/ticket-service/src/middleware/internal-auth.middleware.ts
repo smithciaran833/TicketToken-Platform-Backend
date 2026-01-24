@@ -23,7 +23,15 @@ import { logger } from '../utils/logger';
 const log = logger.child({ component: 'InternalAuth' });
 
 const INTERNAL_HMAC_SECRET = process.env.INTERNAL_HMAC_SECRET || process.env.INTERNAL_SERVICE_SECRET;
-const USE_NEW_HMAC = process.env.USE_NEW_HMAC === 'true';
+
+/**
+ * SECURITY: HMAC authentication is now ENABLED by default.
+ * Set USE_NEW_HMAC=false to disable (ONLY for local development).
+ *
+ * CRITICAL: Disabling HMAC authentication in production allows any service
+ * to impersonate internal services and access protected endpoints.
+ */
+const USE_NEW_HMAC = process.env.USE_NEW_HMAC !== 'false'; // Default true, opt-out only
 
 const ALLOWED_SERVICES = new Set(
   (process.env.ALLOWED_INTERNAL_SERVICES || 'api-gateway,payment-service,order-service,minting-service,transfer-service,blockchain-service,blockchain-indexer,scanning-service,venue-service,event-service')
@@ -61,9 +69,9 @@ export async function internalAuthMiddlewareNew(
   request: FastifyRequest,
   reply: FastifyReply
 ): Promise<void> {
-  // Skip HMAC validation if feature flag is disabled (use legacy auth)
+  // Skip HMAC validation if explicitly disabled (opt-out for development only)
   if (!USE_NEW_HMAC) {
-    log.debug('HMAC validation disabled (USE_NEW_HMAC=false)');
+    log.warn('HMAC authentication is DISABLED - this should only be used in development. Set USE_NEW_HMAC=true in production.');
     return;
   }
 
@@ -81,12 +89,12 @@ export async function internalAuthMiddlewareNew(
     const signature = request.headers['x-internal-signature'] as string;
 
     if (!serviceName || !signature) {
-      log.warn({
+      log.warn('Missing required HMAC headers', {
         path: request.url,
         method: request.method,
         hasService: !!serviceName,
         hasSignature: !!signature,
-      }, 'Missing required HMAC headers');
+      });
 
       return reply.status(401).send({
         error: 'Unauthorized',
@@ -103,12 +111,12 @@ export async function internalAuthMiddlewareNew(
     );
 
     if (!result.valid) {
-      log.warn({
+      log.warn('HMAC validation failed', {
         service: serviceName,
         path: request.url,
         error: result.error,
         errorCode: result.errorCode,
-      }, 'HMAC validation failed');
+      });
 
       return reply.status(401).send({
         error: 'Unauthorized',
@@ -118,7 +126,7 @@ export async function internalAuthMiddlewareNew(
 
     const normalizedServiceName = serviceName.toLowerCase();
     if (!ALLOWED_SERVICES.has(normalizedServiceName)) {
-      log.warn({ serviceName: normalizedServiceName, path: request.url }, 'Unknown service attempted access');
+      log.warn('Unknown service attempted access', { serviceName: normalizedServiceName, path: request.url });
       return reply.status(403).send({
         error: 'Forbidden',
         message: 'Service not authorized',
@@ -134,10 +142,10 @@ export async function internalAuthMiddlewareNew(
     // Backward compatibility
     (request as any).internalService = normalizedServiceName;
 
-    log.debug({ serviceName: normalizedServiceName, path: request.url }, 'Internal service authenticated');
+    log.debug('Internal service authenticated', { serviceName: normalizedServiceName, path: request.url });
   } catch (error) {
     if (error instanceof ReplayAttackError) {
-      log.warn({ error: error.message }, 'Replay attack detected');
+      log.warn('Replay attack detected', { error: error.message });
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Request already processed',
@@ -145,7 +153,7 @@ export async function internalAuthMiddlewareNew(
     }
 
     if (error instanceof SignatureError) {
-      log.warn({ error: error.message }, 'Invalid signature');
+      log.warn('Invalid signature', { error: error.message });
       return reply.status(401).send({
         error: 'Unauthorized',
         message: 'Invalid signature',
@@ -153,14 +161,14 @@ export async function internalAuthMiddlewareNew(
     }
 
     if (error instanceof HmacError) {
-      log.error({ error: error.message }, 'HMAC validation error');
+      log.error('HMAC validation error', { error: error.message });
       return reply.status(401).send({
         error: 'Unauthorized',
         message: error.message,
       });
     }
 
-    log.error({ error }, 'Unexpected error during internal auth');
+    log.error('Unexpected error during internal auth', { error });
     return reply.status(500).send({
       error: 'Internal server error',
       message: 'Authentication failed',

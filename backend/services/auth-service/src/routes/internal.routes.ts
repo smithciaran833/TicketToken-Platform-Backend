@@ -8,7 +8,8 @@
 import { FastifyInstance } from 'fastify';
 import { verifyServiceToken } from '../middleware/s2s.middleware';
 import { pool } from '../config/database';
-import { responseSchemas } from '../validators/response.schemas';
+// SECURITY: Response schemas removed to fix OOM. Internal endpoints use explicit
+// field selection in SQL queries. See src/serializers/user.serializer.ts for pattern.
 
 export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   // Apply S2S authentication to all routes in this group
@@ -19,7 +20,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Called by other services to check if a user can perform an action
    */
   fastify.post('/validate-permissions', {
-    schema: { response: responseSchemas.validatePermissions },
+    // DIAGNOSTIC: schema: { response: responseSchemas.validatePermissions },
   }, async (request, reply) => {
     const { userId, permissions, venueId } = request.body as {
       userId: string;
@@ -89,7 +90,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Bulk validate multiple users (for batch operations)
    */
   fastify.post('/validate-users', {
-    schema: { response: responseSchemas.validateUsers },
+    // DIAGNOSTIC: schema: { response: responseSchemas.validateUsers },
   }, async (request, reply) => {
     const { userIds } = request.body as { userIds: string[] };
 
@@ -128,7 +129,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Get user's tenant context (for multi-tenant operations)
    */
   fastify.get('/user-tenant/:userId', {
-    schema: { response: responseSchemas.userTenant },
+    // DIAGNOSTIC: schema: { response: responseSchemas.userTenant },
   }, async (request, reply) => {
     const { userId } = request.params as { userId: string };
 
@@ -160,7 +161,7 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
    * Health check for service mesh
    */
   fastify.get('/health', {
-    schema: { response: responseSchemas.internalHealth },
+    // DIAGNOSTIC: schema: { response: responseSchemas.internalHealth },
   }, async (request, reply) => {
     return reply.send({
       status: 'healthy',

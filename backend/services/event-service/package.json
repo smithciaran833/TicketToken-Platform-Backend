@@ -36,6 +36,7 @@
     "@types/redis": "^4.0.10",
     "amqplib": "^0.10.9",
     "awilix": "^9.0.0",
+    "axios": "^1.13.2",
     "bull": "^4.16.5",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",
@@ -60,6 +61,7 @@
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.7",
+    "@types/axios": "^0.9.36",
     "@types/cors": "^2.8.19",
     "@types/jest": "^30.0.0",
     "@types/luxon": "^3.4.2",
@@ -68,6 +70,7 @@
     "@types/opossum": "^8.1.9",
     "@types/pg": "^8.10.9",
     "jest": "^30.1.3",
+    "testcontainers": "^11.11.0",
     "ts-jest": "^29.4.1",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"

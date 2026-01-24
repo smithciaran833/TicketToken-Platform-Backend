@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Security & Stability Fixes] - 2026-01-23
+
+### Critical Security Fixes
+- **Fixed data leakage: Blockchain wallet addresses (mint_authority, artist_wallet) no longer exposed in public API responses**
+- **Fixed business intelligence leakage: Artist/venue royalty splits (artist_percentage, venue_percentage) protected from public endpoints**
+- **Fixed pricing algorithm exposure: price_adjustment_rules now internal-only**
+- **Fixed service boundary violation: Replaced direct db('tickets') query with HTTP call to ticket-service**
+
+### Security Hardening
+- Created 4 serializers (event, pricing, capacity, schedule) with comprehensive field whitelisting
+- Protected 36+ sensitive fields from public API exposure
+- Implemented token revocation checking in authentication middleware
+- Replaced 18+ console.log statements with Winston structured logging
+
+### Code Quality Improvements
+- Documented 5 incomplete event cancellation TODOs with full context (impact, dependencies, effort)
+- Added OpenAPI documentation to 3 internal endpoints
+- Enhanced notification controller with architectural explanation
+
+### Testing
+- Added 91 comprehensive serializer security tests
+- All tests passing
+
+### Technical Details
+
+**Serializers Created:**
+- `src/serializers/event.serializer.ts` - Protects 17 sensitive event fields
+- `src/serializers/pricing.serializer.ts` - Protects 5 sensitive pricing fields
+- `src/serializers/capacity.serializer.ts` - Protects 8 sensitive capacity fields
+- `src/serializers/schedule.serializer.ts` - Protects 6 sensitive schedule fields
+
+**Critical Protected Fields:**
+- Event: mint_authority, artist_wallet, artist_percentage, venue_percentage, streaming_config
+- Pricing: price_adjustment_rules (pricing algorithm IP)
+- Capacity: locked_price_data, seat_map, row_config
+
+**Files Modified:** 15+
+**Tests Added:** 91
+
+---
+
 ### Added
 - Token scope validation (TM6) for fine-grained S2S authorization
 - Token revocation support (TM8) for compromised credentials

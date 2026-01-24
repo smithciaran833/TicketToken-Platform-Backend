@@ -12,7 +12,7 @@ export class AuthExtendedController {
   async forgotPassword(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { email } = request.body as { email: string };
-      await this.authExtendedService.forgotPassword(email);
+      await this.authExtendedService.requestPasswordReset(email, request.ip);
       reply.send({
         message: 'If an account exists with that email, a password reset link has been sent'
       });
@@ -28,7 +28,7 @@ export class AuthExtendedController {
   async resetPassword(request: FastifyRequest, reply: FastifyReply) {
     try {
       const { token, newPassword } = request.body as { token: string; newPassword: string };
-      await this.authExtendedService.resetPassword(token, newPassword);
+      await this.authExtendedService.resetPassword(token, newPassword, request.ip);
       reply.send({
         message: 'Password reset successfully'
       });

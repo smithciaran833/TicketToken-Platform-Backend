@@ -69,8 +69,22 @@ export class IntegrationModel extends BaseModel {
     return this.findAllByVenue(venueId, false);
   }
 
+  /**
+   * SECURITY FIX (M4): Explicit column selection - excludes encrypted credentials
+   */
   async findAllByVenue(venueId: string, includeDeleted: boolean = false): Promise<IIntegration[]> {
     let query = this.db(this.tableName)
+      .select([
+        'id',
+        'venue_id',
+        'integration_type',
+        'integration_name',
+        'config_data',
+        'is_active',
+        'created_at',
+        'updated_at',
+        // NOTE: api_key_encrypted, api_secret_encrypted, encrypted_credentials excluded
+      ])
       .where({ venue_id: venueId });
 
     if (!includeDeleted) {
@@ -80,8 +94,22 @@ export class IntegrationModel extends BaseModel {
     return query;
   }
 
+  /**
+   * SECURITY FIX (M4): Explicit column selection - excludes encrypted credentials
+   */
   async findByVenueAndType(venueId: string, type: string): Promise<IIntegration | undefined> {
     return this.db(this.tableName)
+      .select([
+        'id',
+        'venue_id',
+        'integration_type',
+        'integration_name',
+        'config_data',
+        'is_active',
+        'created_at',
+        'updated_at',
+        // NOTE: api_key_encrypted, api_secret_encrypted, encrypted_credentials excluded
+      ])
       .where({ venue_id: venueId, integration_type: type })
       .whereNull('deleted_at')
       .first();

@@ -168,8 +168,14 @@ export class TicketService {
   }
 
   async getTicketTypes(eventId: string, tenantId: string): Promise<TicketType[]> {
+    // SECURITY: Select only safe fields for public display
+    // Do NOT select: sold_quantity, reserved_quantity, cost_basis, profit_margin (business intelligence)
     const query = `
-      SELECT * FROM ticket_types
+      SELECT
+        id, event_id, name, description, category, price,
+        quantity, available_quantity, min_purchase, max_purchase,
+        sale_start, sale_end, is_active, created_at, updated_at
+      FROM ticket_types
       WHERE event_id = $1 AND tenant_id = $2
       ORDER BY price ASC
     `;
@@ -455,8 +461,15 @@ export class TicketService {
       this.log.warn('Redis cache read failed, continuing with DB query', { ticketId });
     }
 
+    // SECURITY: Select only safe fields - excludes qr_code (CRITICAL), payment_id (CRITICAL)
+    // Serializer provides defense-in-depth but we minimize data fetched
     let query = `
-      SELECT t.*, tt.name as ticket_type_name, tt.description as ticket_type_description
+      SELECT
+        t.id, t.event_id, t.ticket_type_id, t.user_id, t.status,
+        t.ticket_number, t.section, t.row, t.seat,
+        t.is_transferable, t.transfer_count, t.is_nft, t.token_mint,
+        t.purchased_at, t.purchase_date, t.created_at, t.updated_at,
+        tt.name as ticket_type_name, tt.description as ticket_type_description
       FROM tickets t
       JOIN ticket_types tt ON t.ticket_type_id = tt.id
       WHERE t.id = $1
@@ -503,8 +516,14 @@ export class TicketService {
 
     // Wrap in tenant context for proper RLS enforcement
     return withTenantContext(tenantId, async () => {
+      // SECURITY: Select only safe fields - excludes qr_code (CRITICAL), payment_id (CRITICAL)
       let query = `
-        SELECT t.*, tt.name as ticket_type_name, e.name as event_name
+        SELECT
+          t.id, t.event_id, t.ticket_type_id, t.user_id, t.status,
+          t.ticket_number, t.section, t.row, t.seat,
+          t.is_transferable, t.transfer_count, t.is_nft, t.token_mint,
+          t.purchased_at, t.purchase_date, t.created_at, t.updated_at,
+          tt.name as ticket_type_name, e.name as event_name
         FROM tickets t
         JOIN ticket_types tt ON t.ticket_type_id = tt.id
         JOIN events e ON t.event_id = e.id
@@ -734,8 +753,13 @@ export class TicketService {
   }
 
   async getTicketType(id: string, tenantId: string): Promise<TicketType | null> {
+    // SECURITY: Select only safe fields for public display
     const query = `
-      SELECT * FROM ticket_types
+      SELECT
+        id, event_id, name, description, category, price,
+        quantity, available_quantity, min_purchase, max_purchase,
+        sale_start, sale_end, is_active, created_at, updated_at
+      FROM ticket_types
       WHERE id = $1 AND tenant_id = $2
     `;
 

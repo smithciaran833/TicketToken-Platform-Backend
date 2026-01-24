@@ -40,8 +40,8 @@ const ALLOWED_SERVICES = new Set(
 const hmacValidator = INTERNAL_HMAC_SECRET
   ? createHmacValidator({
       secret: INTERNAL_HMAC_SECRET,
+      serviceName: 'auth-service',
       replayWindowMs: 60000, // 60 seconds - Audit #16 compliance
-      allowedServices: Array.from(ALLOWED_SERVICES),
     })
   : null;
 
@@ -75,46 +75,46 @@ async function validateHMAC(
   }
 
   try {
-    const headers = {
-      'x-internal-service': request.headers['x-internal-service'] as string,
-      'x-internal-timestamp': request.headers['x-internal-timestamp'] as string,
-      'x-internal-nonce': request.headers['x-internal-nonce'] as string,
-      'x-internal-signature': request.headers['x-internal-signature'] as string,
-      'x-internal-body-hash': request.headers['x-internal-body-hash'] as string,
-    };
+    const serviceName = request.headers['x-internal-service'] as string;
+    const signature = request.headers['x-internal-signature'] as string;
 
-    if (!headers['x-internal-service'] || !headers['x-internal-signature']) {
+    if (!serviceName || !signature) {
       return false; // Not an HMAC request
     }
 
-    const result: HmacValidationResult = await hmacValidator.validate({
-      serviceName: headers['x-internal-service'],
-      timestamp: headers['x-internal-timestamp'],
-      nonce: headers['x-internal-nonce'],
-      signature: headers['x-internal-signature'],
-      bodyHash: headers['x-internal-body-hash'],
-      method: request.method,
-      path: request.url,
-      body: request.body,
-    });
+    // Build headers object for validator
+    const headers: Record<string, string | undefined> = {
+      'x-internal-service': serviceName,
+      'x-internal-timestamp': request.headers['x-internal-timestamp'] as string,
+      'x-internal-nonce': request.headers['x-internal-nonce'] as string,
+      'x-internal-signature': signature,
+      'x-internal-body-hash': request.headers['x-internal-body-hash'] as string,
+    };
+
+    const result: HmacValidationResult = await hmacValidator.validate(
+      headers,
+      request.method,
+      request.url,
+      request.body
+    );
 
     if (!result.valid) {
-      log.warn({
-        service: headers['x-internal-service'],
+      log.warn('HMAC validation failed', {
+        service: serviceName,
         path: request.url,
-        reason: result.reason,
-      }, 'HMAC validation failed');
+        error: result.error,
+      });
 
       reply.status(401).send({
         error: 'Unauthorized',
-        message: result.reason || 'Invalid signature',
+        message: result.error || 'Invalid signature',
       });
       return false;
     }
 
-    const serviceName = headers['x-internal-service'].toLowerCase();
-    if (!ALLOWED_SERVICES.has(serviceName)) {
-      log.warn({ serviceName, path: request.url }, 'Unknown service attempted access');
+    const normalizedServiceName = serviceName.toLowerCase();
+    if (!ALLOWED_SERVICES.has(normalizedServiceName)) {
+      log.warn('Unknown service attempted access', { serviceName: normalizedServiceName, path: request.url });
       reply.status(403).send({
         error: 'Forbidden',
         message: 'Service not authorized',
@@ -123,17 +123,17 @@ async function validateHMAC(
     }
 
     request.internalServiceNew = {
-      serviceName,
+      serviceName: normalizedServiceName,
       isInternal: true,
       authenticatedAt: Date.now(),
       authMethod: 'hmac',
     };
 
-    log.debug({ serviceName, path: request.url, authMethod: 'hmac' }, 'Internal service authenticated via HMAC');
+    log.debug('Internal service authenticated via HMAC', { serviceName: normalizedServiceName, path: request.url, authMethod: 'hmac' });
     return true;
   } catch (error) {
     if (error instanceof ReplayAttackError) {
-      log.warn({ error: error.message }, 'Replay attack detected');
+      log.warn('Replay attack detected', { error: error.message });
       reply.status(401).send({
         error: 'Unauthorized',
         message: 'Request already processed',
@@ -142,7 +142,7 @@ async function validateHMAC(
     }
 
     if (error instanceof SignatureError) {
-      log.warn({ error: error.message }, 'Invalid signature');
+      log.warn('Invalid signature', { error: error.message });
       reply.status(401).send({
         error: 'Unauthorized',
         message: 'Invalid signature',
@@ -151,7 +151,7 @@ async function validateHMAC(
     }
 
     if (error instanceof HmacError) {
-      log.error({ error: error.message }, 'HMAC validation error');
+      log.error('HMAC validation error', { error: error.message });
       reply.status(401).send({
         error: 'Unauthorized',
         message: error.message,
@@ -210,18 +210,18 @@ export async function internalAuthMiddlewareNew(
         authenticatedAt: Date.now(),
         authMethod: 'jwt',
       };
-      log.debug({ serviceName: (request as any).service.name, authMethod: 'jwt' }, 'Internal service authenticated via JWT');
+      log.debug('Internal service authenticated via JWT', { serviceName: (request as any).service.name, authMethod: 'jwt' });
     }
     return;
   }
 
   // No authentication provided
-  log.warn({
+  log.warn('No authentication provided for internal endpoint', {
     path: request.url,
     method: request.method,
     hasHmacHeaders,
     hasJwtToken,
-  }, 'No authentication provided for internal endpoint');
+  });
 
   return reply.status(401).send({
     error: 'Unauthorized',

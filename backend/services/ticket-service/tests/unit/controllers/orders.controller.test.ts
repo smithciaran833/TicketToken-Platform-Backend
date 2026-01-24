@@ -106,6 +106,7 @@ describe('OrdersController', () => {
       (mockRequest as any).user = { id: 'user-123' };
       (mockRequest as any).tenantId = 'tenant-456';
 
+      // Note: payment_intent_id is no longer selected from DB for security
       const mockOrder = {
         order_id: 'order-123',
         status: 'COMPLETED',
@@ -113,8 +114,7 @@ describe('OrdersController', () => {
         total_cents: 5000,
         created_at: new Date('2024-01-01'),
         updated_at: new Date('2024-01-02'),
-        reservation_expires_at: new Date('2024-01-01T01:00:00'),
-        payment_intent_id: 'pi_123'
+        reservation_expires_at: new Date('2024-01-01T01:00:00')
       };
 
       const mockItems = [
@@ -143,6 +143,7 @@ describe('OrdersController', () => {
 
       await controller.getOrderById(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
+      // SECURITY: payment_intent_id is no longer exposed
       expect(mockSend).toHaveBeenCalledWith({
         orderId: 'order-123',
         status: 'COMPLETED',
@@ -168,10 +169,9 @@ describe('OrdersController', () => {
             totalPriceFormatted: '$10.00'
           }
         ],
-        payment_intent_id: 'pi_123',
-        created_at: mockOrder.created_at,
-        updated_at: mockOrder.updated_at,
-        expires_at: mockOrder.reservation_expires_at
+        createdAt: mockOrder.created_at,
+        updatedAt: mockOrder.updated_at,
+        expiresAt: mockOrder.reservation_expires_at
       });
     });
 

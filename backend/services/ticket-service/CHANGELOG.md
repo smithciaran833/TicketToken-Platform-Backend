@@ -10,6 +10,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - MEDIUM audit remediation (Batch 18): Documentation, health checks, graceful degradation
 
+### Added (Phase 5c - Service Boundary & Serialization)
+- **Serialization Infrastructure**
+  - `src/serializers/ticket.serializer.ts` - Safe field filtering for tickets
+  - `src/serializers/transfer.serializer.ts` - PII masking for transfers
+  - `src/serializers/ticketType.serializer.ts` - Public ticket type data
+  - `src/serializers/reservation.serializer.ts` - Reservation responses
+- **Extended TypeScript Types** (`src/types/index.ts`)
+  - `AuthenticatedRequest`, `ValidatedRequest<T>` interfaces
+  - Request body types: `CreatePurchaseBody`, `ConfirmPurchaseBody`, `TransferTicketBody`
+  - Parameter types: `TicketIdParams`, `OrderIdParams`, `ReservationIdParams`
+- **Cross-Service Documentation** (`docs/CROSS_SERVICE_DEPENDENCIES.md`)
+- **Purchase Flow Endpoints**
+  - `POST /purchase/confirm` - Confirm reservation with payment
+  - `DELETE /purchase/:reservationId` - Cancel pending reservation
+
+### Changed (Phase 5c)
+- **HMAC Authentication** - Now defaults to ENABLED (opt-out pattern)
+- **Service Boundary Compliance**
+  - `orders.controller.ts` uses `OrderServiceClient` instead of direct DB
+  - `transferService.ts` uses `EventServiceClient` and `AuthServiceClient`
+- **Logging Standardization** - Replaced console.log with Winston logger in:
+  - `CircuitBreaker.ts`, `tracing.ts`, `response.schema.ts`
+  - `database.ts`, `redis.ts`, `secrets.ts`
+- **Controller Serialization** - All responses use serializers
+
+### Security (Phase 5c)
+- Response sanitization filters sensitive fields (payment_intent_id, qr_code_secret)
+- Transfer responses mask email addresses
+- HMAC authentication defaults to enabled with 60-second replay window
+
+### Fixed (Phase 5c)
+- Data leakage in `orders.controller.ts` - payment_intent_id no longer exposed
+- Service boundary violation in `transferService.ts`
+- Removed TODO stubs from `purchaseRoutes.ts`
+
 ## [1.2.0] - 2025-12-31
 
 ### Added

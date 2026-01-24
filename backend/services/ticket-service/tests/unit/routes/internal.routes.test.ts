@@ -1,5 +1,10 @@
 import { FastifyInstance } from 'fastify';
 
+// Mock the internal auth middleware BEFORE any imports that use it
+jest.mock('../../../src/middleware/internal-auth.middleware', () => ({
+  internalAuthMiddlewareNew: jest.fn((req, reply) => Promise.resolve()),
+}));
+
 // Mock dependencies
 jest.mock('../../../src/services/ticketService', () => ({
   TicketService: jest.fn().mockImplementation(() => ({
@@ -28,6 +33,10 @@ jest.mock('../../../src/utils/logger', () => ({
       error: jest.fn(),
     })),
   },
+}));
+
+jest.mock('../../../src/utils/tenant-db', () => ({
+  setTenantContext: jest.fn().mockResolvedValue(undefined),
 }));
 
 import internalRoutes from '../../../src/routes/internalRoutes';
@@ -218,6 +227,123 @@ describe('Internal Routes', () => {
       await routes['POST /internal/tickets/calculate-price'].handler(mockRequest, mockReply);
 
       expect(mockReply.status).toHaveBeenCalledWith(500);
+    });
+  });
+
+  describe('GET /internal/tickets/user/:userId', () => {
+    it('should return tickets for a user', async () => {
+      mockQuery
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              id: 'ticket-1',
+              event_id: 'event-1',
+              ticket_type_id: 'type-1',
+              user_id: 'user-123',
+              status: 'active',
+              ticket_number: 'TKT-001',
+              seat_section: 'A',
+              seat_row: '1',
+              seat_number: '10',
+              is_transferable: true,
+              transfer_count: 0,
+              token_id: null,
+              purchased_at: '2024-01-01T00:00:00Z',
+              event_name: 'Test Event',
+              event_starts_at: '2024-02-01T00:00:00Z',
+              ticket_type_name: 'VIP',
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [{ count: '1' }],
+        });
+
+      await internalRoutes(mockFastify as FastifyInstance);
+
+      const mockReply = { status: jest.fn().mockReturnThis(), send: jest.fn() };
+      const mockRequest = {
+        params: { userId: 'user-123' },
+        query: {},
+        headers: {
+          'x-internal-service': 'event-service',
+          'x-tenant-id': 'tenant-1',
+        },
+      };
+
+      await routes['GET /internal/tickets/user/:userId'].handler(mockRequest, mockReply);
+
+      expect(mockReply.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 'user-123',
+          tickets: expect.arrayContaining([
+            expect.objectContaining({
+              id: 'ticket-1',
+              userId: 'user-123',
+              status: 'active',
+            }),
+          ]),
+          count: 1,
+          totalCount: 1,
+        })
+      );
+    });
+
+    it('should return 400 for missing user ID', async () => {
+      await internalRoutes(mockFastify as FastifyInstance);
+
+      const mockReply = { status: jest.fn().mockReturnThis(), send: jest.fn() };
+      const mockRequest = {
+        params: {},
+        query: {},
+        headers: {},
+      };
+
+      await routes['GET /internal/tickets/user/:userId'].handler(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(400);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'User ID required' });
+    });
+
+    it('should filter by status when provided', async () => {
+      mockQuery
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ count: '0' }] });
+
+      await internalRoutes(mockFastify as FastifyInstance);
+
+      const mockReply = { status: jest.fn().mockReturnThis(), send: jest.fn() };
+      const mockRequest = {
+        params: { userId: 'user-123' },
+        query: { status: 'active' },
+        headers: { 'x-tenant-id': 'tenant-1' },
+      };
+
+      await routes['GET /internal/tickets/user/:userId'].handler(mockRequest, mockReply);
+
+      // Verify that query was called with status filter
+      expect(mockQuery).toHaveBeenCalledWith(
+        expect.stringContaining('AND t.status = $'),
+        expect.arrayContaining(['user-123', 'tenant-1', 'active'])
+      );
+    });
+
+    it('should handle database errors', async () => {
+      mockQuery.mockRejectedValue(new Error('Database error'));
+
+      await internalRoutes(mockFastify as FastifyInstance);
+
+      const mockReply = { status: jest.fn().mockReturnThis(), send: jest.fn() };
+      const mockRequest = {
+        params: { userId: 'user-123' },
+        query: {},
+        headers: {},
+      };
+
+      await routes['GET /internal/tickets/user/:userId'].handler(mockRequest, mockReply);
+
+      expect(mockReply.status).toHaveBeenCalledWith(500);
+      expect(mockReply.send).toHaveBeenCalledWith({ error: 'Failed to get tickets' });
     });
   });
 });

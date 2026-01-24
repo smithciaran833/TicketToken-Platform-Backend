@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0-security] - 2026-01-23
+
+### Critical Security Fixes
+- **Fixed data leakage: Business tax IDs (EIN) no longer exposed in API responses**
+- **Fixed staff data leakage: PIN codes, salary data, and emergency contacts now protected**
+- **Fixed Stripe Connect account IDs exposure in public API**
+
+### Security Hardening
+- Added venue and staff serializers with comprehensive field whitelisting
+- Fixed SQL injection risk in database helper table name interpolation
+- Enabled HMAC authentication by default for internal service-to-service communication
+- Restricted internal ticket validation to only return necessary fields
+- Added explicit column selection in integration queries to prevent credential leakage
+
+### Code Quality Improvements
+- Improved TypeScript type safety in venue and content controllers
+- Enhanced error handling with specific error messages and structured logging
+- Documented 5 incomplete TODOs with implementation details and effort estimates
+
+### Testing
+- Added 34 comprehensive security tests verifying forbidden fields never leak
+- All serializer and controller tests passing (57 total)
+
+### Technical Details
+
+**Serializers Created:**
+- `src/serializers/venue.serializer.ts` - Protects 30+ sensitive venue fields
+- `src/serializers/staff.serializer.ts` - Protects 40+ sensitive staff fields
+
+**Protected Fields:**
+- Venue: tax_id, business_registration, stripe_connect_account_id, wallet_address, total_revenue
+- Staff: pin_code, hourly_rate, salary, commission_percentage, emergency_contact, ssn
+
+**Files Modified:** 15 | **Tests Added:** 34 | **Type Definitions Added:** 15+
+
+---
+
 ### Added
 - Comprehensive security audit fixes (88+ findings addressed)
 - Row-Level Security (RLS) policies for multi-tenant isolation

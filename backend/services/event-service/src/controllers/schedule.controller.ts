@@ -1,6 +1,7 @@
 import { AuthenticatedHandler } from '../types';
 import { EventScheduleModel, IEventSchedule } from '../models';
 import Joi from 'joi';
+import { serializeSchedule, serializeSchedules } from '../serializers';
 
 const createScheduleSchema = Joi.object({
   starts_at: Joi.date().required(),
@@ -35,7 +36,7 @@ export const getSchedules: AuthenticatedHandler = async (request, reply) => {
       success: true,
       data: {
         event_id: eventId,
-        schedules
+        schedules: serializeSchedules(schedules)
       }
     });
   } catch (error: any) {
@@ -79,7 +80,7 @@ export const createSchedule: AuthenticatedHandler = async (request, reply) => {
 
     return reply.status(201).send({
       success: true,
-      data: schedule
+      data: serializeSchedule(schedule)
     });
   } catch (error: any) {
     if (error.message === 'Event not found') {
@@ -113,7 +114,7 @@ export const getSchedule: AuthenticatedHandler = async (request, reply) => {
 
     return reply.send({
       success: true,
-      data: schedule
+      data: serializeSchedule(schedule)
     });
   } catch (error: any) {
     if (error.message === 'Event not found') {
@@ -149,9 +150,16 @@ export const updateSchedule: AuthenticatedHandler = async (request, reply) => {
 
     const updated = await scheduleModel.updateWithTenant(scheduleId, tenantId, updates);
 
+    if (!updated) {
+      return reply.status(404).send({
+        success: false,
+        error: 'Schedule not found'
+      });
+    }
+
     return reply.send({
       success: true,
-      data: updated
+      data: serializeSchedule(updated)
     });
   } catch (error: any) {
     if (error.message === 'Event not found') {
@@ -180,7 +188,7 @@ export const getUpcomingSchedules: AuthenticatedHandler = async (request, reply)
       success: true,
       data: {
         event_id: eventId,
-        schedules
+        schedules: serializeSchedules(schedules)
       }
     });
   } catch (error: any) {
@@ -215,7 +223,7 @@ export const getNextSchedule: AuthenticatedHandler = async (request, reply) => {
 
     return reply.send({
       success: true,
-      data: schedule
+      data: serializeSchedule(schedule)
     });
   } catch (error: any) {
     if (error.message === 'Event not found') {

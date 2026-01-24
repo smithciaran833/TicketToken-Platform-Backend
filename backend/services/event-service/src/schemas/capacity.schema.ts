@@ -51,9 +51,8 @@ export const createCapacityBodySchema = {
     buffer_capacity: { type: 'integer', minimum: 0, maximum: 1000000 },
     schedule_id: { type: 'string', pattern: uuidPattern },
     // LOW PRIORITY ISSUE #16: Row Configuration Math
-    // TODO: Add service-layer validation in capacity.service.ts to ensure:
-    // rows × seats_per_row = total_capacity (when row_config is provided)
-    // This is a business logic validation that cannot be expressed in JSON Schema
+    // IMPLEMENTED in capacity.service.ts:validateRowConfig()
+    // Validates: rows × seats_per_row = total_capacity (when row_config is provided)
     row_config: {
       type: 'object',
       additionalProperties: false,

@@ -400,6 +400,181 @@ export async function internalRoutes(fastify: FastifyInstance): Promise<void> {
       return reply.status(500).send({ error: 'Internal error' });
     }
   });
+
+  /**
+   * GET /internal/orders/event/:eventId
+   * Get all orders for a specific event with payment details and items
+   * Used by: payment-service (for bulk refunds during event cancellation)
+   */
+  fastify.get('/internal/orders/event/:eventId', async (request, reply) => {
+    const { eventId } = request.params as { eventId: string };
+    const tenantId = request.headers['x-tenant-id'] as string;
+    const traceId = request.headers['x-trace-id'] as string;
+    const { status, limit, offset } = request.query as {
+      status?: string;
+      limit?: string;
+      offset?: string;
+    };
+
+    if (!eventId) {
+      return reply.status(400).send({ error: 'Event ID required' });
+    }
+
+    try {
+      const pool = getDatabase();
+      const maxLimit = Math.min(parseInt(limit || '100'), 500);
+      const queryOffset = parseInt(offset || '0');
+
+      // Build query with optional status filter
+      let query = `
+        SELECT
+          o.id, o.order_number, o.tenant_id, o.user_id, o.event_id,
+          o.status, o.total_cents, o.subtotal_cents, o.fees_cents, o.tax_cents,
+          o.discount_cents, o.currency, o.payment_intent_id, o.payment_method,
+          o.expires_at, o.confirmed_at, o.cancelled_at, o.refunded_at,
+          o.created_at, o.updated_at, o.metadata
+        FROM orders o
+        WHERE o.event_id = $1 AND o.deleted_at IS NULL
+      `;
+      const params: any[] = [eventId];
+      let paramIndex = 2;
+
+      if (tenantId) {
+        query += ` AND o.tenant_id = $${paramIndex}`;
+        params.push(tenantId);
+        paramIndex++;
+      }
+
+      // Optional status filter (can be comma-separated for multiple statuses)
+      if (status) {
+        const statuses = status.split(',').map(s => s.trim().toUpperCase());
+        query += ` AND o.status = ANY($${paramIndex})`;
+        params.push(statuses);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY o.created_at DESC LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(maxLimit, queryOffset);
+
+      const ordersResult = await pool.query(query, params);
+
+      if (ordersResult.rows.length === 0) {
+        request.log.info({
+          eventId,
+          requestingService: request.headers['x-internal-service'],
+          traceId,
+        }, 'No orders found for event');
+
+        return reply.send({
+          eventId,
+          orders: [],
+          count: 0,
+          pagination: { limit: maxLimit, offset: queryOffset, hasMore: false },
+        });
+      }
+
+      // Get order items for all orders in a single query
+      const orderIds = ordersResult.rows.map(o => o.id);
+      const itemsQuery = `
+        SELECT
+          oi.id, oi.order_id, oi.ticket_type_id, oi.ticket_id,
+          oi.quantity, oi.unit_price_cents, oi.total_price_cents,
+          oi.status, oi.created_at
+        FROM order_items oi
+        WHERE oi.order_id = ANY($1) AND oi.deleted_at IS NULL
+        ORDER BY oi.order_id, oi.created_at
+      `;
+      const itemsResult = await pool.query(itemsQuery, [orderIds]);
+
+      // Group items by order_id
+      const itemsByOrderId = new Map<string, any[]>();
+      for (const item of itemsResult.rows) {
+        if (!itemsByOrderId.has(item.order_id)) {
+          itemsByOrderId.set(item.order_id, []);
+        }
+        itemsByOrderId.get(item.order_id)!.push({
+          id: item.id,
+          ticketTypeId: item.ticket_type_id,
+          ticketId: item.ticket_id,
+          quantity: item.quantity,
+          unitPriceCents: item.unit_price_cents,
+          totalPriceCents: item.total_price_cents,
+          status: item.status,
+          createdAt: item.created_at,
+        });
+      }
+
+      // Get count for pagination
+      let countQuery = `
+        SELECT COUNT(*) as total
+        FROM orders o
+        WHERE o.event_id = $1 AND o.deleted_at IS NULL
+      `;
+      const countParams: any[] = [eventId];
+      let countParamIndex = 2;
+
+      if (tenantId) {
+        countQuery += ` AND o.tenant_id = $${countParamIndex}`;
+        countParams.push(tenantId);
+        countParamIndex++;
+      }
+
+      if (status) {
+        const statuses = status.split(',').map(s => s.trim().toUpperCase());
+        countQuery += ` AND o.status = ANY($${countParamIndex})`;
+        countParams.push(statuses);
+      }
+
+      const countResult = await pool.query(countQuery, countParams);
+      const totalCount = parseInt(countResult.rows[0].total);
+
+      request.log.info({
+        eventId,
+        orderCount: ordersResult.rows.length,
+        totalCount,
+        requestingService: request.headers['x-internal-service'],
+        traceId,
+      }, 'Internal event orders lookup');
+
+      return reply.send({
+        eventId,
+        orders: ordersResult.rows.map(order => ({
+          id: order.id,
+          orderNumber: order.order_number,
+          tenantId: order.tenant_id,
+          userId: order.user_id,
+          eventId: order.event_id,
+          status: order.status,
+          totalCents: order.total_cents,
+          subtotalCents: order.subtotal_cents,
+          feesCents: order.fees_cents,
+          taxCents: order.tax_cents,
+          discountCents: order.discount_cents,
+          currency: order.currency,
+          paymentIntentId: order.payment_intent_id,
+          paymentMethod: order.payment_method,
+          expiresAt: order.expires_at,
+          confirmedAt: order.confirmed_at,
+          cancelledAt: order.cancelled_at,
+          refundedAt: order.refunded_at,
+          createdAt: order.created_at,
+          updatedAt: order.updated_at,
+          metadata: order.metadata,
+          items: itemsByOrderId.get(order.id) || [],
+        })),
+        count: ordersResult.rows.length,
+        totalCount,
+        pagination: {
+          limit: maxLimit,
+          offset: queryOffset,
+          hasMore: queryOffset + ordersResult.rows.length < totalCount,
+        },
+      });
+    } catch (error: any) {
+      request.log.error({ error, eventId, traceId }, 'Failed to get orders for event');
+      return reply.status(500).send({ error: 'Internal error' });
+    }
+  });
 }
 
 /**

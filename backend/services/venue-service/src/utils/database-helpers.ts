@@ -8,6 +8,37 @@ const SERIALIZATION_ERROR_CODES = ['40001', '40P01'];
 const MAX_SERIALIZATION_RETRIES = 3;
 
 /**
+ * SECURITY FIX (H1): Allowlist of valid table names for raw SQL queries
+ * Prevents SQL injection via table name interpolation
+ */
+const ALLOWED_TABLES = new Set([
+  'venues',
+  'venue_staff',
+  'venue_integrations',
+  'venue_sections',
+  'venue_tiers',
+  'venue_amenities',
+  'venue_hours',
+  'venue_media',
+  'venue_bank_info',
+  'venue_chargeback_summary',
+  'events',
+  'tickets',
+  'ticket_validations',
+]);
+
+/**
+ * Validates table name against allowlist
+ * @throws Error if table name is not in allowlist
+ */
+function validateTableName(table: string): void {
+  if (!ALLOWED_TABLES.has(table)) {
+    log.error({ table, allowedTables: Array.from(ALLOWED_TABLES) }, 'Invalid table name attempted');
+    throw new Error(`Invalid table name: ${table}. Table must be in the allowlist.`);
+  }
+}
+
+/**
  * SECURITY FIX (LK5): Database helpers for safe concurrent operations
  * 
  * Provides utilities for:
@@ -58,6 +89,7 @@ export async function withLock<T>(
 
 /**
  * SECURITY FIX (LK5): Lock and fetch a single row by ID
+ * SECURITY FIX (H1): Validates table name against allowlist
  */
 export async function lockRowById<T>(
   trx: Knex.Transaction,
@@ -65,6 +97,8 @@ export async function lockRowById<T>(
   id: string,
   lockMode: LockMode = LockMode.FOR_UPDATE
 ): Promise<T | undefined> {
+  validateTableName(table);
+
   const result = await trx.raw(
     `SELECT * FROM "${table}" WHERE id = ? ${lockMode}`,
     [id]
@@ -74,6 +108,7 @@ export async function lockRowById<T>(
 
 /**
  * SECURITY FIX (LK5): Lock multiple rows by IDs
+ * SECURITY FIX (H1): Validates table name against allowlist
  */
 export async function lockRowsByIds<T>(
   trx: Knex.Transaction,
@@ -82,7 +117,9 @@ export async function lockRowsByIds<T>(
   lockMode: LockMode = LockMode.FOR_UPDATE
 ): Promise<T[]> {
   if (ids.length === 0) return [];
-  
+
+  validateTableName(table);
+
   const placeholders = ids.map(() => '?').join(', ');
   const result = await trx.raw(
     `SELECT * FROM "${table}" WHERE id IN (${placeholders}) ${lockMode}`,

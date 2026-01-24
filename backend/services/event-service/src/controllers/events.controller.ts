@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { createProblemError } from '../middleware/error-handler';
+import { serializeEvent, serializeEvents } from '../serializers';
 
 /**
  * Events Controller
@@ -63,7 +64,7 @@ export async function createEvent(
     }
   );
 
-  return reply.status(201).send({ event });
+  return reply.status(201).send({ event: serializeEvent(event) });
 }
 
 export async function getEvent(
@@ -77,12 +78,12 @@ export async function getEvent(
   const eventService = container.resolve('eventService');
 
   const event = await eventService.getEvent(id, tenantId);
-  
+
   if (!event) {
     throw createProblemError(404, 'NOT_FOUND', 'Event not found');
   }
 
-  return reply.send({ event });
+  return reply.send({ event: serializeEvent(event) });
 }
 
 export async function listEvents(
@@ -96,7 +97,10 @@ export async function listEvents(
   const eventService = container.resolve('eventService');
 
   const result = await eventService.listEvents(tenantId, { status, limit, offset });
-  return reply.send(result);
+  return reply.send({
+    events: serializeEvents(result.events),
+    pagination: result.pagination
+  });
 }
 
 export async function updateEvent(
@@ -127,7 +131,7 @@ export async function updateEvent(
     throw createProblemError(404, 'NOT_FOUND', 'Event not found');
   }
 
-  return reply.send({ event });
+  return reply.send({ event: serializeEvent(event) });
 }
 
 export async function deleteEvent(
@@ -167,7 +171,7 @@ export async function publishEvent(
     throw createProblemError(404, 'NOT_FOUND', 'Event not found');
   }
 
-  return reply.send({ event });
+  return reply.send({ event: serializeEvent(event) });
 }
 
 export async function getVenueEvents(
@@ -181,5 +185,5 @@ export async function getVenueEvents(
   const eventService = container.resolve('eventService');
 
   const events = await eventService.getVenueEvents(venueId, tenantId);
-  return reply.send({ events });
+  return reply.send({ events: serializeEvents(events) });
 }

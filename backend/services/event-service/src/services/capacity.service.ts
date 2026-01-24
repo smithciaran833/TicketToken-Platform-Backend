@@ -68,6 +68,52 @@ export class CapacityService {
   }
 
   /**
+   * LOW PRIORITY FIX #16: Validate row configuration math
+   * Ensures rows × seats_per_row = total_capacity (when row_config is provided)
+   *
+   * IMPLEMENTED: TODO #10 - Row Configuration Math Validation
+   */
+  private validateRowConfig(data: Partial<IEventCapacity>): void {
+    const rowConfig = data.row_config as { rows?: number; seats_per_row?: number } | undefined;
+
+    // Skip validation if no row_config provided
+    if (!rowConfig) {
+      return;
+    }
+
+    const rows = rowConfig.rows;
+    const seatsPerRow = rowConfig.seats_per_row;
+
+    // Skip if row_config is incomplete (partial config is allowed)
+    if (rows === undefined || seatsPerRow === undefined) {
+      return;
+    }
+
+    const totalCapacity = data.total_capacity;
+
+    // Skip if total_capacity not provided (will be validated elsewhere)
+    if (totalCapacity === undefined) {
+      return;
+    }
+
+    const calculatedCapacity = rows * seatsPerRow;
+
+    if (calculatedCapacity !== totalCapacity) {
+      throw new ValidationError([{
+        field: 'row_config',
+        message: `Row configuration math invalid: ${rows} rows × ${seatsPerRow} seats/row = ${calculatedCapacity}, but total_capacity is ${totalCapacity}`
+      }]);
+    }
+
+    logger.debug({
+      rows,
+      seatsPerRow,
+      calculatedCapacity,
+      totalCapacity
+    }, 'Row configuration validated');
+  }
+
+  /**
    * HIGH PRIORITY FIX #5: Validate purchase limits
    * Ensures minimum_purchase <= maximum_purchase
    */
@@ -139,6 +185,9 @@ export class CapacityService {
     this.validateCapacityMath(capacityData);
     this.validatePurchaseLimits(capacityData);
 
+    // LOW PRIORITY FIX #16: Validate row configuration math
+    this.validateRowConfig(capacityData);
+
     const [capacity] = await this.db('event_capacity')
       .insert(capacityData)
       .returning('*');
@@ -164,6 +213,14 @@ export class CapacityService {
         await this.validateVenueCapacity(existing.event_id, tenantId, authToken, capacityDiff);
       }
     }
+
+    // LOW PRIORITY FIX #16: Validate row configuration math
+    // Merge existing values with update data to validate the final state
+    const mergedData: Partial<IEventCapacity> = {
+      total_capacity: data.total_capacity ?? existing.total_capacity,
+      row_config: data.row_config ?? existing.row_config,
+    };
+    this.validateRowConfig(mergedData);
 
     const [updated] = await this.db('event_capacity')
       .where({ id: capacityId, tenant_id: tenantId })

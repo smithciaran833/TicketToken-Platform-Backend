@@ -20,7 +20,8 @@ import { logger } from '../utils/logger';
 const log = logger.child({ component: 'InternalAuth' });
 
 const INTERNAL_HMAC_SECRET = process.env.INTERNAL_HMAC_SECRET || process.env.INTERNAL_SERVICE_SECRET;
-const USE_NEW_HMAC = process.env.USE_NEW_HMAC === 'true';
+// SECURITY FIX (H2): Default HMAC to enabled, allow opt-out for backwards compatibility
+const USE_NEW_HMAC = process.env.USE_NEW_HMAC !== 'false';
 
 const ALLOWED_SERVICES = new Set(
   (process.env.ALLOWED_INTERNAL_SERVICES || 'auth-service,event-service,ticket-service,payment-service,order-service,file-service,compliance-service,blockchain-service')

@@ -11,6 +11,9 @@ import { integrationRoutes } from './integrations.controller';
 import { getRedis } from '../config/redis';
 import { idempotency } from '../middleware/idempotency.middleware';
 import * as jwt from 'jsonwebtoken';
+// SECURITY FIX (C1, C2): Import serializers to prevent data leakage
+import { serializeVenue, serializeVenues } from '../serializers/venue.serializer';
+import { serializeStaff, serializeStaffList } from '../serializers/staff.serializer';
 
 interface CreateVenueBody {
   name: string;
@@ -43,22 +46,57 @@ interface VenueParams {
   venueId: string;
 }
 
+interface StaffParams extends VenueParams {
+  staffId: string;
+}
+
+interface VenueQueryParams {
+  my_venues?: boolean;
+  limit?: number;
+  offset?: number;
+  status?: string;
+}
+
+interface AddStaffBody {
+  userId: string;
+  role: string;
+  permissions?: string[];
+}
+
+interface UpdateStaffBody {
+  role?: string;
+  permissions?: string[];
+}
+
+/**
+ * TYPE SAFETY (M1): Typed request with user and tenant context
+ * Used by authenticated routes after middleware adds user/tenant
+ */
+interface AuthenticatedVenueRequest extends FastifyRequest {
+  user: { id: string; tenant_id: string; email: string };
+  tenantId: string;
+}
+
 // Helper middleware for tenant context
-async function addTenantContext(request: any, reply: any) {
-  const tenantId = request.user?.tenant_id;
-  if (!tenantId) {
+async function addTenantContext(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const user = (request as AuthenticatedVenueRequest).user;
+  if (!user?.tenant_id) {
     throw new UnauthorizedError('Missing tenant context');
   }
-  request.tenantId = tenantId;
+  (request as AuthenticatedVenueRequest).tenantId = user.tenant_id;
 }
 
 
 // Helper to verify venue ownership
 // FIXED: Only check access, don't fetch venue (service methods will handle that)
-async function verifyVenueOwnership(request: any, reply: any, venueService: any) {
+async function verifyVenueOwnership(
+  request: FastifyRequest<{ Params: VenueParams }>,
+  reply: FastifyReply,
+  venueService: { checkVenueAccess: (venueId: string, userId: string, tenantId: string) => Promise<boolean> }
+): Promise<void> {
   const { venueId } = request.params;
-  const userId = request.user?.id;
-  const tenantId = request.tenantId;
+  const userId = (request as AuthenticatedVenueRequest).user?.id;
+  const tenantId = (request as AuthenticatedVenueRequest).tenantId;
 
   // Check if user has access to this venue
   const hasAccess = await venueService.checkVenueAccess(venueId, userId, tenantId);
@@ -129,9 +167,10 @@ export async function venueRoutes(fastify: FastifyInstance) {
           venues = await venueService.listVenues(tenantId, query);
         }
 
+        // SECURITY FIX (C1): Serialize venues to prevent data leakage
         return reply.send({
           success: true,
-          data: venues,
+          data: serializeVenues(venues),
           pagination: {
             limit: query.limit || 20,
             offset: query.offset || 0
@@ -164,7 +203,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
         logger.info({ venueId: venue.id, userId: user.id, tenantId }, 'Venue created');
         venueOperations.inc({ operation: 'create', status: 'success' });
 
-        return reply.status(201).send(venue);
+        // SECURITY FIX (C1): Serialize venue to prevent data leakage
+        return reply.status(201).send(serializeVenue(venue));
       } catch (error: any) {
         venueOperations.inc({ operation: 'create', status: 'error' });
         if (error.message?.includes('already exists')) {
@@ -186,7 +226,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const tenantId = request.tenantId;
         // SECURITY FIX: Pass tenantId to service
         const venues = await venueService.listUserVenues(userId, tenantId, {});
-        return reply.send(venues);
+        // SECURITY FIX (C1): Serialize venues to prevent data leakage
+        return reply.send(serializeVenues(venues));
       } catch (error: any) {
         logger.error({ error, userId: request.user?.id }, 'Failed to list user venues');
         return ErrorResponseBuilder.internal(reply, 'Failed to list user venues');
@@ -212,7 +253,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
         }
 
         venueOperations.inc({ operation: 'read', status: 'success' });
-        return reply.send(venue);
+        // SECURITY FIX (C1): Serialize venue to prevent data leakage
+        return reply.send(serializeVenue(venue));
       } catch (error: any) {
         venueOperations.inc({ operation: 'read', status: 'error' });
         throw error;
@@ -243,19 +285,51 @@ export async function venueRoutes(fastify: FastifyInstance) {
           return reply.status(404).send({ error: 'Venue not found' });
         }
 
-        // TODO: Calculate available capacity from active events
-        // For now, return total capacity as available
+        /**
+         * TODO: Calculate available capacity from active events
+         *
+         * WHAT: Query event-service for active/upcoming events at this venue
+         *       Sum tickets sold per event, subtract from max_capacity
+         *       Return breakdown by event and overall availability
+         *
+         * CALCULATION:
+         *   available = max_capacity - SUM(tickets_sold for active events)
+         *   reserved = SUM(tickets in 'reserved' status, not yet paid)
+         *   utilized = SUM(tickets in 'sold' or 'scanned' status)
+         *
+         * WHY NOT DONE: Requires cross-service call to event-service
+         *               Need to define what "active event" means (today? this week?)
+         *               Capacity may vary by event (different stage setups)
+         *
+         * IMPACT: Currently returns total capacity as available
+         *         Overbooking prevention relies on event-service validation
+         *
+         * EFFORT: ~4 hours
+         *         - Add event-service HTTP client call
+         *         - Aggregate ticket counts per event
+         *         - Handle concurrent events scenario
+         *
+         * PRIORITY: Medium - useful for venue dashboard, not critical for booking
+         */
         return reply.send({
           venueId: venue.id,
           venueName: venue.name,
           totalCapacity: venue.max_capacity,
-          available: venue.max_capacity,
+          available: venue.max_capacity, // MOCK: actual calculation pending
           reserved: 0,
           utilized: 0
         });
-      } catch (error: any) {
-        logger.error({ error, venueId: request.params.venueId }, 'Failed to get venue capacity');
-        return reply.status(500).send({ error: 'Internal server error' });
+      } catch (error: unknown) {
+        const err = error as Error;
+        logger.error({
+          error: err.message,
+          stack: err.stack,
+          venueId: (request.params as VenueParams).venueId
+        }, 'Failed to get venue capacity');
+        return reply.status(500).send({
+          error: 'Failed to get venue capacity',
+          message: err.message
+        });
       }
     }
   );
@@ -284,9 +358,17 @@ export async function venueRoutes(fastify: FastifyInstance) {
         }
 
         return reply.send(stats);
-      } catch (error: any) {
-        logger.error({ error, venueId: request.params.venueId }, 'Failed to get venue stats');
-        return reply.status(500).send({ error: 'Internal server error' });
+      } catch (error: unknown) {
+        const err = error as Error;
+        logger.error({
+          error: err.message,
+          stack: err.stack,
+          venueId: (request.params as VenueParams).venueId
+        }, 'Failed to get venue stats');
+        return reply.status(500).send({
+          error: 'Failed to get venue stats',
+          message: err.message
+        });
       }
     }
   );
@@ -311,7 +393,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
         logger.info({ venueId, userId, tenantId }, 'Venue updated');
         venueOperations.inc({ operation: 'update', status: 'success' });
 
-        return reply.send(updatedVenue);
+        // SECURITY FIX (C1): Serialize venue to prevent data leakage
+        return reply.send(serializeVenue(updatedVenue));
       } catch (error: any) {
         venueOperations.inc({ operation: 'update', status: 'error' });
         if (error instanceof NotFoundError || error instanceof ForbiddenError) {
@@ -388,9 +471,17 @@ export async function venueRoutes(fastify: FastifyInstance) {
           role: accessDetails?.role || null,
           permissions: accessDetails?.permissions || []
         });
-      } catch (error: any) {
-        logger.error({ error, venueId: request.params.venueId }, 'Failed to check access');
-        return reply.status(500).send({ error: 'Failed to check access' });
+      } catch (error: unknown) {
+        const err = error as Error;
+        logger.error({
+          error: err.message,
+          stack: err.stack,
+          venueId: (request.params as VenueParams).venueId
+        }, 'Failed to check access');
+        return reply.status(500).send({
+          error: 'Failed to check venue access',
+          message: err.message
+        });
       }
     }
   );
@@ -431,7 +522,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
         const tenantId = request.tenantId;
         const staffMember = await venueService.addStaffMember(venueId, staffData, requesterId, tenantId);
 
-        return reply.status(201).send(staffMember);
+        // SECURITY FIX (C2): Serialize staff to prevent data leakage (pin_code, hourly_rate, etc.)
+        return reply.status(201).send(serializeStaff(staffMember));
       } catch (error: any) {
         if (error.statusCode === 403 || error.name === 'ForbiddenError') {
           return reply.status(403).send({ error: error.message });
@@ -439,8 +531,15 @@ export async function venueRoutes(fastify: FastifyInstance) {
         if (error.statusCode === 404 || error.name === 'NotFoundError') {
           return reply.status(404).send({ error: error.message });
         }
-        logger.error({ error, venueId: request.params.venueId }, 'Failed to add staff');
-        return reply.status(500).send({ error: 'Failed to add staff member' });
+        logger.error({
+          error: error.message,
+          stack: error.stack,
+          venueId: (request.params as VenueParams).venueId
+        }, 'Failed to add staff');
+        return reply.status(500).send({
+          error: 'Failed to add staff member',
+          message: error.message
+        });
       }
     }
   );
@@ -460,7 +559,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
 
         const staff = await venueService.getVenueStaff(venueId, userId, tenantId);
 
-        return reply.send(staff);
+        // SECURITY FIX (C2): Serialize staff list to prevent data leakage (pin_code, hourly_rate, etc.)
+        return reply.send(serializeStaffList(staff));
       } catch (error: any) {
         if (error.statusCode === 403 || error.name === 'ForbiddenError') {
           return reply.status(403).send({ error: error.message });
@@ -501,7 +601,8 @@ export async function venueRoutes(fastify: FastifyInstance) {
 
         logger.info({ venueId, staffId, role, requesterId }, 'Staff role updated');
 
-        return reply.send(updatedStaff);
+        // SECURITY FIX (C2): Serialize staff to prevent data leakage
+        return reply.send(serializeStaff(updatedStaff));
       } catch (error: any) {
         if (error.statusCode === 403 || error.name === 'ForbiddenError') {
           return reply.status(403).send({ error: error.message });
@@ -509,8 +610,16 @@ export async function venueRoutes(fastify: FastifyInstance) {
         if (error.message === 'Staff member not found') {
           return reply.status(404).send({ error: error.message });
         }
-        logger.error({ error, venueId: request.params.venueId, staffId: request.params.staffId }, 'Failed to update staff role');
-        return reply.status(500).send({ error: 'Failed to update staff role' });
+        logger.error({
+          error: error.message,
+          stack: error.stack,
+          venueId: (request.params as StaffParams).venueId,
+          staffId: (request.params as StaffParams).staffId
+        }, 'Failed to update staff role');
+        return reply.status(500).send({
+          error: 'Failed to update staff role',
+          message: error.message
+        });
       }
     }
   );
@@ -552,8 +661,16 @@ export async function venueRoutes(fastify: FastifyInstance) {
         if (error.message === 'Cannot remove yourself') {
           return reply.status(400).send({ error: error.message });
         }
-        logger.error({ error, venueId: request.params.venueId, staffId: request.params.staffId }, 'Failed to remove staff');
-        return reply.status(500).send({ error: 'Failed to remove staff member' });
+        logger.error({
+          error: error.message,
+          stack: error.stack,
+          venueId: (request.params as StaffParams).venueId,
+          staffId: (request.params as StaffParams).staffId
+        }, 'Failed to remove staff');
+        return reply.status(500).send({
+          error: 'Failed to remove staff member',
+          message: error.message
+        });
       }
     }
   );

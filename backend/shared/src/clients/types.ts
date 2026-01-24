@@ -1095,3 +1095,147 @@ export interface BatchIdentityCheckResponse {
   allVerified: boolean;
   unverifiedUserIds: string[];
 }
+
+// =============================================================================
+// Phase 5d Types - Event Cancellation Workflow
+// =============================================================================
+
+// --- Ticket Service: Get Tickets by User ---
+
+export interface TicketByUser {
+  id: string;
+  ticketNumber: string;
+  eventId: string;
+  eventName: string;
+  ticketTypeId: string;
+  ticketTypeName: string;
+  status: string;
+  priceCents: number;
+  currency: string;
+  seat?: {
+    section?: string;
+    row?: string;
+    number?: string;
+  };
+  orderId: string;
+  purchasedAt: string;
+  validFrom?: string;
+  validUntil?: string;
+}
+
+export interface GetTicketsByUserResponse {
+  userId: string;
+  tickets: TicketByUser[];
+  count: number;
+  pagination?: PaginationMeta;
+}
+
+// --- Order Service: Get Orders by Event ---
+
+export interface OrderByEvent {
+  id: string;
+  orderNumber: string;
+  tenantId: string;
+  userId: string;
+  eventId: string;
+  status: string;
+  totalCents: number;
+  subtotalCents: number;
+  feesCents: number;
+  taxCents: number;
+  discountCents: number;
+  currency: string;
+  paymentIntentId?: string;
+  paymentMethod?: string;
+  expiresAt?: string;
+  confirmedAt?: string;
+  cancelledAt?: string;
+  refundedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  metadata?: Record<string, any>;
+  items: OrderItemByEvent[];
+}
+
+export interface OrderItemByEvent {
+  id: string;
+  ticketTypeId: string;
+  ticketId?: string;
+  quantity: number;
+  unitPriceCents: number;
+  totalPriceCents: number;
+  status: string;
+  createdAt: string;
+}
+
+export interface GetOrdersByEventResponse {
+  eventId: string;
+  orders: OrderByEvent[];
+  count: number;
+  totalCount: number;
+  pagination: {
+    limit: number;
+    offset: number;
+    hasMore: boolean;
+  };
+}
+
+// --- Payment Service: Bulk Refunds ---
+
+export interface BulkRefundRequest {
+  eventId: string;
+  tenantId: string;
+  refundPolicy: 'full' | 'partial';
+  reason: string;
+}
+
+export interface BulkRefundResponse {
+  requestId: string;
+  status: 'processing' | 'completed' | 'failed';
+  totalOrders: number;
+  estimatedRefundAmount: number;
+  currency: string;
+  jobId: string;
+  message: string;
+}
+
+// --- Marketplace Service: Cancel Event Listings ---
+
+export interface CancelEventListingsRequest {
+  eventId: string;
+  tenantId: string;
+  reason: string;
+  notifySellers?: boolean;
+}
+
+export interface CancelEventListingsResponse {
+  success: boolean;
+  cancelledListings: number;
+  affectedSellers?: number;
+  inProgressTransactions: number;
+  warnings: string[];
+  details?: {
+    listingIds: string[];
+    sellerIds: string[];
+    reason: string;
+    cancelledAt: string;
+  };
+}
+
+// --- Event Service: Blockchain Status Update ---
+
+export interface UpdateBlockchainStatusRequest {
+  status: 'synced' | 'failed';
+  eventPda?: string;
+  signature?: string;
+  error?: string;
+  syncedAt?: string;
+}
+
+export interface UpdateBlockchainStatusResponse {
+  success: boolean;
+  eventId: string;
+  status: 'synced' | 'failed';
+  eventPda?: string;
+  message: string;
+}

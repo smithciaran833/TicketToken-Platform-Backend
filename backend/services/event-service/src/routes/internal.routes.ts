@@ -10,14 +10,85 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { getDb } from '../config/database';
 import { internalAuthMiddlewareNew } from '../middleware/internal-auth.middleware';
+import { logger } from '../utils/logger';
+import {
+  getTicketStatsFromTicketService,
+  getDefaultTicketStats,
+  TicketStats,
+} from '../clients/ticket-stats';
+
+/**
+ * Ticket Service Client for internal S2S calls
+ *
+ * CRITICAL FIX: Service Boundary Violation
+ * Previously, event-service directly queried the 'tickets' table owned by ticket-service.
+ * This violated microservices architecture principles. Now we call ticket-service via HTTP.
+ *
+ * TODO #14 IMPLEMENTED: Extracted to src/clients/ticket-stats.ts for reuse
+ */
 
 export default async function internalRoutes(fastify: FastifyInstance): Promise<void> {
   // Apply internal authentication to all routes using standardized middleware
   fastify.addHook('preHandler', internalAuthMiddlewareNew);
 
   /**
-   * GET /internal/events/:eventId
-   * Get event details with blockchain fields
+   * @openapi
+   * /internal/events/{eventId}:
+   *   get:
+   *     summary: Get event by ID (internal)
+   *     description: |
+   *       Retrieves event details including blockchain fields (event_pda, artist_wallet, etc.)
+   *       This endpoint is for internal S2S use only and requires HMAC authentication.
+   *     tags:
+   *       - Internal
+   *     security:
+   *       - hmacAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: eventId
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *         description: Event UUID
+   *       - in: header
+   *         name: x-tenant-id
+   *         schema:
+   *           type: string
+   *         description: Tenant ID for multi-tenant isolation
+   *       - in: header
+   *         name: x-trace-id
+   *         schema:
+   *           type: string
+   *         description: Distributed tracing ID
+   *     responses:
+   *       200:
+   *         description: Event data with blockchain fields
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 event:
+   *                   type: object
+   *                   properties:
+   *                     id:
+   *                       type: string
+   *                     name:
+   *                       type: string
+   *                     status:
+   *                       type: string
+   *                     eventPda:
+   *                       type: string
+   *                     artistWallet:
+   *                       type: string
+   *       400:
+   *         description: Event ID required
+   *       404:
+   *         description: Event not found
+   *       500:
+   *         description: Internal error
+   *
    * Used by: minting-service, payment-service
    */
   fastify.get('/internal/events/:eventId', async (request, reply) => {
@@ -107,8 +178,58 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
   });
 
   /**
-   * GET /internal/events/:eventId/pda
-   * Get event's blockchain PDA (Program Derived Address) and related blockchain data
+   * @openapi
+   * /internal/events/{eventId}/pda:
+   *   get:
+   *     summary: Get event blockchain PDA data (internal)
+   *     description: |
+   *       Retrieves blockchain-specific data including Program Derived Address (PDA),
+   *       merkle tree address, collection mint, and royalty percentages.
+   *       Required for minting tickets as NFTs.
+   *     tags:
+   *       - Internal
+   *       - Blockchain
+   *     security:
+   *       - hmacAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: eventId
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *       - in: header
+   *         name: x-tenant-id
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Event blockchain data
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 eventId:
+   *                   type: string
+   *                 blockchain:
+   *                   type: object
+   *                   properties:
+   *                     eventPda:
+   *                       type: string
+   *                     merkleTreeAddress:
+   *                       type: string
+   *                     collectionMint:
+   *                       type: string
+   *                     artistWallet:
+   *                       type: string
+   *                     artistPercentage:
+   *                       type: number
+   *                 hasBlockchainConfig:
+   *                   type: boolean
+   *       404:
+   *         description: Event not found
+   *
    * Used by: minting-service, blockchain-service
    */
   fastify.get('/internal/events/:eventId/pda', async (request, reply) => {
@@ -183,8 +304,217 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
   });
 
   /**
-   * GET /internal/events/:eventId/scan-stats
-   * Get aggregated scan statistics for an event
+   * @openapi
+   * /internal/events/{eventId}/blockchain-status:
+   *   put:
+   *     summary: Update event blockchain sync status (internal)
+   *     description: |
+   *       Callback endpoint for blockchain-service to update event with
+   *       blockchain sync status (PDA, transaction signature, etc.)
+   *       This is called after async blockchain sync completes.
+   *     tags:
+   *       - Internal
+   *       - Blockchain
+   *     security:
+   *       - hmacAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: eventId
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - status
+   *             properties:
+   *               status:
+   *                 type: string
+   *                 enum: [synced, failed]
+   *               eventPda:
+   *                 type: string
+   *                 description: Program Derived Address of the event on Solana
+   *               signature:
+   *                 type: string
+   *                 description: Transaction signature
+   *               error:
+   *                 type: string
+   *                 description: Error message if status is failed
+   *               syncedAt:
+   *                 type: string
+   *                 format: date-time
+   *     responses:
+   *       200:
+   *         description: Blockchain status updated
+   *       400:
+   *         description: Invalid request
+   *       404:
+   *         description: Event not found
+   *       500:
+   *         description: Internal error
+   *
+   * Used by: blockchain-service (after processing event.blockchain_sync_requested)
+   */
+  fastify.put('/internal/events/:eventId/blockchain-status', async (request, reply) => {
+    const { eventId } = request.params as { eventId: string };
+    const tenantId = request.headers['x-tenant-id'] as string;
+    const traceId = request.headers['x-trace-id'] as string;
+    const callingService = request.headers['x-internal-service'] as string;
+
+    const { status, eventPda, signature, error, syncedAt } = request.body as {
+      status: 'synced' | 'failed';
+      eventPda?: string;
+      signature?: string;
+      error?: string;
+      syncedAt?: string;
+    };
+
+    if (!eventId) {
+      return reply.status(400).send({ error: 'Event ID required' });
+    }
+
+    if (!status || !['synced', 'failed'].includes(status)) {
+      return reply.status(400).send({ error: 'Valid status (synced/failed) required' });
+    }
+
+    try {
+      const db = getDb();
+
+      // Verify event exists
+      let eventQuery = db('events')
+        .where('id', eventId)
+        .whereNull('deleted_at');
+
+      if (tenantId) {
+        eventQuery = eventQuery.where('tenant_id', tenantId);
+      }
+
+      const event = await eventQuery.first();
+
+      if (!event) {
+        return reply.status(404).send({ error: 'Event not found' });
+      }
+
+      // Update event with blockchain data
+      const updateData: Record<string, any> = {
+        blockchain_sync_status: status,
+        blockchain_synced_at: status === 'synced' ? (syncedAt || new Date().toISOString()) : null,
+        blockchain_sync_error: status === 'failed' ? error : null,
+        updated_at: new Date(),
+      };
+
+      if (status === 'synced' && eventPda) {
+        updateData.event_pda = eventPda;
+      }
+
+      if (signature) {
+        updateData.blockchain_tx_signature = signature;
+      }
+
+      await db('events')
+        .where('id', eventId)
+        .update(updateData);
+
+      request.log.info({
+        eventId,
+        status,
+        eventPda,
+        signature: signature ? `${signature.substring(0, 20)}...` : null,
+        callingService,
+        traceId,
+      }, 'Blockchain status updated');
+
+      return reply.send({
+        success: true,
+        eventId,
+        status,
+        eventPda: status === 'synced' ? eventPda : null,
+        message: status === 'synced'
+          ? 'Event successfully synced to blockchain'
+          : `Blockchain sync failed: ${error}`,
+      });
+    } catch (err: any) {
+      request.log.error({ error: err, eventId, traceId }, 'Failed to update blockchain status');
+      return reply.status(500).send({ error: 'Internal error' });
+    }
+  });
+
+  /**
+   * @openapi
+   * /internal/events/{eventId}/scan-stats:
+   *   get:
+   *     summary: Get event scan statistics (internal)
+   *     description: |
+   *       Retrieves aggregated ticket scan statistics for an event including
+   *       sold/used/validated counts, entry rate, and capacity utilization.
+   *       Ticket data is fetched from ticket-service via HTTP.
+   *     tags:
+   *       - Internal
+   *       - Analytics
+   *     security:
+   *       - hmacAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: eventId
+   *         required: true
+   *         schema:
+   *           type: string
+   *           format: uuid
+   *       - in: header
+   *         name: x-tenant-id
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Event scan statistics
+   *         content:
+   *           application/json:
+   *             schema:
+   *               type: object
+   *               properties:
+   *                 event:
+   *                   type: object
+   *                   properties:
+   *                     id:
+   *                       type: string
+   *                     name:
+   *                       type: string
+   *                     status:
+   *                       type: string
+   *                 ticketStats:
+   *                   type: object
+   *                   properties:
+   *                     totalTickets:
+   *                       type: integer
+   *                     soldTickets:
+   *                       type: integer
+   *                     validatedTickets:
+   *                       type: integer
+   *                 metrics:
+   *                   type: object
+   *                   properties:
+   *                     entryRate:
+   *                       type: integer
+   *                       description: Percentage of sold tickets that were validated
+   *                     capacityUtilization:
+   *                       type: integer
+   *                 eventTiming:
+   *                   type: object
+   *                   properties:
+   *                     isUpcoming:
+   *                       type: boolean
+   *                     isOngoing:
+   *                       type: boolean
+   *                     isPast:
+   *                       type: boolean
+   *       404:
+   *         description: Event not found
+   *
    * Used by: scanning-service (analytics-dashboard.service)
    * Note: This provides event-level context; actual scan data is in scanning-service
    */
@@ -219,30 +549,16 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
         return reply.status(404).send({ error: 'Event not found' });
       }
 
-      // Get ticket statistics using query builder instead of raw SQL
-      const ticketStats = await db('tickets')
-        .where('event_id', eventId)
-        .whereNull('deleted_at')
-        .select(
-          db.raw('COUNT(*) as total_tickets'),
-          db.raw("COUNT(CASE WHEN status = 'SOLD' THEN 1 END) as sold_tickets"),
-          db.raw("COUNT(CASE WHEN status = 'USED' THEN 1 END) as used_tickets"),
-          db.raw("COUNT(CASE WHEN status = 'TRANSFERRED' THEN 1 END) as transferred_tickets"),
-          db.raw("COUNT(CASE WHEN status = 'CANCELLED' THEN 1 END) as cancelled_tickets"),
-          db.raw('COUNT(CASE WHEN validated_at IS NOT NULL THEN 1 END) as validated_tickets'),
-          db.raw('MAX(validated_at) as last_validation_at')
-        )
-        .first();
+      // CRITICAL FIX: Call ticket-service via HTTP instead of direct DB query
+      // This fixes the service boundary violation (audit issue #1)
+      // TODO #14 IMPLEMENTED: Using shared ticket-stats client
+      const ticketStatsFromService = await getTicketStatsFromTicketService(
+        eventId,
+        { tenantId, traceId }
+      );
 
-      const stats = ticketStats || {
-        total_tickets: 0,
-        sold_tickets: 0,
-        used_tickets: 0,
-        transferred_tickets: 0,
-        cancelled_tickets: 0,
-        validated_tickets: 0,
-        last_validation_at: null,
-      };
+      // Use service response or fallback to zeros if service unavailable
+      const stats: TicketStats = ticketStatsFromService || getDefaultTicketStats();
 
       // Calculate event timing
       const now = new Date();
@@ -260,17 +576,18 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
       };
 
       // Calculate entry rate (validated / sold)
-      const soldCount = parseInt(stats.sold_tickets || '0');
-      const validatedCount = parseInt(stats.validated_tickets || '0');
+      const soldCount = stats.soldTickets || 0;
+      const validatedCount = stats.validatedTickets || 0;
       const entryRate = soldCount > 0 ? Math.round((validatedCount / soldCount) * 100) : 0;
 
       request.log.info({
         eventId,
-        totalTickets: stats.total_tickets,
-        validatedTickets: stats.validated_tickets,
+        totalTickets: stats.totalTickets,
+        validatedTickets: stats.validatedTickets,
         entryRate,
         requestingService: request.headers['x-internal-service'],
         traceId,
+        source: ticketStatsFromService ? 'ticket-service' : 'fallback',
       }, 'Internal event scan stats lookup');
 
       return reply.send({
@@ -287,13 +604,13 @@ export default async function internalRoutes(fastify: FastifyInstance): Promise<
           capacity: event.capacity,
         },
         ticketStats: {
-          totalTickets: parseInt(stats.total_tickets || '0'),
-          soldTickets: parseInt(stats.sold_tickets || '0'),
-          usedTickets: parseInt(stats.used_tickets || '0'),
-          transferredTickets: parseInt(stats.transferred_tickets || '0'),
-          cancelledTickets: parseInt(stats.cancelled_tickets || '0'),
+          totalTickets: stats.totalTickets,
+          soldTickets: stats.soldTickets,
+          usedTickets: stats.usedTickets,
+          transferredTickets: stats.transferredTickets,
+          cancelledTickets: stats.cancelledTickets,
           validatedTickets: validatedCount,
-          lastValidationAt: stats.last_validation_at,
+          lastValidationAt: stats.lastValidationAt,
         },
         metrics: {
           entryRate,

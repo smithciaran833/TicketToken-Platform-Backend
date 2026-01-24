@@ -1,6 +1,12 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { transferService } from '../services/transferService';
 import { auditService } from '@tickettoken/shared';
+import {
+  serializeTransfer,
+  serializeTransferForSender,
+  serializeTransfers,
+  serializeTransfersForSender,
+} from '../serializers';
 
 export class TransferController {
   async transferTicket(
@@ -43,9 +49,10 @@ export class TransferController {
         success: true,
       });
 
+      // Serialize for sender - includes masked recipient email
       reply.send({
         success: true,
-        data: transfer
+        data: serializeTransferForSender(transfer)
       });
     } catch (error) {
       // Audit log: Failed transfer attempt
@@ -78,9 +85,10 @@ export class TransferController {
 
     const history = await transferService.getTransferHistory(ticketId);
 
+    // Serialize transfers - strip sensitive fields like acceptance_code, to_email
     reply.send({
       success: true,
-      data: history
+      data: serializeTransfers(history)
     });
   }
 
@@ -97,9 +105,13 @@ export class TransferController {
       toUserId
     );
 
+    // Validation response contains only valid/reason, no sensitive data to serialize
     reply.send({
       success: validation.valid,
-      data: validation
+      data: {
+        valid: validation.valid,
+        reason: validation.reason,
+      }
     });
   }
 }

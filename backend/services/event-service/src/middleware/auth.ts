@@ -2,8 +2,10 @@ import { FastifyRequest, FastifyReply } from 'fastify';
 import jwt from 'jsonwebtoken';
 import fs from 'fs';
 import path from 'path';
+import axios from 'axios';
 import { verifyServiceToken, verifyApiKey, isTrustedService } from '../config/service-auth';
 import { UnauthorizedError, ForbiddenError, BadRequestError } from '../utils/errors';
+import { logger } from '../utils/logger';
 
 // Load RSA public key for token verification
 const publicKeyPath = process.env.JWT_PUBLIC_KEY_PATH ||
@@ -22,9 +24,9 @@ let keyRotationInterval: NodeJS.Timeout | null = null;
 async function loadPublicKey(): Promise<void> {
   try {
     publicKey = fs.readFileSync(publicKeyPath, 'utf8');
-    console.log('✓ Event Service: JWT public key loaded/reloaded');
-  } catch (error) {
-    console.error('✗ Event Service: Failed to load JWT public key:', error);
+    logger.info('JWT public key loaded/reloaded successfully');
+  } catch (error: any) {
+    logger.error({ error: error.message, path: publicKeyPath }, 'Failed to load JWT public key');
     // Only throw if no key is loaded yet (startup)
     // During rotation, log error but continue with existing key
     if (!publicKey) {
@@ -36,16 +38,16 @@ async function loadPublicKey(): Promise<void> {
 // Load key on startup (synchronous for startup safety)
 try {
   publicKey = fs.readFileSync(publicKeyPath, 'utf8');
-  console.log('✓ Event Service: JWT public key loaded for token verification');
-} catch (error) {
-  console.error('✗ Event Service: Failed to load JWT public key:', error);
+  logger.info({ path: publicKeyPath }, 'JWT public key loaded for token verification');
+} catch (error: any) {
+  logger.error({ error: error.message, path: publicKeyPath }, 'Failed to load JWT public key on startup');
   throw new Error('JWT public key not found: ' + publicKeyPath);
 }
 
 // Reload key every 5 minutes for rotation support
 keyRotationInterval = setInterval(() => {
   loadPublicKey().catch(err => {
-    console.error('Failed to reload JWT public key:', err);
+    logger.error({ error: err.message }, 'Failed to reload JWT public key during rotation');
   });
 }, 5 * 60 * 1000);
 
@@ -56,7 +58,7 @@ export function shutdownAuthMiddleware(): void {
   if (keyRotationInterval) {
     clearInterval(keyRotationInterval);
     keyRotationInterval = null;
-    console.log('JWT key rotation interval cleared');
+    logger.info('JWT key rotation interval cleared');
   }
 }
 
@@ -102,6 +104,54 @@ export interface AuthContext {
   isInternalRequest: boolean;
 }
 
+/**
+ * AUTH SERVICE URL for token revocation checks
+ */
+const AUTH_SERVICE_URL = process.env.AUTH_SERVICE_URL || 'http://auth-service:3000';
+
+/**
+ * Check if a token has been revoked by calling auth-service
+ *
+ * HIGH PRIORITY FIX: Token Revocation Check (Audit Issue #11)
+ * Validates tokens haven't been revoked (logout, password change, security incident)
+ *
+ * @param jti - JWT Token ID (unique identifier)
+ * @returns true if token is revoked, false otherwise
+ */
+async function checkTokenRevocation(jti: string): Promise<boolean> {
+  if (!jti) {
+    // No JTI means we can't check revocation - allow by default
+    return false;
+  }
+
+  try {
+    const response = await axios.get<{ revoked?: boolean }>(
+      `${AUTH_SERVICE_URL}/internal/token-status/${jti}`,
+      {
+        headers: {
+          'x-internal-service': 'event-service',
+          'x-service-name': 'event-service',
+        },
+        timeout: 2000, // 2 second timeout to prevent blocking
+      }
+    );
+
+    return response.data.revoked === true;
+  } catch (error: any) {
+    // Log the error but fail open to prevent cascading failures
+    // If auth-service is down, we don't want to block all requests
+    logger.warn({
+      jti,
+      error: error.message,
+      status: error.response?.status,
+    }, 'Token revocation check failed - failing open');
+
+    // Fail open to prevent service outages
+    // Security trade-off: availability over perfect revocation enforcement
+    return false;
+  }
+}
+
 // Fastify authentication middleware - verifies JWT locally
 export async function authenticateFastify(
   request: FastifyRequest,
@@ -130,6 +180,15 @@ export async function authenticateFastify(
     // Validate tenant_id is present
     if (!decoded.tenant_id) {
       throw new UnauthorizedError('Invalid token - missing tenant context');
+    }
+
+    // HIGH PRIORITY FIX: Check if token has been revoked (Audit Issue #11)
+    if (decoded.jti) {
+      const isRevoked = await checkTokenRevocation(decoded.jti);
+      if (isRevoked) {
+        logger.warn({ jti: decoded.jti, userId: decoded.sub }, 'Revoked token used');
+        throw new UnauthorizedError('Token has been revoked');
+      }
     }
 
     // Attach user data to request
@@ -370,6 +429,15 @@ export async function authenticateUserOrService(
 
     if (!decoded.tenant_id) {
       throw new UnauthorizedError('Invalid token - missing tenant context');
+    }
+
+    // HIGH PRIORITY FIX: Check if token has been revoked (Audit Issue #11)
+    if (decoded.jti) {
+      const isRevoked = await checkTokenRevocation(decoded.jti);
+      if (isRevoked) {
+        logger.warn({ jti: decoded.jti, userId: decoded.sub }, 'Revoked token used in authenticateUserOrService');
+        throw new UnauthorizedError('Token has been revoked');
+      }
     }
 
     // User authentication - set source as 'user'

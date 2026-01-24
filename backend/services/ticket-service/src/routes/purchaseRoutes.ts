@@ -118,7 +118,6 @@ export default async function purchaseRoutes(fastify: FastifyInstance) {
   // POST /purchase/confirm - Confirm a reservation with payment
   // Fixes Batch 4: Idempotency middleware added for duplicate prevention
   // Fixes Batch 5: Purchase-tier rate limiting (5 req/min per user)
-  // TODO: Add confirmPurchase method to purchaseController
   // ==========================================================================
   fastify.post('/confirm', {
     preHandler: [
@@ -149,7 +148,8 @@ export default async function purchaseRoutes(fastify: FastifyInstance) {
               type: 'object',
               properties: {
                 tickets: { type: 'array' },
-                orderId: { type: 'string' }
+                orderId: { type: 'string' },
+                status: { type: 'string' }
               }
             }
           }
@@ -157,17 +157,15 @@ export default async function purchaseRoutes(fastify: FastifyInstance) {
       }
     }
   }, async (request, reply) => {
-    // Stub - controller method needs to be implemented
     const validatedBody = (request as any).validatedBody;
-    reply.status(501).send({ 
-      error: 'Not implemented', 
-      message: 'Confirm purchase endpoint requires controller implementation' 
-    });
+    return purchaseController.confirmPurchase(
+      { ...request, body: validatedBody } as FastifyRequest,
+      reply
+    );
   });
 
   // ==========================================================================
   // DELETE /purchase/:reservationId - Cancel a reservation
-  // TODO: Add cancelReservation method to purchaseController
   // ==========================================================================
   fastify.delete('/:reservationId', {
     preHandler: [authMiddleware, tenantMiddleware],
@@ -192,10 +190,6 @@ export default async function purchaseRoutes(fastify: FastifyInstance) {
       }
     }
   }, async (request, reply) => {
-    // Stub - controller method needs to be implemented
-    reply.status(501).send({ 
-      error: 'Not implemented', 
-      message: 'Cancel reservation endpoint requires controller implementation' 
-    });
+    return purchaseController.cancelReservation(request, reply);
   });
 }

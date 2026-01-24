@@ -107,7 +107,38 @@ export class SSLRenewalJob {
    * Renew SSL certificate for a domain
    *
    * MOCK IMPLEMENTATION - Just updates the expiry date
+   *
    * TODO: Integrate with Let's Encrypt ACME protocol
+   *
+   * WHAT: Implement real SSL certificate renewal via ACME v2 protocol
+   *       1. Generate new private key and CSR
+   *       2. Submit order to Let's Encrypt
+   *       3. Complete HTTP-01 or DNS-01 challenge
+   *       4. Download certificate chain
+   *       5. Store certificate securely (encrypted)
+   *       6. Reload nginx/caddy to use new cert
+   *
+   * WHY NOT DONE: Requires infrastructure changes
+   *       - Need DNS provider API integration for DNS-01 challenges
+   *       - Need reverse proxy config management for HTTP-01 challenges
+   *       - Need secure key storage (HSM or encrypted vault)
+   *       - Need cert distribution to load balancers
+   *
+   * LIBRARIES TO USE:
+   *       - node-acme-client: ACME v2 protocol implementation
+   *       - node-forge: Key generation and CSR creation
+   *       - Provider-specific SDKs for DNS challenges (Cloudflare, Route53, etc.)
+   *
+   * IMPACT: Currently using mock renewal (just updates dates in DB)
+   *         Real SSL certs must be renewed manually or via external process
+   *         90-day Let's Encrypt certs will expire if not renewed
+   *
+   * EFFORT: ~2-3 days
+   *         - Day 1: ACME client setup, challenge selection
+   *         - Day 2: DNS/HTTP challenge implementation
+   *         - Day 3: Cert storage, nginx reload, testing
+   *
+   * PRIORITY: High for production - currently only works with mock data
    */
   private async renewCertificate(domainId: string, domain: string): Promise<void> {
     log.warn({

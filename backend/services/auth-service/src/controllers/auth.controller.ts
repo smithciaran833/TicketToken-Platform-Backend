@@ -3,6 +3,7 @@ import { MFAService } from '../services/mfa.service';
 import { captchaService } from '../services/captcha.service';
 import { db } from '../config/database';
 import { userCache, sessionCache, getCacheStats } from '../services/cache-integration';
+import { serializeUser, SAFE_USER_SELECT } from '../serializers/user.serializer';
 
 export class AuthController {
   constructor(
@@ -14,10 +15,13 @@ export class AuthController {
     try {
       const result = await this.authService.register(request.body);
 
-      if (result.user.id) { await userCache.setUser(result.user.id, result.user); }
+      // Cache the safe user data
+      const safeUser = serializeUser(result.user);
+      if (safeUser.id) { await userCache.setUser(safeUser.id, safeUser); }
 
+      // SECURITY: Always serialize user data before returning
       return reply.status(201).send({
-        user: result.user,
+        user: safeUser,
         tokens: result.tokens,
       });
     } catch (error: any) {
@@ -79,26 +83,29 @@ export class AuthController {
       // Clear CAPTCHA failures on successful login
       await captchaService.clearFailures(identifier);
 
+      // SECURITY: Always serialize user data before returning
+      const safeUser = serializeUser(result.user);
+
       // FIX: If tokens is null, it means MFA is required
-      if (!result.tokens && result.user.mfa_enabled) {
+      if (!result.tokens && safeUser.mfa_enabled) {
         return reply.status(200).send({
           requiresMFA: true,
-          userId: result.user.id,
+          userId: safeUser.id,
         });
       }
 
       // If MFA was provided and verified, or MFA not enabled
-      if (result.user.id) { await userCache.setUser(result.user.id, result.user); }
+      if (safeUser.id) { await userCache.setUser(safeUser.id, safeUser); }
       if (result.tokens) {
         await sessionCache.setSession(result.tokens.accessToken, {
-          userId: result.user.id,
-          email: result.user.email,
+          userId: safeUser.id,
+          email: safeUser.email,
           createdAt: Date.now()
         });
       }
 
       return reply.send({
-        user: result.user,
+        user: safeUser,
         tokens: result.tokens,
       });
     } catch (error: any) {
@@ -165,15 +172,19 @@ export class AuthController {
   async getMe(request: any, reply: any) {
     const userId = request.user.id;
 
+    // Try cache first (cache should only contain safe fields)
     let user = await userCache.getUser(userId);
 
     if (!user) {
+      // SECURITY: Use explicit field selection - never SELECT *
       user = await db('users')
+        .select(db.raw(SAFE_USER_SELECT))
         .where('id', userId)
         .whereNull('deleted_at')
         .first();
 
       if (user) {
+        // Cache only safe user data
         await userCache.setUser(userId, user);
       }
     }
@@ -182,7 +193,8 @@ export class AuthController {
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    return reply.send({ user });
+    // SECURITY: Always serialize before returning (defense in depth)
+    return reply.send({ user: serializeUser(user) });
   }
 
   async getCacheStats(request: any, reply: any) {
@@ -191,9 +203,11 @@ export class AuthController {
   }
 
   async verifyToken(request: any, reply: any) {
-    // Fetch full user from DB to satisfy response schema
     const userId = request.user.id;
+
+    // SECURITY: Use explicit field selection - never SELECT *
     const user = await db('users')
+      .select(db.raw(SAFE_USER_SELECT))
       .where('id', userId)
       .whereNull('deleted_at')
       .first();
@@ -202,13 +216,16 @@ export class AuthController {
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    return reply.send({ valid: true, user });
+    // SECURITY: Always serialize before returning (defense in depth)
+    return reply.send({ valid: true, user: serializeUser(user) });
   }
 
   async getCurrentUser(request: any, reply: any) {
-    // Fetch full user from DB to satisfy response schema
     const userId = request.user.id;
+
+    // SECURITY: Use explicit field selection - never SELECT *
     const user = await db('users')
+      .select(db.raw(SAFE_USER_SELECT))
       .where('id', userId)
       .whereNull('deleted_at')
       .first();
@@ -217,7 +234,8 @@ export class AuthController {
       return reply.status(404).send({ error: 'User not found' });
     }
 
-    return reply.send({ user });
+    // SECURITY: Always serialize before returning (defense in depth)
+    return reply.send({ user: serializeUser(user) });
   }
 
   async setupMFA(request: any, reply: any) {

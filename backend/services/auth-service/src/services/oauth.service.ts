@@ -5,6 +5,7 @@ import { auditService } from './audit.service';
 import { AuthenticationError, ValidationError } from '../errors';
 import crypto from 'crypto';
 import { env } from '../config/env';
+import { logger } from '../utils/logger';
 
 interface OAuthProfile {
   id: string;
@@ -57,7 +58,7 @@ export class OAuthService {
         verified: payload.email_verified || false
       };
     } catch (error: any) {
-      console.error('Google OAuth error:', error);
+      logger.error('Google OAuth error', { error: error.message, stack: error.stack });
       throw new AuthenticationError('Google authentication failed: ' + error.message);
     }
   }
@@ -69,7 +70,8 @@ export class OAuthService {
       await client.query('BEGIN');
 
       const finalTenantId = tenantId || '00000000-0000-0000-0000-000000000001';
-      await client.query(`SET LOCAL app.current_tenant_id = '${finalTenantId}'`);
+      // SECURITY FIX: Use parameterized query to prevent SQL injection
+      await client.query('SELECT set_config($1, $2, true)', ['app.current_tenant_id', finalTenantId]);
 
       const oauthResult = await client.query(
         `SELECT oc.user_id FROM oauth_connections oc

@@ -406,6 +406,145 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   });
 
   /**
+   * GET /internal/tickets/user/:userId
+   * Get all tickets for a user
+   * Used by: event-service, notification-service, order-service
+   */
+  fastify.get('/internal/tickets/user/:userId', {
+    preHandler: [internalAuthMiddlewareNew]
+  }, async (request, reply) => {
+    const traceId = request.headers['x-trace-id'] as string;
+    const tenantId = request.headers['x-tenant-id'] as string;
+
+    try {
+      const { userId } = request.params as { userId: string };
+      const { status, eventId, limit, offset } = request.query as {
+        status?: string;
+        eventId?: string;
+        limit?: string;
+        offset?: string;
+      };
+
+      if (!userId) {
+        return reply.status(400).send({ error: 'User ID required' });
+      }
+
+      // Set tenant context for RLS if provided
+      if (tenantId) {
+        await setTenantContext(tenantId);
+      }
+
+      // Build query with optional filters
+      let query = `
+        SELECT
+          t.id, t.event_id, t.ticket_type_id, t.user_id, t.status,
+          t.ticket_number, t.seat_section, t.seat_row, t.seat_number,
+          t.is_transferable, t.transfer_count,
+          t.nft_token_id as token_id, t.purchased_at, t.created_at, t.updated_at,
+          e.name as event_name, e.starts_at as event_starts_at,
+          tt.name as ticket_type_name
+        FROM tickets t
+        LEFT JOIN events e ON t.event_id = e.id
+        LEFT JOIN ticket_types tt ON t.ticket_type_id = tt.id
+        WHERE t.user_id = $1 AND t.deleted_at IS NULL
+      `;
+      const params: any[] = [userId];
+      let paramIndex = 2;
+
+      // Add tenant filter if provided
+      if (tenantId) {
+        query += ` AND t.tenant_id = $${paramIndex}`;
+        params.push(tenantId);
+        paramIndex++;
+      }
+
+      // Add status filter if provided
+      if (status) {
+        query += ` AND t.status = $${paramIndex}`;
+        params.push(status);
+        paramIndex++;
+      }
+
+      // Add event filter if provided
+      if (eventId) {
+        query += ` AND t.event_id = $${paramIndex}`;
+        params.push(eventId);
+        paramIndex++;
+      }
+
+      query += ` ORDER BY t.created_at DESC`;
+
+      // Apply pagination
+      const limitNum = Math.min(parseInt(limit || '100'), 500);
+      const offsetNum = parseInt(offset || '0');
+      query += ` LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`;
+      params.push(limitNum, offsetNum);
+
+      const result = await DatabaseService.query(query, params);
+
+      // Get total count for pagination
+      let countQuery = `
+        SELECT COUNT(*) as count FROM tickets t
+        WHERE t.user_id = $1 AND t.deleted_at IS NULL
+      `;
+      const countParams: any[] = [userId];
+      if (tenantId) {
+        countQuery += ` AND t.tenant_id = $2`;
+        countParams.push(tenantId);
+      }
+      if (status) {
+        countQuery += ` AND t.status = $${countParams.length + 1}`;
+        countParams.push(status);
+      }
+      if (eventId) {
+        countQuery += ` AND t.event_id = $${countParams.length + 1}`;
+        countParams.push(eventId);
+      }
+      const countResult = await DatabaseService.query(countQuery, countParams);
+      const totalCount = parseInt(countResult.rows[0]?.count || '0');
+
+      const response = {
+        userId,
+        tickets: result.rows.map(row => ({
+          id: row.id,
+          eventId: row.event_id,
+          ticketTypeId: row.ticket_type_id,
+          userId: row.user_id,
+          status: row.status,
+          ticketNumber: row.ticket_number,
+          seatSection: row.seat_section,
+          seatRow: row.seat_row,
+          seatNumber: row.seat_number,
+          isTransferable: row.is_transferable,
+          transferCount: row.transfer_count,
+          tokenId: row.token_id,
+          purchasedAt: row.purchased_at,
+          eventName: row.event_name,
+          eventStartsAt: row.event_starts_at,
+          ticketTypeName: row.ticket_type_name
+        })),
+        count: result.rows.length,
+        totalCount,
+        hasMore: offsetNum + result.rows.length < totalCount
+      };
+
+      log.info('Internal user tickets lookup', {
+        userId,
+        count: result.rows.length,
+        totalCount,
+        requestingService: request.headers['x-internal-service'],
+        traceId
+      });
+
+      return reply.send(response);
+
+    } catch (error) {
+      log.error('Failed to get tickets by user', { error, userId: (request.params as any).userId, traceId });
+      return reply.status(500).send({ error: 'Failed to get tickets' });
+    }
+  });
+
+  /**
    * GET /internal/tickets/by-token/:tokenId
    * Get ticket by blockchain token ID
    * Used by: blockchain-indexer

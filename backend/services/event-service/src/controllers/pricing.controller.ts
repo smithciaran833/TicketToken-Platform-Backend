@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { createProblemError } from '../middleware/error-handler';
+import { serializePricing, serializePricings } from '../serializers';
 
 /**
  * Pricing Controller
@@ -22,7 +23,7 @@ export async function getEventPricing(
   const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.getEventPricing(eventId, tenantId);
 
-  return reply.send({ pricing });
+  return reply.send({ pricing: serializePricings(pricing) });
 }
 
 export async function getPricingById(
@@ -41,7 +42,7 @@ export async function getPricingById(
     throw createProblemError(404, 'NOT_FOUND', 'Pricing not found');
   }
 
-  return reply.send({ pricing });
+  return reply.send({ pricing: serializePricing(pricing) });
 }
 
 export async function createPricing(
@@ -72,7 +73,7 @@ export async function createPricing(
     tenantId
   );
 
-  return reply.status(201).send({ pricing });
+  return reply.status(201).send({ pricing: serializePricing(pricing) });
 }
 
 export async function updatePricing(
@@ -103,7 +104,7 @@ export async function updatePricing(
     throw createProblemError(404, 'NOT_FOUND', 'Pricing not found');
   }
 
-  return reply.send({ pricing });
+  return reply.send({ pricing: serializePricing(pricing) });
 }
 
 export async function calculatePrice(
@@ -145,5 +146,5 @@ export async function getActivePricing(
   const pricingService = container.resolve('pricingService');
   const pricing = await pricingService.getActivePricing(eventId, tenantId);
 
-  return reply.send({ pricing });
+  return reply.send({ pricing: serializePricings(pricing) });
 }

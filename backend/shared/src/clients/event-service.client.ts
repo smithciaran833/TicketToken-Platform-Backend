@@ -15,6 +15,9 @@ import {
   // Phase 5c metrics types
   EventMetricsResponse,
   ActiveEventsResponse,
+  // Phase 5d types (event cancellation)
+  UpdateBlockchainStatusRequest,
+  UpdateBlockchainStatusResponse,
 } from './types';
 
 /**
@@ -182,7 +185,7 @@ export class EventServiceClient extends BaseServiceClient {
 
   /**
    * Get events currently in active sale period
-   * 
+   *
    * @param ctx - Request context with tenant info
    * @returns List of events with ticket inventory info
    */
@@ -192,6 +195,76 @@ export class EventServiceClient extends BaseServiceClient {
       ctx
     );
     return response.data;
+  }
+
+  // ==========================================================================
+  // PHASE 5d METHODS - Event Cancellation Workflow Support
+  // ==========================================================================
+
+  /**
+   * Update blockchain sync status for an event
+   *
+   * Called by blockchain-service after processing sync requests.
+   * Updates event with PDA and signature on success, or error on failure.
+   *
+   * @param eventId - The event ID
+   * @param request - Status update with PDA/signature or error
+   * @param ctx - Request context with tenant info
+   * @returns Update confirmation
+   */
+  async updateBlockchainStatus(
+    eventId: string,
+    request: UpdateBlockchainStatusRequest,
+    ctx: RequestContext
+  ): Promise<UpdateBlockchainStatusResponse> {
+    const response = await this.put<UpdateBlockchainStatusResponse>(
+      `/internal/events/${eventId}/blockchain-status`,
+      ctx,
+      request
+    );
+    return response.data;
+  }
+
+  /**
+   * Mark event as synced with blockchain (helper method)
+   *
+   * @param eventId - The event ID
+   * @param eventPda - The program derived address
+   * @param signature - The transaction signature
+   * @param ctx - Request context with tenant info
+   * @returns Update confirmation
+   */
+  async markEventSynced(
+    eventId: string,
+    eventPda: string,
+    signature: string,
+    ctx: RequestContext
+  ): Promise<UpdateBlockchainStatusResponse> {
+    return this.updateBlockchainStatus(eventId, {
+      status: 'synced',
+      eventPda,
+      signature,
+      syncedAt: new Date().toISOString(),
+    }, ctx);
+  }
+
+  /**
+   * Mark event blockchain sync as failed (helper method)
+   *
+   * @param eventId - The event ID
+   * @param error - Error message
+   * @param ctx - Request context with tenant info
+   * @returns Update confirmation
+   */
+  async markEventSyncFailed(
+    eventId: string,
+    error: string,
+    ctx: RequestContext
+  ): Promise<UpdateBlockchainStatusResponse> {
+    return this.updateBlockchainStatus(eventId, {
+      status: 'failed',
+      error,
+    }, ctx);
   }
 }
 

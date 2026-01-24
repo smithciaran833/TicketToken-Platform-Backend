@@ -248,7 +248,7 @@ class QueueListenerClass {
 
     const consumer = await this.channel.consume(
       CONSUMER_CONFIG.queueName,
-      (msg) => this.handleMessage(msg)
+      (msg: ConsumeMessage | null) => this.handleMessage(msg)
     );
 
     this.consumerTag = consumer.consumerTag;

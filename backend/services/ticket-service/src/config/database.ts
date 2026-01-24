@@ -1,5 +1,8 @@
 import { Pool } from 'pg';
 import { config } from './index';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'Database' });
 
 // Create singleton database pool
 export const pool = new Pool({
@@ -9,17 +12,17 @@ export const pool = new Pool({
 
 // Handle pool errors
 pool.on('error', (err) => {
-  console.error('Unexpected error on idle database client', err);
+  log.error('Unexpected error on idle database client', { error: err });
   process.exit(-1);
 });
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {
-  console.log('SIGTERM received, closing database pool');
+  log.info('SIGTERM received, closing database pool');
   await pool.end();
 });
 
 process.on('SIGINT', async () => {
-  console.log('SIGINT received, closing database pool');
+  log.info('SIGINT received, closing database pool');
   await pool.end();
 });

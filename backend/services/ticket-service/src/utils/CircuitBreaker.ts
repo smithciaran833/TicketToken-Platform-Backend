@@ -1,3 +1,7 @@
+import { logger } from './logger';
+
+const log = logger.child({ component: 'CircuitBreaker' });
+
 interface CircuitBreakerOptions {
   name?: string;
   failureThreshold?: number;
@@ -57,7 +61,7 @@ class CircuitBreaker {
         throw error;
       }
       this.state = 'HALF_OPEN';
-      console.log(`Circuit ${this.name} attempting recovery (HALF_OPEN)`);
+      log.info('Circuit attempting recovery', { circuit: this.name, state: 'HALF_OPEN' });
     }
 
     try {
@@ -98,7 +102,7 @@ class CircuitBreaker {
       if (this.successCount >= this.successThreshold) {
         this.state = 'CLOSED';
         this.successCount = 0;
-        console.log(`✅ Circuit ${this.name} recovered (CLOSED)`);
+        log.info('Circuit recovered', { circuit: this.name, state: 'CLOSED' });
       }
     }
   }
@@ -112,7 +116,7 @@ class CircuitBreaker {
     if (this.failureCount >= this.failureThreshold) {
       this.state = 'OPEN';
       this.nextAttempt = Date.now() + this.resetTimeout;
-      console.log(`⚠️ Circuit ${this.name} opened due to failures`);
+      log.warn('Circuit opened due to failures', { circuit: this.name, state: 'OPEN', failureCount: this.failureCount });
     }
   }
 
@@ -130,7 +134,7 @@ class CircuitBreaker {
     this.failureCount = 0;
     this.successCount = 0;
     this.nextAttempt = Date.now();
-    console.log(`Circuit ${this.name} manually reset`);
+    log.info('Circuit manually reset', { circuit: this.name, state: 'CLOSED' });
   }
 }
 

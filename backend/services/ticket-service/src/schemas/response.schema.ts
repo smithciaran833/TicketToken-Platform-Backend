@@ -14,6 +14,9 @@
  */
 
 import { z } from 'zod';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'ResponseSchema' });
 
 // =============================================================================
 // BASE RESPONSE SCHEMAS
@@ -297,7 +300,7 @@ export function sanitizeResponse<T>(schema: z.ZodType<T>, data: unknown): T {
   
   // If validation fails, log and return partial data
   // In production, you might want to throw or return a safe default
-  console.warn('Response sanitization warning:', result.error.flatten());
+  log.warn('Response sanitization warning', { validationErrors: result.error.flatten() });
   
   // Attempt to extract valid fields only
   try {

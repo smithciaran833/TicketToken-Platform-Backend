@@ -19,8 +19,7 @@
  * - audit-service: Security audit logging
  */
 
-import * as amqplib from 'amqplib';
-import type { Connection, Channel } from 'amqplib';
+import amqplib from 'amqplib';
 import { logger } from '../utils/logger';
 import { env } from './env';
 import { Counter, Gauge } from 'prom-client';
@@ -65,7 +64,9 @@ export const rabbitmqConfig = {
     mfaEnabled: 'user.mfa_enabled',
     mfaDisabled: 'user.mfa_disabled',
     userUpdated: 'user.updated',
-    userDeleted: 'user.deleted'
+    userDeleted: 'user.deleted',
+    // Tenant events (TODO #9: Cache invalidation)
+    tenantStatusChanged: 'tenant.status_changed'
   }
 };
 
@@ -81,8 +82,8 @@ const RECONNECT_CONFIG = {
 // =============================================================================
 
 class RabbitMQPublisher {
-  private connection: Connection | null = null;
-  private channel: Channel | null = null;
+  private connection: amqplib.ChannelModel | null = null;
+  private channel: amqplib.Channel | null = null;
   private connected: boolean = false;
   private connecting: boolean = false;
   private reconnectAttempts: number = 0;
@@ -109,23 +110,27 @@ class RabbitMQPublisher {
         url: rabbitmqConfig.url.replace(/:[^:@]+@/, ':***@')
       });
 
-      this.connection = await amqplib.connect(rabbitmqConfig.url);
-      this.channel = await this.connection.createChannel();
+      const connection = await amqplib.connect(rabbitmqConfig.url);
+      const channel = await connection.createChannel();
 
       // Set up event handlers
-      this.connection.on('error', (err: Error) => {
+      connection.on('error', (err: Error) => {
         log.error('RabbitMQ connection error', { error: err.message });
         this.handleDisconnect();
       });
 
-      this.connection.on('close', () => {
+      connection.on('close', () => {
         log.warn('RabbitMQ connection closed');
         this.handleDisconnect();
       });
 
-      this.channel.on('error', (err: Error) => {
+      channel.on('error', (err: Error) => {
         log.error('RabbitMQ channel error', { error: err.message });
       });
+
+      // Assign to instance after all setup is complete
+      this.connection = connection;
+      this.channel = channel;
 
       // Set up exchanges
       await this.setupExchanges();
@@ -524,6 +529,33 @@ export const AuthEventPublisher = {
         disabledAt: new Date().toISOString()
       },
       { userId, tenantId: metadata?.tenantId }
+    );
+  },
+
+  /**
+   * Publish tenant.status_changed event
+   *
+   * Part of TODO #9: Tenant Cache Invalidation
+   * This event is published when an admin changes a tenant's status.
+   * Other services should subscribe to invalidate their tenant caches.
+   */
+  async tenantStatusChanged(
+    tenantId: string,
+    oldStatus: string,
+    newStatus: string,
+    changedBy: string
+  ): Promise<boolean> {
+    return rabbitmq.publish(
+      rabbitmqConfig.exchanges.events,
+      rabbitmqConfig.routingKeys.tenantStatusChanged,
+      {
+        tenantId,
+        oldStatus,
+        newStatus,
+        changedBy,
+        changedAt: new Date().toISOString()
+      },
+      { tenantId }
     );
   }
 };

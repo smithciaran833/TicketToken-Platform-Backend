@@ -17,6 +17,8 @@ import {
   GetOrdersWithoutTicketsResponse,
   OrdersWithoutTicketsOptions,
   GetOrderForPaymentResponse,
+  // Phase 5d types (event cancellation)
+  GetOrdersByEventResponse,
 } from './types';
 
 // =============================================================================
@@ -280,6 +282,54 @@ export class OrderServiceClient extends BaseServiceClient {
       { status }
     );
     return response.data.order;
+  }
+
+  // ==========================================================================
+  // PHASE 5d NEW METHODS - Event Cancellation Workflow Support
+  // ==========================================================================
+
+  /**
+   * Get all orders for a specific event
+   * Used for event cancellation to process bulk refunds
+   *
+   * @param eventId - The event ID
+   * @param ctx - Request context with tenant info
+   * @param options - Query options for filtering and pagination
+   * @returns List of orders for the event with items
+   */
+  async getOrdersByEvent(
+    eventId: string,
+    ctx: RequestContext,
+    options?: {
+      status?: string;
+      limit?: number;
+      offset?: number;
+    }
+  ): Promise<GetOrdersByEventResponse> {
+    const params = new URLSearchParams();
+    if (options?.status) params.append('status', options.status);
+    if (options?.limit) params.append('limit', options.limit.toString());
+    if (options?.offset) params.append('offset', options.offset.toString());
+
+    const queryString = params.toString();
+    const path = `/internal/orders/event/${eventId}${queryString ? `?${queryString}` : ''}`;
+
+    const response = await this.get<GetOrdersByEventResponse>(path, ctx);
+    return response.data;
+  }
+
+  /**
+   * Get confirmed orders for event refund processing (helper method)
+   *
+   * @param eventId - The event ID
+   * @param ctx - Request context with tenant info
+   * @returns Orders with CONFIRMED status
+   */
+  async getConfirmedOrdersForEvent(
+    eventId: string,
+    ctx: RequestContext
+  ): Promise<GetOrdersByEventResponse> {
+    return this.getOrdersByEvent(eventId, ctx, { status: 'CONFIRMED' });
   }
 }
 

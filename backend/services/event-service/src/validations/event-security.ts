@@ -9,12 +9,13 @@
 
 import crypto from 'crypto';
 import { logger } from '../utils/logger';
-import { 
-  ValidationError, 
-  ForbiddenError, 
+import { getRedis } from '../config/redis';
+import {
+  ValidationError,
+  ForbiddenError,
   BadRequestError,
   EventStateError,
-  ErrorCodes 
+  ErrorCodes
 } from '../utils/errors';
 
 export interface EventSecurityConfig {
@@ -600,38 +601,93 @@ export class EventSecurityValidator {
   }
 }
 
-// TODO [PHASE 2 - Issue #1]: Migrate to Redis for distributed confirmation cache
-// Current in-memory cache doesn't scale across service instances.
-// In production, user could hit different pods between generating and confirming tokens.
-// Replace with Redis:
-//   - Use key pattern: `event:confirm:{token}`
-//   - Set 5-minute TTL with Redis SETEX
-//   - Inject Redis client as constructor dependency
-//   - Keep Map as fallback for tests/development
-const pendingConfirmations = new Map<string, CriticalChangeConfirmation>();
+/**
+ * Redis-based distributed confirmation cache
+ *
+ * IMPLEMENTED: Phase 2 Issue #1 - Redis migration for confirmation tokens
+ * Supports horizontal scaling across service instances.
+ * Falls back to in-memory Map when Redis unavailable (tests/development).
+ */
+const CONFIRMATION_CACHE_PREFIX = 'event:confirm:';
+const CONFIRMATION_TTL = 5 * 60; // 5 minutes in seconds
+
+// In-memory fallback for tests/development when Redis unavailable
+const pendingConfirmationsFallback = new Map<string, CriticalChangeConfirmation>();
 
 /**
- * Store a confirmation requirement (use Redis in production)
+ * Store a confirmation requirement in Redis (with in-memory fallback)
+ *
+ * @param confirmation - The confirmation to store
  */
-export function storePendingConfirmation(confirmation: CriticalChangeConfirmation): void {
-  pendingConfirmations.set(confirmation.confirmationToken, confirmation);
-  
-  // Auto-cleanup after expiry
-  setTimeout(() => {
-    pendingConfirmations.delete(confirmation.confirmationToken);
-  }, 5 * 60 * 1000);
+export async function storePendingConfirmation(confirmation: CriticalChangeConfirmation): Promise<void> {
+  const key = `${CONFIRMATION_CACHE_PREFIX}${confirmation.confirmationToken}`;
+
+  try {
+    const redis = getRedis();
+    await redis.setex(key, CONFIRMATION_TTL, JSON.stringify(confirmation));
+    logger.debug({ token: confirmation.confirmationToken.substring(0, 8) }, 'Confirmation stored in Redis');
+  } catch (error: any) {
+    // Fallback to in-memory for tests/development
+    logger.warn({ error: error.message }, 'Redis unavailable, using in-memory fallback for confirmation');
+    pendingConfirmationsFallback.set(confirmation.confirmationToken, confirmation);
+
+    // Auto-cleanup after expiry for fallback
+    setTimeout(() => {
+      pendingConfirmationsFallback.delete(confirmation.confirmationToken);
+    }, CONFIRMATION_TTL * 1000);
+  }
 }
 
 /**
- * Retrieve a pending confirmation by token
+ * Retrieve a pending confirmation by token from Redis (with in-memory fallback)
+ *
+ * @param token - The confirmation token
+ * @returns The confirmation or null if not found/expired
  */
-export function getPendingConfirmation(token: string): CriticalChangeConfirmation | null {
-  return pendingConfirmations.get(token) || null;
+export async function getPendingConfirmation(token: string): Promise<CriticalChangeConfirmation | null> {
+  const key = `${CONFIRMATION_CACHE_PREFIX}${token}`;
+
+  try {
+    const redis = getRedis();
+    const cached = await redis.get(key);
+
+    if (cached) {
+      const confirmation = JSON.parse(cached) as CriticalChangeConfirmation;
+      // Restore Date objects
+      confirmation.expiresAt = new Date(confirmation.expiresAt);
+      return confirmation;
+    }
+    return null;
+  } catch (error: any) {
+    // Fallback to in-memory
+    logger.warn({ error: error.message }, 'Redis unavailable, checking in-memory fallback');
+    return pendingConfirmationsFallback.get(token) || null;
+  }
 }
 
 /**
- * Remove a used confirmation
+ * Remove a used confirmation from Redis (with in-memory fallback)
+ *
+ * @param token - The confirmation token to remove
  */
-export function removePendingConfirmation(token: string): void {
-  pendingConfirmations.delete(token);
+export async function removePendingConfirmation(token: string): Promise<void> {
+  const key = `${CONFIRMATION_CACHE_PREFIX}${token}`;
+
+  try {
+    const redis = getRedis();
+    await redis.del(key);
+    logger.debug({ token: token.substring(0, 8) }, 'Confirmation removed from Redis');
+  } catch (error: any) {
+    // Fallback to in-memory
+    logger.warn({ error: error.message }, 'Redis unavailable, removing from in-memory fallback');
+    pendingConfirmationsFallback.delete(token);
+  }
+}
+
+/**
+ * Clear all pending confirmations (for testing purposes)
+ */
+export async function clearAllPendingConfirmations(): Promise<void> {
+  pendingConfirmationsFallback.clear();
+  // Note: Redis keys will expire naturally via TTL
 }

@@ -195,7 +195,12 @@ export class QRService {
   }
 
   private async getTicketData(ticketId: string): Promise<any> {
-    const query = 'SELECT * FROM tickets WHERE id = $1';
+    // SECURITY: Select only fields needed for QR validation - no sensitive data
+    const query = `
+      SELECT id, event_id, status, validated_at
+      FROM tickets
+      WHERE id = $1
+    `;
     const result = await DatabaseService.query(query, [ticketId]);
 
     if (result.rows.length === 0) {

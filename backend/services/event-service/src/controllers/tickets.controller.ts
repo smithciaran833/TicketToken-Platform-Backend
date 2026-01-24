@@ -137,28 +137,56 @@ export const updateTicketType: AuthenticatedHandler = async (request, reply) => 
       });
     }
 
-    // MEDIUM PRIORITY FIX for Issue #11: Check if tickets have been sold before allowing price changes
-    // TODO: Implement service-to-service call to ticket-service to check sold count
-    // Example implementation:
-    //   const ticketService = container.resolve('ticketService');
-    //   const soldCount = await ticketService.getSoldCount(id, typeId);
-    //   if (soldCount > 0 && value.base_price && value.base_price !== pricing.base_price) {
-    //     throw createProblemError(400, 'TICKETS_SOLD', 'Cannot change price after tickets have been sold');
-    //   }
-    
-    // For now, check if price is being changed and add warning in response
-    const isPriceChanging = value.base_price && value.base_price !== pricing.base_price;
-    
-    const updated = await pricingService.updatePricing(typeId, value, tenantId);
-    
-    // Add warning if price was changed
+    // TODO #6 IMPLEMENTED: Block pricing changes if tickets have been sold
+    // Uses local event_capacity.sold_count instead of calling ticket-service (more efficient)
+    const isPriceChanging = value.base_price !== undefined &&
+                            parseFloat(value.base_price) !== parseFloat(pricing.base_price);
+
     if (isPriceChanging) {
-      return reply.send({
-        success: true,
-        data: updated,
-        warning: 'Price updated. TODO: Verify no tickets have been sold via ticket-service before allowing price changes.'
-      });
+      // Check sold_count from event_capacity table
+      // Pricing is linked to capacity via capacity_id
+      const capacityId = pricing.capacity_id;
+
+      if (capacityId) {
+        const capacity = await db('event_capacity')
+          .where({ id: capacityId, tenant_id: tenantId })
+          .first();
+
+        if (capacity && capacity.sold_count > 0) {
+          return reply.status(400).send({
+            success: false,
+            error: 'Cannot change price after tickets have been sold',
+            code: 'TICKETS_SOLD',
+            details: {
+              soldCount: capacity.sold_count,
+              currentPrice: pricing.base_price,
+              attemptedPrice: value.base_price
+            }
+          });
+        }
+      } else {
+        // If no capacity_id, check total sold for the event
+        const eventSoldCount = await db('event_capacity')
+          .where({ event_id: id, tenant_id: tenantId })
+          .sum('sold_count as total')
+          .first();
+
+        if (eventSoldCount && parseInt(eventSoldCount.total || '0', 10) > 0) {
+          return reply.status(400).send({
+            success: false,
+            error: 'Cannot change price after tickets have been sold for this event',
+            code: 'TICKETS_SOLD',
+            details: {
+              eventSoldCount: parseInt(eventSoldCount.total || '0', 10),
+              currentPrice: pricing.base_price,
+              attemptedPrice: value.base_price
+            }
+          });
+        }
+      }
     }
+
+    const updated = await pricingService.updatePricing(typeId, value, tenantId);
 
     return reply.send({
       success: true,

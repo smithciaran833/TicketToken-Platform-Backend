@@ -66,7 +66,9 @@ export const rabbitmqConfig = {
     eventDeleted: 'event.deleted',
     // Capacity-related events
     capacityWarning: 'event.capacity.warning',
-    capacityCritical: 'event.capacity.critical'
+    capacityCritical: 'event.capacity.critical',
+    // Blockchain sync events (TODO #12)
+    blockchainSyncRequested: 'event.blockchain_sync_requested'
   }
 };
 
@@ -601,6 +603,57 @@ export const EventLifecyclePublisher = {
         eventId,
         ...capacityData,
         timestamp: new Date().toISOString()
+      },
+      metadata
+    );
+  },
+
+  /**
+   * Publish event.blockchain_sync_requested
+   *
+   * TODO #12 IMPLEMENTED: Async blockchain sync via message queue
+   *
+   * This event is consumed by blockchain-service to create the event on-chain.
+   * The blockchain-service should:
+   * 1. Listen for 'event.blockchain_sync_requested' events
+   * 2. Call the Solana program to create the event
+   * 3. Update event-service via callback or internal API with the event_pda
+   *
+   * Benefits:
+   * - Event creation is not blocked by blockchain latency
+   * - Automatic retry via RabbitMQ dead-letter queue
+   * - Better fault isolation
+   */
+  async blockchainSyncRequested(
+    eventId: string,
+    blockchainData: {
+      blockchainEventId: number;
+      venueId: string;
+      name: string;
+      ticketPrice: number;
+      totalTickets: number;
+      startTime: Date | string;
+      endTime: Date | string;
+      refundWindow: number;
+      metadataUri: string;
+      description: string;
+      transferable: boolean;
+      resaleable: boolean;
+      merkleTree: string;
+      artistWallet: string;
+      artistPercentage: number;
+      venuePercentage: number;
+    },
+    metadata?: { userId?: string; tenantId?: string }
+  ): Promise<boolean> {
+    return rabbitmq.publish(
+      rabbitmqConfig.exchanges.events,
+      rabbitmqConfig.routingKeys.blockchainSyncRequested,
+      {
+        eventId,
+        action: 'CREATE_EVENT',
+        blockchainData,
+        requestedAt: new Date().toISOString()
       },
       metadata
     );

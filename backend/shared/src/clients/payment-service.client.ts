@@ -8,6 +8,7 @@
  */
 
 import { BaseServiceClient, RequestContext, ServiceClientError } from '../http-client/base-service-client';
+import { BulkRefundResponse } from './types';
 
 // =============================================================================
 // Request/Response Types
@@ -425,6 +426,60 @@ export class PaymentServiceClient extends BaseServiceClient {
       }
       throw error;
     }
+  }
+
+  // ==========================================================================
+  // PHASE 5d NEW METHODS - Event Cancellation Workflow Support
+  // ==========================================================================
+
+  /**
+   * Process bulk refunds for event cancellation
+   *
+   * Creates a batch job to refund all orders for a cancelled event.
+   * Refunds are processed asynchronously via a job queue.
+   *
+   * @param request - Bulk refund request details
+   * @param ctx - Request context with tenant/user IDs
+   * @returns Batch job tracking info
+   */
+  async processBulkRefunds(
+    request: {
+      eventId: string;
+      tenantId: string;
+      refundPolicy: 'full' | 'partial';
+      reason: string;
+    },
+    ctx: RequestContext
+  ): Promise<BulkRefundResponse> {
+    const response = await this.post<BulkRefundResponse>(
+      '/internal/refunds/batch',
+      ctx,
+      request
+    );
+    return response.data;
+  }
+
+  /**
+   * Process full refunds for event cancellation (helper method)
+   *
+   * @param eventId - The event ID
+   * @param tenantId - The tenant ID
+   * @param reason - Reason for refund
+   * @param ctx - Request context with tenant/user IDs
+   * @returns Batch job tracking info
+   */
+  async processFullRefundsForEvent(
+    eventId: string,
+    tenantId: string,
+    reason: string,
+    ctx: RequestContext
+  ): Promise<BulkRefundResponse> {
+    return this.processBulkRefunds({
+      eventId,
+      tenantId,
+      refundPolicy: 'full',
+      reason,
+    }, ctx);
   }
 }
 

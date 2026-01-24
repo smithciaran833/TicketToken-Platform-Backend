@@ -14,6 +14,7 @@ export const QUEUE_NAMES = {
   EVENT_TRANSITIONS: 'event-transitions',
   EVENT_NOTIFICATIONS: 'event-notifications',
   EVENT_CLEANUP: 'event-cleanup',
+  BLOCKCHAIN_SYNC: 'blockchain-sync',
 } as const;
 
 // Job queues

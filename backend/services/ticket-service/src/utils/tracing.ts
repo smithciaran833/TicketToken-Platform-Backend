@@ -38,6 +38,9 @@ import { trace, context, SpanStatusCode, Span, SpanKind, propagation, Context, A
 import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 
+// NOTE: Cannot import logger here due to circular dependency
+// (logger imports tracing for trace context). Using console for initialization messages.
+
 const SERVICE_NAME = 'ticket-service';
 const SERVICE_VERSION = process.env.SERVICE_VERSION || '1.0.0';
 const ENVIRONMENT = process.env.NODE_ENV || 'development';
@@ -147,6 +150,7 @@ let samplingConfig: SamplingConfig = { ...DEFAULT_SAMPLING_CONFIG };
  */
 export function setSamplingConfig(config: Partial<SamplingConfig>): void {
   samplingConfig = { ...samplingConfig, ...config };
+  // Using console due to circular dependency with logger
   console.log('Trace sampling configuration updated:', {
     defaultRate: samplingConfig.defaultRate,
     routeRulesCount: samplingConfig.routeRules.length,
@@ -346,7 +350,7 @@ export function initTracing(): void {
 
   // Start the SDK
   sdk.start();
-  console.log(`✓ OpenTelemetry tracing initialized for ${SERVICE_NAME}`);
+  console.log(`OpenTelemetry tracing initialized for ${SERVICE_NAME}`);
 }
 
 /**

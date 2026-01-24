@@ -11,6 +11,12 @@
  */
 
 import { pino } from 'pino';
+import {
+  ticketServiceClient,
+  notificationServiceClient,
+  createRequestContext,
+} from '@tickettoken/shared';
+import { getDb } from '../config/database';
 
 const logger = pino({ name: 'event-state-machine' });
 
@@ -441,21 +447,108 @@ export interface EventModificationNotification {
 export async function notifyTicketHoldersOfModification(
   notification: EventModificationNotification
 ): Promise<{ queued: boolean; count: number }> {
-  // TODO: Implement actual notification service integration
-  // See implementation guide in JSDoc above
-  
-  logger.info({
-    eventId: notification.eventId,
-    tenantId: notification.tenantId,
-    modificationType: notification.modificationType,
-    affectedCount: notification.affectedTicketHolderCount || 0,
-  }, 'Event modification notification should be sent (not implemented)');
+  // TODO #11 IMPLEMENTED: Using notificationServiceClient
+  const { eventId, tenantId, modificationType, previousValue, newValue } = notification;
+  const db = getDb();
 
-  // Placeholder return
-  return {
-    queued: false, // Set to true when implemented
-    count: notification.affectedTicketHolderCount || 0,
-  };
+  try {
+    const ctx = createRequestContext(tenantId);
+
+    // Get event details
+    const event = await db('events')
+      .where({ id: eventId, tenant_id: tenantId })
+      .first();
+
+    if (!event) {
+      logger.warn({ eventId }, 'Event not found for modification notification');
+      return { queued: false, count: 0 };
+    }
+
+    // Get ticket holders from ticket-service
+    const ticketsResponse = await ticketServiceClient.getTicketsByEvent(eventId, ctx);
+    const tickets = ticketsResponse.tickets || [];
+    const uniqueUserIds = [...new Set(tickets.map((t: any) => t.userId || t.user_id).filter(Boolean))];
+
+    if (uniqueUserIds.length === 0) {
+      logger.info({ eventId }, 'No ticket holders to notify of modification');
+      return { queued: true, count: 0 };
+    }
+
+    // Determine template and subject based on modification type
+    const templateMap: Record<string, { templateId: string; subject: string }> = {
+      'RESCHEDULED': {
+        templateId: 'event_rescheduled',
+        subject: `Event Rescheduled: ${event.name}`,
+      },
+      'VENUE_CHANGED': {
+        templateId: 'event_venue_changed',
+        subject: `Venue Changed: ${event.name}`,
+      },
+      'TIME_CHANGED': {
+        templateId: 'event_time_changed',
+        subject: `Time Changed: ${event.name}`,
+      },
+      'CANCELLED': {
+        templateId: 'event_cancelled',
+        subject: `Event Cancelled: ${event.name}`,
+      },
+    };
+
+    const templateConfig = templateMap[modificationType] || {
+      templateId: 'event_modified',
+      subject: `Event Update: ${event.name}`,
+    };
+
+    // Build batch notifications
+    const notifications = uniqueUserIds.map(userId => ({
+      userId,
+      templateId: templateConfig.templateId,
+      data: {
+        eventName: event.name,
+        eventDate: event.starts_at,
+        modificationType,
+        previousValue: previousValue || '',
+        newValue: newValue || '',
+        actionRequired: modificationType === 'CANCELLED'
+          ? 'No action needed - refunds will be processed automatically.'
+          : 'Please review the updated event details.',
+      },
+      subject: templateConfig.subject,
+    }));
+
+    // Send batch notification
+    const result = await notificationServiceClient.sendBatchNotification({
+      notifications,
+      priority: modificationType === 'CANCELLED' ? 'high' : 'normal',
+    }, ctx);
+
+    const queuedCount = result.queuedCount || uniqueUserIds.length;
+
+    logger.info({
+      eventId,
+      tenantId,
+      modificationType,
+      userCount: uniqueUserIds.length,
+      queuedCount,
+    }, 'Event modification notifications sent to notification-service');
+
+    return {
+      queued: true,
+      count: queuedCount,
+    };
+  } catch (error: any) {
+    logger.error({
+      eventId,
+      tenantId,
+      modificationType,
+      error: error.message,
+    }, 'Failed to send event modification notifications');
+
+    return {
+      queued: false,
+      count: notification.affectedTicketHolderCount || 0,
+    };
+  }
 }
 
 export const STATES_REQUIRING_NOTIFICATION: EventState[] = [

@@ -89,13 +89,19 @@ describe('TransferController', () => {
       };
       (mockRequest as any).user = { id: 'owner-123' };
 
+      // Mock raw transfer data from service (snake_case with sensitive fields)
       const mockTransfer = {
         id: 'transfer-123',
-        ticketId: 'ticket-123',
-        fromUserId: 'owner-123',
-        toUserId: 'recipient-456',
-        status: 'COMPLETED',
-        transferredAt: new Date()
+        ticket_id: 'ticket-123',
+        from_user_id: 'owner-123',
+        to_user_id: 'recipient-456',
+        to_email: 'recipient@example.com',  // Sensitive - should be masked
+        status: 'completed',
+        transfer_method: 'direct',
+        is_gift: true,
+        transferred_at: new Date(),
+        created_at: new Date(),
+        updated_at: new Date()
       };
 
       (transferService.transferTicket as jest.Mock).mockResolvedValue(mockTransfer);
@@ -132,10 +138,21 @@ describe('TransferController', () => {
         userAgent: 'test-agent',
         success: true
       });
+      // Serialized for sender - includes masked email, excludes sensitive fields
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTransfer
+        data: expect.objectContaining({
+          id: 'transfer-123',
+          ticketId: 'ticket-123',
+          status: 'completed',
+          recipientEmailMasked: 're*****@example.com'
+        })
       });
+      // Verify sensitive fields are NOT in response
+      const sentData = mockSend.mock.calls[0][0].data;
+      expect(sentData.fromUserId).toBeUndefined();
+      expect(sentData.toUserId).toBeUndefined();
+      expect(sentData.toEmail).toBeUndefined();
     });
 
     it('should log failed transfer attempt and rethrow error', async () => {
@@ -250,20 +267,27 @@ describe('TransferController', () => {
     it('should return transfer history for a ticket', async () => {
       mockRequest.params = { ticketId: 'ticket-123' };
 
+      // Mock raw history from service (snake_case, safe fields only after service update)
       const mockHistory = [
         {
           id: 'transfer-1',
-          ticketId: 'ticket-123',
-          fromUserId: 'user-1',
-          toUserId: 'user-2',
-          transferredAt: new Date('2024-01-01')
+          ticket_id: 'ticket-123',
+          status: 'completed',
+          transfer_method: 'direct',
+          is_gift: true,
+          transferred_at: new Date('2024-01-01'),
+          created_at: new Date('2024-01-01'),
+          updated_at: new Date('2024-01-01')
         },
         {
           id: 'transfer-2',
-          ticketId: 'ticket-123',
-          fromUserId: 'user-2',
-          toUserId: 'user-3',
-          transferredAt: new Date('2024-01-15')
+          ticket_id: 'ticket-123',
+          status: 'completed',
+          transfer_method: 'direct',
+          is_gift: false,
+          transferred_at: new Date('2024-01-15'),
+          created_at: new Date('2024-01-15'),
+          updated_at: new Date('2024-01-15')
         }
       ];
 
@@ -272,9 +296,13 @@ describe('TransferController', () => {
       await controller.getTransferHistory(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(transferService.getTransferHistory).toHaveBeenCalledWith('ticket-123');
+      // Serialized to camelCase
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockHistory
+        data: expect.arrayContaining([
+          expect.objectContaining({ id: 'transfer-1', ticketId: 'ticket-123', status: 'completed' }),
+          expect.objectContaining({ id: 'transfer-2', ticketId: 'ticket-123', status: 'completed' })
+        ])
       });
     });
 
@@ -312,10 +340,10 @@ describe('TransferController', () => {
       };
       (mockRequest as any).user = { id: 'owner-123' };
 
+      // Service returns only valid/reason (no sensitive internal data)
       const mockValidation = {
         valid: true,
-        ticket: { id: 'ticket-123', status: 'ACTIVE' },
-        recipient: { id: 'recipient-456', verified: true }
+        reason: undefined
       };
 
       (transferService.validateTransferRequest as jest.Mock).mockResolvedValue(mockValidation);
@@ -327,9 +355,13 @@ describe('TransferController', () => {
         'owner-123',
         'recipient-456'
       );
+      // Controller extracts only valid/reason
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockValidation
+        data: {
+          valid: true,
+          reason: undefined
+        }
       });
     });
 
@@ -342,16 +374,20 @@ describe('TransferController', () => {
 
       const mockValidation = {
         valid: false,
-        errors: ['Ticket is already used', 'Recipient not verified']
+        reason: 'Ticket is already used'
       };
 
       (transferService.validateTransferRequest as jest.Mock).mockResolvedValue(mockValidation);
 
       await controller.validateTransfer(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
+      // Controller extracts only valid/reason
       expect(mockSend).toHaveBeenCalledWith({
         success: false,
-        data: mockValidation
+        data: {
+          valid: false,
+          reason: 'Ticket is already used'
+        }
       });
     });
 

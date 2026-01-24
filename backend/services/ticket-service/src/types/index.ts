@@ -1,4 +1,138 @@
+import { FastifyRequest } from 'fastify';
+
+// =============================================================================
+// Extended Request Types for Type Safety
+// =============================================================================
+
+/**
+ * Authenticated user from JWT
+ */
+export interface AuthenticatedUser {
+  id: string;
+  sub?: string;  // JWT subject claim (same as id)
+  tenant_id?: string;
+  email?: string;
+  role?: string;
+  permissions?: string[];
+}
+
+/**
+ * Base authenticated request - use in controllers requiring auth
+ */
+export interface AuthenticatedRequest extends FastifyRequest {
+  user: AuthenticatedUser;
+  userId?: string;  // Backwards compatibility
+  tenantId?: string;
+}
+
+/**
+ * Request with validated body from Zod schema
+ */
+export interface ValidatedRequest<T> extends AuthenticatedRequest {
+  validatedBody: T;
+}
+
+/**
+ * Generic request param types
+ */
+export interface TicketIdParams {
+  ticketId: string;
+}
+
+export interface ReservationIdParams {
+  reservationId: string;
+}
+
+export interface EventIdParams {
+  eventId: string;
+}
+
+export interface UserIdParams {
+  userId: string;
+}
+
+export interface OrderIdParams {
+  orderId: string;
+}
+
+export interface IdParams {
+  id: string;
+}
+
+/**
+ * Common query parameters
+ */
+export interface PaginationQuery {
+  limit?: number | string;
+  offset?: number | string;
+}
+
+export interface TicketQueryParams extends PaginationQuery {
+  eventId?: string;
+  status?: string;
+}
+
+export interface OrderQueryParams extends PaginationQuery {
+  status?: string;
+}
+
+/**
+ * Purchase request body
+ */
+export interface CreatePurchaseBody {
+  eventId: string;
+  tickets: Array<{
+    ticketTypeId: string;
+    quantity: number;
+  }>;
+  items?: Array<{
+    ticketTypeId?: string;
+    tierId?: string;
+    quantity: number;
+  }>;
+  tenantId?: string;
+  discountCodes?: string[];
+  paymentMethodId?: string;
+  idempotencyKey?: string;
+}
+
+export interface ConfirmPurchaseBody {
+  reservationId: string;
+  paymentId: string;
+}
+
+/**
+ * Transfer request body
+ */
+export interface TransferTicketBody {
+  ticketId: string;
+  toUserId: string;
+  reason?: string;
+}
+
+export interface ValidateTransferBody {
+  ticketId: string;
+  toUserId: string;
+}
+
+/**
+ * QR validation request body
+ */
+export interface QRValidateBody {
+  qrCode: string;
+  eventId: string;
+  entrance?: string;
+  deviceId?: string;
+}
+
+export interface QRGenerateBody {
+  ticketId: string;
+}
+
+// =============================================================================
 // Ticket-related types
+// =============================================================================
+
 export interface Ticket {
   id: string;
   tenant_id: string;

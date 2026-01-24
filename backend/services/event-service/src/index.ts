@@ -15,7 +15,8 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import underPressure from '@fastify/under-pressure';
 import { DatabaseService } from './services/databaseService';
-import { initRedis, getRedis, closeRedisConnections } from './config/redis';
+import { initRedis, getRedis, getSub, closeRedisConnections } from './config/redis';
+import { invalidateTenantCache } from './middleware/tenant';
 import { initializeMongoDB, closeMongoDB } from './config/mongodb';
 import { createDependencyContainer } from './config/dependencies';
 import { ReservationCleanupService } from './services/reservation-cleanup.service';
@@ -92,6 +93,58 @@ let cleanupService: ReservationCleanupService | null = null;
 
 // Track if shutdown is in progress
 let isShuttingDown = false;
+
+// Redis subscription client for cache invalidation
+let redisSub: ReturnType<typeof getSub> | null = null;
+
+/**
+ * TODO #9: Initialize tenant cache invalidation subscription
+ *
+ * Subscribes to the 'tenant:cache:invalidate' Redis channel.
+ * When auth-service changes a tenant's status, it publishes the tenant ID
+ * to this channel, and we invalidate our local cache entry.
+ */
+async function initializeCacheInvalidation(): Promise<void> {
+  try {
+    redisSub = getSub();
+
+    // Subscribe to the tenant cache invalidation channel
+    await redisSub.subscribe('tenant:cache:invalidate');
+
+    // Handle incoming messages
+    redisSub.on('message', async (channel: string, tenantId: string) => {
+      if (channel === 'tenant:cache:invalidate') {
+        logger.debug({ tenantId, channel }, 'Received tenant cache invalidation event');
+        await invalidateTenantCache(tenantId);
+      }
+    });
+
+    // Handle subscription errors
+    redisSub.on('error', (error: Error) => {
+      logger.error({ error: error.message }, 'Redis subscription error');
+    });
+
+    logger.info('Subscribed to tenant:cache:invalidate channel');
+  } catch (error: any) {
+    logger.warn({ error: error.message }, 'Failed to initialize cache invalidation subscription - will use TTL-based expiration');
+    // Non-fatal: cache will still expire via TTL
+  }
+}
+
+/**
+ * Cleanup cache invalidation subscription
+ */
+async function shutdownCacheInvalidation(): Promise<void> {
+  if (redisSub) {
+    try {
+      await redisSub.unsubscribe('tenant:cache:invalidate');
+      logger.info('Unsubscribed from tenant:cache:invalidate channel');
+    } catch (error: any) {
+      logger.warn({ error: error.message }, 'Failed to unsubscribe from cache invalidation channel');
+    }
+    redisSub = null;
+  }
+}
 
 async function start(): Promise<void> {
   try {
@@ -303,6 +356,10 @@ async function start(): Promise<void> {
     // Initialize Bull job queues for event transitions
     await initializeEventTransitionsProcessor();
     logger.info('Event transitions job processor initialized');
+
+    // TODO #9: Initialize tenant cache invalidation subscription
+    await initializeCacheInvalidation();
+    logger.info('Tenant cache invalidation subscription initialized');
   } catch (error) {
     logger.error({ error }, 'Failed to start event service');
     process.exit(1);
@@ -388,6 +445,10 @@ const gracefulShutdown = async (signal: string) => {
     // 6.5. Close RabbitMQ connection
     await shutdownRabbitMQ();
     logger.info('RabbitMQ publisher disconnected');
+
+    // 6.6. Shutdown cache invalidation subscription (before closing Redis)
+    await shutdownCacheInvalidation();
+    logger.info('Cache invalidation subscription closed');
 
     // 7. Close Redis connections
     await closeRedisConnections();

@@ -9,6 +9,7 @@ import swaggerUi from '@fastify/swagger-ui';
 import { createDependencyContainer } from './config/dependencies';
 import { authRoutes } from './routes/auth.routes';
 import { internalRoutes } from './routes/internal.routes';
+import { adminRoutes } from './routes/admin.routes';
 import { env } from './config/env';
 import { setupHealthRoutes } from './services/monitoring.service';
 import { pool, db } from './config/database';
@@ -54,7 +55,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       const proto = request.headers['x-forwarded-proto'];
       if (proto === 'http') {
         const host = request.headers['host'] || '';
-        return reply.redirect(301, `https://${host}${request.url}`);
+        return reply.code(301).redirect(`https://${host}${request.url}`);
       }
     });
   }
@@ -437,6 +438,11 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   await app.register(internalRoutes, {
     prefix: '/auth/internal'
+  });
+
+  await app.register(adminRoutes, {
+    prefix: '/auth/admin',
+    container
   });
 
   app.addHook('onClose', async () => {

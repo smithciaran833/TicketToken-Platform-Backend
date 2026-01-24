@@ -25,8 +25,12 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
     }, 'Internal ticket validation request');
 
     try {
+      // SECURITY FIX (H4): Use explicit column list instead of SELECT *
       const result = await db.raw(`
-        SELECT t.*, e.venue_id, e.start_date
+        SELECT
+          t.id, t.ticket_number, t.status, t.scanned_at, t.event_id, t.tier_id,
+          t.seat_section, t.seat_row, t.seat_number, t.holder_name, t.holder_email,
+          e.venue_id, e.start_date, e.name as event_name
         FROM tickets t
         JOIN events e ON t.event_id = e.id
         WHERE t.id = ? AND e.venue_id = ?
@@ -41,10 +45,25 @@ const internalValidationRoutes: FastifyPluginAsync = async (fastify) => {
         .where('ticket_id', ticketId)
         .first();
 
+      // Return only safe ticket fields for validation
+      const ticket = result.rows[0];
       return reply.send({
         valid: !scanCheck,
         alreadyScanned: !!scanCheck,
-        ticket: result.rows[0]
+        ticket: {
+          id: ticket.id,
+          ticketNumber: ticket.ticket_number,
+          status: ticket.status,
+          scannedAt: ticket.scanned_at,
+          eventId: ticket.event_id,
+          eventName: ticket.event_name,
+          venueId: ticket.venue_id,
+          startDate: ticket.start_date,
+          seatSection: ticket.seat_section,
+          seatRow: ticket.seat_row,
+          seatNumber: ticket.seat_number,
+          holderName: ticket.holder_name,
+        }
       });
     } catch (error: any) {
       fastify.log.error('Validation error:', error);

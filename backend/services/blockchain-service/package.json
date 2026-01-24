@@ -10,12 +10,13 @@
     "test": "jest --passWithNoTests",
     "test:coverage": "jest --coverage --passWithNoTests",
     "test:watch": "jest --watch --passWithNoTests",
-    "migrate": "knex migrate:latest --knexfile knexfile.js",
-    "migrate:rollback": "knex migrate:rollback --knexfile knexfile.js",
-    "migrate:make": "knex migrate:make --knexfile knexfile.js"
+    "migrate": "knex migrate:latest --knexfile knexfile.ts",
+    "migrate:rollback": "knex migrate:rollback --knexfile knexfile.ts",
+    "migrate:make": "knex migrate:make --knexfile knexfile.ts"
   },
   "dependencies": {
     "@tickettoken/shared": "file:../../shared",
+    "@aws-sdk/client-kms": "3.962.0",
     "@aws-sdk/client-secrets-manager": "3.962.0",
     "@fastify/cors": "^8.4.2",
     "@fastify/helmet": "^11.1.1",

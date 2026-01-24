@@ -8,6 +8,51 @@ import { initializeCache } from '../services/cache.service';
 import { getRedis } from '../config/redis';
 
 /**
+ * TYPE SAFETY (M1): Request parameter and body interfaces
+ */
+interface VenueParams {
+  venueId: string;
+}
+
+interface ContentParams extends VenueParams {
+  contentId: string;
+}
+
+interface CreateContentBody {
+  contentType: string;
+  content: Record<string, unknown>;
+  displayOrder?: number;
+  featured?: boolean;
+}
+
+interface UpdateContentBody {
+  content?: Record<string, unknown>;
+  displayOrder?: number;
+  featured?: boolean;
+  primaryImage?: string;
+}
+
+interface ContentQueryParams {
+  contentType?: string;
+  status?: string;
+  type?: string;
+}
+
+interface SeatingChartBody {
+  sections: Array<{ id: string; name: string; rows: number; seatsPerRow: number }>;
+}
+
+interface PhotoBody {
+  media: { url: string; type: string; caption?: string };
+}
+
+/**
+ * TYPE SAFETY (M1): User context added by auth middleware
+ * Note: Using type alias instead of interface extension to avoid FastifyRequest conflict
+ */
+type UserContext = { id: string; tenant_id: string };
+
+/**
  * SECURITY FIX: VenueContentController updated to pass tenantId to all service calls
  * SECURITY FIX: Requires authentication - no 'system' fallback
  * CACHE FIX: Initialize with cacheService to enable cache invalidation

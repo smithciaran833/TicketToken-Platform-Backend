@@ -7,6 +7,11 @@ import { discountService } from '../services/discountService';
 import { PurchaseSaga } from '../sagas/PurchaseSaga';
 import { config } from '../config';
 import { logger } from '../utils/logger';
+import {
+  OrderServiceClient,
+  createRequestContext,
+} from '../clients';
+import { NotFoundError, ValidationError, ForbiddenError } from '../utils/errors';
 
 const log = logger.child({ component: 'PurchaseController' });
 
@@ -14,6 +19,9 @@ const db = knex({
   client: 'pg',
   connection: process.env.DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/tickettoken_db'
 });
+
+// Initialize order service client for confirm/cancel operations
+const orderServiceClient = new OrderServiceClient();
 
 export class PurchaseController {
   async createOrder(request: FastifyRequest, reply: FastifyReply) {
@@ -352,6 +360,259 @@ export class PurchaseController {
         message: error.message || 'Failed to create order'
       });
     }
+  }
+
+  /**
+   * Confirm a reservation and complete the purchase
+   *
+   * This endpoint is called after payment is processed to:
+   * 1. Validate the reservation exists and is still valid
+   * 2. Update order status to PAID
+   * 3. Return the confirmed tickets
+   *
+   * SERVICE BOUNDARY: Uses OrderServiceClient for order status updates
+   */
+  async confirmPurchase(request: FastifyRequest, reply: FastifyReply) {
+    const { reservationId, paymentId } = (request as any).validatedBody || request.body as any;
+    const userId = (request as any).user?.id || (request as any).userId;
+    const tenantId = (request as any).tenantId;
+
+    if (!userId) {
+      return reply.status(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Authentication required'
+      });
+    }
+
+    if (!reservationId) {
+      return reply.status(400).send({
+        error: 'INVALID_REQUEST',
+        message: 'reservationId is required'
+      });
+    }
+
+    if (!paymentId) {
+      return reply.status(400).send({
+        error: 'INVALID_REQUEST',
+        message: 'paymentId is required'
+      });
+    }
+
+    try {
+      const ctx = createRequestContext(tenantId || 'default', userId);
+
+      // Get the order to verify ownership and status
+      const order = await orderServiceClient.getOrder(reservationId, ctx);
+
+      if (order.userId !== userId) {
+        return reply.status(404).send({
+          error: 'NOT_FOUND',
+          message: 'Reservation not found'
+        });
+      }
+
+      if (order.status === 'PAID' || order.status === 'CONFIRMED') {
+        // Already confirmed - return success (idempotent)
+        const tickets = await this.getTicketsForOrder(reservationId, tenantId);
+        return reply.send({
+          success: true,
+          data: {
+            orderId: order.id,
+            status: order.status,
+            tickets: tickets.map(t => ({
+              id: t.id,
+              ticketTypeId: t.ticket_type_id,
+              status: t.status
+            }))
+          }
+        });
+      }
+
+      if (order.status !== 'PENDING') {
+        return reply.status(400).send({
+          error: 'INVALID_ORDER_STATUS',
+          message: `Cannot confirm order with status: ${order.status}`
+        });
+      }
+
+      // Check if reservation has expired
+      if (order.expiresAt && new Date(order.expiresAt) < new Date()) {
+        return reply.status(410).send({
+          error: 'RESERVATION_EXPIRED',
+          message: 'This reservation has expired. Please create a new order.'
+        });
+      }
+
+      // Update order status to PAID via order-service
+      await orderServiceClient.updateOrderStatus(reservationId, 'PAID', ctx);
+
+      // Update local tickets status to active
+      await db('tickets')
+        .where('order_id', reservationId)
+        .update({
+          status: 'active',
+          updated_at: new Date()
+        });
+
+      // Get the confirmed tickets
+      const tickets = await this.getTicketsForOrder(reservationId, tenantId);
+
+      log.info('Purchase confirmed successfully', {
+        orderId: reservationId,
+        userId,
+        ticketCount: tickets.length
+      });
+
+      return reply.send({
+        success: true,
+        data: {
+          orderId: reservationId,
+          status: 'PAID',
+          tickets: tickets.map(t => ({
+            id: t.id,
+            ticketTypeId: t.ticket_type_id,
+            status: 'active'
+          }))
+        }
+      });
+
+    } catch (error: any) {
+      if (error.statusCode === 404) {
+        return reply.status(404).send({
+          error: 'NOT_FOUND',
+          message: 'Reservation not found'
+        });
+      }
+
+      log.error('Error confirming purchase', {
+        error: error.message,
+        reservationId,
+        userId
+      });
+
+      return reply.status(500).send({
+        error: 'CONFIRM_FAILED',
+        message: error.message || 'Failed to confirm purchase'
+      });
+    }
+  }
+
+  /**
+   * Cancel a pending reservation
+   *
+   * This endpoint cancels a pending reservation and releases the reserved inventory.
+   *
+   * SERVICE BOUNDARY: Uses OrderServiceClient for order cancellation
+   */
+  async cancelReservation(request: FastifyRequest, reply: FastifyReply) {
+    const { reservationId } = request.params as any;
+    const userId = (request as any).user?.id || (request as any).userId;
+    const tenantId = (request as any).tenantId;
+
+    if (!userId) {
+      return reply.status(401).send({
+        error: 'UNAUTHORIZED',
+        message: 'Authentication required'
+      });
+    }
+
+    if (!reservationId) {
+      return reply.status(400).send({
+        error: 'INVALID_REQUEST',
+        message: 'reservationId is required'
+      });
+    }
+
+    try {
+      const ctx = createRequestContext(tenantId || 'default', userId);
+
+      // Get the order to verify ownership and status
+      const order = await orderServiceClient.getOrder(reservationId, ctx);
+
+      if (order.userId !== userId) {
+        return reply.status(404).send({
+          error: 'NOT_FOUND',
+          message: 'Reservation not found'
+        });
+      }
+
+      if (order.status === 'CANCELLED') {
+        // Already cancelled - return success (idempotent)
+        return reply.send({
+          success: true,
+          message: 'Reservation already cancelled'
+        });
+      }
+
+      if (order.status !== 'PENDING') {
+        return reply.status(400).send({
+          error: 'INVALID_ORDER_STATUS',
+          message: `Cannot cancel order with status: ${order.status}. Only PENDING orders can be cancelled.`
+        });
+      }
+
+      // Cancel the order via order-service
+      await orderServiceClient.cancelOrder(reservationId, 'User requested cancellation', ctx);
+
+      // Release the reserved inventory by restoring ticket type quantities
+      const orderItems = await orderServiceClient.getOrderItems(reservationId, ctx);
+
+      for (const item of orderItems) {
+        await db('ticket_types')
+          .where('id', item.ticketTypeId)
+          .update({
+            available_quantity: db.raw('available_quantity + ?', [item.quantity]),
+            reserved_quantity: db.raw('GREATEST(COALESCE(reserved_quantity, 0) - ?, 0)', [item.quantity]),
+            updated_at: new Date()
+          });
+      }
+
+      // Delete any tickets that were created for this order
+      await db('tickets')
+        .where('order_id', reservationId)
+        .delete();
+
+      log.info('Reservation cancelled successfully', {
+        orderId: reservationId,
+        userId,
+        itemsReleased: orderItems.length
+      });
+
+      return reply.send({
+        success: true,
+        message: 'Reservation cancelled successfully'
+      });
+
+    } catch (error: any) {
+      if (error.statusCode === 404) {
+        return reply.status(404).send({
+          error: 'NOT_FOUND',
+          message: 'Reservation not found'
+        });
+      }
+
+      log.error('Error cancelling reservation', {
+        error: error.message,
+        reservationId,
+        userId
+      });
+
+      return reply.status(500).send({
+        error: 'CANCEL_FAILED',
+        message: error.message || 'Failed to cancel reservation'
+      });
+    }
+  }
+
+  /**
+   * Helper to get tickets for an order
+   */
+  private async getTicketsForOrder(orderId: string, tenantId?: string): Promise<any[]> {
+    let query = db('tickets').where('order_id', orderId);
+    if (tenantId) {
+      query = query.where('tenant_id', tenantId);
+    }
+    return query.select('id', 'ticket_type_id', 'status', 'user_id', 'event_id');
   }
 }
 

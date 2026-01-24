@@ -1,5 +1,6 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { createProblemError } from '../middleware/error-handler';
+import { serializeCapacity, serializeCapacities } from '../serializers';
 
 /**
  * Capacity Controller
@@ -22,7 +23,7 @@ export async function getEventCapacity(
   const capacityService = container.resolve('capacityService');
   const sections = await capacityService.getEventCapacity(eventId, tenantId);
 
-  return reply.send({ capacity: sections });
+  return reply.send({ capacity: serializeCapacities(sections) });
 }
 
 export async function getTotalCapacity(
@@ -68,7 +69,7 @@ export async function getCapacityById(
     throw createProblemError(404, 'NOT_FOUND', 'Capacity not found');
   }
 
-  return reply.send({ capacity });
+  return reply.send({ capacity: serializeCapacity(capacity) });
 }
 
 export async function createCapacity(
@@ -97,7 +98,7 @@ export async function createCapacity(
     authToken
   );
 
-  return reply.status(201).send({ capacity });
+  return reply.status(201).send({ capacity: serializeCapacity(capacity) });
 }
 
 export async function updateCapacity(
@@ -124,7 +125,7 @@ export async function updateCapacity(
     throw createProblemError(404, 'NOT_FOUND', 'Capacity not found');
   }
 
-  return reply.send({ capacity });
+  return reply.send({ capacity: serializeCapacity(capacity) });
 }
 
 export async function checkAvailability(
@@ -194,7 +195,7 @@ export async function reserveCapacity(
 
   return reply.send({
     message: 'Capacity reserved successfully',
-    capacity,
+    capacity: serializeCapacity(capacity),
     locked_price: lockedPrice
   });
 }

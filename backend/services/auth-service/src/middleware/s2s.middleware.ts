@@ -3,9 +3,36 @@
  *
  * Verifies that requests from internal services are authenticated.
  * Services must include an x-service-token header with a valid JWT.
- * 
- * SECURITY: Uses SEPARATE keys from user JWTs to limit blast radius
- * if one key is compromised.
+ *
+ * SECURITY ARCHITECTURE:
+ * ======================
+ * This module uses SEPARATE keys from user JWTs to limit blast radius
+ * if one key is compromised. The key isolation ensures:
+ * 1. Compromised user JWT keys cannot be used to forge S2S tokens
+ * 2. Compromised S2S keys cannot be used to impersonate users
+ * 3. Each key type can be rotated independently
+ *
+ * DEVELOPMENT FALLBACK BEHAVIOR:
+ * ==============================
+ * In development mode ONLY, if S2S_PRIVATE_KEY and S2S_PUBLIC_KEY are
+ * not configured, this module falls back to using JWT keys. This is
+ * intentional to simplify local development setup.
+ *
+ * ⚠️  SECURITY WARNING: In production, this fallback is BLOCKED.
+ * The loadFromEnvironment() method throws an error if S2S keys are
+ * not configured in production, ensuring proper key isolation.
+ *
+ * To generate separate S2S keys:
+ * ```bash
+ * openssl genrsa -out s2s-private.pem 4096
+ * openssl rsa -in s2s-private.pem -pubout -out s2s-public.pem
+ * ```
+ *
+ * MONITORING:
+ * ===========
+ * The isUsingFallbackKeys() function is exported for monitoring.
+ * Alert if this returns true in production (it shouldn't be possible,
+ * but defense in depth).
  */
 
 import jwt from 'jsonwebtoken';

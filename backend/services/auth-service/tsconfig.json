@@ -5,6 +5,8 @@
     "moduleResolution": "Node",
     "outDir": "./dist",
     "strict": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -12,11 +14,8 @@
     "sourceMap": true,
     "declaration": true,
     "declarationMap": true,
-    "baseUrl": "./",
-    "paths": {
-      "@tickettoken/shared": ["../../shared/dist/index"],
-      "@tickettoken/shared/*": ["../../shared/dist/*"]
-    }
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuildinfo"
   },
   "include": [
     "src/**/*"
@@ -27,6 +26,8 @@
     "test",
     "**/*.test.ts",
     "**/*.spec.ts",
-    "**/*.old"
+    "**/*.old",
+    ".tsbuildinfo",
+    "src/validators/response.schemas.ts"
   ]
 }

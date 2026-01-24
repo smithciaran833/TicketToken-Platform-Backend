@@ -8,6 +8,7 @@
  */
 
 import { BaseServiceClient, RequestContext, ServiceClientError } from '../http-client/base-service-client';
+import { CancelEventListingsResponse } from './types';
 
 // =============================================================================
 // Request/Response Types
@@ -376,6 +377,61 @@ export class MarketplaceServiceClient extends BaseServiceClient {
       }
       throw error;
     }
+  }
+
+  // ==========================================================================
+  // PHASE 5d NEW METHODS - Event Cancellation Workflow Support
+  // ==========================================================================
+
+  /**
+   * Cancel all active marketplace listings for an event
+   *
+   * Used during event cancellation to remove all resale listings
+   * and warn about in-progress transactions.
+   *
+   * @param eventId - The event ID
+   * @param tenantId - The tenant ID
+   * @param reason - Reason for cancellation
+   * @param notifySellers - Whether to notify sellers (default: true)
+   * @param ctx - Request context with tenant/user IDs
+   * @returns Cancellation results
+   */
+  async cancelEventListings(
+    eventId: string,
+    tenantId: string,
+    reason: string,
+    notifySellers: boolean,
+    ctx: RequestContext
+  ): Promise<CancelEventListingsResponse> {
+    const response = await this.post<CancelEventListingsResponse>(
+      '/internal/listings/cancel-by-event',
+      ctx,
+      {
+        eventId,
+        tenantId,
+        reason,
+        notifySellers,
+      }
+    );
+    return response.data;
+  }
+
+  /**
+   * Cancel event listings with default notification (helper method)
+   *
+   * @param eventId - The event ID
+   * @param tenantId - The tenant ID
+   * @param reason - Reason for cancellation
+   * @param ctx - Request context with tenant/user IDs
+   * @returns Cancellation results
+   */
+  async cancelEventListingsWithNotification(
+    eventId: string,
+    tenantId: string,
+    reason: string,
+    ctx: RequestContext
+  ): Promise<CancelEventListingsResponse> {
+    return this.cancelEventListings(eventId, tenantId, reason, true, ctx);
   }
 }
 

@@ -3,6 +3,7 @@ import { getDb } from '../config/database';
 import { getRedis } from '../config/redis';
 import { isValidUuid } from '../schemas/common.schema';
 import { UnauthorizedError, ForbiddenError, BadRequestError, TenantError, InternalError } from '../utils/errors';
+import { logger } from '../utils/logger';
 
 /**
  * NOTE: Issue #18 (HIGH) - Connection Pool Safety
@@ -17,12 +18,13 @@ import { UnauthorizedError, ForbiddenError, BadRequestError, TenantError, Intern
  * Key: tenant:valid:{tenant_id}
  * Value: JSON({ id, status, name })
  * TTL: 5 minutes
- * 
- * Phase 2 TODO: Implement cache invalidation when tenant status changes
- * via pub/sub or event system
+ *
+ * IMPLEMENTED: TODO #9 - Cache invalidation via Redis pub/sub
+ * Auth-service publishes to 'tenant:cache:invalidate' channel when tenant status changes.
+ * Event-service subscribes and calls invalidateTenantCache() to clear stale entries.
  */
 const TENANT_CACHE_TTL = 5 * 60; // 5 minutes in seconds
-const TENANT_CACHE_PREFIX = 'tenant:valid:';
+export const TENANT_CACHE_PREFIX = 'tenant:valid:';
 
 async function getCachedTenant(tenantId: string): Promise<any | null> {
   try {
@@ -45,9 +47,9 @@ async function cacheTenant(tenant: any): Promise<void> {
       TENANT_CACHE_TTL,
       JSON.stringify({ id: tenant.id, status: tenant.status, name: tenant.name })
     );
-  } catch (error) {
+  } catch (error: any) {
     // Cache write failure - log but don't fail request
-    console.error('Failed to cache tenant:', error);
+    logger.warn({ tenantId: tenant.id, error: error.message }, 'Failed to cache tenant');
   }
 }
 
@@ -246,4 +248,30 @@ export async function strictTenantHook(request: FastifyRequest, reply: FastifyRe
   (request as any).tenantId = tenantId;
   
   request.log.debug({ tenantId, userId: user.id || user.sub, usesTrx: !!trx }, 'Strict tenant context set for RLS');
+}
+
+/**
+ * Invalidate tenant cache entry
+ *
+ * IMPLEMENTED: TODO #9 - Tenant Cache Invalidation
+ * Called when auth-service publishes a tenant status change event.
+ * Removes the cached tenant data so the next request fetches fresh data from DB.
+ *
+ * @param tenantId - The tenant ID to invalidate
+ */
+export async function invalidateTenantCache(tenantId: string): Promise<void> {
+  const key = `${TENANT_CACHE_PREFIX}${tenantId}`;
+
+  try {
+    const redis = getRedis();
+    const deleted = await redis.del(key);
+
+    if (deleted > 0) {
+      logger.info({ tenantId }, 'Tenant cache invalidated');
+    } else {
+      logger.debug({ tenantId }, 'Tenant cache key not found (already expired or never cached)');
+    }
+  } catch (error: any) {
+    logger.warn({ tenantId, error: error.message }, 'Failed to invalidate tenant cache');
+  }
 }

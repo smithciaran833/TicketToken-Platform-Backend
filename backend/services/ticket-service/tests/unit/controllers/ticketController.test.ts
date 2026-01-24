@@ -84,7 +84,11 @@ describe('TicketController', () => {
         name: 'VIP',
         price: 100,
         quantity: 50,
-        tenant_id: 'tenant-456'
+        available_quantity: 50,
+        is_active: true,
+        tenant_id: 'tenant-456',
+        created_at: new Date(),
+        updated_at: new Date()
       };
 
       (mockTicketService.createTicketType as jest.Mock).mockResolvedValue(mockTicketType);
@@ -104,10 +108,21 @@ describe('TicketController', () => {
         'event:event-123:availability'
       ]);
       expect(mockStatus).toHaveBeenCalledWith(201);
+      // Serializer transforms snake_case to camelCase and strips tenant_id
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTicketType
+        data: expect.objectContaining({
+          id: 'tt-123',
+          eventId: 'event-123',
+          name: 'VIP',
+          price: 100,
+          quantity: 50
+        })
       });
+      // Verify sensitive data is NOT in response
+      const sentData = mockSend.mock.calls[0][0].data;
+      expect(sentData.tenant_id).toBeUndefined();
+      expect(sentData.tenantId).toBeUndefined();
     });
   });
 
@@ -136,18 +151,33 @@ describe('TicketController', () => {
 
       (cache.get as jest.Mock).mockResolvedValue(null);
 
-      const ticketTypes = [{ id: 'tt-1', name: 'GA' }, { id: 'tt-2', name: 'VIP' }];
+      // Mock raw data from service (snake_case)
+      const ticketTypes = [
+        { id: 'tt-1', name: 'GA', event_id: 'event-123', price: 50, quantity: 100, available_quantity: 100, is_active: true },
+        { id: 'tt-2', name: 'VIP', event_id: 'event-123', price: 100, quantity: 50, available_quantity: 50, is_active: true }
+      ];
       (mockTicketService.getTicketTypes as jest.Mock).mockResolvedValue(ticketTypes);
       (cache.set as jest.Mock).mockResolvedValue(true);
 
       await controller.getTicketTypes(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockTicketService.getTicketTypes).toHaveBeenCalledWith('event-123', 'tenant-456');
-      expect(cache.set).toHaveBeenCalledWith('ticket-types:event-123:tenant-456', ticketTypes, { ttl: 300 });
+      // Cache stores serialized data (camelCase)
+      expect(cache.set).toHaveBeenCalledWith(
+        'ticket-types:event-123:tenant-456',
+        expect.arrayContaining([
+          expect.objectContaining({ id: 'tt-1', name: 'GA', eventId: 'event-123' }),
+          expect.objectContaining({ id: 'tt-2', name: 'VIP', eventId: 'event-123' })
+        ]),
+        { ttl: 300 }
+      );
       expect(mockHeader).toHaveBeenCalledWith('X-Cache', 'MISS');
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: ticketTypes
+        data: expect.arrayContaining([
+          expect.objectContaining({ id: 'tt-1', name: 'GA' }),
+          expect.objectContaining({ id: 'tt-2', name: 'VIP' })
+        ])
       });
     });
   });
@@ -167,12 +197,14 @@ describe('TicketController', () => {
         user_id: 'user-123',
         event_id: 'event-123',
         ticket_type_id: 'tt-1',
+        quantity: 2,
         total_quantity: 2,
-        tickets: ['ticket-1', 'ticket-2'],
+        tickets: ['ticket-1', 'ticket-2'],  // This should be stripped by serializer
         expires_at: new Date('2024-01-01T01:00:00'),
         status: 'RESERVED',
         type_name: 'GA',
-        created_at: new Date('2024-01-01')
+        created_at: new Date('2024-01-01'),
+        updated_at: new Date('2024-01-01')
       };
 
       (mockTicketService.createReservation as jest.Mock).mockResolvedValue(mockResult);
@@ -186,21 +218,20 @@ describe('TicketController', () => {
         userId: 'user-123',
         tenantId: 'tenant-456'
       });
+      // Serializer transforms to camelCase and includes userId for owner
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: {
+        data: expect.objectContaining({
           id: 'res-123',
           userId: 'user-123',
           eventId: 'event-123',
           ticketTypeId: 'tt-1',
-          totalQuantity: 2,
-          tickets: ['ticket-1', 'ticket-2'],
-          expiresAt: mockResult.expires_at,
-          status: 'RESERVED',
-          typeName: 'GA',
-          createdAt: mockResult.created_at
-        }
+          status: 'RESERVED'
+        })
       });
+      // Verify internal tickets array is stripped
+      const sentData = mockSend.mock.calls[0][0].data;
+      expect(sentData.tickets).toBeUndefined();
     });
 
     it('should return 401 if user not authenticated', async () => {
@@ -227,19 +258,24 @@ describe('TicketController', () => {
       (mockRequest as any).user = { id: 'user-123' };
       mockRequest.params = { reservationId: 'res-123' };
 
-      const mockResult = {
-        tickets: ['ticket-1', 'ticket-2'],
-        orderId: 'order-123'
-      };
+      // Mock raw tickets array from service
+      const mockResult = [
+        { id: 'ticket-1', event_id: 'event-123', ticket_type_id: 'tt-1', user_id: 'user-123', status: 'active', created_at: new Date(), updated_at: new Date() },
+        { id: 'ticket-2', event_id: 'event-123', ticket_type_id: 'tt-1', user_id: 'user-123', status: 'active', created_at: new Date(), updated_at: new Date() }
+      ];
 
       (mockTicketService.confirmPurchase as jest.Mock).mockResolvedValue(mockResult);
 
       await controller.confirmPurchase(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockTicketService.confirmPurchase).toHaveBeenCalledWith('res-123', 'user-123');
+      // Serialized tickets for owner
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockResult
+        data: expect.arrayContaining([
+          expect.objectContaining({ id: 'ticket-1', userId: 'user-123' }),
+          expect.objectContaining({ id: 'ticket-2', userId: 'user-123' })
+        ])
       });
     });
 
@@ -260,15 +296,22 @@ describe('TicketController', () => {
       (mockRequest as any).user = { id: 'user-123', role: 'user' };
       (mockRequest as any).tenantId = 'tenant-456';
 
-      const mockTickets = [{ id: 'ticket-1' }, { id: 'ticket-2' }];
+      const mockTickets = [
+        { id: 'ticket-1', user_id: 'user-123', event_id: 'event-1', status: 'active', created_at: new Date(), updated_at: new Date() },
+        { id: 'ticket-2', user_id: 'user-123', event_id: 'event-1', status: 'active', created_at: new Date(), updated_at: new Date() }
+      ];
       (mockTicketService.getUserTickets as jest.Mock).mockResolvedValue(mockTickets);
 
       await controller.getUserTickets(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockTicketService.getUserTickets).toHaveBeenCalledWith('user-123', 'tenant-456');
+      // Serialized for owner includes userId
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTickets
+        data: expect.arrayContaining([
+          expect.objectContaining({ id: 'ticket-1', userId: 'user-123' }),
+          expect.objectContaining({ id: 'ticket-2', userId: 'user-123' })
+        ])
       });
     });
 
@@ -277,7 +320,9 @@ describe('TicketController', () => {
       (mockRequest as any).user = { id: 'admin-123', role: 'admin' };
       (mockRequest as any).tenantId = 'tenant-456';
 
-      const mockTickets = [{ id: 'ticket-1' }];
+      const mockTickets = [
+        { id: 'ticket-1', user_id: 'other-user', event_id: 'event-1', status: 'active', created_at: new Date(), updated_at: new Date() }
+      ];
       (mockTicketService.getUserTickets as jest.Mock).mockResolvedValue(mockTickets);
 
       await controller.getUserTickets(mockRequest as FastifyRequest, mockReply as FastifyReply);
@@ -285,7 +330,9 @@ describe('TicketController', () => {
       expect(mockTicketService.getUserTickets).toHaveBeenCalledWith('other-user', 'tenant-456');
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTickets
+        data: expect.arrayContaining([
+          expect.objectContaining({ id: 'ticket-1', userId: 'other-user' })
+        ])
       });
     });
 
@@ -347,7 +394,10 @@ describe('TicketController', () => {
       const mockTicket = {
         id: 'ticket-123',
         user_id: 'user-123',
-        status: 'ACTIVE'
+        event_id: 'event-1',
+        status: 'ACTIVE',
+        created_at: new Date(),
+        updated_at: new Date()
       };
 
       (mockTicketService.getTicket as jest.Mock).mockResolvedValue(mockTicket);
@@ -355,9 +405,14 @@ describe('TicketController', () => {
       await controller.getTicketById(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockTicketService.getTicket).toHaveBeenCalledWith('ticket-123', 'tenant-456');
+      // Serialized for owner includes userId
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTicket
+        data: expect.objectContaining({
+          id: 'ticket-123',
+          userId: 'user-123',
+          status: 'ACTIVE'
+        })
       });
     });
 
@@ -407,16 +462,24 @@ describe('TicketController', () => {
       const mockTicket = {
         id: 'ticket-123',
         user_id: 'other-user',
-        status: 'ACTIVE'
+        event_id: 'event-1',
+        status: 'ACTIVE',
+        created_at: new Date(),
+        updated_at: new Date()
       };
 
       (mockTicketService.getTicket as jest.Mock).mockResolvedValue(mockTicket);
 
       await controller.getTicketById(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
+      // Admin viewing ticket also gets serialized owner view
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTicket
+        data: expect.objectContaining({
+          id: 'ticket-123',
+          userId: 'other-user',
+          status: 'ACTIVE'
+        })
       });
     });
   });
@@ -507,15 +570,30 @@ describe('TicketController', () => {
       mockRequest.params = { id: 'tt-123' };
       (mockRequest as any).tenantId = 'tenant-456';
 
-      const mockTicketType = { id: 'tt-123', name: 'VIP' };
+      const mockTicketType = {
+        id: 'tt-123',
+        name: 'VIP',
+        event_id: 'event-1',
+        price: 100,
+        quantity: 50,
+        available_quantity: 50,
+        is_active: true,
+        created_at: new Date(),
+        updated_at: new Date()
+      };
       (mockTicketService.getTicketType as jest.Mock).mockResolvedValue(mockTicketType);
 
       await controller.getTicketType(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockTicketService.getTicketType).toHaveBeenCalledWith('tt-123', 'tenant-456');
+      // Serialized to camelCase
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTicketType
+        data: expect.objectContaining({
+          id: 'tt-123',
+          name: 'VIP',
+          eventId: 'event-1'
+        })
       });
     });
 
@@ -542,7 +620,12 @@ describe('TicketController', () => {
         id: 'tt-123',
         event_id: 'event-123',
         name: 'Updated VIP',
-        price: 150
+        price: 150,
+        quantity: 50,
+        available_quantity: 50,
+        is_active: true,
+        created_at: new Date(),
+        updated_at: new Date()
       };
 
       (mockTicketService.updateTicketType as jest.Mock).mockResolvedValue(mockTicketType);
@@ -559,9 +642,15 @@ describe('TicketController', () => {
         'ticket-types:event-123:tenant-456',
         'event:event-123:availability'
       ]);
+      // Serialized to camelCase
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTicketType
+        data: expect.objectContaining({
+          id: 'tt-123',
+          eventId: 'event-123',
+          name: 'Updated VIP',
+          price: 150
+        })
       });
     });
   });
@@ -571,15 +660,22 @@ describe('TicketController', () => {
       (mockRequest as any).user = { id: 'user-123' };
       (mockRequest as any).tenantId = 'tenant-456';
 
-      const mockTickets = [{ id: 'ticket-1' }, { id: 'ticket-2' }];
+      const mockTickets = [
+        { id: 'ticket-1', user_id: 'user-123', event_id: 'event-1', status: 'active', created_at: new Date(), updated_at: new Date() },
+        { id: 'ticket-2', user_id: 'user-123', event_id: 'event-1', status: 'active', created_at: new Date(), updated_at: new Date() }
+      ];
       (mockTicketService.getUserTickets as jest.Mock).mockResolvedValue(mockTickets);
 
       await controller.getCurrentUserTickets(mockRequest as FastifyRequest, mockReply as FastifyReply);
 
       expect(mockTicketService.getUserTickets).toHaveBeenCalledWith('user-123', 'tenant-456');
+      // Serialized for owner includes userId
       expect(mockSend).toHaveBeenCalledWith({
         success: true,
-        data: mockTickets
+        data: expect.arrayContaining([
+          expect.objectContaining({ id: 'ticket-1', userId: 'user-123' }),
+          expect.objectContaining({ id: 'ticket-2', userId: 'user-123' })
+        ])
       });
     });
 

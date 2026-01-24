@@ -20,6 +20,8 @@ import {
   EventMetadataModel,
   IEventMetadata
 } from '../models';
+import { queueBlockchainSync } from '../jobs/blockchain-sync.job';
+import { getSoldTicketCountFromService } from '../clients/ticket-stats';
 
 const logger = pino({ name: 'event-service' });
 
@@ -428,52 +430,86 @@ export class EventService {
         venuePercentage: originalData.venue_percentage || 0,
       };
 
-      // TODO: Publish to message queue instead of direct call
-      // await messageQueue.publish('blockchain.events', {
-      //   action: 'CREATE_EVENT',
-      //   eventId: event.id,
-      //   tenantId,
-      //   blockchainData
-      // });
+      // TODO #12 IMPLEMENTED: Publish to message queue instead of direct synchronous call
+      // Blockchain-service will consume this event and process asynchronously
+      // This prevents blocking event creation on blockchain latency
+      const published = await EventLifecyclePublisher.blockchainSyncRequested(
+        event.id!,
+        {
+          blockchainEventId,
+          venueId: blockchainData.venueId,
+          name: blockchainData.name,
+          ticketPrice: blockchainData.ticketPrice,
+          totalTickets: blockchainData.totalTickets,
+          startTime: blockchainData.startTime,
+          endTime: blockchainData.endTime,
+          refundWindow: blockchainData.refundWindow,
+          metadataUri: blockchainData.metadataUri,
+          description: blockchainData.description,
+          transferable: blockchainData.transferable,
+          resaleable: blockchainData.resaleable,
+          merkleTree: blockchainData.merkleTree,
+          artistWallet: blockchainData.artistWallet,
+          artistPercentage: blockchainData.artistPercentage,
+          venuePercentage: blockchainData.venuePercentage,
+        },
+        { tenantId }
+      );
 
-      const blockchainResult = await this.blockchainService.createEventOnChain(blockchainData, tenantId);
+      if (published) {
+        // Update status to pending - blockchain-service will update when complete
+        await this.db('events')
+          .where({ id: event.id, tenant_id: tenantId })
+          .update({
+            blockchain_status: 'pending',
+            updated_at: new Date()
+          });
 
-      await this.db('events')
-        .where({ id: event.id, tenant_id: tenantId })
-        .update({
-          event_pda: blockchainResult.eventPda,
-          blockchain_status: 'synced',
-          updated_at: new Date()
+        logger.info({
+          msg: `Blockchain sync requested for event ${event.id}`,
+          eventId: event.id,
+          blockchainEventId,
+        });
+      } else {
+        // RabbitMQ not connected - fall back to Bull queue retry mechanism
+        logger.warn({
+          msg: `RabbitMQ not available, queuing blockchain sync for retry`,
+          eventId: event.id,
         });
 
-      logger.info({
-        msg: `Event ${event.id} synced to blockchain`,
-        eventId: event.id,
-        blockchainEventId,
-        eventPda: blockchainResult.eventPda,
-        signature: blockchainResult.signature,
-      });
+        await this.db('events')
+          .where({ id: event.id, tenant_id: tenantId })
+          .update({
+            blockchain_status: 'queued',
+            updated_at: new Date()
+          });
+
+        // Use Bull queue as fallback
+        if (tenantId && event.id) {
+          await queueBlockchainSync(event.id, tenantId);
+        }
+      }
     } catch (blockchainError) {
+      const error = blockchainError instanceof Error ? blockchainError : new Error(String(blockchainError));
+
       logger.error({
-        msg: `Failed to sync event ${event.id} to blockchain`,
+        msg: `Failed to request blockchain sync for event ${event.id}`,
         eventId: event.id,
-        error: blockchainError instanceof Error ? blockchainError.message : String(blockchainError),
+        error: error.message,
       });
 
       await this.db('events')
         .where({ id: event.id, tenant_id: tenantId })
         .update({
           blockchain_status: 'failed',
+          blockchain_error: error.message,
           updated_at: new Date()
         });
 
-      // TODO: Implement retry logic with exponential backoff
-      // await retryQueue.add('blockchain-sync', {
-      //   eventId: event.id,
-      //   tenantId,
-      //   attempt: 1,
-      //   maxAttempts: 3
-      // });
+      // TODO #13: Queue for retry with exponential backoff
+      if (tenantId && event.id) {
+        await queueBlockchainSync(event.id, tenantId, error);
+      }
     }
   }
 
@@ -817,13 +853,18 @@ export class EventService {
   /**
    * CRITICAL FIX: Get sold ticket count from capacity table only
    * No longer queries tickets table directly (cross-service boundary violation)
-   * 
-   * TODO: If ticket-service API is available, call it for accuracy:
-   * const response = await ticketServiceClient.getEventTicketStats(eventId, tenantId);
-   * return response.soldCount;
+   *
+   * TODO #14 IMPLEMENTED: Uses shared ticket-stats client with fallback to local capacity table
    */
   private async getSoldTicketCount(eventId: string, tenantId: string): Promise<number> {
     try {
+      // Try ticket-service API first for accuracy
+      const serviceCount = await getSoldTicketCountFromService(eventId, { tenantId });
+      if (serviceCount > 0) {
+        return serviceCount;
+      }
+
+      // Fallback to local capacity table
       const capacities = await this.db('event_capacity')
         .where({ event_id: eventId, tenant_id: tenantId })
         .select('sold_count');

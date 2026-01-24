@@ -5,6 +5,7 @@ import { ValidationError, AuthenticationError } from '../errors';
 import { passwordResetRateLimiter } from '../utils/rateLimiter';
 import { EmailService } from './email.service';
 import { redisKeys } from '../utils/redisKeys';
+import { logger } from '../utils/logger';
 
 export class AuthExtendedService {
   private emailService: EmailService;
@@ -211,7 +212,7 @@ export class AuthExtendedService {
       created_at: new Date()
     });
 
-    console.log(`Email verified successfully for user: ${userId}`);
+    logger.info('Email verified successfully', { userId });
   }
 
   async resendVerificationEmail(userId: string): Promise<void> {
@@ -321,7 +322,7 @@ export class AuthExtendedService {
           ])
         });
 
-      console.log('All sessions invalidated except current one due to password change for user:', userId);
+      logger.info('All sessions invalidated except current one due to password change', { userId });
     } else {
       // No request metadata = invalidate ALL sessions (strict mode)
       await db('user_sessions')
@@ -335,7 +336,7 @@ export class AuthExtendedService {
           ])
         });
 
-      console.log('All sessions invalidated due to password change for user:', userId);
+      logger.info('All sessions invalidated due to password change', { userId });
     }
 
     // Invalidate all refresh tokens using non-blocking SCAN
@@ -356,7 +357,7 @@ export class AuthExtendedService {
       }
     }
 
-    console.log('All refresh tokens invalidated for user:', userId);
+    logger.info('All refresh tokens invalidated', { userId });
   }
 
   private validatePasswordStrength(password: string): void {

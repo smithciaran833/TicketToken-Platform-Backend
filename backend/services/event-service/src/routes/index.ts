@@ -4,7 +4,6 @@ import scheduleRoutes from './schedules.routes';
 import capacityRoutes from './capacity.routes';
 import pricingRoutes from './pricing.routes';
 import ticketRoutes from './tickets.routes';
-import notificationRoutes from './notifications.routes';
 import customerRoutes from './customers.routes';
 import reportRoutes from './reports.routes';
 import venueAnalyticsRoutes from './venue-analytics.routes';
@@ -27,7 +26,6 @@ export default async function routes(app: FastifyInstance) {
   await app.register(capacityRoutes);
   await app.register(pricingRoutes);
   await app.register(ticketRoutes);
-  await app.register(notificationRoutes);
   await app.register(customerRoutes);
   await app.register(reportRoutes);
   await app.register(venueAnalyticsRoutes);

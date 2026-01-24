@@ -7,6 +7,7 @@ import { env } from '../config/env';
 import { AuthenticationError } from '../errors';
 import { redisKeys } from '../utils/redisKeys';
 import { otpRateLimiter, mfaSetupRateLimiter, backupCodeRateLimiter } from '../utils/rateLimiter';
+import { logger } from '../utils/logger';
 
 // Idempotency window for MFA setup (5 minutes)
 const MFA_SETUP_IDEMPOTENCY_WINDOW = 5 * 60;
@@ -85,7 +86,7 @@ export class MFAService {
         qrCode,
       };
     } catch (error: any) {
-      console.error('MFA setupTOTP error:', error.message, error.stack);
+      logger.error('MFA setupTOTP error', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -137,7 +138,7 @@ export class MFAService {
 
       return { backupCodes: plainBackupCodes };
     } catch (error: any) {
-      console.error('MFA verifyAndEnableTOTP error:', error.message, error.stack);
+      logger.error('MFA verifyAndEnableTOTP error', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -183,7 +184,7 @@ export class MFAService {
 
       return verified;
     } catch (error: any) {
-      console.error('MFA verifyTOTP error:', error.message, error.stack);
+      logger.error('MFA verifyTOTP error', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -222,7 +223,7 @@ export class MFAService {
 
       return true;
     } catch (error: any) {
-      console.error('MFA verifyBackupCode error:', error.message, error.stack);
+      logger.error('MFA verifyBackupCode error', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -248,7 +249,7 @@ export class MFAService {
 
       return { backupCodes: newBackupCodes };
     } catch (error: any) {
-      console.error('MFA regenerateBackupCodes error:', error.message, error.stack);
+      logger.error('MFA regenerateBackupCodes error', { error: error.message, stack: error.stack });
       throw error;
     }
   }
@@ -361,9 +362,9 @@ export class MFAService {
       await redis.del(`mfa:secret:${userId}`);
       await redis.del(`mfa:verified:${userId}`);
 
-      console.log('MFA disabled for user:', userId);
+      logger.info('MFA disabled for user', { userId });
     } catch (error: any) {
-      console.error('MFA disableTOTP error:', error.message, error.stack);
+      logger.error('MFA disableTOTP error', { error: error.message, stack: error.stack });
       throw error;
     }
   }

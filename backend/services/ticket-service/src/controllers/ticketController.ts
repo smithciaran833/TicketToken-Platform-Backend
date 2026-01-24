@@ -1,6 +1,15 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { container } from '../bootstrap/container';
 import { cache } from '../services/cache-integration';
+import {
+  serializeTicket,
+  serializeTicketForOwner,
+  serializeTickets,
+  serializeTicketsForOwner,
+  serializeTicketType,
+  serializeTicketTypes,
+  serializeReservationForOwner,
+} from '../serializers';
 
 export class TicketController {
   private ticketService = container.services.ticketService;
@@ -25,7 +34,7 @@ export class TicketController {
 
     reply.status(201).send({
       success: true,
-      data: ticketType
+      data: serializeTicketType(ticketType)
     });
   }
 
@@ -37,25 +46,28 @@ export class TicketController {
     const tenantId = (request as any).tenantId;
     const cacheKey = `ticket-types:${eventId}:${tenantId}`;
 
-    let ticketTypes = await cache.get(cacheKey);
+    const cachedTypes = await cache.get(cacheKey);
 
-    if (ticketTypes) {
+    if (cachedTypes && Array.isArray(cachedTypes)) {
       reply.header('X-Cache', 'HIT');
+      // Cached data is already serialized - return directly
       reply.send({
         success: true,
-        data: ticketTypes
+        data: cachedTypes
       });
       return;
     }
 
-    ticketTypes = await this.ticketService.getTicketTypes(eventId, tenantId);
+    const ticketTypes = await this.ticketService.getTicketTypes(eventId, tenantId);
 
-    await cache.set(cacheKey, ticketTypes, { ttl: 300 });
+    // Cache serialized data to prevent data leakage from cache
+    const serializedTypes = serializeTicketTypes(ticketTypes as Record<string, any>[]);
+    await cache.set(cacheKey, serializedTypes, { ttl: 300 });
 
     reply.header('X-Cache', 'MISS');
     reply.send({
       success: true,
-      data: ticketTypes
+      data: serializedTypes
     });
   }
 
@@ -77,23 +89,10 @@ export class TicketController {
       tenantId
     });
 
-    // Transform snake_case to camelCase for API response
-    const response = {
-      id: result.id,
-      userId: result.user_id,
-      eventId: result.event_id,
-      ticketTypeId: result.ticket_type_id,
-      totalQuantity: result.total_quantity,
-      tickets: result.tickets,
-      expiresAt: result.expires_at,
-      status: result.status,
-      typeName: result.type_name,
-      createdAt: result.created_at
-    };
-
+    // Use serializer to transform and filter safe fields only
     reply.send({
       success: true,
-      data: response
+      data: serializeReservationForOwner(result)
     });
   }
 
@@ -110,9 +109,10 @@ export class TicketController {
     const { reservationId } = request.params as any;
     const result = await this.ticketService.confirmPurchase(reservationId, user.id);
 
+    // Serialize tickets for owner (includes userId since they are the owner)
     reply.send({
       success: true,
-      data: result
+      data: serializeTicketsForOwner(result)
     });
   }
 
@@ -135,9 +135,10 @@ export class TicketController {
 
     const tickets = await this.ticketService.getUserTickets(userId, tenantId);
 
+    // Serialize for owner since they own these tickets
     reply.send({
       success: true,
-      data: tickets
+      data: serializeTicketsForOwner(tickets)
     });
   }
 
@@ -191,9 +192,10 @@ export class TicketController {
       });
     }
 
+    // Serialize for owner - includes userId since they verified ownership
     reply.send({
       success: true,
-      data: ticket
+      data: serializeTicketForOwner(ticket)
     });
   }
 
@@ -265,7 +267,7 @@ export class TicketController {
 
     reply.send({
       success: true,
-      data: ticketType
+      data: serializeTicketType(ticketType)
     });
   }
 
@@ -284,7 +286,7 @@ export class TicketController {
 
     reply.send({
       success: true,
-      data: ticketType
+      data: serializeTicketType(ticketType)
     });
   }
 
@@ -301,9 +303,10 @@ export class TicketController {
     const tenantId = (request as any).tenantId;
     const tickets = await this.ticketService.getUserTickets(user.id, tenantId);
 
+    // Serialize for owner since this is their own tickets
     reply.send({
       success: true,
-      data: tickets
+      data: serializeTicketsForOwner(tickets)
     });
   }
 }
