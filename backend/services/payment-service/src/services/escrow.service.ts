@@ -1,6 +1,6 @@
 /**
  * Escrow Service
- * 
+ *
  * HIGH FIX: Implements proper escrow functionality with:
  * - Hold funds until release conditions are met
  * - Automatic release after hold period
@@ -16,6 +16,41 @@ import { feeCalculationService } from './fee-calculation.service';
 import { v4 as uuidv4 } from 'uuid';
 
 const log = logger.child({ component: 'EscrowService' });
+
+// =============================================================================
+// SECURITY: Explicit field lists to prevent SELECT * from exposing sensitive data
+// =============================================================================
+
+// Safe fields for external/public responses (excludes payment_intent_id, release_conditions)
+const SAFE_ESCROW_FIELDS = [
+  'id',
+  'order_id',
+  'amount',
+  'held_amount',
+  'released_amount',
+  'status',
+  'hold_until',
+  'tenant_id',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+// All fields for internal operations
+const ALL_ESCROW_FIELDS = [
+  'id',
+  'order_id',
+  'payment_intent_id',
+  'amount',
+  'held_amount',
+  'released_amount',
+  'status',
+  'hold_until',
+  'release_conditions',
+  'dispute_id',
+  'tenant_id',
+  'created_at',
+  'updated_at',
+].join(', ');
 
 // =============================================================================
 // TYPES
@@ -75,7 +110,8 @@ class EscrowService {
     holdUntil.setDate(holdUntil.getDate() + holdDays);
 
     const db = DatabaseService.getPool();
-    
+
+    // SECURITY: Use explicit RETURNING fields instead of *
     const result = await db.query(`
       INSERT INTO escrow_accounts (
         id, order_id, payment_intent_id, amount, held_amount, released_amount,
@@ -83,7 +119,7 @@ class EscrowService {
       ) VALUES (
         $1, $2, $3, $4, $4, 0, 'held', $5, $6, $7, NOW(), NOW()
       )
-      RETURNING *
+      RETURNING ${ALL_ESCROW_FIELDS}
     `, [
       id,
       orderId,
@@ -109,9 +145,10 @@ class EscrowService {
    */
   async getEscrow(escrowId: string, tenantId: string): Promise<EscrowAccount | null> {
     const db = DatabaseService.getPool();
-    
+
+    // SECURITY: Use safe fields for external-facing method
     const result = await db.query(`
-      SELECT * FROM escrow_accounts
+      SELECT ${SAFE_ESCROW_FIELDS} FROM escrow_accounts
       WHERE id = $1 AND tenant_id = $2
     `, [escrowId, tenantId]);
 
@@ -119,7 +156,7 @@ class EscrowService {
       return null;
     }
 
-    return this.mapToEscrowAccount(result.rows[0]);
+    return this.mapToEscrowAccountSafe(result.rows[0]);
   }
 
   /**
@@ -129,9 +166,9 @@ class EscrowService {
     const { escrowId, amount, reason, tenantId } = params;
 
     return withSerializableTransaction(async (client) => {
-      // Lock the escrow record
+      // Lock the escrow record - need all fields for internal processing
       const lockResult = await client.query(`
-        SELECT * FROM escrow_accounts
+        SELECT ${ALL_ESCROW_FIELDS} FROM escrow_accounts
         WHERE id = $1 AND tenant_id = $2
         FOR UPDATE
       `, [escrowId, tenantId]);
@@ -155,7 +192,7 @@ class EscrowService {
 
       // Calculate release amount
       const releaseAmount = amount || escrow.heldAmount;
-      
+
       if (releaseAmount > escrow.heldAmount) {
         throw new Error('Release amount exceeds held amount');
       }
@@ -164,7 +201,7 @@ class EscrowService {
       const newReleasedAmount = escrow.releasedAmount + releaseAmount;
       const newStatus = newHeldAmount === 0 ? 'released' : 'partially_released';
 
-      // Update escrow
+      // Update escrow - use explicit RETURNING fields
       const updateResult = await client.query(`
         UPDATE escrow_accounts
         SET held_amount = $1,
@@ -172,7 +209,7 @@ class EscrowService {
             status = $3,
             updated_at = NOW()
         WHERE id = $4
-        RETURNING *
+        RETURNING ${ALL_ESCROW_FIELDS}
       `, [newHeldAmount, newReleasedAmount, newStatus, escrowId]);
 
       // Record the release event
@@ -200,8 +237,9 @@ class EscrowService {
    */
   async cancelEscrow(escrowId: string, reason: string, tenantId: string): Promise<EscrowAccount> {
     return withSerializableTransaction(async (client) => {
+      // SECURITY: Use explicit field list for locking
       const lockResult = await client.query(`
-        SELECT * FROM escrow_accounts
+        SELECT ${ALL_ESCROW_FIELDS} FROM escrow_accounts
         WHERE id = $1 AND tenant_id = $2
         FOR UPDATE
       `, [escrowId, tenantId]);
@@ -216,12 +254,13 @@ class EscrowService {
         throw new Error('Cannot cancel fully released escrow');
       }
 
+      // SECURITY: Use explicit RETURNING fields
       const updateResult = await client.query(`
         UPDATE escrow_accounts
         SET status = 'cancelled',
             updated_at = NOW()
         WHERE id = $1
-        RETURNING *
+        RETURNING ${ALL_ESCROW_FIELDS}
       `, [escrowId]);
 
       await client.query(`
@@ -244,13 +283,14 @@ class EscrowService {
   async disputeEscrow(escrowId: string, disputeId: string, tenantId: string): Promise<EscrowAccount> {
     const db = DatabaseService.getPool();
 
+    // SECURITY: Use explicit RETURNING fields
     const result = await db.query(`
       UPDATE escrow_accounts
       SET status = 'disputed',
           dispute_id = $2,
           updated_at = NOW()
       WHERE id = $1 AND tenant_id = $3
-      RETURNING *
+      RETURNING ${ALL_ESCROW_FIELDS}
     `, [escrowId, disputeId, tenantId]);
 
     if (result.rows.length === 0) {
@@ -271,8 +311,9 @@ class EscrowService {
     let processedCount = 0;
 
     try {
+      // SECURITY: Use explicit field list - only need id and tenant_id for processing
       const result = await client.query(`
-        SELECT * FROM escrow_accounts
+        SELECT id, tenant_id FROM escrow_accounts
         WHERE status = 'held'
           AND hold_until <= NOW()
         ORDER BY hold_until ASC
@@ -309,23 +350,26 @@ class EscrowService {
   async listEscrowsForOrder(orderId: string, tenantId: string): Promise<EscrowAccount[]> {
     const db = DatabaseService.getPool();
 
+    // SECURITY: Use safe fields for external-facing method
     const result = await db.query(`
-      SELECT * FROM escrow_accounts
+      SELECT ${SAFE_ESCROW_FIELDS} FROM escrow_accounts
       WHERE order_id = $1 AND tenant_id = $2
       ORDER BY created_at DESC
     `, [orderId, tenantId]);
 
-    return result.rows.map(row => this.mapToEscrowAccount(row));
+    return result.rows.map(row => this.mapToEscrowAccountSafe(row));
   }
 
   /**
-   * Get escrow by payment intent
+   * Get escrow by payment intent - INTERNAL USE ONLY
+   * Used for payment processing which needs the payment_intent_id
    */
   async getEscrowByPaymentIntent(paymentIntentId: string, tenantId: string): Promise<EscrowAccount | null> {
     const db = DatabaseService.getPool();
 
+    // SECURITY: Internal method needs all fields
     const result = await db.query(`
-      SELECT * FROM escrow_accounts
+      SELECT ${ALL_ESCROW_FIELDS} FROM escrow_accounts
       WHERE payment_intent_id = $1 AND tenant_id = $2
     `, [paymentIntentId, tenantId]);
 
@@ -337,7 +381,8 @@ class EscrowService {
   }
 
   /**
-   * Map database row to EscrowAccount
+   * Map database row to EscrowAccount - FULL version
+   * INTERNAL USE: Includes sensitive fields like payment_intent_id
    */
   private mapToEscrowAccount(row: any): EscrowAccount {
     return {
@@ -349,9 +394,30 @@ class EscrowService {
       releasedAmount: row.released_amount,
       status: row.status,
       holdUntil: new Date(row.hold_until),
-      releaseConditions: typeof row.release_conditions === 'string' 
-        ? JSON.parse(row.release_conditions) 
+      releaseConditions: typeof row.release_conditions === 'string'
+        ? JSON.parse(row.release_conditions)
         : row.release_conditions || [],
+      tenantId: row.tenant_id,
+      createdAt: new Date(row.created_at),
+      updatedAt: new Date(row.updated_at),
+    };
+  }
+
+  /**
+   * Map database row to EscrowAccount - SAFE version
+   * Excludes payment_intent_id and release_conditions
+   */
+  private mapToEscrowAccountSafe(row: any): EscrowAccount {
+    return {
+      id: row.id,
+      orderId: row.order_id,
+      paymentIntentId: '', // Hidden for external responses
+      amount: row.amount,
+      heldAmount: row.held_amount,
+      releasedAmount: row.released_amount,
+      status: row.status,
+      holdUntil: new Date(row.hold_until),
+      releaseConditions: [], // Hidden for external responses
       tenantId: row.tenant_id,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),

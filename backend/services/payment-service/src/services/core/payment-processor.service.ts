@@ -22,7 +22,7 @@ export class StripePaymentError extends Error {
     super(StripePaymentError.getMessage(error));
     this.name = 'StripePaymentError';
     this.stripeError = error;
-    
+
     // Classify error type and retryability
     if (error.type === 'StripeCardError') {
       this.type = 'card_error';
@@ -77,10 +77,25 @@ export class StripePaymentError extends Error {
 // PAYMENT PROCESSOR SERVICE
 // =============================================================================
 
+export interface ProcessPaymentData {
+  userId: string;
+  orderId: string;
+  venueId: string;
+  eventId: string;
+  amountCents: number;
+  currency: string;
+  platformFeeCents?: number;
+  venuePayoutCents?: number;
+  idempotencyKey?: string;
+  tenantId: string;
+  type?: 'ticket_purchase' | 'refund' | 'transfer' | 'payout' | 'fee';
+  metadata?: Record<string, any>;
+}
+
 export class PaymentProcessorService {
   private stripe: any;
   private db: any;
-  
+
   constructor(stripe: any, db: any) {
     this.stripe = stripe;
     this.db = db;
@@ -88,20 +103,17 @@ export class PaymentProcessorService {
 
   /**
    * Execute Stripe operation with circuit breaker protection
-   * MEDIUM FIX: Use circuit breaker for all Stripe API calls
    */
   private async executeWithCircuitBreaker<T>(
     operation: () => Promise<T>,
     operationName: string
   ): Promise<T> {
     try {
-      // Use the pre-configured Stripe circuit breaker
       return await stripeCircuitBreaker.execute(async () => {
         const result = await operation();
         return result;
       });
     } catch (error: any) {
-      // If it's a circuit breaker error, wrap it appropriately
       if (error.name === 'CircuitBreakerError') {
         log.warn({ operation: operationName }, 'Circuit breaker is open - rejecting Stripe call');
         throw new StripePaymentError({
@@ -109,57 +121,66 @@ export class PaymentProcessorService {
           message: 'Payment service temporarily unavailable. Please try again later.',
         });
       }
-      
-      // Wrap and rethrow Stripe errors
       throw new StripePaymentError(error);
     }
   }
 
-  async processPayment(data: {
-    userId: string;
-    orderId: string;
-    amountCents: number;
-    currency: string;
-    idempotencyKey?: string;
-    tenantId?: string;
-  }): Promise<any> {
-    // MEDIUM FIX: Use circuit breaker for Stripe calls
+  async processPayment(data: ProcessPaymentData): Promise<any> {
+    // Calculate fees if not provided
+    const platformFeeCents = data.platformFeeCents ?? Math.round(data.amountCents * 0.05); // 5% default
+    const venuePayoutCents = data.venuePayoutCents ?? (data.amountCents - platformFeeCents);
+
+    // Create Stripe payment intent with circuit breaker
     const paymentIntent: any = await this.executeWithCircuitBreaker(
-        () => this.stripe.paymentIntents.create({
-          amount: data.amountCents,
-          currency: data.currency,
-          metadata: {
-            orderId: data.orderId,
-            userId: data.userId,
-            tenantId: data.tenantId || 'default'
-          }
-        }, {
-          idempotencyKey: data.idempotencyKey
+      () => this.stripe.paymentIntents.create({
+        amount: data.amountCents,
+        currency: data.currency,
+        metadata: {
+          orderId: data.orderId,
+          userId: data.userId,
+          venueId: data.venueId,
+          eventId: data.eventId,
+          tenantId: data.tenantId,
+          ...data.metadata,
+        }
+      }, {
+        idempotencyKey: data.idempotencyKey
       }),
       'paymentIntents.create'
     );
 
+    // Insert transaction with all required fields
     const [transaction] = await this.db('payment_transactions')
       .insert({
         id: uuidv4(),
-        order_id: data.orderId,
+        tenant_id: data.tenantId,
+        venue_id: data.venueId,
         user_id: data.userId,
+        event_id: data.eventId,
+        order_id: data.orderId,
+        type: data.type || 'ticket_purchase',
         amount: data.amountCents,
         currency: data.currency,
+        status: 'pending', // Always start as pending per schema constraint
+        platform_fee: platformFeeCents,
+        venue_payout: venuePayoutCents,
         stripe_payment_intent_id: paymentIntent.id,
-        status: paymentIntent.status,
-        idempotency_key: data.idempotencyKey,
-        tenant_id: data.tenantId || 'default',
-        created_at: new Date()
+        idempotency_key: data.idempotencyKey || null,
+        metadata: data.metadata || {},
+        created_at: new Date(),
+        updated_at: new Date(),
       })
       .returning('*');
 
     log.info({
       userId: data.userId,
       orderId: data.orderId,
+      venueId: data.venueId,
+      eventId: data.eventId,
       paymentIntentId: paymentIntent.id,
+      amount: data.amountCents,
     }, 'Payment processed');
-    
+
     return {
       transactionId: transaction.id,
       paymentIntentId: paymentIntent.id,
@@ -169,24 +190,35 @@ export class PaymentProcessorService {
   }
 
   async confirmPayment(paymentIntentId: string, userId: string): Promise<any> {
-    // MEDIUM FIX: Use circuit breaker for Stripe calls
     const paymentIntent: any = await this.executeWithCircuitBreaker(
       () => this.stripe.paymentIntents.confirm(paymentIntentId),
       'paymentIntents.confirm'
     );
-    
+
+    // Map Stripe status to our valid statuses
+    const statusMap: Record<string, string> = {
+      'succeeded': 'completed',
+      'requires_payment_method': 'pending',
+      'requires_confirmation': 'pending',
+      'requires_action': 'processing',
+      'processing': 'processing',
+      'canceled': 'failed',
+    };
+    const dbStatus = statusMap[paymentIntent.status] || 'pending';
+
     await this.db('payment_transactions')
       .where({ stripe_payment_intent_id: paymentIntentId })
       .update({
-        status: paymentIntent.status,
-        confirmed_at: new Date()
+        status: dbStatus,
+        updated_at: new Date(),
       });
-    
+
     log.info({
       paymentIntentId,
       status: paymentIntent.status,
+      dbStatus,
     }, 'Payment confirmed');
-    
+
     return {
       status: paymentIntent.status,
       confirmedAt: new Date()

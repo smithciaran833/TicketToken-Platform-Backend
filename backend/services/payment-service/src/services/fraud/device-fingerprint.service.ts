@@ -1,19 +1,37 @@
 import crypto from 'crypto';
 import { query } from '../../config/database';
+import { logger } from '../../utils/logger';
+
+const log = logger.child({ component: 'DeviceFingerprintService' });
+
+export interface DeviceData {
+  userAgent: string;
+  screenResolution: string;
+  timezone: string;
+  language: string;
+  platform: string;
+  plugins?: string[];
+  fonts?: string[];
+  canvas?: string;
+  webgl?: string;
+}
+
+export interface RiskFactor {
+  factor: string;
+  weight: number;
+  value: any;
+}
+
+export interface DeviceRiskScore {
+  score: number;
+  factors: RiskFactor[];
+}
 
 export class DeviceFingerprintService {
-  generateFingerprint(deviceData: {
-    userAgent: string;
-    screenResolution: string;
-    timezone: string;
-    language: string;
-    platform: string;
-    plugins?: string[];
-    fonts?: string[];
-    canvas?: string;
-    webgl?: string;
-  }): string {
-    // Create a stable fingerprint from device characteristics
+  /**
+   * Generate a fingerprint from device characteristics
+   */
+  generateFingerprint(deviceData: DeviceData): string {
     const fingerprintData = {
       ua: deviceData.userAgent,
       sr: deviceData.screenResolution,
@@ -23,227 +41,283 @@ export class DeviceFingerprintService {
       plugins: (deviceData.plugins || []).sort().join(','),
       fonts: (deviceData.fonts || []).slice(0, 20).sort().join(','),
       canvas: deviceData.canvas ? deviceData.canvas.substring(0, 50) : '',
-      webgl: deviceData.webgl ? deviceData.webgl.substring(0, 50) : ''
+      webgl: deviceData.webgl ? deviceData.webgl.substring(0, 50) : '',
     };
-    
+
     const fingerprintString = JSON.stringify(fingerprintData);
     const hash = crypto.createHash('sha256').update(fingerprintString).digest('hex');
-    
+
     return hash;
   }
-  
+
+  /**
+   * Record device activity
+   */
   async recordDeviceActivity(
+    tenantId: string,
     deviceFingerprint: string,
     userId: string,
     activity: string,
-    metadata?: any
+    metadata?: Record<string, any>
   ): Promise<void> {
     await query(
-      `INSERT INTO device_activity 
-       (device_fingerprint, user_id, activity_type, metadata, timestamp)
-       VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)`,
-      [deviceFingerprint, userId, activity, JSON.stringify(metadata || {})]
+      `INSERT INTO device_activity
+       (tenant_id, device_fingerprint, user_id, activity_type, metadata, timestamp)
+       VALUES ($1, $2, $3, $4, $5, CURRENT_TIMESTAMP)`,
+      [tenantId, deviceFingerprint, userId, activity, JSON.stringify(metadata || {})]
     );
+
+    log.debug({ deviceFingerprint: deviceFingerprint.slice(0, 8), activity }, 'Device activity recorded');
   }
-  
-  async getDeviceRiskScore(deviceFingerprint: string): Promise<{
-    score: number;
-    factors: Array<{
-      factor: string;
-      weight: number;
-      value: any;
-    }>;
-  }> {
-    const factors = [];
+
+  /**
+   * Get device risk score based on multiple factors
+   */
+  async getDeviceRiskScore(deviceFingerprint: string, tenantId: string): Promise<DeviceRiskScore> {
+    const factors: RiskFactor[] = [];
     let totalScore = 0;
-    
-    // Factor 1: Number of accounts associated
-    const accountCount = await this.getAssociatedAccountCount(deviceFingerprint);
+
+    // Factor 1: Number of accounts associated with device
+    const accountCount = await this.getAssociatedAccountCount(deviceFingerprint, tenantId);
     if (accountCount > 1) {
-      const accountFactor = {
+      const weight = 0.3;
+      const contribution = Math.min(accountCount / 5, 1) * weight;
+      factors.push({
         factor: 'multiple_accounts',
-        weight: 0.3,
-        value: accountCount
-      };
-      factors.push(accountFactor);
-      totalScore += Math.min(accountCount / 5, 1) * accountFactor.weight;
+        weight,
+        value: accountCount,
+      });
+      totalScore += contribution;
     }
-    
+
     // Factor 2: Suspicious activity patterns
-    const suspiciousActivity = await this.getSuspiciousActivityCount(deviceFingerprint);
+    const suspiciousActivity = await this.getSuspiciousActivityCount(deviceFingerprint, tenantId);
     if (suspiciousActivity > 0) {
-      const activityFactor = {
+      const weight = 0.25;
+      const contribution = Math.min(suspiciousActivity / 10, 1) * weight;
+      factors.push({
         factor: 'suspicious_activity',
-        weight: 0.25,
-        value: suspiciousActivity
-      };
-      factors.push(activityFactor);
-      totalScore += Math.min(suspiciousActivity / 10, 1) * activityFactor.weight;
+        weight,
+        value: suspiciousActivity,
+      });
+      totalScore += contribution;
     }
-    
+
     // Factor 3: Geographic anomalies
-    const geoAnomalies = await this.checkGeographicAnomalies(deviceFingerprint);
+    const geoAnomalies = await this.checkGeographicAnomalies(deviceFingerprint, tenantId);
     if (geoAnomalies.hasAnomalies) {
-      const geoFactor = {
+      const weight = 0.2;
+      factors.push({
         factor: 'geographic_anomalies',
-        weight: 0.2,
-        value: geoAnomalies
-      };
-      factors.push(geoFactor);
-      totalScore += geoFactor.weight;
+        weight,
+        value: geoAnomalies.details,
+      });
+      totalScore += weight;
     }
-    
-    // Factor 4: Device age
-    const deviceAge = await this.getDeviceAge(deviceFingerprint);
-    if (deviceAge < 24) { // Less than 24 hours old
-      const ageFactor = {
+
+    // Factor 4: Device age (new devices are higher risk)
+    const deviceAge = await this.getDeviceAge(deviceFingerprint, tenantId);
+    if (deviceAge >= 0 && deviceAge < 24) {
+      const weight = 0.15;
+      const contribution = (1 - deviceAge / 24) * weight;
+      factors.push({
         factor: 'new_device',
-        weight: 0.15,
-        value: `${deviceAge} hours`
-      };
-      factors.push(ageFactor);
-      totalScore += (1 - deviceAge / 24) * ageFactor.weight;
+        weight,
+        value: `${deviceAge.toFixed(1)} hours`,
+      });
+      totalScore += contribution;
     }
-    
+
     // Factor 5: Failed payment attempts
-    const failedAttempts = await this.getFailedPaymentAttempts(deviceFingerprint);
+    const failedAttempts = await this.getFailedPaymentAttempts(deviceFingerprint, tenantId);
     if (failedAttempts > 2) {
-      const failedFactor = {
+      const weight = 0.1;
+      const contribution = Math.min(failedAttempts / 5, 1) * weight;
+      factors.push({
         factor: 'failed_payments',
-        weight: 0.1,
-        value: failedAttempts
-      };
-      factors.push(failedFactor);
-      totalScore += Math.min(failedAttempts / 5, 1) * failedFactor.weight;
+        weight,
+        value: failedAttempts,
+      });
+      totalScore += contribution;
     }
-    
+
     return {
       score: Math.min(totalScore, 1),
-      factors
+      factors,
     };
   }
-  
-  private async getAssociatedAccountCount(deviceFingerprint: string): Promise<number> {
+
+  /**
+   * Get count of unique accounts associated with this device
+   */
+  async getAssociatedAccountCount(deviceFingerprint: string, tenantId: string): Promise<number> {
     const result = await query(
       `SELECT COUNT(DISTINCT user_id) as count
        FROM device_activity
-       WHERE device_fingerprint = $1`,
-      [deviceFingerprint]
+       WHERE device_fingerprint = $1 AND tenant_id = $2`,
+      [deviceFingerprint, tenantId]
     );
-    
-    return parseInt(result.rows[0].count);
+
+    return parseInt(result.rows[0].count) || 0;
   }
-  
-  private async getSuspiciousActivityCount(deviceFingerprint: string): Promise<number> {
+
+  /**
+   * Get count of suspicious activities for this device
+   */
+  async getSuspiciousActivityCount(deviceFingerprint: string, tenantId: string): Promise<number> {
     const result = await query(
       `SELECT COUNT(*) as count
        FROM device_activity
        WHERE device_fingerprint = $1
+         AND tenant_id = $2
          AND activity_type IN ('failed_payment', 'fraud_detected', 'account_locked')
          AND timestamp > CURRENT_TIMESTAMP - INTERVAL '30 days'`,
-      [deviceFingerprint]
+      [deviceFingerprint, tenantId]
     );
-    
-    return parseInt(result.rows[0].count);
+
+    return parseInt(result.rows[0].count) || 0;
   }
-  
-  private async checkGeographicAnomalies(deviceFingerprint: string): Promise<{
+
+  /**
+   * Check for geographic anomalies (impossible travel)
+   */
+  async checkGeographicAnomalies(deviceFingerprint: string, tenantId: string): Promise<{
     hasAnomalies: boolean;
     details?: any;
   }> {
-    // Check for impossible travel scenarios
     const geoQuery = `
-      SELECT 
+      SELECT
         da1.timestamp as time1,
         da1.metadata->>'location' as location1,
         da2.timestamp as time2,
         da2.metadata->>'location' as location2
       FROM device_activity da1
       JOIN device_activity da2 ON da1.device_fingerprint = da2.device_fingerprint
+        AND da1.tenant_id = da2.tenant_id
       WHERE da1.device_fingerprint = $1
+        AND da1.tenant_id = $2
         AND da2.timestamp > da1.timestamp
         AND da2.timestamp < da1.timestamp + INTERVAL '1 hour'
+        AND da1.metadata->>'location' IS NOT NULL
+        AND da2.metadata->>'location' IS NOT NULL
         AND da1.metadata->>'location' != da2.metadata->>'location'
       ORDER BY da1.timestamp DESC
       LIMIT 1
     `;
-    
-    const result = await query(geoQuery, [deviceFingerprint]);
-    
+
+    const result = await query(geoQuery, [deviceFingerprint, tenantId]);
+
     if (result.rows.length > 0) {
       const anomaly = result.rows[0];
-      // In production, calculate actual distance between locations
       return {
         hasAnomalies: true,
         details: {
           location1: anomaly.location1,
           location2: anomaly.location2,
-          timeDifference: anomaly.time2 - anomaly.time1
-        }
+          time1: anomaly.time1,
+          time2: anomaly.time2,
+        },
       };
     }
-    
+
     return { hasAnomalies: false };
   }
-  
-  private async getDeviceAge(deviceFingerprint: string): Promise<number> {
+
+  /**
+   * Get device age in hours
+   */
+  async getDeviceAge(deviceFingerprint: string, tenantId: string): Promise<number> {
     const result = await query(
       `SELECT MIN(timestamp) as first_seen
        FROM device_activity
-       WHERE device_fingerprint = $1`,
-      [deviceFingerprint]
+       WHERE device_fingerprint = $1 AND tenant_id = $2`,
+      [deviceFingerprint, tenantId]
     );
-    
+
     if (result.rows[0].first_seen) {
       const ageMs = Date.now() - new Date(result.rows[0].first_seen).getTime();
       return ageMs / (1000 * 60 * 60); // Convert to hours
     }
-    
-    return 0;
+
+    return -1; // No activity found
   }
-  
-  private async getFailedPaymentAttempts(deviceFingerprint: string): Promise<number> {
+
+  /**
+   * Get failed payment attempts for this device
+   */
+  async getFailedPaymentAttempts(deviceFingerprint: string, tenantId: string): Promise<number> {
     const result = await query(
       `SELECT COUNT(*) as count
        FROM payment_transactions
        WHERE device_fingerprint = $1
+         AND tenant_id = $2
          AND status = 'failed'
          AND created_at > CURRENT_TIMESTAMP - INTERVAL '7 days'`,
-      [deviceFingerprint]
+      [deviceFingerprint, tenantId]
     );
-    
-    return parseInt(result.rows[0].count);
+
+    return parseInt(result.rows[0].count) || 0;
   }
-  
-  async compareFingerprints(fp1: string, fp2: string): Promise<{
+
+  /**
+   * Compare two fingerprints for similarity
+   */
+  compareFingerprints(fp1: string, fp2: string): {
     similar: boolean;
     similarity: number;
-  }> {
-    // Simple comparison - in production would use more sophisticated matching
+  } {
     if (fp1 === fp2) {
       return { similar: true, similarity: 1.0 };
     }
-    
-    // Check if fingerprints are similar (could be same device with minor changes)
+
     const distance = this.calculateHammingDistance(fp1, fp2);
     const similarity = 1 - (distance / Math.max(fp1.length, fp2.length));
-    
+
     return {
       similar: similarity > 0.85,
-      similarity
+      similarity,
     };
   }
-  
+
+  /**
+   * Calculate Hamming distance between two strings
+   */
   private calculateHammingDistance(str1: string, str2: string): number {
     let distance = 0;
     const length = Math.min(str1.length, str2.length);
-    
+
     for (let i = 0; i < length; i++) {
       if (str1[i] !== str2[i]) distance++;
     }
-    
+
     distance += Math.abs(str1.length - str2.length);
-    
+
     return distance;
+  }
+
+  /**
+   * Get all activity for a device
+   */
+  async getDeviceActivity(
+    deviceFingerprint: string,
+    tenantId: string,
+    limit: number = 50
+  ): Promise<any[]> {
+    const result = await query(
+      `SELECT id, user_id, activity_type, metadata, timestamp
+       FROM device_activity
+       WHERE device_fingerprint = $1 AND tenant_id = $2
+       ORDER BY timestamp DESC
+       LIMIT $3`,
+      [deviceFingerprint, tenantId, limit]
+    );
+
+    return result.rows.map(row => ({
+      id: row.id,
+      userId: row.user_id,
+      activityType: row.activity_type,
+      metadata: row.metadata,
+      timestamp: row.timestamp,
+    }));
   }
 }

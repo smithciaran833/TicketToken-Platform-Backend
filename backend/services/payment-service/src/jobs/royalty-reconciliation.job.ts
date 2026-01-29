@@ -1,7 +1,24 @@
-import { royaltyReconciliationService } from '../services/reconciliation/royalty-reconciliation.service';
+import { RoyaltyReconciliationService } from '../services/reconciliation/royalty-reconciliation.service';
+import { DatabaseService } from '../services/databaseService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'RoyaltyReconciliationJob' });
+
+// Lazy initialization of the service
+let _service: RoyaltyReconciliationService | null = null;
+
+function getService(): RoyaltyReconciliationService {
+  if (!_service) {
+    const pool = DatabaseService.getPool();
+    // Mock blockchain client for now - would be injected in production
+    const blockchainClient = {
+      getSecondarySales: async () => [],
+      getTransaction: async () => null,
+    };
+    _service = new RoyaltyReconciliationService(pool, blockchainClient);
+  }
+  return _service;
+}
 
 export async function runDailyReconciliation(): Promise<void> {
   log.info('Starting daily royalty reconciliation job');
@@ -14,7 +31,7 @@ export async function runDailyReconciliation(): Promise<void> {
     const endOfYesterday = new Date(yesterday);
     endOfYesterday.setHours(23, 59, 59, 999);
 
-    await royaltyReconciliationService.runReconciliation(yesterday, endOfYesterday);
+    await getService().runReconciliation('system', yesterday, endOfYesterday);
 
     log.info('Daily royalty reconciliation completed successfully');
   } catch (error) {
@@ -35,7 +52,7 @@ export async function runWeeklyReconciliation(): Promise<void> {
     yesterday.setDate(yesterday.getDate() - 1);
     yesterday.setHours(23, 59, 59, 999);
 
-    await royaltyReconciliationService.runReconciliation(lastWeek, yesterday);
+    await getService().runReconciliation('system', lastWeek, yesterday);
 
     log.info('Weekly royalty reconciliation completed successfully');
   } catch (error) {

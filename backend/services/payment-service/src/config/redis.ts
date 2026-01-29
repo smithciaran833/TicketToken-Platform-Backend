@@ -1,6 +1,6 @@
 /**
  * Redis Configuration - Migrated to @tickettoken/shared
- * 
+ *
  * CRITICAL: Uses async initialization pattern for proper connection management
  */
 
@@ -11,6 +11,9 @@ import {
   getRedisSubClient,
   getConnectionManager,
 } from '@tickettoken/shared';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ component: 'RedisConfig' });
 
 let redis: Redis;
 let redisPub: Redis;
@@ -23,18 +26,18 @@ export async function initRedis(): Promise<void> {
   redisPub = await getRedisPubClient();
   redisSub = await getRedisSubClient();
   initialized = true;
-  
-  // Log connection status
+
+  // Log connection status using proper logger
   redis.on('error', (err) => {
-    console.error('Redis connection error:', err);
+    log.error({ error: err.message }, 'Redis connection error');
   });
 
   redis.on('connect', () => {
-    console.log('Redis connected successfully (via @tickettoken/shared)');
+    log.info('Redis connected successfully (via @tickettoken/shared)');
   });
 
   redis.on('ready', () => {
-    console.log('Redis is ready (via @tickettoken/shared)');
+    log.info('Redis is ready (via @tickettoken/shared)');
   });
 }
 
@@ -58,5 +61,5 @@ export async function closeRedisConnection(): Promise<void> {
   const connectionManager = getConnectionManager();
   await connectionManager.disconnect();
   initialized = false;
-  console.log('Payment service Redis connection closed');
+  log.info('Payment service Redis connection closed');
 }

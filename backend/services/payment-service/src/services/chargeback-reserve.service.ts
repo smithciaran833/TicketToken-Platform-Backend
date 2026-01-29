@@ -4,15 +4,14 @@
  */
 
 import { Pool } from 'pg';
-import { SafeLogger } from '../utils/pci-log-scrubber.util';
+import { logger } from '../utils/logger';
 
-const logger = new SafeLogger('ChargebackReserveService');
+const log = logger.child({ component: 'ChargebackReserveService' });
 
 export interface ReservePolicy {
   baseReserveRate: number;        // Base % of transaction to reserve (e.g., 0.01 = 1%)
-  highRiskRate: number;            // Rate for high-risk transactions
-  holdPeriodDays: number;          // Days to hold reserve (default 90)
-  releaseAfterDays: number;        // Days before auto-release (default 180)
+  highRiskRate: number;           // Rate for high-risk transactions
+  holdPeriodDays: number;         // Days to hold reserve (default 90)
 }
 
 export interface ReserveCalculation {
@@ -20,8 +19,6 @@ export interface ReserveCalculation {
   reserveAmountCents: number;
   reserveRate: number;
   riskLevel: 'low' | 'medium' | 'high';
-  holdUntil: Date;
-  releaseAfter: Date;
 }
 
 export interface ReserveStats {
@@ -36,9 +33,8 @@ export class ChargebackReserveService {
   private pool: Pool;
   private policy: ReservePolicy = {
     baseReserveRate: 0.01,     // 1%
-    highRiskRate: 0.05,         // 5%
+    highRiskRate: 0.05,        // 5%
     holdPeriodDays: 90,
-    releaseAfterDays: 180,
   };
 
   constructor(pool: Pool, policy?: Partial<ReservePolicy>) {
@@ -55,24 +51,25 @@ export class ChargebackReserveService {
     transactionId: string,
     tenantId: string
   ): Promise<ReserveCalculation> {
-    // Get transaction details
+    // Get transaction details and user's chargeback history
     const txQuery = `
       SELECT
-        pt.amount_cents,
-        pt.payment_method,
-        pt.created_at,
-        u.chargeback_count,
-        v.chargeback_rate,
-        COUNT(DISTINCT pch.chargeback_id) as historical_chargebacks
+        pt.amount,
+        pt.user_id,
+        pt.venue_id,
+        (SELECT COUNT(*) FROM payment_chargebacks pc 
+         WHERE pc.user_id = pt.user_id 
+         AND pc.created_at > NOW() - INTERVAL '1 year') as user_chargebacks,
+        (SELECT COUNT(*) FROM payment_chargebacks pc2
+         JOIN payment_transactions pt2 ON pc2.transaction_id = pt2.id
+         WHERE pt2.venue_id = pt.venue_id
+         AND pc2.created_at > NOW() - INTERVAL '1 year') as venue_chargebacks,
+        (SELECT COUNT(*) FROM payment_transactions pt3
+         WHERE pt3.venue_id = pt.venue_id
+         AND pt3.created_at > NOW() - INTERVAL '1 year') as venue_transactions
       FROM payment_transactions pt
-      LEFT JOIN users u ON pt.user_id = u.user_id
-      LEFT JOIN venues v ON pt.venue_id = v.venue_id
-      LEFT JOIN payment_chargebacks pch ON pt.user_id = pch.user_id
-        AND pch.created_at > NOW() - INTERVAL '1 year'
-      WHERE pt.transaction_id = $1
+      WHERE pt.id = $1
         AND pt.tenant_id = $2
-      GROUP BY pt.transaction_id, pt.amount_cents, pt.payment_method,
-               pt.created_at, u.chargeback_count, v.chargeback_rate
     `;
 
     const result = await this.pool.query(txQuery, [transactionId, tenantId]);
@@ -82,28 +79,29 @@ export class ChargebackReserveService {
     }
 
     const tx = result.rows[0];
-    const amountCents = parseInt(tx.amount_cents);
+    const amountCents = Math.round(parseFloat(tx.amount) * 100);
+    const userChargebacks = parseInt(tx.user_chargebacks) || 0;
+    const venueChargebacks = parseInt(tx.venue_chargebacks) || 0;
+    const venueTransactions = parseInt(tx.venue_transactions) || 0;
+
+    // Calculate venue chargeback rate
+    const venueChargebackRate = venueTransactions > 0 
+      ? venueChargebacks / venueTransactions 
+      : 0;
 
     // Assess risk level
-    const riskLevel = this.assessRiskLevel(
-      parseInt(tx.historical_chargebacks) || 0,
-      parseFloat(tx.chargeback_rate) || 0,
-      tx.payment_method
-    );
+    const riskLevel = this.assessRiskLevel(userChargebacks, venueChargebackRate);
 
     // Calculate reserve rate based on risk
     const reserveRate = riskLevel === 'high'
       ? this.policy.highRiskRate
-      : this.policy.baseReserveRate;
+      : riskLevel === 'medium'
+        ? (this.policy.baseReserveRate + this.policy.highRiskRate) / 2
+        : this.policy.baseReserveRate;
 
     const reserveAmountCents = Math.round(amountCents * reserveRate);
 
-    // Calculate dates
-    const now = new Date();
-    const holdUntil = new Date(now.getTime() + (this.policy.holdPeriodDays * 24 * 60 * 60 * 1000));
-    const releaseAfter = new Date(now.getTime() + (this.policy.releaseAfterDays * 24 * 60 * 60 * 1000));
-
-    logger.info({
+    log.info({
       transactionId,
       amountCents,
       reserveAmountCents,
@@ -115,8 +113,6 @@ export class ChargebackReserveService {
       reserveAmountCents,
       reserveRate,
       riskLevel,
-      holdUntil,
-      releaseAfter,
     };
   }
 
@@ -125,8 +121,7 @@ export class ChargebackReserveService {
    */
   private assessRiskLevel(
     userChargebacks: number,
-    venueChargebackRate: number,
-    paymentMethod: string
+    venueChargebackRate: number
   ): 'low' | 'medium' | 'high' {
     // High risk criteria
     if (userChargebacks >= 3 || venueChargebackRate >= 0.02) {
@@ -134,7 +129,7 @@ export class ChargebackReserveService {
     }
 
     // Medium risk criteria
-    if (userChargebacks >= 1 || venueChargebackRate >= 0.01 || paymentMethod === 'card') {
+    if (userChargebacks >= 1 || venueChargebackRate >= 0.01) {
       return 'medium';
     }
 
@@ -147,74 +142,90 @@ export class ChargebackReserveService {
   async createReserve(
     transactionId: string,
     tenantId: string
-  ): Promise<void> {
+  ): Promise<{ reserveId: string; reserveAmountCents: number }> {
     const calculation = await this.calculateReserve(transactionId, tenantId);
 
+    // Check if reserve already exists
+    const existingQuery = `
+      SELECT reserve_id, reserve_amount_cents FROM payment_reserves
+      WHERE transaction_id = $1
+    `;
+    const existing = await this.pool.query(existingQuery, [transactionId]);
+
+    if (existing.rows.length > 0) {
+      // Update existing reserve
+      await this.pool.query(
+        `UPDATE payment_reserves 
+         SET reserve_amount_cents = $1, updated_at = NOW()
+         WHERE reserve_id = $2`,
+        [calculation.reserveAmountCents, existing.rows[0].reserve_id]
+      );
+
+      return {
+        reserveId: existing.rows[0].reserve_id,
+        reserveAmountCents: calculation.reserveAmountCents,
+      };
+    }
+
+    // Create new reserve
     const query = `
       INSERT INTO payment_reserves (
-        transaction_id,
         tenant_id,
+        transaction_id,
         reserve_amount_cents,
-        reserve_rate,
-        risk_level,
         status,
-        hold_until,
-        release_after,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, 'held', $6, $7, NOW())
-      ON CONFLICT (transaction_id) DO UPDATE SET
-        reserve_amount_cents = $3,
-        reserve_rate = $4,
-        risk_level = $5,
-        hold_until = $6,
-        release_after = $7,
-        updated_at = NOW()
+      ) VALUES ($1, $2, $3, 'held', NOW())
+      RETURNING reserve_id
     `;
 
-    await this.pool.query(query, [
-      transactionId,
+    const result = await this.pool.query(query, [
       tenantId,
+      transactionId,
       calculation.reserveAmountCents,
-      calculation.reserveRate,
-      calculation.riskLevel,
-      calculation.holdUntil,
-      calculation.releaseAfter,
     ]);
 
-    logger.info({
+    log.info({
       transactionId,
       reserveAmountCents: calculation.reserveAmountCents,
     }, 'Reserve created');
+
+    return {
+      reserveId: result.rows[0].reserve_id,
+      reserveAmountCents: calculation.reserveAmountCents,
+    };
   }
 
   /**
    * Process eligible reserve releases (automated job)
    */
-  async processReserveReleases(): Promise<{ releasedCount: number; releasedAmountCents: number }> {
+  async processReserveReleases(tenantId?: string): Promise<{ releasedCount: number; releasedAmountCents: number }> {
     const client = await this.pool.connect();
 
     try {
       await client.query('BEGIN');
 
-      // Find reserves eligible for release
+      // Find reserves eligible for release (held for more than holdPeriodDays)
+      // and no pending chargebacks
       const findQuery = `
         SELECT
-          reserve_id,
-          transaction_id,
-          tenant_id,
-          reserve_amount_cents
-        FROM payment_reserves
-        WHERE status = 'held'
-          AND hold_until <= NOW()
+          pr.reserve_id,
+          pr.transaction_id,
+          pr.tenant_id,
+          pr.reserve_amount_cents
+        FROM payment_reserves pr
+        WHERE pr.status = 'held'
+          AND pr.created_at <= NOW() - INTERVAL '${this.policy.holdPeriodDays} days'
+          ${tenantId ? 'AND pr.tenant_id = $1' : ''}
           AND NOT EXISTS (
             SELECT 1 FROM payment_chargebacks pc
-            WHERE pc.transaction_id = payment_reserves.transaction_id
-              AND pc.status IN ('pending', 'under_review')
+            WHERE pc.transaction_id = pr.transaction_id
+              AND pc.status IN ('open', 'under_review')
           )
         LIMIT 100
       `;
 
-      const reserves = await client.query(findQuery);
+      const reserves = await client.query(findQuery, tenantId ? [tenantId] : []);
 
       if (reserves.rows.length === 0) {
         await client.query('COMMIT');
@@ -239,7 +250,7 @@ export class ChargebackReserveService {
 
       await client.query('COMMIT');
 
-      logger.info({
+      log.info({
         count: reserves.rows.length,
         totalAmountCents: totalReleasedCents,
       }, 'Reserves released');
@@ -251,7 +262,7 @@ export class ChargebackReserveService {
 
     } catch (error) {
       await client.query('ROLLBACK');
-      logger.error({
+      log.error({
         error: error instanceof Error ? error.message : 'Unknown error',
       }, 'Reserve release failed');
       throw error;
@@ -266,7 +277,7 @@ export class ChargebackReserveService {
   async handleChargeback(
     transactionId: string,
     chargebackAmountCents: number
-  ): Promise<void> {
+  ): Promise<{ coveredAmountCents: number; remainingAmountCents: number }> {
     const client = await this.pool.connect();
 
     try {
@@ -276,15 +287,16 @@ export class ChargebackReserveService {
       const reserveQuery = `
         SELECT reserve_id, reserve_amount_cents, status
         FROM payment_reserves
-        WHERE transaction_id = $1
+        WHERE transaction_id = $1 AND status = 'held'
+        FOR UPDATE
       `;
 
       const result = await client.query(reserveQuery, [transactionId]);
 
       if (result.rows.length === 0) {
-        logger.warn({ transactionId }, 'No reserve found for chargeback');
+        log.warn({ transactionId }, 'No held reserve found for chargeback');
         await client.query('COMMIT');
-        return;
+        return { coveredAmountCents: 0, remainingAmountCents: chargebackAmountCents };
       }
 
       const reserve = result.rows[0];
@@ -292,26 +304,27 @@ export class ChargebackReserveService {
 
       // Use reserve to cover chargeback
       const coveredAmountCents = Math.min(chargebackAmountCents, reserveAmountCents);
-      const remainingChargebackCents = chargebackAmountCents - coveredAmountCents;
+      const remainingAmountCents = chargebackAmountCents - coveredAmountCents;
 
       await client.query(
         `UPDATE payment_reserves
          SET status = 'used_for_chargeback',
              used_amount_cents = $1,
-             used_at = NOW(),
              updated_at = NOW()
          WHERE reserve_id = $2`,
         [coveredAmountCents, reserve.reserve_id]
       );
 
-      logger.info({
+      log.info({
         transactionId,
         chargebackAmountCents,
         coveredAmountCents,
-        remainingChargebackCents,
+        remainingAmountCents,
       }, 'Reserve used for chargeback');
 
       await client.query('COMMIT');
+
+      return { coveredAmountCents, remainingAmountCents };
 
     } catch (error) {
       await client.query('ROLLBACK');
@@ -331,10 +344,10 @@ export class ChargebackReserveService {
   ): Promise<ReserveStats> {
     const query = `
       SELECT
-        SUM(CASE WHEN status = 'held' THEN reserve_amount_cents ELSE 0 END) as total_reserved,
-        SUM(CASE WHEN status = 'released' THEN reserve_amount_cents ELSE 0 END) as total_released,
-        SUM(CASE WHEN status = 'held' AND hold_until <= NOW() THEN reserve_amount_cents ELSE 0 END) as pending_release,
-        SUM(CASE WHEN status = 'used_for_chargeback' THEN used_amount_cents ELSE 0 END) as chargebacks
+        COALESCE(SUM(CASE WHEN status = 'held' THEN reserve_amount_cents ELSE 0 END), 0) as total_reserved,
+        COALESCE(SUM(CASE WHEN status = 'released' THEN reserve_amount_cents ELSE 0 END), 0) as total_released,
+        COALESCE(SUM(CASE WHEN status = 'held' AND created_at <= NOW() - INTERVAL '${this.policy.holdPeriodDays} days' THEN reserve_amount_cents ELSE 0 END), 0) as pending_release,
+        COALESCE(SUM(CASE WHEN status = 'used_for_chargeback' THEN used_amount_cents ELSE 0 END), 0) as chargebacks
       FROM payment_reserves
       WHERE tenant_id = $1
         AND created_at BETWEEN $2 AND $3
@@ -368,12 +381,11 @@ export class ChargebackReserveService {
         pr.transaction_id,
         pr.reserve_amount_cents,
         pr.status,
-        pr.hold_until,
-        pr.release_after,
-        pt.amount_cents as transaction_amount,
+        pr.created_at,
+        pt.amount as transaction_amount,
         pt.created_at as transaction_date
       FROM payment_reserves pr
-      JOIN payment_transactions pt ON pr.transaction_id = pt.transaction_id
+      JOIN payment_transactions pt ON pr.transaction_id = pt.id
       WHERE pt.venue_id = $1
         AND pr.tenant_id = $2
         AND pr.status = 'held'
@@ -386,12 +398,41 @@ export class ChargebackReserveService {
       reserveId: row.reserve_id,
       transactionId: row.transaction_id,
       reserveAmountCents: parseInt(row.reserve_amount_cents),
-      transactionAmountCents: parseInt(row.transaction_amount),
+      transactionAmountCents: Math.round(parseFloat(row.transaction_amount) * 100),
       status: row.status,
-      holdUntil: row.hold_until,
-      releaseAfter: row.release_after,
+      createdAt: row.created_at,
       transactionDate: row.transaction_date,
     }));
+  }
+
+  /**
+   * Get reserve for a specific transaction
+   */
+  async getReserveByTransaction(transactionId: string): Promise<any | null> {
+    const query = `
+      SELECT reserve_id, transaction_id, tenant_id, reserve_amount_cents, 
+             used_amount_cents, status, created_at, released_at
+      FROM payment_reserves
+      WHERE transaction_id = $1
+    `;
+
+    const result = await this.pool.query(query, [transactionId]);
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+    return {
+      reserveId: row.reserve_id,
+      transactionId: row.transaction_id,
+      tenantId: row.tenant_id,
+      reserveAmountCents: parseInt(row.reserve_amount_cents),
+      usedAmountCents: parseInt(row.used_amount_cents) || 0,
+      status: row.status,
+      createdAt: row.created_at,
+      releasedAt: row.released_at,
+    };
   }
 
   /**
@@ -399,6 +440,13 @@ export class ChargebackReserveService {
    */
   updatePolicy(policy: Partial<ReservePolicy>): void {
     this.policy = { ...this.policy, ...policy };
-    logger.info({ policy: this.policy }, 'Reserve policy updated');
+    log.info({ policy: this.policy }, 'Reserve policy updated');
+  }
+
+  /**
+   * Get current policy
+   */
+  getPolicy(): ReservePolicy {
+    return { ...this.policy };
   }
 }

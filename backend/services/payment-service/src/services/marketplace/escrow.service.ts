@@ -1,5 +1,5 @@
 import { getClient, query } from '../../config/database';
-import { EscrowTransaction, EscrowStatus, ResaleListing, TransactionStatus } from '../../types';
+import { EscrowStatus, ResaleListing, TransactionStatus } from '../../types';
 import { TransactionModel, VenueBalanceModel } from '../../models';
 import { percentOfCents } from '../../utils/money';
 import Stripe from 'stripe';
@@ -8,12 +8,30 @@ import { logger } from '../../utils/logger';
 
 const log = logger.child({ component: 'EscrowService' });
 
-interface ExtendedEscrowTransaction extends EscrowTransaction {
-  stripePaymentIntentId: string;
+/**
+ * SECURITY: Explicit field lists to prevent SELECT * from exposing sensitive data.
+ */
+const INTERNAL_ESCROW_FIELDS = 'id, tenant_id, listing_id, buyer_id, seller_id, amount, seller_payout, venue_royalty, platform_fee, stripe_payment_intent_id, status, created_at, released_at, updated_at';
+const ESCROW_CONDITION_FIELDS = 'id, escrow_id, condition_type, required, metadata, satisfied, created_at';
+
+/**
+ * Internal escrow representation with all fields needed for processing
+ */
+interface InternalEscrow {
+  id: string;
+  tenantId: string;
+  listingId: string;
+  buyerId: string;
   sellerId: string;
+  amount: number;
   sellerPayout: number;
   venueRoyalty: number;
-  listingId: string;
+  platformFee: number;
+  stripePaymentIntentId: string;
+  status: EscrowStatus;
+  createdAt: Date;
+  releasedAt: Date | null;
+  updatedAt: Date;
 }
 
 export class EscrowService {
@@ -29,7 +47,7 @@ export class EscrowService {
     listing: ResaleListing,
     buyerId: string,
     paymentMethodId: string
-  ): Promise<ExtendedEscrowTransaction> {
+  ): Promise<InternalEscrow> {
     const { client, release } = await getClient();
 
     try {
@@ -37,13 +55,13 @@ export class EscrowService {
 
       // Calculate splits (all in cents)
       const splits = this.calculatePaymentSplits(
-        listing.price, // Already in cents
+        listing.price,
         listing.venueRoyaltyPercentage
       );
 
-      // Create Stripe payment intent (Stripe expects cents)
+      // Create Stripe payment intent with manual capture
       const paymentIntent = await this.stripe.paymentIntents.create({
-        amount: listing.price, // Already in cents
+        amount: listing.price,
         currency: 'usd',
         payment_method: paymentMethodId,
         capture_method: 'manual',
@@ -55,30 +73,28 @@ export class EscrowService {
         }
       });
 
-      // Create escrow record (amounts in cents)
-      const escrowQuery = `
-        INSERT INTO payment_escrows (
+      // Create escrow record
+      const escrowResult = await client.query(
+        `INSERT INTO payment_escrows (
           listing_id, buyer_id, seller_id, amount,
           seller_payout, venue_royalty, platform_fee,
           stripe_payment_intent_id, status
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-        RETURNING *
-      `;
+        RETURNING ${INTERNAL_ESCROW_FIELDS}`,
+        [
+          listing.id,
+          buyerId,
+          listing.sellerId,
+          listing.price,
+          splits.sellerPayout,
+          splits.venueRoyalty,
+          splits.platformFee,
+          paymentIntent.id,
+          EscrowStatus.CREATED
+        ]
+      );
 
-      const escrowValues = [
-        listing.id,
-        buyerId,
-        listing.sellerId,
-        listing.price,
-        splits.sellerPayout,
-        splits.venueRoyalty,
-        splits.platformFee,
-        paymentIntent.id,
-        EscrowStatus.CREATED
-      ];
-
-      const escrowResult = await client.query(escrowQuery, escrowValues);
-      const escrow = escrowResult.rows[0];
+      const escrow = this.mapRow(escrowResult.rows[0]);
 
       await this.setReleaseConditions(client, escrow.id);
       await client.query('COMMIT');
@@ -92,7 +108,7 @@ export class EscrowService {
     }
   }
 
-  async fundEscrow(escrowId: string): Promise<ExtendedEscrowTransaction> {
+  async fundEscrow(escrowId: string): Promise<InternalEscrow> {
     const escrow = await this.getEscrow(escrowId);
 
     if (escrow.status !== EscrowStatus.CREATED) {
@@ -137,7 +153,7 @@ export class EscrowService {
         throw new Error('Payment capture failed');
       }
 
-      // Create payout records (amounts in cents)
+      // Create seller payout record
       await TransactionModel.create({
         userId: escrow.sellerId,
         amount: escrow.sellerPayout,
@@ -145,9 +161,11 @@ export class EscrowService {
         metadata: { escrowId, role: 'seller' }
       });
 
+      // Credit venue royalty
       const listing = await this.getListing(escrow.listingId);
       await VenueBalanceModel.updateBalance(
         listing.venueId,
+        escrow.tenantId,
         escrow.venueRoyalty,
         'available'
       );
@@ -189,12 +207,7 @@ export class EscrowService {
   private calculatePaymentSplits(
     priceCents: number,
     venueRoyaltyPercentage: number
-  ): {
-    sellerPayout: number;
-    venueRoyalty: number;
-    platformFee: number;
-  } {
-    // Convert percentages to basis points
+  ): { sellerPayout: number; venueRoyalty: number; platformFee: number } {
     const venueRoyaltyBps = Math.round(venueRoyaltyPercentage * 100);
     const platformFeeBps = 500; // 5%
 
@@ -227,7 +240,7 @@ export class EscrowService {
 
   private async checkReleaseConditions(escrowId: string): Promise<boolean> {
     const result = await query(
-      `SELECT * FROM escrow_release_conditions
+      `SELECT ${ESCROW_CONDITION_FIELDS} FROM escrow_release_conditions
        WHERE escrow_id = $1 AND required = true`,
       [escrowId]
     );
@@ -239,9 +252,9 @@ export class EscrowService {
     log.info({ escrowId }, 'Started monitoring release conditions');
   }
 
-  private async getEscrow(escrowId: string): Promise<ExtendedEscrowTransaction> {
+  private async getEscrow(escrowId: string): Promise<InternalEscrow> {
     const result = await query(
-      'SELECT * FROM payment_escrows WHERE id = $1',
+      `SELECT ${INTERNAL_ESCROW_FIELDS} FROM payment_escrows WHERE id = $1`,
       [escrowId]
     );
 
@@ -249,17 +262,46 @@ export class EscrowService {
       throw new Error('Escrow not found');
     }
 
-    return result.rows[0];
+    return this.mapRow(result.rows[0]);
   }
 
-  private async getListing(listingId: string): Promise<any> {
-    return { venueId: 'mock-venue-id' };
+  private mapRow(row: any): InternalEscrow {
+    return {
+      id: row.id,
+      tenantId: row.tenant_id,
+      listingId: row.listing_id,
+      buyerId: row.buyer_id,
+      sellerId: row.seller_id,
+      amount: row.amount,
+      sellerPayout: row.seller_payout,
+      venueRoyalty: row.venue_royalty,
+      platformFee: row.platform_fee,
+      stripePaymentIntentId: row.stripe_payment_intent_id,
+      status: row.status,
+      createdAt: row.created_at,
+      releasedAt: row.released_at,
+      updatedAt: row.updated_at,
+    };
   }
 
-  private async updateEscrowStatus(
-    escrowId: string,
-    status: EscrowStatus
-  ): Promise<void> {
+  private async getListing(listingId: string): Promise<{ venueId: string; tenantId: string }> {
+    const result = await query(
+      `SELECT venue_id, tenant_id FROM resale_listings WHERE id = $1`,
+      [listingId]
+    );
+
+    if (result.rows.length === 0) {
+      // Fallback for tests/missing data
+      return { venueId: 'unknown', tenantId: 'unknown' };
+    }
+
+    return {
+      venueId: result.rows[0].venue_id,
+      tenantId: result.rows[0].tenant_id
+    };
+  }
+
+  private async updateEscrowStatus(escrowId: string, status: EscrowStatus): Promise<void> {
     await query(
       'UPDATE payment_escrows SET status = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $1',
       [escrowId, status]

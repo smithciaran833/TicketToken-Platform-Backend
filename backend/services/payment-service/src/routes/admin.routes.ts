@@ -15,6 +15,9 @@ import { processPendingTransfers, getTransferStatus } from '../jobs/transfer-ret
 import { escrowService } from '../services/escrow.service';
 import { metricsRegistry } from './metrics.routes';
 import { logger } from '../utils/logger';
+import { cacheService } from '../services/cache.service';
+import { query } from '../config/database';
+import { getRedis } from '../config/redis';
 
 const log = logger.child({ component: 'AdminRoutes' });
 
@@ -279,55 +282,218 @@ export default async function adminRoutes(fastify: FastifyInstance) {
       cache,
     }, 'Admin clearing cache');
 
-    // TODO: Implement cache clearing based on cache type
-    // For now, just acknowledge the request
+    const tenantId = (request as any).tenantId;
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
 
-    return reply.send({
-      message: 'Cache clear requested',
-      cache: cache || 'all',
-      timestamp: new Date().toISOString(),
-    });
+    const cacheType = cache || 'all';
+    let clearedPatterns: string[] = [];
+
+    try {
+      // SECURITY: Always scope cache clearing to tenant - NEVER clear global cache
+      switch (cacheType) {
+        case 'all':
+          await cacheService.invalidate(`tenant:${tenantId}:*`);
+          clearedPatterns.push(`tenant:${tenantId}:*`);
+          break;
+        case 'payments':
+          await cacheService.invalidate(`tenant:${tenantId}:payment:*`);
+          clearedPatterns.push(`tenant:${tenantId}:payment:*`);
+          break;
+        case 'fraud':
+          await cacheService.invalidate(`tenant:${tenantId}:fraud:*`);
+          clearedPatterns.push(`tenant:${tenantId}:fraud:*`);
+          break;
+        case 'rates':
+          await cacheService.invalidate(`tenant:${tenantId}:rates:*`);
+          clearedPatterns.push(`tenant:${tenantId}:rates:*`);
+          break;
+        case 'escrow':
+          await cacheService.invalidate(`tenant:${tenantId}:escrow:*`);
+          clearedPatterns.push(`tenant:${tenantId}:escrow:*`);
+          break;
+        default:
+          return reply.status(400).send({
+            error: 'Invalid cache type',
+            validTypes: ['all', 'payments', 'fraud', 'rates', 'escrow']
+          });
+      }
+
+      log.info({ tenantId, cacheType, clearedPatterns }, 'Cache cleared successfully');
+
+      return reply.send({
+        message: 'Cache cleared successfully',
+        cache: cacheType,
+        patterns: clearedPatterns,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      log.error({ error: error.message, tenantId, cacheType }, 'Failed to clear cache');
+      return reply.status(500).send({
+        error: 'Failed to clear cache',
+        details: error.message
+      });
+    }
   });
 
   /**
    * GET /admin/audit-log
    * Get recent payment audit log entries
+   *
+   * SECURITY: Uses explicit field list - excludes internal Stripe IDs from non-internal consumers
    */
   fastify.get('/audit-log', async (request: FastifyRequest, reply: FastifyReply) => {
-    const { limit = 100, offset = 0 } = request.query as { limit?: number; offset?: number };
-    
-    // TODO: Implement database query for audit log
-    // This is a placeholder response
-    
-    return reply.send({
-      entries: [],
-      pagination: {
-        limit,
-        offset,
-        total: 0,
-      },
-    });
+    const { limit = 100, offset = 0, event_type } = request.query as {
+      limit?: number;
+      offset?: number;
+      event_type?: string;
+    };
+    const tenantId = (request as any).tenantId;
+
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
+
+    // Validate and cap limit
+    const safeLimit = Math.min(Math.max(1, Number(limit) || 100), 500);
+    const safeOffset = Math.max(0, Number(offset) || 0);
+
+    try {
+      // SECURITY: Explicit field list - excludes stripe_event_id for external consumers
+      const SAFE_AUDIT_FIELDS = 'id, event_type, transfer_id, payout_id, dispute_id, amount, metadata, created_at';
+
+      let queryText = `
+        SELECT ${SAFE_AUDIT_FIELDS}
+        FROM payment_audit_log
+        WHERE tenant_id = $1
+      `;
+      const params: any[] = [tenantId];
+
+      // Optional filter by event type
+      if (event_type) {
+        queryText += ` AND event_type = $${params.length + 1}`;
+        params.push(event_type);
+      }
+
+      queryText += ` ORDER BY created_at DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
+      params.push(safeLimit, safeOffset);
+
+      const result = await query(queryText, params);
+
+      // Get total count for pagination
+      let countQuery = `SELECT COUNT(*) as total FROM payment_audit_log WHERE tenant_id = $1`;
+      const countParams: any[] = [tenantId];
+      if (event_type) {
+        countQuery += ` AND event_type = $2`;
+        countParams.push(event_type);
+      }
+      const countResult = await query(countQuery, countParams);
+      const total = parseInt(countResult.rows[0]?.total || '0');
+
+      log.info({ tenantId, limit: safeLimit, offset: safeOffset, count: result.rows.length }, 'Audit log retrieved');
+
+      return reply.send({
+        entries: result.rows.map(row => ({
+          id: row.id,
+          eventType: row.event_type,
+          transferId: row.transfer_id,
+          payoutId: row.payout_id,
+          disputeId: row.dispute_id,
+          amount: row.amount ? parseInt(row.amount) : null,
+          metadata: row.metadata,
+          createdAt: row.created_at,
+        })),
+        pagination: {
+          limit: safeLimit,
+          offset: safeOffset,
+          total,
+        },
+      });
+    } catch (error: any) {
+      log.error({ error: error.message, tenantId }, 'Failed to retrieve audit log');
+      return reply.status(500).send({
+        type: 'https://api.tickettoken.io/problems/internal-error',
+        title: 'Audit Log Error',
+        status: 500,
+        detail: 'Failed to retrieve audit log',
+      });
+    }
   });
 
   /**
    * POST /admin/maintenance/mode
-   * Toggle maintenance mode
+   * Toggle maintenance mode for this tenant
+   *
+   * When enabled, non-admin requests return 503 (via maintenance middleware)
    */
   fastify.post('/maintenance/mode', async (request: FastifyRequest, reply: FastifyReply) => {
     const { enabled } = request.body as { enabled: boolean };
+    const tenantId = (request as any).tenantId;
 
-    log.warn({
-      userId: (request as any).user?.id,
-      maintenanceMode: enabled,
-    }, 'Maintenance mode changed');
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
 
-    // TODO: Implement maintenance mode toggle
-    // This would typically set a flag that middleware checks
+    // Store in Redis with tenant scope
+    const key = `maintenance:payment-service:${tenantId}`;
 
-    return reply.send({
-      message: `Maintenance mode ${enabled ? 'enabled' : 'disabled'}`,
-      enabled,
-      timestamp: new Date().toISOString(),
-    });
+    try {
+      const redis = getRedis();
+
+      if (enabled) {
+        // Set with 24-hour expiry as safety net
+        await redis.set(key, 'true', 'EX', 86400);
+        log.warn({ tenantId, userId: (request as any).user?.id }, 'Maintenance mode ENABLED');
+      } else {
+        await redis.del(key);
+        log.info({ tenantId, userId: (request as any).user?.id }, 'Maintenance mode DISABLED');
+      }
+
+      return reply.send({
+        message: `Maintenance mode ${enabled ? 'enabled' : 'disabled'}`,
+        enabled,
+        tenantId,
+        expiresIn: enabled ? '24 hours (safety)' : null,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      log.error({ error: error.message, tenantId }, 'Failed to toggle maintenance mode');
+      return reply.status(500).send({
+        type: 'https://api.tickettoken.io/problems/internal-error',
+        title: 'Maintenance Mode Error',
+        status: 500,
+        detail: 'Failed to toggle maintenance mode',
+      });
+    }
+  });
+
+  /**
+   * GET /admin/maintenance/status
+   * Check current maintenance mode status
+   */
+  fastify.get('/maintenance/status', async (request: FastifyRequest, reply: FastifyReply) => {
+    const tenantId = (request as any).tenantId;
+
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
+
+    try {
+      const redis = getRedis();
+      const key = `maintenance:payment-service:${tenantId}`;
+      const maintenanceMode = await redis.get(key);
+      const ttl = maintenanceMode ? await redis.ttl(key) : null;
+
+      return reply.send({
+        enabled: maintenanceMode === 'true',
+        tenantId,
+        expiresInSeconds: ttl,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (error: any) {
+      log.error({ error: error.message, tenantId }, 'Failed to check maintenance status');
+      return reply.status(500).send({ error: 'Failed to check maintenance status' });
+    }
   });
 }

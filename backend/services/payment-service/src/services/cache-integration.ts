@@ -2,12 +2,7 @@ import { createCache } from '@tickettoken/shared';
 
 const serviceName = process.env.SERVICE_NAME || 'payment-service';
 
-// DEBUG
-console.log('=== CACHE INTEGRATION DEBUG ===');
-console.log('REDIS_HOST:', process.env.REDIS_HOST);
-console.log('REDIS_PORT:', process.env.REDIS_PORT);
-console.log('REDIS_PASSWORD:', process.env.REDIS_PASSWORD ? '[SET]' : '[NOT SET]');
-console.log('===============================');
+// SECURITY: Removed debug console.log statements that exposed environment variables
 
 // Initialize cache with service-specific config
 const cacheSystem = createCache({

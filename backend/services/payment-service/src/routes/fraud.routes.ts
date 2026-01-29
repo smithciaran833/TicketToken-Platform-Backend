@@ -2,6 +2,14 @@ import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { advancedFraudDetectionService } from '../services/fraud/advanced-fraud-detection.service';
 import { fraudReviewService } from '../services/fraud/fraud-review.service';
 import { db } from '../config/database';
+import {
+  serializeFraudCheckPublic,
+  serializeFraudChecksAdmin,
+  serializeIPReputationAdmin,
+  serializeFraudRulesAdmin,
+  ADMIN_FRAUD_CHECK_FIELDS,
+  ADMIN_IP_REPUTATION_FIELDS,
+} from '../serializers';
 
 export default async function fraudRoutes(fastify: FastifyInstance) {
   /**
@@ -11,7 +19,8 @@ export default async function fraudRoutes(fastify: FastifyInstance) {
   fastify.post('/check', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const fraudCheck = await advancedFraudDetectionService.performFraudCheck(request.body as any);
-      return fraudCheck;
+      // SECURITY: Only return decision to public APIs, never scores or signals
+      return serializeFraudCheckPublic(fraudCheck);
     } catch (error: any) {
       return reply.code(500).send({ error: error.message });
     }
@@ -190,10 +199,13 @@ export default async function fraudRoutes(fastify: FastifyInstance) {
    */
   fastify.get('/rules', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
+      // SECURITY: Select only safe fields - exclude 'conditions' which contains detection logic
       const rules = await db('fraud_rules')
+        .select('id', 'tenant_id', 'rule_name', 'description', 'rule_type', 'action', 'priority', 'is_active', 'trigger_count', 'created_at', 'updated_at')
         .orderBy('priority', 'asc');
 
-      return { rules };
+      // SECURITY: Serialize rules to ensure no sensitive fields leak
+      return { rules: serializeFraudRulesAdmin(rules) };
     } catch (error: any) {
       return reply.code(500).send({ error: error.message });
     }
@@ -248,7 +260,9 @@ export default async function fraudRoutes(fastify: FastifyInstance) {
     try {
       const { ipAddress } = request.params;
 
+      // SECURITY: Select only admin-safe fields, exclude tracking internals
       const reputation = await db('ip_reputation')
+        .select(ADMIN_IP_REPUTATION_FIELDS)
         .where('ip_address', ipAddress)
         .first();
 
@@ -256,7 +270,8 @@ export default async function fraudRoutes(fastify: FastifyInstance) {
         return reply.code(404).send({ error: 'IP not found' });
       }
 
-      return reputation;
+      // SECURITY: Serialize IP reputation to filter sensitive fields
+      return serializeIPReputationAdmin(reputation);
     } catch (error: any) {
       return reply.code(500).send({ error: error.message });
     }
@@ -296,12 +311,15 @@ export default async function fraudRoutes(fastify: FastifyInstance) {
       const { limit } = request.query as any;
       const limitNum = limit ? parseInt(limit as string) : 50;
 
+      // SECURITY: Select only admin-safe fields - exclude signals, device_fingerprint, ip_address
       const history = await db('fraud_checks')
+        .select(ADMIN_FRAUD_CHECK_FIELDS)
         .where('user_id', userId)
         .orderBy('timestamp', 'desc')
         .limit(limitNum);
 
-      return { history };
+      // SECURITY: Serialize fraud checks for admin view
+      return { history: serializeFraudChecksAdmin(history) };
     } catch (error: any) {
       return reply.code(500).send({ error: error.message });
     }
@@ -329,14 +347,22 @@ async function getRiskDistribution(days: number) {
 }
 
 async function getRecentHighRiskTransactions(limit: number) {
+  // SECURITY: Select only admin-safe fields - NEVER select signals, device_fingerprint, ip_address
   const transactions = await db('fraud_checks')
     .where('score', '>=', 0.6)
     .orderBy('timestamp', 'desc')
     .limit(limit)
-    .select('*');
+    .select(ADMIN_FRAUD_CHECK_FIELDS);
 
+  // SECURITY: Return serialized admin view - no signals exposed
   return transactions.map((t: any) => ({
-    ...t,
-    signals: JSON.parse(t.signals || '[]')
+    id: t.id,
+    userId: t.user_id,
+    paymentId: t.payment_id,
+    score: t.score,
+    riskScore: t.risk_score,
+    decision: t.decision,
+    checkType: t.check_type,
+    timestamp: t.timestamp,
   }));
 }

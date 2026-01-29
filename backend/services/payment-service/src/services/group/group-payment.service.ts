@@ -7,6 +7,93 @@ import { logger } from '../../utils/logger';
 
 const log = logger.child({ component: 'GroupPayment' });
 
+/**
+ * SECURITY: Explicit field lists to prevent SELECT * from exposing sensitive data.
+ */
+
+// Safe group payment fields (excludes ticket_selections which contains pricing details)
+const SAFE_GROUP_PAYMENT_FIELDS = [
+  'id',
+  'tenant_id',
+  'organizer_id',
+  'event_id',
+  'total_amount',
+  'status',
+  'expires_at',
+  'completed_at',
+  'cancelled_at',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+// All group payment fields for internal operations
+const ALL_GROUP_PAYMENT_FIELDS = [
+  'id',
+  'tenant_id',
+  'organizer_id',
+  'event_id',
+  'total_amount',
+  'ticket_selections',
+  'status',
+  'expires_at',
+  'completed_at',
+  'cancelled_at',
+  'cancellation_reason',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+// Safe member fields (excludes payment_id, email visible only to organizer)
+const SAFE_MEMBER_FIELDS = [
+  'id',
+  'tenant_id',
+  'group_payment_id',
+  'name',
+  'amount_due',
+  'ticket_count',
+  'paid',
+  'paid_at',
+  'status',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+// Member fields for organizer view (includes email)
+const ORGANIZER_MEMBER_FIELDS = [
+  'id',
+  'tenant_id',
+  'group_payment_id',
+  'email',
+  'name',
+  'amount_due',
+  'ticket_count',
+  'paid',
+  'paid_at',
+  'reminders_sent',
+  'status',
+  'created_at',
+  'updated_at',
+].join(', ');
+
+// All member fields for internal operations
+const ALL_MEMBER_FIELDS = [
+  'id',
+  'tenant_id',
+  'group_payment_id',
+  'user_id',
+  'email',
+  'name',
+  'amount_due',
+  'ticket_count',
+  'paid',
+  'paid_at',
+  'payment_id',
+  'reminders_sent',
+  'status',
+  'created_at',
+  'updated_at',
+].join(', ');
+
 export class GroupPaymentService {
   private reminderQueue: Bull.Queue;
   private expiryQueue: Bull.Queue;
@@ -57,12 +144,13 @@ export class GroupPaymentService {
       const groupId = uuidv4();
       const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+      // SECURITY: Use explicit RETURNING fields, not *
       const groupQuery = `
         INSERT INTO group_payments (
           id, organizer_id, event_id, total_amount,
           ticket_selections, expires_at, status
         ) VALUES ($1, $2, $3, $4, $5, $6, $7)
-        RETURNING *
+        RETURNING ${ALL_GROUP_PAYMENT_FIELDS}
       `;
 
       const groupValues = [
@@ -84,12 +172,13 @@ export class GroupPaymentService {
         const memberId = uuidv4();
         const amountDue = pricePerTicket * member.ticketCount;
 
+        // SECURITY: Use explicit RETURNING fields, not *
         const memberQuery = `
           INSERT INTO group_payment_members (
             id, group_payment_id, email, name,
             amount_due, ticket_count
           ) VALUES ($1, $2, $3, $4, $5, $6)
-          RETURNING *
+          RETURNING ${ORGANIZER_MEMBER_FIELDS}
         `;
 
         const memberValues = [
@@ -141,8 +230,10 @@ export class GroupPaymentService {
     try {
       await client.query('BEGIN');
 
+      // SECURITY: Select only fields needed for payment processing
       const memberQuery = `
-        SELECT * FROM group_payment_members
+        SELECT id, group_payment_id, amount_due, paid, email, name
+        FROM group_payment_members
         WHERE id = $1 AND group_payment_id = $2
       `;
       const memberResult = await client.query(memberQuery, [memberId, groupId]);
@@ -225,7 +316,7 @@ export class GroupPaymentService {
     try {
       await client.query('BEGIN');
 
-      const group = await this.getGroupPayment(groupId);
+      const group = await this.getGroupPaymentInternal(groupId);
 
       if (group.status !== GroupPaymentStatus.COLLECTING) {
         return;
@@ -292,7 +383,7 @@ export class GroupPaymentService {
   }
 
   private async completePurchase(groupId: string): Promise<void> {
-    const group = await this.getGroupPayment(groupId);
+    const group = await this.getGroupPaymentInternal(groupId);
 
     log.info({
       groupId,
@@ -329,14 +420,20 @@ export class GroupPaymentService {
     }, 'Processing partial group payment');
   }
 
-  private async getGroupPayment(groupId: string): Promise<GroupPayment> {
+  /**
+   * Get group payment - INTERNAL version with all fields.
+   * Use for service layer operations that need ticket_selections.
+   */
+  private async getGroupPaymentInternal(groupId: string): Promise<GroupPayment> {
+    // SECURITY: Use explicit field list instead of SELECT *
     const groupResult = await query(
-      'SELECT * FROM group_payments WHERE id = $1',
+      `SELECT ${ALL_GROUP_PAYMENT_FIELDS} FROM group_payments WHERE id = $1`,
       [groupId]
     );
 
+    // SECURITY: Use organizer fields (includes email for internal processing)
     const membersResult = await query(
-      'SELECT * FROM group_payment_members WHERE group_payment_id = $1',
+      `SELECT ${ORGANIZER_MEMBER_FIELDS} FROM group_payment_members WHERE group_payment_id = $1`,
       [groupId]
     );
 
@@ -346,15 +443,55 @@ export class GroupPaymentService {
     };
   }
 
+  /**
+   * Get unpaid members for reminder processing.
+   * INTERNAL: Needs email for sending reminders.
+   */
   private async getUnpaidMembers(groupId: string): Promise<GroupMember[]> {
+    // SECURITY: Use explicit field list, includes email for reminders
     const result = await query(
-      'SELECT * FROM group_payment_members WHERE group_payment_id = $1 AND paid = false',
+      `SELECT ${ORGANIZER_MEMBER_FIELDS} FROM group_payment_members
+       WHERE group_payment_id = $1 AND paid = false`,
       [groupId]
     );
 
     return result.rows;
   }
 
+  /**
+   * Get group payment by ID - PUBLIC version with safe fields.
+   * Use for authorization checks and external API responses.
+   */
+  async getGroupPayment(groupId: string): Promise<GroupPayment | null> {
+    // SECURITY: Use safe fields - excludes ticket_selections and sensitive data
+    const groupResult = await query(
+      `SELECT ${SAFE_GROUP_PAYMENT_FIELDS} FROM group_payments WHERE id = $1`,
+      [groupId]
+    );
+
+    if (groupResult.rows.length === 0) {
+      return null;
+    }
+
+    const row = groupResult.rows[0];
+    // Map database snake_case to TypeScript camelCase
+    return {
+      id: row.id,
+      organizerId: row.organizer_id,
+      eventId: row.event_id,
+      totalAmount: parseInt(row.total_amount) || 0,
+      ticketSelections: [], // Not included in safe fields
+      members: [], // Not fetched in this method
+      expiresAt: row.expires_at,
+      status: row.status,
+      createdAt: row.created_at,
+    } as GroupPayment;
+  }
+
+  /**
+   * Get group status for external API.
+   * Returns summary data without sensitive internal fields.
+   */
   async getGroupStatus(groupId: string): Promise<{
     group: GroupPayment;
     summary: {
@@ -365,19 +502,34 @@ export class GroupPaymentService {
       percentageCollected: number;
     };
   }> {
-    const group = await this.getGroupPayment(groupId);
+    // SECURITY: Use safe fields for external-facing method
+    const groupResult = await query(
+      `SELECT ${SAFE_GROUP_PAYMENT_FIELDS} FROM group_payments WHERE id = $1`,
+      [groupId]
+    );
 
-    const paidMembers = group.members.filter(m => m.paid);
-    const totalCollected = paidMembers.reduce((sum, m) => sum + m.amountDue, 0);
+    // SECURITY: Use safe member fields (no email for external view)
+    const membersResult = await query(
+      `SELECT ${SAFE_MEMBER_FIELDS} FROM group_payment_members WHERE group_payment_id = $1`,
+      [groupId]
+    );
+
+    const group = {
+      ...groupResult.rows[0],
+      members: membersResult.rows
+    };
+
+    const paidMembers = group.members.filter((m: any) => m.paid);
+    const totalCollected = paidMembers.reduce((sum: number, m: any) => sum + (m.amount_due || 0), 0);
 
     return {
       group,
       summary: {
         totalMembers: group.members.length,
         paidMembers: paidMembers.length,
-        totalExpected: group.totalAmount,
+        totalExpected: group.total_amount || 0,
         totalCollected,
-        percentageCollected: (totalCollected / group.totalAmount) * 100
+        percentageCollected: group.total_amount ? (totalCollected / group.total_amount) * 100 : 0
       }
     };
   }

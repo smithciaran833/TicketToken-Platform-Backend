@@ -2,6 +2,12 @@ import { query } from '../../config/database';
 import { complianceConfig } from '../../config/compliance';
 
 /**
+ * SECURITY: Explicit field list for tax form status queries.
+ * EXCLUDES form_data which contains TIN (SSN/EIN) - only retrieve when user downloads their own form.
+ */
+const TAX_FORM_STATUS_FIELDS = 'id, tenant_id, user_id, tax_year, total_proceeds, transaction_count, status, generated_at, sent_at';
+
+/**
  * FORM 1099-DA TAX REPORTING SERVICE
  * 
  * IRS-required reporting for digital asset (NFT) sales.
@@ -234,8 +240,10 @@ export class Form1099DAService {
     downloadUrl?: string;
     summary?: any;
   }> {
+    // SECURITY: Use explicit field list - EXCLUDES form_data which contains TIN (SSN/EIN)
+    // form_data should only be retrieved when user downloads their own form
     const result = await query(
-      `SELECT * FROM tax_forms_1099da
+      `SELECT ${TAX_FORM_STATUS_FIELDS} FROM tax_forms_1099da
        WHERE user_id = $1 AND tax_year = $2
        ORDER BY generated_at DESC
        LIMIT 1`,
@@ -254,11 +262,16 @@ export class Form1099DAService {
 
     const form = result.rows[0];
 
+    // SECURITY: Construct summary from safe fields instead of parsing form_data
+    // form_data contains TIN and should only be accessed when user downloads their form
     return {
       status: form.status,
       generatedAt: form.generated_at,
       downloadUrl: `/api/tax/forms/1099-da/${userId}/${taxYear}`,
-      summary: JSON.parse(form.form_data).summary
+      summary: {
+        totalProceeds: parseFloat(form.total_proceeds),
+        transactionCount: form.transaction_count
+      }
     };
   }
 }

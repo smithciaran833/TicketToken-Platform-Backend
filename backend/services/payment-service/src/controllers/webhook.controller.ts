@@ -203,11 +203,78 @@ export class WebhookController {
   private async handleRefund(charge: Stripe.Charge): Promise<void> {
     log.info({
       chargeId: charge.id,
-      refunded: charge.refunded
+      refunded: charge.refunded,
+      amountRefunded: charge.amount_refunded
     }, 'Processing refund');
 
-    // Implementation depends on your refund tracking
-    // This is a placeholder
+    try {
+      // Get payment intent ID from the charge
+      const paymentIntentId = typeof charge.payment_intent === 'string'
+        ? charge.payment_intent
+        : charge.payment_intent?.id;
+
+      if (!paymentIntentId) {
+        log.warn({ chargeId: charge.id }, 'Refund webhook missing payment_intent');
+        return;
+      }
+
+      // Find the original transaction
+      const transaction = await db('payment_transactions')
+        .where('stripe_payment_intent_id', paymentIntentId)
+        .first('id', 'user_id', 'tenant_id', 'amount');
+
+      if (!transaction) {
+        log.warn({ paymentIntentId, chargeId: charge.id }, 'Refund for unknown transaction');
+        return;
+      }
+
+      // Process each refund in the charge (Stripe includes all refunds on the charge)
+      const refunds = charge.refunds?.data || [];
+      for (const refund of refunds) {
+        // Check if this refund already exists (idempotency)
+        const existing = await db('payment_refunds')
+          .where('stripe_refund_id', refund.id)
+          .first('id');
+
+        if (existing) {
+          log.debug({ refundId: refund.id }, 'Refund already processed');
+          continue;
+        }
+
+        // Create refund record
+        await db('payment_refunds').insert({
+          tenant_id: transaction.tenant_id,
+          transaction_id: transaction.id,
+          user_id: transaction.user_id,
+          amount: refund.amount,
+          currency: refund.currency,
+          status: refund.status,
+          reason: refund.reason || 'requested_by_customer',
+          stripe_refund_id: refund.id,
+          created_at: new Date(),
+          updated_at: new Date()
+        });
+
+        log.info({
+          refundId: refund.id,
+          transactionId: transaction.id,
+          amount: refund.amount
+        }, 'Refund recorded from webhook');
+      }
+
+      // Update transaction status based on refund amount
+      const newStatus = charge.amount_refunded >= charge.amount ? 'refunded' : 'partially_refunded';
+      await db('payment_transactions')
+        .where('id', transaction.id)
+        .update({
+          status: newStatus,
+          updated_at: new Date()
+        });
+
+    } catch (error) {
+      log.error({ error, chargeId: charge.id }, 'Error processing refund webhook');
+      throw error;
+    }
   }
 
   private async handlePaymentCanceled(paymentIntent: Stripe.PaymentIntent): Promise<void> {

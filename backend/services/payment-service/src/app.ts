@@ -17,6 +17,7 @@ import refundRoutes from './routes/refund.routes';
 // Import middleware
 import { errorHandler } from './middleware/error-handler';
 import { idempotencyCacheHook } from './middleware/idempotency';
+import { maintenanceMiddleware } from './middleware/maintenance.middleware';
 
 export async function buildApp(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -56,6 +57,10 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Idempotency response caching hook (global)
   app.addHook('onSend', idempotencyCacheHook);
+
+  // Maintenance mode middleware - blocks non-admin requests when enabled
+  // Note: Runs after auth middleware sets tenantId/user, before route handlers
+  app.addHook('preHandler', maintenanceMiddleware);
 
   // ============================================================================
   // ROUTES

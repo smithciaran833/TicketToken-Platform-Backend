@@ -8,6 +8,11 @@ const WEBHOOK_SECRET = process.env.INTERNAL_WEBHOOK_SECRET || 'internal-webhook-
 const MAX_RETRY_ATTEMPTS = 5;
 const INITIAL_RETRY_DELAY = 1000;
 
+/**
+ * SECURITY: Explicit field list for outbox queries.
+ */
+const OUTBOX_FIELDS = 'id, tenant_id, event_type, aggregate_type, aggregate_id, payload, correlation_id, destination_url, attempts, last_attempt_at, processed_at, created_at';
+
 export class OutboxProcessor {
   private pool: Pool;
   private processingInterval: NodeJS.Timeout | null = null;
@@ -58,8 +63,9 @@ export class OutboxProcessor {
 
     try {
       await withSystemContextPool(this.pool, async (client) => {
+        // SECURITY: Use explicit field list instead of SELECT *
         const result = await client.query(`
-          SELECT * FROM outbox
+          SELECT ${OUTBOX_FIELDS} FROM outbox
           WHERE processed_at IS NULL
             AND attempts < $1
             AND (

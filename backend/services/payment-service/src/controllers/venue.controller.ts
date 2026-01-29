@@ -12,20 +12,25 @@ export class VenueController {
   async getBalance(request: FastifyRequest, reply: FastifyReply) {
     const { venueId } = request.params as any;
     const user = (request as any).user;
+    const tenantId = (request as any).tenantId;
 
     // Verify venue access
     if (!user) {
       return reply.status(401).send({ error: "Authentication required" });
     }
-    
+
     if (!user.venues?.includes(venueId) && !user.isAdmin) {
       return reply.status(403).send({
         error: 'Access denied'
       });
     }
 
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
+
     const balance = await this.venueBalanceService.getBalance(venueId);
-    const payoutInfo = await this.venueBalanceService.calculatePayoutAmount(venueId);
+    const payoutInfo = await this.venueBalanceService.calculatePayoutAmount(venueId, tenantId);
 
     return reply.send({
       balance,
@@ -37,19 +42,24 @@ export class VenueController {
     const { venueId } = request.params as any;
     const { amount, instant } = request.body as any;
     const user = (request as any).user;
+    const tenantId = (request as any).tenantId;
 
     // Verify venue access
     if (!user) {
       return reply.status(401).send({ error: "Authentication required" });
     }
-    
+
     if (!user.venues?.includes(venueId) && !user.isAdmin) {
       return reply.status(403).send({
         error: 'Access denied'
       });
     }
 
-    await this.venueBalanceService.processPayout(venueId, amount);
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
+
+    await this.venueBalanceService.processPayout(venueId, tenantId, amount);
 
     return reply.send({
       success: true,
@@ -69,20 +79,28 @@ export class VenueController {
     if (!user) {
       return reply.status(401).send({ error: "Authentication required" });
     }
-    
+
     if (!user.venues?.includes(venueId) && !user.isAdmin) {
       return reply.status(403).send({
         error: 'Access denied'
       });
     }
 
-    // TODO: Implement getPayoutHistory method
-    const history: any[] = []; /* await this.venueBalanceService.getPayoutHistory(
-      venueId,
-      parseInt(limit as string),
-      parseInt(offset as string)
-    ); */
+    const tenantId = (request as any).tenantId;
+    if (!tenantId) {
+      return reply.status(400).send({ error: 'Tenant context required' });
+    }
 
-    return reply.send(history);
+    const history = await this.venueBalanceService.getPayoutHistory(
+      venueId,
+      tenantId,
+      parseInt(limit as string) || 50,
+      parseInt(offset as string) || 0
+    );
+
+    return reply.send({
+      venueId,
+      ...history
+    });
   }
 }

@@ -1,6 +1,6 @@
 /**
  * Payment Analytics Dashboard Service
- * Real-time payment insights and reporting
+ * FIXED: Aligned with actual payment_transactions schema
  */
 
 import { Pool } from 'pg';
@@ -35,7 +35,7 @@ export interface TrendData {
 export interface PaymentBreakdown {
   byMethod: Array<{ method: string; count: number; revenueCents: number }>;
   byStatus: Array<{ status: string; count: number; revenueCents: number }>;
-  byVenueTier: Array<{ tier: string; count: number; revenueCents: number }>;
+  byType: Array<{ type: string; count: number; revenueCents: number }>;
 }
 
 export interface PerformanceMetrics {
@@ -81,11 +81,12 @@ export class PaymentAnalyticsService {
     startDate: Date,
     endDate: Date
   ): Promise<OverviewMetrics> {
+    // FIXED: Use 'amount' instead of 'amount_cents', convert to cents
     const query = `
       SELECT
         COUNT(*) as total_transactions,
-        SUM(amount_cents) as total_revenue_cents,
-        AVG(amount_cents) as avg_transaction_cents,
+        SUM(amount * 100) as total_revenue_cents,
+        AVG(amount * 100) as avg_transaction_cents,
         COUNT(CASE WHEN status = 'completed' THEN 1 END)::FLOAT /
           NULLIF(COUNT(*), 0) as success_rate
       FROM payment_transactions
@@ -110,11 +111,12 @@ export class PaymentAnalyticsService {
     startDate: Date,
     endDate: Date
   ): Promise<TrendData[]> {
+    // FIXED: Use 'amount' instead of 'amount_cents'
     const query = `
       SELECT
         DATE(created_at) as date,
         COUNT(*) as transaction_count,
-        SUM(amount_cents) as revenue_cents,
+        SUM(amount * 100) as revenue_cents,
         COUNT(CASE WHEN status = 'completed' THEN 1 END)::FLOAT /
           NULLIF(COUNT(*), 0) as success_rate
       FROM payment_transactions
@@ -138,32 +140,37 @@ export class PaymentAnalyticsService {
     startDate: Date,
     endDate: Date
   ): Promise<PaymentBreakdown> {
-    const methodQuery = `
-      SELECT payment_method as method, COUNT(*) as count, SUM(amount_cents) as revenue_cents
+    // FIXED: payment_method doesn't exist, use type instead
+    // Also removed byVenueTier since venues.tier doesn't exist
+    const typeQuery = `
+      SELECT type, COUNT(*) as count, SUM(amount * 100) as revenue_cents
       FROM payment_transactions
       WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
-      GROUP BY payment_method ORDER BY count DESC
+      GROUP BY type ORDER BY count DESC
     `;
 
     const statusQuery = `
-      SELECT status, COUNT(*) as count, SUM(amount_cents) as revenue_cents
+      SELECT status, COUNT(*) as count, SUM(amount * 100) as revenue_cents
       FROM payment_transactions
       WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
       GROUP BY status ORDER BY count DESC
     `;
 
-    const tierQuery = `
-      SELECT COALESCE(v.tier, 'unknown') as tier, COUNT(pt.*) as count, SUM(pt.amount_cents) as revenue_cents
-      FROM payment_transactions pt
-      LEFT JOIN venues v ON pt.venue_id = v.venue_id
-      WHERE pt.tenant_id = $1 AND pt.created_at BETWEEN $2 AND $3
-      GROUP BY tier ORDER BY count DESC
+    // For payment method, we'll extract from metadata if available
+    const methodQuery = `
+      SELECT 
+        COALESCE(metadata->>'payment_method', 'unknown') as method,
+        COUNT(*) as count,
+        SUM(amount * 100) as revenue_cents
+      FROM payment_transactions
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
+      GROUP BY method ORDER BY count DESC
     `;
 
-    const [methodResult, statusResult, tierResult] = await Promise.all([
-      this.pool.query(methodQuery, [tenantId, startDate, endDate]),
+    const [typeResult, statusResult, methodResult] = await Promise.all([
+      this.pool.query(typeQuery, [tenantId, startDate, endDate]),
       this.pool.query(statusQuery, [tenantId, startDate, endDate]),
-      this.pool.query(tierQuery, [tenantId, startDate, endDate]),
+      this.pool.query(methodQuery, [tenantId, startDate, endDate]),
     ]);
 
     return {
@@ -177,8 +184,8 @@ export class PaymentAnalyticsService {
         count: parseInt(row.count),
         revenueCents: parseInt(row.revenue_cents),
       })),
-      byVenueTier: tierResult.rows.map((row) => ({
-        tier: row.tier,
+      byType: typeResult.rows.map((row) => ({
+        type: row.type,
         count: parseInt(row.count),
         revenueCents: parseInt(row.revenue_cents),
       })),
@@ -190,15 +197,16 @@ export class PaymentAnalyticsService {
     startDate: Date,
     endDate: Date
   ): Promise<PerformanceMetrics> {
+    // FIXED: completed_at doesn't exist, use updated_at - created_at
+    // Also removed timeout status check (doesn't exist in schema)
     const query = `
       SELECT
-        AVG(EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) as avg_processing_ms,
-        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) as p95_processing_ms,
-        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (completed_at - created_at)) * 1000) as p99_processing_ms,
-        COUNT(CASE WHEN status = 'failed' THEN 1 END)::FLOAT / NULLIF(COUNT(*), 0) as error_rate,
-        COUNT(CASE WHEN status = 'timeout' THEN 1 END)::FLOAT / NULLIF(COUNT(*), 0) as timeout_rate
+        AVG(EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000) as avg_processing_ms,
+        PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000) as p95_processing_ms,
+        PERCENTILE_CONT(0.99) WITHIN GROUP (ORDER BY EXTRACT(EPOCH FROM (updated_at - created_at)) * 1000) as p99_processing_ms,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END)::FLOAT / NULLIF(COUNT(*), 0) as error_rate
       FROM payment_transactions
-      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 AND completed_at IS NOT NULL
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
@@ -209,7 +217,7 @@ export class PaymentAnalyticsService {
       p95ProcessingTimeMs: Math.round(parseFloat(row.p95_processing_ms) || 0),
       p99ProcessingTimeMs: Math.round(parseFloat(row.p99_processing_ms) || 0),
       errorRate: parseFloat(row.error_rate) || 0,
-      timeoutRate: parseFloat(row.timeout_rate) || 0,
+      timeoutRate: 0, // Not available in schema
     };
   }
 
@@ -219,11 +227,12 @@ export class PaymentAnalyticsService {
     return cacheService.getOrCompute(
       cacheKey,
       async () => {
+        // FIXED: Use 'amount' instead of 'amount_cents'
         const query = `
           SELECT
             DATE_TRUNC('minute', created_at) as minute,
             COUNT(*) as count,
-            SUM(amount_cents) as revenue_cents,
+            SUM(amount * 100) as revenue_cents,
             COUNT(CASE WHEN status = 'completed' THEN 1 END) as successful
           FROM payment_transactions
           WHERE tenant_id = $1 AND created_at >= NOW() - INTERVAL '1 hour'
@@ -249,16 +258,17 @@ export class PaymentAnalyticsService {
     endDate: Date,
     limit: number = 10
   ): Promise<any[]> {
+    // FIXED: Join on correct column (id, not venue_id)
     const query = `
       SELECT
-        v.venue_id, v.name as venue_name,
+        v.id as venue_id, v.name as venue_name,
         COUNT(pt.*) as transaction_count,
-        SUM(pt.amount_cents) as total_revenue_cents,
-        AVG(pt.amount_cents) as avg_transaction_cents
+        SUM(pt.amount * 100) as total_revenue_cents,
+        AVG(pt.amount * 100) as avg_transaction_cents
       FROM payment_transactions pt
-      JOIN venues v ON pt.venue_id = v.venue_id
+      JOIN venues v ON pt.venue_id = v.id
       WHERE pt.tenant_id = $1 AND pt.created_at BETWEEN $2 AND $3 AND pt.status = 'completed'
-      GROUP BY v.venue_id, v.name
+      GROUP BY v.id, v.name
       ORDER BY total_revenue_cents DESC LIMIT $4
     `;
 
@@ -278,10 +288,16 @@ export class PaymentAnalyticsService {
     startDate: Date,
     endDate: Date
   ): Promise<any> {
+    // FIXED: error_code and error_message don't exist, extract from metadata
     const query = `
-      SELECT error_code, error_message, payment_method, COUNT(*) as count, SUM(amount_cents) as failed_revenue_cents
+      SELECT 
+        metadata->>'error_code' as error_code,
+        metadata->>'error_message' as error_message,
+        metadata->>'payment_method' as payment_method,
+        COUNT(*) as count,
+        SUM(amount * 100) as failed_revenue_cents
       FROM payment_transactions
-      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 AND status IN ('failed', 'declined')
+      WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3 AND status = 'failed'
       GROUP BY error_code, error_message, payment_method
       ORDER BY count DESC LIMIT 20
     `;
@@ -289,9 +305,9 @@ export class PaymentAnalyticsService {
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
 
     return result.rows.map((row) => ({
-      errorCode: row.error_code,
-      errorMessage: row.error_message,
-      paymentMethod: row.payment_method,
+      errorCode: row.error_code || 'unknown',
+      errorMessage: row.error_message || 'No error message',
+      paymentMethod: row.payment_method || 'unknown',
       count: parseInt(row.count),
       failedRevenueCents: parseInt(row.failed_revenue_cents),
     }));
@@ -302,8 +318,9 @@ export class PaymentAnalyticsService {
     startDate: Date,
     endDate: Date
   ): Promise<string> {
+    // FIXED: Use 'id' instead of 'transaction_id', 'amount' instead of 'amount_cents'
     const query = `
-      SELECT transaction_id, created_at, amount_cents, status, payment_method, venue_id, user_id
+      SELECT id, created_at, amount, status, type, venue_id, user_id
       FROM payment_transactions
       WHERE tenant_id = $1 AND created_at BETWEEN $2 AND $3
       ORDER BY created_at DESC
@@ -311,13 +328,13 @@ export class PaymentAnalyticsService {
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
 
-    const headers = ['Transaction ID', 'Date', 'Amount (cents)', 'Status', 'Method', 'Venue ID', 'User ID'];
+    const headers = ['Transaction ID', 'Date', 'Amount (cents)', 'Status', 'Type', 'Venue ID', 'User ID'];
     const rows = result.rows.map((row) => [
-      row.transaction_id,
+      row.id,
       row.created_at.toISOString(),
-      row.amount_cents,
+      Math.round(parseFloat(row.amount) * 100), // Convert to cents
       row.status,
-      row.payment_method,
+      row.type,
       row.venue_id || '',
       row.user_id || '',
     ]);

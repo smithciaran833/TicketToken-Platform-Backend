@@ -9,8 +9,8 @@
 
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { escrowService } from '../services/escrow.service';
-import { 
-  validateCreateEscrow, 
+import {
+  validateCreateEscrow,
   validateEscrowIdParam,
   validateReleaseEscrow,
   CreateEscrowInput,
@@ -18,6 +18,11 @@ import {
   ReleaseEscrowInput,
 } from '../validators/payment.validator';
 import { logger } from '../utils/logger';
+import {
+  serializeEscrow,
+  serializeEscrows,
+  serializeEscrowSummary,
+} from '../serializers';
 
 const log = logger.child({ component: 'EscrowRoutes' });
 
@@ -86,7 +91,8 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
           amount: escrow.amount,
         }, 'Escrow created');
 
-        return reply.status(201).send(escrow);
+        // SECURITY: Serialize escrow to filter sensitive fields like paymentIntentId
+        return reply.status(201).send(serializeEscrow(escrow));
       } catch (error: any) {
         log.error({ error: error.message }, 'Failed to create escrow');
         
@@ -121,14 +127,16 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
             type: 'object',
             properties: {
               id: { type: 'string' },
+              tenantId: { type: 'string' },
               orderId: { type: 'string' },
-              paymentIntentId: { type: 'string' },
+              // SECURITY: paymentIntentId removed - internal Stripe identifier
               amount: { type: 'integer' },
               heldAmount: { type: 'integer' },
               releasedAmount: { type: 'integer' },
               status: { type: 'string' },
               holdUntil: { type: 'string' },
               createdAt: { type: 'string' },
+              updatedAt: { type: 'string' },
             },
           },
           404: {
@@ -156,7 +164,8 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
         });
       }
 
-      return reply.send(escrow);
+      // SECURITY: Serialize escrow to filter sensitive fields
+      return reply.send(serializeEscrow(escrow));
     }
   );
 
@@ -215,7 +224,8 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
           newStatus: escrow.status,
         }, 'Escrow released');
 
-        return reply.send(escrow);
+        // SECURITY: Serialize escrow to filter sensitive fields
+        return reply.send(serializeEscrow(escrow));
       } catch (error: any) {
         log.error({ error: error.message, escrowId }, 'Failed to release escrow');
         
@@ -264,7 +274,8 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
 
         log.info({ escrowId, reason }, 'Escrow cancelled');
 
-        return reply.send(escrow);
+        // SECURITY: Serialize escrow to filter sensitive fields
+        return reply.send(serializeEscrow(escrow));
       } catch (error: any) {
         log.error({ error: error.message, escrowId }, 'Failed to cancel escrow');
         
@@ -315,7 +326,8 @@ export default async function escrowRoutes(fastify: FastifyInstance) {
 
       const escrows = await escrowService.listEscrowsForOrder(orderId, tenantId);
 
-      return reply.send(escrows);
+      // SECURITY: Serialize escrows to filter sensitive fields
+      return reply.send(serializeEscrows(escrows));
     }
   );
 }

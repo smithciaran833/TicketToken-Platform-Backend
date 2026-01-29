@@ -11,6 +11,16 @@ import { v4 as uuidv4 } from 'uuid';
 
 const log = logger.child({ component: 'DatabaseTransaction' });
 
+/**
+ * SECURITY: Explicit field lists for transaction utility queries.
+ * These are internal fields used for locking and transaction processing.
+ */
+const TRANSACTION_LOCK_FIELDS = 'id, tenant_id, user_id, event_id, order_id, amount, currency, status, stripe_payment_intent_id, stripe_charge_id, payment_method_type, created_at, updated_at';
+const REFUND_LOCK_FIELDS = 'id, tenant_id, payment_id, user_id, amount, reason, status, stripe_refund_id, refund_method, requested_at, processed_at, created_at, updated_at';
+const VENUE_BALANCE_LOCK_FIELDS = 'id, tenant_id, venue_id, available_balance, pending_balance, held_for_disputes, currency, updated_at';
+const PENDING_TRANSFER_FIELDS = 'id, tenant_id, stripe_transfer_id, payment_id, venue_id, amount, destination_account, status, retry_count, retry_after, created_at, updated_at';
+const ORDER_LOCK_FIELDS = 'id, tenant_id, user_id, event_id, status, total_amount, currency, created_at, updated_at';
+
 // =============================================================================
 // TRANSACTION ISOLATION LEVELS
 // =============================================================================
@@ -379,9 +389,10 @@ export async function selectPaymentForUpdate(
   paymentId: string,
   tenantId: string
 ): Promise<any | null> {
+  // SECURITY: Use explicit field list instead of SELECT *
   const result = await client.query(
-    `SELECT * FROM payment_transactions 
-     WHERE id = $1 AND tenant_id = $2 
+    `SELECT ${TRANSACTION_LOCK_FIELDS} FROM payment_transactions
+     WHERE id = $1 AND tenant_id = $2
      FOR UPDATE`,
     [paymentId, tenantId]
   );
@@ -398,9 +409,10 @@ export async function selectPaymentsForUpdate(
 ): Promise<any[]> {
   if (paymentIds.length === 0) return [];
   
+  // SECURITY: Use explicit field list instead of SELECT *
   const result = await client.query(
-    `SELECT * FROM payment_transactions 
-     WHERE id = ANY($1) AND tenant_id = $2 
+    `SELECT ${TRANSACTION_LOCK_FIELDS} FROM payment_transactions
+     WHERE id = ANY($1) AND tenant_id = $2
      ORDER BY created_at ASC
      FOR UPDATE`,
     [paymentIds, tenantId]
@@ -416,9 +428,10 @@ export async function selectRefundForUpdate(
   refundId: string,
   tenantId: string
 ): Promise<any | null> {
+  // SECURITY: Use explicit field list instead of SELECT *
   const result = await client.query(
-    `SELECT * FROM payment_refunds 
-     WHERE id = $1 AND tenant_id = $2 
+    `SELECT ${REFUND_LOCK_FIELDS} FROM payment_refunds
+     WHERE id = $1 AND tenant_id = $2
      FOR UPDATE`,
     [refundId, tenantId]
   );
@@ -433,9 +446,10 @@ export async function selectVenueBalanceForUpdate(
   venueId: string,
   tenantId: string
 ): Promise<any | null> {
+  // SECURITY: Use explicit field list instead of SELECT *
   const result = await client.query(
-    `SELECT * FROM venue_balances 
-     WHERE venue_id = $1 AND tenant_id = $2 
+    `SELECT ${VENUE_BALANCE_LOCK_FIELDS} FROM venue_balances
+     WHERE venue_id = $1 AND tenant_id = $2
      FOR UPDATE`,
     [venueId, tenantId]
   );
@@ -449,9 +463,10 @@ export async function selectPendingTransfersForProcessing(
   client: PoolClient,
   limit: number = 10
 ): Promise<any[]> {
+  // SECURITY: Use explicit field list instead of SELECT *
   const result = await client.query(
-    `SELECT * FROM pending_transfers 
-     WHERE status = 'pending' 
+    `SELECT ${PENDING_TRANSFER_FIELDS} FROM pending_transfers
+     WHERE status = 'pending'
        AND (retry_after IS NULL OR retry_after < NOW())
      ORDER BY created_at ASC
      LIMIT $1
@@ -469,8 +484,10 @@ export async function selectOrderForPayment(
   orderId: string,
   tenantId: string
 ): Promise<any | null> {
+  // SECURITY: Use explicit field list instead of SELECT *
   const result = await client.query(
-    `SELECT o.*, pi.id as payment_intent_id, pi.status as payment_status
+    `SELECT o.id, o.tenant_id, o.user_id, o.event_id, o.status, o.total_amount, o.currency, o.created_at, o.updated_at,
+            pi.id as payment_intent_id, pi.status as payment_status
      FROM orders o
      LEFT JOIN payment_intents pi ON o.id = pi.order_id
      WHERE o.id = $1 AND o.tenant_id = $2

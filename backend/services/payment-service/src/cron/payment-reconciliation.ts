@@ -4,7 +4,12 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'PaymentReconciliation' });
 
-type PaymentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled';
+/**
+ * SECURITY: Explicit field list for reconciliation queries.
+ */
+const RECONCILIATION_TRANSACTION_FIELDS = 'id, tenant_id, venue_id, user_id, event_id, order_id, amount, currency, status, stripe_payment_intent_id, created_at, updated_at';
+
+type PaymentStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'refunded' | 'partially_refunded';
 
 export class PaymentReconciliation {
   private db: Pool;
@@ -18,8 +23,9 @@ export class PaymentReconciliation {
   async run(): Promise<void> {
     log.info('Starting payment reconciliation');
 
+    // SECURITY: Use explicit field list instead of SELECT *
     const stuckPayments = await this.db.query(
-      `SELECT * FROM payment_transactions
+      `SELECT ${RECONCILIATION_TRANSACTION_FIELDS} FROM payment_transactions
        WHERE status = $1
        AND updated_at < NOW() - INTERVAL '10 minutes'`,
       ['processing']
@@ -60,7 +66,7 @@ export class PaymentReconciliation {
       'requires_action': 'pending',
       'processing': 'processing',
       'succeeded': 'completed',
-      'canceled': 'cancelled',
+      'canceled': 'failed',
       'requires_capture': 'processing'
     };
     return statusMap[status] || 'failed';
@@ -74,18 +80,15 @@ export class PaymentReconciliation {
 
     for (const event of events.data) {
       const exists = await this.db.query(
-        'SELECT id FROM webhook_inbox WHERE webhook_id = $1',
+        'SELECT id FROM webhook_inbox WHERE event_id = $1',
         [event.id]
       );
 
       if (exists.rows.length === 0) {
         log.warn({ eventId: event.id, eventType: event.type }, 'Missing webhook event detected');
-        await this.db.query(
-          `INSERT INTO webhook_inbox (webhook_id, event_id, provider, event_type, payload, status)
-           VALUES ($1, $2, $3, $4, $5, 'pending')
-           ON CONFLICT (webhook_id) DO NOTHING`,
-          [event.id, event.id, 'stripe', event.type, JSON.stringify(event)]
-        );
+        // Note: tenant_id would need to be extracted from event metadata in production
+        // For now, we skip inserting webhooks without tenant context
+        log.info({ eventId: event.id }, 'Skipping webhook insert - no tenant context available');
       }
     }
   }

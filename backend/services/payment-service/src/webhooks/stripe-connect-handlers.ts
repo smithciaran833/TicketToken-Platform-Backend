@@ -10,14 +10,20 @@
 import Stripe from 'stripe';
 import { DatabaseService } from '../services/databaseService';
 import { logger } from '../utils/logger';
-import { 
-  getTransactionManager, 
+import {
+  getTransactionManager,
   IsolationLevel,
-  selectPaymentForUpdate 
+  selectPaymentForUpdate
 } from '../utils/database-transaction.util';
 import { recordWebhook } from '../routes/metrics.routes';
 
 const log = logger.child({ component: 'StripeConnectHandlers' });
+
+/**
+ * SECURITY: Explicit field lists for webhook handler queries.
+ */
+const STRIPE_TRANSFER_FIELDS = 'id, tenant_id, payment_id, venue_id, amount, status, stripe_transfer_id, reversed_at, reversal_reason, created_at, updated_at';
+const CONNECTED_ACCOUNT_FIELDS = 'id, tenant_id, venue_id, stripe_account_id, account_status, charges_enabled, payouts_enabled, created_at, updated_at';
 
 // =============================================================================
 // TRANSFER HANDLERS
@@ -44,8 +50,9 @@ export async function handleTransferReversed(event: Stripe.Event): Promise<void>
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
 
     // Find the transfer record
+    // SECURITY: Use explicit field list instead of SELECT *
     const transferResult = await client.query(
-      `SELECT * FROM stripe_transfers WHERE stripe_transfer_id = $1 FOR UPDATE`,
+      `SELECT ${STRIPE_TRANSFER_FIELDS} FROM stripe_transfers WHERE stripe_transfer_id = $1 FOR UPDATE`,
       [transfer.id]
     );
 
@@ -184,8 +191,9 @@ export async function handlePayoutFailed(event: Stripe.Event): Promise<void> {
     await client.query('BEGIN');
 
     // Find connected account
+    // SECURITY: Use explicit field list instead of SELECT *
     const accountResult = await client.query(
-      `SELECT * FROM connected_accounts WHERE stripe_account_id = $1`,
+      `SELECT ${CONNECTED_ACCOUNT_FIELDS} FROM connected_accounts WHERE stripe_account_id = $1`,
       [connectedAccountId]
     );
 

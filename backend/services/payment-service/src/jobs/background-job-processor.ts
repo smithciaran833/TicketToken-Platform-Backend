@@ -1,6 +1,6 @@
 /**
  * Background Job Processor with Tenant Context
- * 
+ *
  * HIGH FIX: Ensures all background jobs:
  * - Include tenant ID in payload
  * - Validate tenant context before processing
@@ -10,11 +10,19 @@
 import { DatabaseService } from '../services/databaseService';
 import { logger } from '../utils/logger';
 import { v4 as uuidv4 } from 'uuid';
+import { queueService } from '../services/queueService';
 
 const log = logger.child({ component: 'BackgroundJobProcessor' });
 
 // UUID validation regex
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * SECURITY: Explicit field lists for job processing tables.
+ */
+const BACKGROUND_JOB_FIELDS = 'id, tenant_id, type, payload, status, attempts, max_attempts, process_after, correlation_id, started_at, completed_at, created_at, updated_at';
+const DEAD_LETTER_FIELDS = 'id, tenant_id, job_id, job_type, payload, error_message, retry_count, retried, moved_at, correlation_id, created_at';
+const OUTBOX_FIELDS = 'id, tenant_id, event_type, aggregate_type, aggregate_id, payload, attempts, last_attempt_at, last_error, processed_at, created_at';
 
 // =============================================================================
 // TYPES
@@ -49,12 +57,12 @@ const JOB_CONFIG = {
   maxRetryDelayMs: parseInt(process.env.JOB_MAX_RETRY_DELAY_MS || '3600000', 10), // 1 hour max
   backoffMultiplier: parseFloat(process.env.JOB_BACKOFF_MULTIPLIER || '2'),
   jitterFactor: 0.1, // 10% jitter to prevent thundering herd
-  
+
   // BJ-6: Stalled job detection
   stalledTimeoutMs: parseInt(process.env.JOB_STALLED_TIMEOUT_MS || '300000', 10), // 5 minutes
   stalledCheckIntervalMs: parseInt(process.env.JOB_STALLED_CHECK_INTERVAL_MS || '60000', 10), // 1 minute
-  
-  // BJ-5: Dead letter configuration  
+
+  // BJ-5: Dead letter configuration
   deadLetterEnabled: process.env.JOB_DEAD_LETTER_ENABLED !== 'false',
 };
 
@@ -151,16 +159,16 @@ export class BackgroundJobProcessor {
   private startStalledJobChecker(): void {
     const check = async () => {
       if (!this.isRunning) return;
-      
+
       try {
         await this.recoverStalledJobs();
       } catch (error) {
         log.error({ error }, 'Error checking for stalled jobs');
       }
-      
+
       this.stalledCheckTimeout = setTimeout(check, JOB_CONFIG.stalledCheckIntervalMs);
     };
-    
+
     // Start after a delay
     this.stalledCheckTimeout = setTimeout(check, JOB_CONFIG.stalledCheckIntervalMs);
   }
@@ -170,7 +178,7 @@ export class BackgroundJobProcessor {
    */
   private async recoverStalledJobs(): Promise<void> {
     const db = DatabaseService.getPool();
-    
+
     const result = await db.query(`
       UPDATE background_jobs
       SET status = 'pending',
@@ -180,7 +188,7 @@ export class BackgroundJobProcessor {
         AND started_at < NOW() - INTERVAL '${JOB_CONFIG.stalledTimeoutMs} milliseconds'
       RETURNING id, type, tenant_id
     `);
-    
+
     if (result.rows.length > 0) {
       log.warn({
         recoveredCount: result.rows.length,
@@ -218,8 +226,9 @@ export class BackgroundJobProcessor {
 
       // Fetch and lock the next pending job
       // Use SKIP LOCKED to avoid contention
+      // SECURITY: Use explicit field list instead of SELECT *
       const result = await client.query(`
-        SELECT * FROM background_jobs
+        SELECT ${BACKGROUND_JOB_FIELDS} FROM background_jobs
         WHERE status = 'pending'
           AND (process_after IS NULL OR process_after <= NOW())
           AND attempts < max_attempts
@@ -255,7 +264,7 @@ export class BackgroundJobProcessor {
 
       // CRITICAL: Validate tenant ID from payload
       const tenantId = job.payload?.tenantId;
-      
+
       if (!tenantId) {
         log.error({ jobId: job.id }, 'Job missing tenant ID');
         await this.markJobFailed(client, job.id, 'Missing tenant ID in payload');
@@ -272,8 +281,8 @@ export class BackgroundJobProcessor {
 
       // Mark as processing
       await client.query(
-        `UPDATE background_jobs 
-         SET status = 'processing', 
+        `UPDATE background_jobs
+         SET status = 'processing',
              attempts = attempts + 1,
              started_at = NOW()
          WHERE id = $1`,
@@ -285,7 +294,7 @@ export class BackgroundJobProcessor {
 
       // Get handler
       const handler = this.handlers.get(job.type);
-      
+
       if (!handler) {
         log.error({ jobId: job.id, type: job.type }, 'No handler for job type');
         await this.markJobFailed(client, job.id, `No handler for job type: ${job.type}`);
@@ -302,8 +311,8 @@ export class BackgroundJobProcessor {
 
         // Mark as completed
         await client.query(
-          `UPDATE background_jobs 
-           SET status = 'completed', 
+          `UPDATE background_jobs
+           SET status = 'completed',
                completed_at = NOW()
            WHERE id = $1`,
           [job.id]
@@ -313,7 +322,7 @@ export class BackgroundJobProcessor {
       } catch (error) {
         // Handle job failure
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        
+
         if (job.attempts + 1 >= job.maxAttempts) {
           // BJ-5: Move to dead letter queue instead of just marking failed
           if (JOB_CONFIG.deadLetterEnabled) {
@@ -330,10 +339,10 @@ export class BackgroundJobProcessor {
           // BJ-4: MEDIUM FIX - Exponential backoff with jitter
           const retryDelayMs = this.calculateRetryDelay(job.attempts);
           const retryDelaySeconds = Math.ceil(retryDelayMs / 1000);
-          
+
           await client.query(
-            `UPDATE background_jobs 
-             SET status = 'pending', 
+            `UPDATE background_jobs
+             SET status = 'pending',
                  process_after = NOW() + INTERVAL '${retryDelaySeconds} seconds',
                  last_error = $2
              WHERE id = $1`,
@@ -368,13 +377,13 @@ export class BackgroundJobProcessor {
   private calculateRetryDelay(attempts: number): number {
     // Calculate base delay with exponential backoff
     const baseDelay = JOB_CONFIG.baseRetryDelayMs * Math.pow(JOB_CONFIG.backoffMultiplier, attempts);
-    
+
     // Cap at max delay
     const cappedDelay = Math.min(baseDelay, JOB_CONFIG.maxRetryDelayMs);
-    
+
     // Add jitter (±10%) to prevent thundering herd
     const jitter = cappedDelay * JOB_CONFIG.jitterFactor * (Math.random() * 2 - 1);
-    
+
     return Math.round(cappedDelay + jitter);
   }
 
@@ -383,8 +392,8 @@ export class BackgroundJobProcessor {
    */
   private async markJobFailed(client: any, jobId: string, error: string): Promise<void> {
     await client.query(
-      `UPDATE background_jobs 
-       SET status = 'failed', 
+      `UPDATE background_jobs
+       SET status = 'failed',
            failed_at = NOW(),
            last_error = $2
        WHERE id = $1`,
@@ -401,7 +410,7 @@ export class BackgroundJobProcessor {
     error: string
   ): Promise<void> {
     const tenantId = job.payload?.tenantId;
-    
+
     // Insert into dead letter queue
     await client.query(`
       INSERT INTO dead_letter_queue (
@@ -424,8 +433,8 @@ export class BackgroundJobProcessor {
 
     // Update original job status
     await client.query(`
-      UPDATE background_jobs 
-      SET status = 'dead_letter', 
+      UPDATE background_jobs
+      SET status = 'dead_letter',
           failed_at = NOW(),
           last_error = $2
       WHERE id = $1
@@ -451,8 +460,9 @@ export class BackgroundJobProcessor {
     try {
       await client.query('BEGIN');
 
+      // SECURITY: Use explicit field list instead of SELECT *
       const result = await client.query(`
-        SELECT * FROM dead_letter_queue WHERE id = $1 FOR UPDATE
+        SELECT ${DEAD_LETTER_FIELDS} FROM dead_letter_queue WHERE id = $1 FOR UPDATE
       `, [deadLetterId]);
 
       if (result.rows.length === 0) {
@@ -548,7 +558,7 @@ export class BackgroundJobProcessor {
       tenantId,
       correlationId,
     }, 'Job enqueued');
-    
+
     return jobId;
   }
 
@@ -561,9 +571,9 @@ export class BackgroundJobProcessor {
     oldest?: Date;
   }> {
     const db = DatabaseService.getPool();
-    
+
     let query = `
-      SELECT 
+      SELECT
         COUNT(*) as total,
         job_type,
         MIN(moved_at) as oldest
@@ -571,20 +581,20 @@ export class BackgroundJobProcessor {
       WHERE retried = false
     `;
     const params: any[] = [];
-    
+
     if (tenantId) {
       query += ` AND tenant_id = $1`;
       params.push(tenantId);
     }
-    
+
     query += ` GROUP BY job_type`;
-    
+
     const result = await db.query(query, params);
-    
+
     const byType: Record<string, number> = {};
     let total = 0;
     let oldest: Date | undefined;
-    
+
     for (const row of result.rows) {
       byType[row.job_type] = parseInt(row.count, 10);
       total += parseInt(row.count, 10);
@@ -592,7 +602,7 @@ export class BackgroundJobProcessor {
         oldest = row.oldest;
       }
     }
-    
+
     return { total, byType, oldest };
   }
 }
@@ -618,10 +628,11 @@ export async function processOutboxEvents(): Promise<void> {
     await client.query('BEGIN');
 
     // Fetch pending outbox events with FOR UPDATE SKIP LOCKED
+    // SECURITY: Use explicit field list instead of SELECT *
     const result = await client.query(`
-      SELECT * FROM outbox
-      WHERE processed = false
-        AND (retry_after IS NULL OR retry_after <= NOW())
+      SELECT ${OUTBOX_FIELDS} FROM outbox
+      WHERE processed_at IS NULL
+        AND (last_attempt_at IS NULL OR last_attempt_at <= NOW() - INTERVAL '1 minute')
         AND attempts < 5
       ORDER BY created_at ASC
       LIMIT 10
@@ -635,10 +646,10 @@ export async function processOutboxEvents(): Promise<void> {
       // CRITICAL: Validate tenant ID
       if (!tenantId || !isValidTenantId(tenantId)) {
         log.error({ outboxId: row.id }, 'Outbox event missing or invalid tenant ID');
-        
+
         // Mark as failed
         await client.query(
-          `UPDATE outbox SET processed = true, error = $2, processed_at = NOW() WHERE id = $1`,
+          `UPDATE outbox SET processed_at = NOW(), last_error = $2 WHERE id = $1`,
           [row.id, 'Missing or invalid tenant ID']
         );
         continue;
@@ -656,21 +667,20 @@ export async function processOutboxEvents(): Promise<void> {
 
         // Mark as processed
         await client.query(
-          `UPDATE outbox SET processed = true, processed_at = NOW() WHERE id = $1`,
+          `UPDATE outbox SET processed_at = NOW() WHERE id = $1`,
           [row.id]
         );
 
         log.info({ outboxId: row.id, eventType: row.event_type }, 'Outbox event processed');
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        
+
         // Schedule retry with exponential backoff
-        const retryDelay = Math.pow(2, row.attempts) * 60;
         await client.query(
-          `UPDATE outbox 
-           SET attempts = attempts + 1, 
-               retry_after = NOW() + INTERVAL '${retryDelay} seconds',
-               error = $2
+          `UPDATE outbox
+           SET attempts = attempts + 1,
+               last_attempt_at = NOW(),
+               last_error = $2
            WHERE id = $1`,
           [row.id, errorMessage]
         );
@@ -693,9 +703,44 @@ export async function processOutboxEvents(): Promise<void> {
 }
 
 /**
- * Publish an outbox event (placeholder - implement actual publishing)
+ * Publish an outbox event to RabbitMQ
+ *
+ * Routes events to appropriate queues based on event_type:
+ * - payment.* -> payment-events queue
+ * - refund.* -> payment-events queue
+ * - transfer.* -> payment-events queue
+ * - Default -> payment-events queue
  */
 async function publishOutboxEvent(event: any): Promise<void> {
-  // TODO: Implement actual event publishing (e.g., to RabbitMQ, Kafka, etc.)
-  log.debug({ eventType: event.event_type, aggregateId: event.aggregate_id }, 'Publishing outbox event');
+  // Determine target queue based on event type
+  const eventType = event.event_type || 'unknown';
+  const queue = 'payment-events'; // All payment events go to same queue for simplicity
+
+  const message = {
+    event_id: event.id,
+    event_type: eventType,
+    tenant_id: event.tenant_id,
+    aggregate_type: event.aggregate_type,
+    aggregate_id: event.aggregate_id,
+    payload: event.payload,
+    timestamp: new Date().toISOString(),
+  };
+
+  try {
+    await queueService.publish(queue, message);
+
+    log.info({
+      eventId: event.id,
+      eventType,
+      aggregateId: event.aggregate_id,
+      queue,
+    }, 'Outbox event published to queue');
+  } catch (error: any) {
+    log.error({
+      eventId: event.id,
+      eventType,
+      error: error.message,
+    }, 'Failed to publish outbox event');
+    throw error; // Rethrow to trigger retry logic
+  }
 }

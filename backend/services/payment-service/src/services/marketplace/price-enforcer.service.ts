@@ -1,6 +1,12 @@
 import { query } from '../../config/database';
 import { ResaleListing } from '../../types';
 
+/**
+ * SECURITY: Explicit field lists to prevent SELECT * from exposing data.
+ */
+const VENUE_PRICE_RULE_FIELDS = 'id, tenant_id, venue_id, max_markup_percentage, min_markup_percentage, is_active, created_at, updated_at';
+const RESALE_LISTING_FIELDS = 'id, tenant_id, ticket_id, venue_id, seller_id, price, original_price, status, created_at, updated_at';
+
 export class PriceEnforcerService {
   async validateListingPrice(
     ticketId: string,
@@ -148,23 +154,25 @@ export class PriceEnforcerService {
   }
   
   private async getVenuePriceRules(venueId: string): Promise<any> {
+    // SECURITY: Use explicit field list instead of SELECT *
     const result = await query(
-      'SELECT * FROM venue_price_rules WHERE venue_id = $1',
+      `SELECT ${VENUE_PRICE_RULE_FIELDS} FROM venue_price_rules WHERE venue_id = $1`,
       [venueId]
     );
-    
+
     return result.rows[0];
   }
   
   private async getRecentListings(venueId: string, hours: number): Promise<any[]> {
     const since = new Date(Date.now() - hours * 60 * 60 * 1000);
-    
+
+    // SECURITY: Use explicit field list instead of SELECT *
     const result = await query(
-      `SELECT * FROM resale_listings 
+      `SELECT ${RESALE_LISTING_FIELDS} FROM resale_listings
        WHERE venue_id = $1 AND created_at > $2`,
       [venueId, since]
     );
-    
+
     return result.rows;
   }
   

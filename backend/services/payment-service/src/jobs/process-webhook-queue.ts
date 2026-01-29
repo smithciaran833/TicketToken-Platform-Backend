@@ -6,6 +6,11 @@ import { withSystemContextPool } from '../workers/system-job-utils';
 
 const log = logger.child({ component: 'ProcessWebhookQueue' });
 
+/**
+ * SECURITY: Explicit field list for webhook inbox queries.
+ */
+const WEBHOOK_INBOX_FIELDS = 'id, tenant_id, webhook_id, event_id, provider, event_type, payload, signature, status, retry_count, processed_at, created_at';
+
 export class ProcessWebhookQueueJob {
   private db: Pool;
   private stripeHandler: StripeWebhookHandler;
@@ -18,8 +23,9 @@ export class ProcessWebhookQueueJob {
   async execute(): Promise<void> {
     await withSystemContextPool(this.db, async (client) => {
       // Get unprocessed webhooks
+      // SECURITY: Use explicit field list instead of SELECT *
       const webhooks = await client.query(
-        `SELECT * FROM webhook_inbox
+        `SELECT ${WEBHOOK_INBOX_FIELDS} FROM webhook_inbox
          WHERE status = 'pending'
          AND retry_count < 5
          ORDER BY created_at ASC

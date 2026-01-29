@@ -17,6 +17,11 @@ const log = logger.child({ component: 'TenantJobUtils' });
 // UUID validation regex
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * SECURITY: Explicit field lists for job processing tables.
+ */
+const DEAD_LETTER_FIELDS = 'id, tenant_id, job_id, job_type, payload, error_message, retry_count, retried, moved_at, correlation_id, created_at';
+
 // =============================================================================
 // TYPES
 // =============================================================================
@@ -320,8 +325,9 @@ export async function getTenantDLQEntries(
   const db = DatabaseService.getPool();
   const limit = options.limit || 100;
   
+  // SECURITY: Use explicit field list instead of SELECT *
   let query = `
-    SELECT * FROM dead_letter_queue 
+    SELECT ${DEAD_LETTER_FIELDS} FROM dead_letter_queue
     WHERE tenant_id = $1
   `;
   const params: any[] = [tenantId];
@@ -357,8 +363,9 @@ export async function retryFromTenantDLQ(
     await client.query('BEGIN');
     
     // Get the DLQ entry with tenant verification
+    // SECURITY: Use explicit field list instead of SELECT *
     const result = await client.query(`
-      SELECT * FROM dead_letter_queue 
+      SELECT ${DEAD_LETTER_FIELDS} FROM dead_letter_queue
       WHERE id = $1 AND tenant_id = $2
       FOR UPDATE
     `, [dlqId, requestingTenantId]);

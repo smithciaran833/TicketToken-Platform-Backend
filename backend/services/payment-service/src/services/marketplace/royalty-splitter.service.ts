@@ -1,6 +1,13 @@
 import { query } from '../../config/database';
 
 /**
+ * SECURITY: Explicit field lists to prevent SELECT * from exposing sensitive data.
+ * Excludes: stripe_account_id, artist_stripe_account_id, artist_wallet_address
+ */
+const VENUE_ROYALTY_FIELDS = 'id, tenant_id, venue_id, default_royalty_percentage, minimum_payout_amount_cents, payout_schedule, payment_method, auto_payout_enabled, created_at, updated_at';
+const EVENT_ROYALTY_FIELDS = 'id, tenant_id, event_id, venue_royalty_percentage, artist_royalty_percentage, override_venue_default, created_at, updated_at';
+
+/**
  * ROYALTY SPLITTER SERVICE
  * 
  * Calculates and distributes royalties from NFT ticket resales.
@@ -115,20 +122,22 @@ export class RoyaltySplitterService {
   }
   
   private async getVenueRoyaltySettings(venueId: string): Promise<any> {
+    // SECURITY: Use explicit field list - excludes stripe_account_id
     const result = await query(
-      'SELECT * FROM venue_royalty_settings WHERE venue_id = $1',
+      `SELECT ${VENUE_ROYALTY_FIELDS} FROM venue_royalty_settings WHERE venue_id = $1`,
       [venueId]
     );
-    
+
     return result.rows[0] || { defaultRoyaltyPercentage: 10 };
   }
   
   private async getEventRoyaltySettings(eventId: string): Promise<any> {
+    // SECURITY: Use explicit field list - excludes artist_stripe_account_id, artist_wallet_address
     const result = await query(
-      'SELECT * FROM event_royalty_settings WHERE event_id = $1',
+      `SELECT ${EVENT_ROYALTY_FIELDS} FROM event_royalty_settings WHERE event_id = $1`,
       [eventId]
     );
-    
+
     return result.rows[0];
   }
   

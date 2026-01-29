@@ -1,35 +1,18 @@
 /**
  * Refund Policy Enforcement Service
- * 
- * PHASE 5c BYPASS EXCEPTION:
- * This service checks ticket refund eligibility by querying tickets, events, and venues.
- * Direct DB access is retained because:
- * 
- * 1. REFUND ELIGIBILITY: Must calculate time-based windows consistently
- * 2. FINANCIAL ATOMICITY: Refund requests must be processed transactionally
- * 3. POLICY ENFORCEMENT: Event dates from events table determine cutoff
- * 4. VENUE CUSTOMIZATION: Venue-specific refund policies from venues table
- * 5. TICKET UPDATES: Updates ticket status to refund_pending transactionally
- * 
- * Tables accessed:
- * - tickets: Ticket data and status updates (ticket-service owned)
- * - events: Event dates for refund window calculation (event-service owned)
- * - venues: Venue-specific refund policies (venue-service owned)
- * - payment_refunds: Refund records (payment-service owned)
- * 
- * Future: Consider ticketServiceClient.getTicketForRefund() and
- * eventServiceClient.getEventRefundPolicy() methods for cleaner separation.
+ *
+ * Handles refund eligibility checks and policy enforcement.
+ * Works with payment_transactions and payment_refunds tables.
  */
 
-import { Pool } from 'pg';
-import { SafeLogger } from '../utils/pci-log-scrubber.util';
-import { cacheService } from './cache.service';
+import { Pool, PoolClient } from 'pg';
+import { logger } from '../utils/logger';
 
-const logger = new SafeLogger('RefundPolicyService');
+const log = logger.child({ component: 'RefundPolicyService' });
 
 export interface RefundWindow {
-  eventDate: Date;
-  purchaseDate: Date;
+  transactionDate: Date;
+  eventDate?: Date;
   refundDeadline: Date;
   isEligible: boolean;
   reason?: string;
@@ -37,22 +20,34 @@ export interface RefundWindow {
 }
 
 export interface RefundStatistics {
-  total_refunds: string;
-  total_refunded_cents: string | null;
-  avg_refund_cents: string | null;
-  completed_refunds: string;
-  pending_refunds: string;
-  rejected_refunds: string;
+  totalRefunds: number;
+  totalRefundedCents: number;
+  avgRefundCents: number;
+  completedRefunds: number;
+  pendingRefunds: number;
+  failedRefunds: number;
 }
 
 export interface RefundPolicy {
   defaultWindowHours: number;
   minimumWindowHours: number;
-  customWindows: {
-    venueId?: string;
-    eventType?: string;
-    windowHours: number;
-  }[];
+  maxRefundPercent: number;
+}
+
+export interface RefundRequest {
+  transactionId: string;
+  tenantId: string;
+  amount: number;
+  reason: string;
+  metadata?: Record<string, any>;
+  idempotencyKey?: string;
+}
+
+export interface RefundResult {
+  success: boolean;
+  message: string;
+  refundId?: string;
+  amount?: number;
 }
 
 export class RefundPolicyService {
@@ -60,109 +55,119 @@ export class RefundPolicyService {
   private defaultPolicy: RefundPolicy = {
     defaultWindowHours: 48,
     minimumWindowHours: 2,
-    customWindows: [],
+    maxRefundPercent: 100,
   };
 
   constructor(pool: Pool) {
     this.pool = pool;
   }
 
+  /**
+   * Check if a transaction is eligible for refund
+   */
   async checkRefundEligibility(
-    ticketId: string,
+    transactionId: string,
     tenantId: string
   ): Promise<RefundWindow> {
-    const cacheKey = `refund:eligibility:${ticketId}`;
+    const query = `
+      SELECT
+        pt.id,
+        pt.amount,
+        pt.status,
+        pt.created_at,
+        pt.event_id,
+        e.start_date as event_date
+      FROM payment_transactions pt
+      LEFT JOIN events e ON pt.event_id = e.id
+      WHERE pt.id = $1
+        AND pt.tenant_id = $2
+        AND pt.status NOT IN ('refunded', 'failed')
+    `;
 
-    return cacheService.getOrCompute(
-      cacheKey,
-      async () => {
-        const query = `
-          SELECT
-            t.ticket_id,
-            t.purchase_date,
-            t.status,
-            e.event_date,
-            e.event_type,
-            e.venue_id,
-            v.refund_policy_hours
-          FROM tickets t
-          JOIN events e ON t.event_id = e.event_id
-          LEFT JOIN venues v ON e.venue_id = v.venue_id
-          WHERE t.ticket_id = $1
-            AND t.tenant_id = $2
-            AND t.status != 'refunded'
-        `;
+    const result = await this.pool.query(query, [transactionId, tenantId]);
 
-        const result = await this.pool.query(query, [ticketId, tenantId]);
+    if (result.rows.length === 0) {
+      return {
+        transactionDate: new Date(),
+        refundDeadline: new Date(),
+        isEligible: false,
+        reason: 'Transaction not found, already refunded, or failed',
+      };
+    }
 
-        if (result.rows.length === 0) {
-          return {
-            eventDate: new Date(),
-            purchaseDate: new Date(),
-            refundDeadline: new Date(),
-            isEligible: false,
-            reason: 'Ticket not found or already refunded',
-          };
-        }
+    const transaction = result.rows[0];
+    const transactionDate = new Date(transaction.created_at);
+    const eventDate = transaction.event_date ? new Date(transaction.event_date) : undefined;
 
-        const ticket = result.rows[0];
-        const eventDate = new Date(ticket.event_date);
-        const purchaseDate = new Date(ticket.purchase_date);
+    // Check existing refunds for this transaction
+    const existingRefundsQuery = `
+      SELECT COALESCE(SUM(amount), 0) as total_refunded
+      FROM payment_refunds
+      WHERE transaction_id = $1 AND tenant_id = $2 AND status != 'failed'
+    `;
+    const refundsResult = await this.pool.query(existingRefundsQuery, [transactionId, tenantId]);
+    const totalRefunded = parseFloat(refundsResult.rows[0].total_refunded) || 0;
+    const originalAmount = parseFloat(transaction.amount);
 
-        const windowHours = ticket.refund_policy_hours ||
-                           this.getCustomWindow(ticket.venue_id, ticket.event_type) ||
-                           this.defaultPolicy.defaultWindowHours;
+    if (totalRefunded >= originalAmount) {
+      return {
+        transactionDate,
+        eventDate,
+        refundDeadline: new Date(),
+        isEligible: false,
+        reason: 'Transaction has already been fully refunded',
+      };
+    }
 
-        const refundDeadline = new Date(eventDate.getTime() - (windowHours * 60 * 60 * 1000));
-        const now = new Date();
-
-        const minimumDeadline = new Date(
-          eventDate.getTime() - (this.defaultPolicy.minimumWindowHours * 60 * 60 * 1000)
-        );
-
-        const isEligible = now <= refundDeadline;
-        const hoursRemaining = Math.max(0, (refundDeadline.getTime() - now.getTime()) / (1000 * 60 * 60));
-
-        let reason: string | undefined;
-        if (!isEligible) {
-          if (now > minimumDeadline) {
-            reason = `Event is within ${this.defaultPolicy.minimumWindowHours} hours, refunds not allowed`;
-          } else {
-            reason = `Refund window closed (deadline was ${refundDeadline.toISOString()})`;
-          }
-        }
-
-        logger.info({
-          ticketId,
-          isEligible,
-          hoursRemaining: Math.round(hoursRemaining * 10) / 10,
-        }, 'Refund eligibility checked');
-
-        return {
-          eventDate,
-          purchaseDate,
-          refundDeadline,
-          isEligible,
-          reason,
-          hoursRemaining: isEligible ? hoursRemaining : undefined,
-        };
-      },
-      300
+    // Calculate refund deadline based on event date or transaction date
+    const referenceDate = eventDate || new Date(transactionDate.getTime() + 30 * 24 * 60 * 60 * 1000); // 30 days if no event
+    const refundDeadline = new Date(
+      referenceDate.getTime() - (this.defaultPolicy.defaultWindowHours * 60 * 60 * 1000)
     );
+
+    const now = new Date();
+    const isEligible = now <= refundDeadline;
+    const hoursRemaining = Math.max(0, (refundDeadline.getTime() - now.getTime()) / (1000 * 60 * 60));
+
+    let reason: string | undefined;
+    if (!isEligible) {
+      const minimumDeadline = new Date(
+        referenceDate.getTime() - (this.defaultPolicy.minimumWindowHours * 60 * 60 * 1000)
+      );
+      if (now > minimumDeadline) {
+        reason = `Event is within ${this.defaultPolicy.minimumWindowHours} hours, refunds not allowed`;
+      } else {
+        reason = `Refund window closed (deadline was ${refundDeadline.toISOString()})`;
+      }
+    }
+
+    log.info({
+      transactionId,
+      isEligible,
+      hoursRemaining: Math.round(hoursRemaining * 10) / 10,
+      totalRefunded,
+      originalAmount,
+    }, 'Refund eligibility checked');
+
+    return {
+      transactionDate,
+      eventDate,
+      refundDeadline,
+      isEligible,
+      reason,
+      hoursRemaining: isEligible ? hoursRemaining : undefined,
+    };
   }
 
-  async processRefundRequest(
-    ticketId: string,
-    tenantId: string,
-    userId: string,
-    reason: string
-  ): Promise<{ success: boolean; message: string; refundId?: string }> {
-    const eligibility = await this.checkRefundEligibility(ticketId, tenantId);
+  /**
+   * Process a refund request
+   */
+  async processRefundRequest(request: RefundRequest): Promise<RefundResult> {
+    const eligibility = await this.checkRefundEligibility(request.transactionId, request.tenantId);
 
     if (!eligibility.isEligible) {
-      logger.warn({
-        ticketId,
-        userId,
+      log.warn({
+        transactionId: request.transactionId,
         reason: eligibility.reason,
       }, 'Refund request denied');
 
@@ -177,103 +182,190 @@ export class RefundPolicyService {
     try {
       await client.query('BEGIN');
 
+      // Get transaction details
+      const txnQuery = `
+        SELECT id, amount, status
+        FROM payment_transactions
+        WHERE id = $1 AND tenant_id = $2
+        FOR UPDATE
+      `;
+      const txnResult = await client.query(txnQuery, [request.transactionId, request.tenantId]);
+
+      if (txnResult.rows.length === 0) {
+        throw new Error('Transaction not found');
+      }
+
+      const transaction = txnResult.rows[0];
+      const maxRefundable = parseFloat(transaction.amount);
+
+      // Validate refund amount
+      if (request.amount <= 0) {
+        throw new Error('Refund amount must be positive');
+      }
+
+      if (request.amount > maxRefundable) {
+        throw new Error(`Refund amount (${request.amount}) exceeds transaction amount (${maxRefundable})`);
+      }
+
+      // Check for existing refunds
+      const existingQuery = `
+        SELECT COALESCE(SUM(amount), 0) as total_refunded
+        FROM payment_refunds
+        WHERE transaction_id = $1 AND tenant_id = $2 AND status != 'failed'
+      `;
+      const existingResult = await client.query(existingQuery, [request.transactionId, request.tenantId]);
+      const totalRefunded = parseFloat(existingResult.rows[0].total_refunded) || 0;
+
+      if (totalRefunded + request.amount > maxRefundable) {
+        throw new Error(`Total refunds would exceed transaction amount`);
+      }
+
+      // Create refund record
       const refundQuery = `
         INSERT INTO payment_refunds (
-          ticket_id,
           tenant_id,
-          user_id,
-          refund_amount_cents,
-          refund_reason,
-          refund_status,
-          requested_at
-        )
-        SELECT
-          t.ticket_id,
-          t.tenant_id,
-          $3,
-          t.price_cents,
-          $4,
-          'pending',
-          NOW()
-        FROM tickets t
-        WHERE t.ticket_id = $1 AND t.tenant_id = $2
-        RETURNING refund_id, refund_amount_cents
+          transaction_id,
+          amount,
+          reason,
+          status,
+          metadata,
+          idempotency_key
+        ) VALUES ($1, $2, $3, $4, 'pending', $5, $6)
+        RETURNING id, amount
       `;
 
       const refundResult = await client.query(refundQuery, [
-        ticketId,
-        tenantId,
-        userId,
-        reason,
+        request.tenantId,
+        request.transactionId,
+        request.amount,
+        request.reason,
+        JSON.stringify(request.metadata || {}),
+        request.idempotencyKey || null,
       ]);
 
-      if (refundResult.rows.length === 0) {
-        throw new Error('Failed to create refund record');
+      const refundId = refundResult.rows[0].id;
+
+      // Update transaction status if fully refunded
+      const newTotalRefunded = totalRefunded + request.amount;
+      if (newTotalRefunded >= maxRefundable) {
+        await client.query(
+          `UPDATE payment_transactions SET status = 'refunded', updated_at = NOW() WHERE id = $1`,
+          [request.transactionId]
+        );
+      } else if (newTotalRefunded > 0) {
+        await client.query(
+          `UPDATE payment_transactions SET status = 'partially_refunded', updated_at = NOW() WHERE id = $1`,
+          [request.transactionId]
+        );
       }
-
-      const refundId = refundResult.rows[0].refund_id;
-
-      await client.query(
-        `UPDATE tickets
-         SET status = 'refund_pending', updated_at = NOW()
-         WHERE ticket_id = $1 AND tenant_id = $2`,
-        [ticketId, tenantId]
-      );
 
       await client.query('COMMIT');
 
-      await cacheService.delete(`refund:eligibility:${ticketId}`);
-
-      logger.info({
+      log.info({
         refundId,
-        ticketId,
-        userId,
+        transactionId: request.transactionId,
+        amount: request.amount,
       }, 'Refund request created');
 
       return {
         success: true,
         message: 'Refund request submitted successfully',
         refundId,
+        amount: request.amount,
       };
     } catch (error) {
       await client.query('ROLLBACK');
-      logger.error({
-        ticketId,
-        error: error instanceof Error ? error.message : 'Unknown error',
+      
+      const message = error instanceof Error ? error.message : 'Unknown error';
+      log.error({
+        transactionId: request.transactionId,
+        error: message,
       }, 'Refund request failed');
 
       return {
         success: false,
-        message: 'Failed to process refund request',
+        message: `Failed to process refund: ${message}`,
       };
     } finally {
       client.release();
     }
   }
 
-  private getCustomWindow(venueId?: string, eventType?: string): number | null {
-    const customWindow = this.defaultPolicy.customWindows.find(
-      (w) => w.venueId === venueId || w.eventType === eventType
-    );
-
-    return customWindow?.windowHours || null;
-  }
-
-  async updateVenueRefundPolicy(
-    venueId: string,
+  /**
+   * Complete a refund (called after Stripe confirms)
+   */
+  async completeRefund(
+    refundId: string,
     tenantId: string,
-    windowHours: number
-  ): Promise<void> {
-    await this.pool.query(
-      `UPDATE venues
-       SET refund_policy_hours = $1, updated_at = NOW()
-       WHERE venue_id = $2 AND tenant_id = $3`,
-      [windowHours, venueId, tenantId]
-    );
+    stripeRefundId: string
+  ): Promise<RefundResult> {
+    const query = `
+      UPDATE payment_refunds
+      SET status = 'completed',
+          stripe_refund_id = $3,
+          completed_at = NOW(),
+          updated_at = NOW()
+      WHERE id = $1 AND tenant_id = $2
+      RETURNING id, amount
+    `;
 
-    logger.info({ venueId, windowHours }, 'Venue refund policy updated');
+    const result = await this.pool.query(query, [refundId, tenantId, stripeRefundId]);
+
+    if (result.rows.length === 0) {
+      return {
+        success: false,
+        message: 'Refund not found',
+      };
+    }
+
+    log.info({ refundId, stripeRefundId }, 'Refund completed');
+
+    return {
+      success: true,
+      message: 'Refund completed',
+      refundId,
+      amount: parseFloat(result.rows[0].amount),
+    };
   }
 
+  /**
+   * Mark a refund as failed
+   */
+  async failRefund(
+    refundId: string,
+    tenantId: string,
+    reason: string
+  ): Promise<RefundResult> {
+    const query = `
+      UPDATE payment_refunds
+      SET status = 'failed',
+          metadata = jsonb_set(COALESCE(metadata, '{}'), '{failure_reason}', $3::jsonb),
+          updated_at = NOW()
+      WHERE id = $1 AND tenant_id = $2
+      RETURNING id
+    `;
+
+    const result = await this.pool.query(query, [refundId, tenantId, JSON.stringify(reason)]);
+
+    if (result.rows.length === 0) {
+      return {
+        success: false,
+        message: 'Refund not found',
+      };
+    }
+
+    log.warn({ refundId, reason }, 'Refund failed');
+
+    return {
+      success: true,
+      message: 'Refund marked as failed',
+      refundId,
+    };
+  }
+
+  /**
+   * Get refund statistics for a tenant
+   */
   async getRefundStatistics(
     tenantId: string,
     startDate: Date,
@@ -281,18 +373,51 @@ export class RefundPolicyService {
   ): Promise<RefundStatistics> {
     const query = `
       SELECT
-        COUNT(*) as total_refunds,
-        SUM(refund_amount_cents) as total_refunded_cents,
-        AVG(refund_amount_cents) as avg_refund_cents,
-        COUNT(CASE WHEN refund_status = 'completed' THEN 1 END) as completed_refunds,
-        COUNT(CASE WHEN refund_status = 'pending' THEN 1 END) as pending_refunds,
-        COUNT(CASE WHEN refund_status = 'rejected' THEN 1 END) as rejected_refunds
+        COUNT(*)::int as total_refunds,
+        COALESCE(SUM(amount), 0)::int as total_refunded_cents,
+        COALESCE(AVG(amount), 0)::int as avg_refund_cents,
+        COUNT(CASE WHEN status = 'completed' THEN 1 END)::int as completed_refunds,
+        COUNT(CASE WHEN status = 'pending' THEN 1 END)::int as pending_refunds,
+        COUNT(CASE WHEN status = 'failed' THEN 1 END)::int as failed_refunds
       FROM payment_refunds
       WHERE tenant_id = $1
-        AND requested_at BETWEEN $2 AND $3
+        AND created_at BETWEEN $2 AND $3
     `;
 
     const result = await this.pool.query(query, [tenantId, startDate, endDate]);
-    return result.rows[0];
+    const row = result.rows[0];
+
+    return {
+      totalRefunds: row.total_refunds,
+      totalRefundedCents: row.total_refunded_cents,
+      avgRefundCents: row.avg_refund_cents,
+      completedRefunds: row.completed_refunds,
+      pendingRefunds: row.pending_refunds,
+      failedRefunds: row.failed_refunds,
+    };
+  }
+
+  /**
+   * Get refund policy
+   */
+  getPolicy(): RefundPolicy {
+    return { ...this.defaultPolicy };
+  }
+
+  /**
+   * Update refund policy
+   */
+  updatePolicy(policy: Partial<RefundPolicy>): void {
+    if (policy.defaultWindowHours !== undefined) {
+      this.defaultPolicy.defaultWindowHours = policy.defaultWindowHours;
+    }
+    if (policy.minimumWindowHours !== undefined) {
+      this.defaultPolicy.minimumWindowHours = policy.minimumWindowHours;
+    }
+    if (policy.maxRefundPercent !== undefined) {
+      this.defaultPolicy.maxRefundPercent = policy.maxRefundPercent;
+    }
+
+    log.info({ policy: this.defaultPolicy }, 'Refund policy updated');
   }
 }

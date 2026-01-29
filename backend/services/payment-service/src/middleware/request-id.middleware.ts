@@ -5,6 +5,7 @@
 
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { v4 as uuidv4 } from 'uuid';
+import { logger } from '../utils/logger';
 
 /**
  * Middleware to add unique request ID to each request
@@ -52,23 +53,25 @@ export async function requestLoggerMiddleware(
   // Log when response finishes
   reply.raw.on('finish', () => {
     const duration = Date.now() - start;
+    // SECURITY: Don't log full IP address (PII) - only log first octet for debugging
+    const maskedIp = request.ip ? request.ip.split('.')[0] + '.x.x.x' : 'unknown';
     const logData = {
       requestId: (request as any).id,
       method: request.method,
       url: request.url,
       statusCode: reply.statusCode,
       duration: `${duration}ms`,
-      userAgent: request.headers['user-agent'],
-      ip: request.ip
+      // SECURITY: Don't log full user-agent (can be used for fingerprinting)
+      ip: maskedIp
     };
-    
-    // Log level based on status code
+
+    // Use proper logger instead of console
     if (reply.statusCode >= 500) {
-      console.error('Request error:', logData);
+      logger.error(logData, 'Request error');
     } else if (reply.statusCode >= 400) {
-      console.warn('Request warning:', logData);
+      logger.warn(logData, 'Request warning');
     } else {
-      console.log('Request completed:', logData);
+      logger.info(logData, 'Request completed');
     }
   });
 }

@@ -643,6 +643,115 @@ export default async function internalRoutes(fastify: FastifyInstance) {
   );
 
   /**
+   * GET /internal/venues/:venueId/stripe-status
+   * Get Stripe Connect status for a venue
+   * Used by: compliance-service (for bank verification)
+   *
+   * Returns bank verification status based on Stripe Connect payouts_enabled
+   */
+  fastify.get<{ Params: { venueId: string } }>(
+    '/internal/venues/:venueId/stripe-status',
+    { preHandler: [internalAuthMiddlewareNew] },
+    async (request, reply) => {
+      const { venueId } = request.params;
+      const traceId = request.headers['x-trace-id'] as string;
+      const callingService = (request as any).internalService;
+      const tenantId = request.headers['x-tenant-id'] as string;
+
+      try {
+        // Get connected account for this venue
+        const connectedAccount = await db('connected_accounts')
+          .where('venue_id', venueId)
+          .where('tenant_id', tenantId)
+          .first();
+
+        if (!connectedAccount) {
+          log.info({ venueId, tenantId, callingService, traceId }, 'No Stripe Connect account for venue');
+          return reply.send({
+            venueId,
+            hasStripeAccount: false,
+            bankVerified: false,
+            stripeAccountId: null,
+            accountStatus: 'not_connected',
+            chargesEnabled: false,
+            payoutsEnabled: false,
+            detailsSubmitted: false,
+            verificationMethod: 'stripe_connect',
+          });
+        }
+
+        // Get latest status from Stripe if account exists
+        let liveStatus = null;
+        if (connectedAccount.stripe_account_id) {
+          try {
+            const account = await stripe.accounts.retrieve(connectedAccount.stripe_account_id);
+            liveStatus = {
+              chargesEnabled: account.charges_enabled,
+              payoutsEnabled: account.payouts_enabled,
+              detailsSubmitted: account.details_submitted,
+            };
+
+            // Update local record if status changed
+            if (account.payouts_enabled !== connectedAccount.payouts_enabled) {
+              await db('connected_accounts')
+                .where('id', connectedAccount.id)
+                .update({
+                  charges_enabled: account.charges_enabled,
+                  payouts_enabled: account.payouts_enabled,
+                  details_submitted: account.details_submitted,
+                  onboarding_status: account.payouts_enabled ? 'complete' : connectedAccount.onboarding_status,
+                  updated_at: new Date(),
+                });
+            }
+          } catch (stripeError: any) {
+            log.warn({
+              error: stripeError.message,
+              stripeAccountId: connectedAccount.stripe_account_id,
+              venueId,
+            }, 'Failed to fetch live Stripe status, using cached');
+          }
+        }
+
+        // Bank is verified if payouts are enabled (Stripe verifies during onboarding)
+        const bankVerified = liveStatus?.payoutsEnabled ?? connectedAccount.payouts_enabled;
+
+        log.info({
+          venueId,
+          stripeAccountId: connectedAccount.stripe_account_id,
+          bankVerified,
+          callingService,
+          traceId,
+        }, 'Stripe Connect status lookup');
+
+        return reply.send({
+          venueId,
+          hasStripeAccount: true,
+          bankVerified,
+          stripeAccountId: connectedAccount.stripe_account_id,
+          accountStatus: connectedAccount.onboarding_status,
+          chargesEnabled: liveStatus?.chargesEnabled ?? connectedAccount.charges_enabled,
+          payoutsEnabled: liveStatus?.payoutsEnabled ?? connectedAccount.payouts_enabled,
+          detailsSubmitted: liveStatus?.detailsSubmitted ?? connectedAccount.details_submitted,
+          verificationMethod: 'stripe_connect',
+          createdAt: connectedAccount.created_at,
+          updatedAt: connectedAccount.updated_at,
+        });
+      } catch (error: any) {
+        log.error({
+          error: error.message,
+          venueId,
+          traceId,
+        }, 'Failed to get Stripe Connect status');
+
+        return reply.status(500).send({
+          error: 'Failed to get Stripe Connect status',
+          message: error.message,
+        });
+      }
+    }
+  );
+
+  /**
    * POST /internal/royalties/reverse
    * Reverse royalty distributions for a refund
    * Used by: order-service (when processing refunds)

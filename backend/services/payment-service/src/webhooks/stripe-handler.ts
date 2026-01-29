@@ -44,6 +44,11 @@ const CARD_DECLINE_MESSAGES: Record<string, string> = {
   'generic_decline': 'Your card was declined. Please try a different payment method.',
 };
 
+/**
+ * SECURITY: Explicit field list for webhook handler queries.
+ */
+const WEBHOOK_INBOX_LOCK_FIELDS = 'id, webhook_id, event_id, provider, event_type, payload, signature, status, processed, attempts, last_attempt_at, created_at';
+
 function getUserFriendlyDeclineMessage(declineCode: string | undefined): string {
   if (!declineCode) {
     return 'Your card was declined. Please try a different payment method.';
@@ -208,8 +213,9 @@ export class StripeWebhookHandler {
       await client.query('BEGIN');
       
       // Lock the webhook record
+      // SECURITY: Use explicit field list instead of SELECT *
       const result = await client.query(
-        `SELECT * FROM webhook_inbox 
+        `SELECT ${WEBHOOK_INBOX_LOCK_FIELDS} FROM webhook_inbox
          WHERE webhook_id = $1 AND processed = false
          FOR UPDATE SKIP LOCKED`,
         [webhookId]

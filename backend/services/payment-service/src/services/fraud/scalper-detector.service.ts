@@ -1,31 +1,77 @@
 import { query } from '../../config/database';
-import { FraudCheck, FraudSignal, SignalType, FraudDecision } from '../../types';
 import { RedisService } from '../redisService';
 import { logger } from '../../utils/logger';
 
 const log = logger.child({ component: 'ScalperDetector' });
 
-export class ScalperDetectorService {
-  private knownScalperPatterns: Set<string>;
+export enum SignalType {
+  RAPID_PURCHASES = 'rapid_purchases',
+  MULTI_EVENT = 'multi_event',
+  KNOWN_SCALPER = 'known_scalper',
+  BOT_BEHAVIOR = 'bot_behavior',
+  MULTIPLE_PAYMENT_METHODS = 'multiple_payment_methods',
+}
 
-  constructor() {
-    this.knownScalperPatterns = new Set([
-      'rapid_multi_event_purchases',
-      'consistent_high_markup_resales',
-      'bot_like_behavior',
-      'multiple_payment_methods',
-      'suspicious_account_creation'
-    ]);
+export enum FraudDecision {
+  APPROVE = 'approve',
+  REVIEW = 'review',
+  DECLINE = 'decline',
+}
+
+export interface FraudSignal {
+  type: SignalType;
+  severity: 'low' | 'medium' | 'high';
+  confidence: number;
+  details: Record<string, any>;
+}
+
+export interface FraudCheck {
+  userId: string;
+  ipAddress: string;
+  deviceFingerprint: string;
+  score: number;
+  signals: FraudSignal[];
+  decision: FraudDecision;
+  timestamp: Date;
+}
+
+export interface ScalperDetectionConfig {
+  rapidPurchaseThreshold: number;
+  rapidPurchaseWindowMinutes: number;
+  multiEventThreshold: number;
+  suspiciousPurchaseCount: number;
+  suspiciousPaymentMethodCount: number;
+  reviewThreshold: number;
+  declineThreshold: number;
+}
+
+export class ScalperDetectorService {
+  private config: ScalperDetectionConfig = {
+    rapidPurchaseThreshold: 3,
+    rapidPurchaseWindowMinutes: 10,
+    multiEventThreshold: 3,
+    suspiciousPurchaseCount: 10,
+    suspiciousPaymentMethodCount: 3,
+    reviewThreshold: 30,
+    declineThreshold: 50,
+  };
+
+  constructor(config?: Partial<ScalperDetectionConfig>) {
+    if (config) {
+      this.config = { ...this.config, ...config };
+    }
   }
 
   async detectScalper(
     userId: string,
-    transaction: any,
+    tenantId: string,
+    transaction: { ipAddress?: string },
     deviceFingerprint?: string
   ): Promise<FraudCheck> {
     const signals: FraudSignal[] = [];
     let totalScore = 0;
 
+    // Check rapid purchases
     const rapidCheck = await this.checkRapidPurchases(userId);
     if (rapidCheck.isRapid) {
       const score = 30;
@@ -36,28 +82,30 @@ export class ScalperDetectorService {
         details: {
           count: rapidCheck.count,
           windowMinutes: rapidCheck.windowMinutes,
-          score: score
-        }
+          score,
+        },
       });
       totalScore += score;
     }
 
-    const multiEventCheck = await this.checkMultipleEvents(userId);
-    if (multiEventCheck.count > 3) {
+    // Check multiple events
+    const multiEventCheck = await this.checkMultipleEvents(userId, tenantId);
+    if (multiEventCheck.count > this.config.multiEventThreshold) {
       const score = 20;
       signals.push({
-        type: SignalType.RAPID_PURCHASES,
+        type: SignalType.MULTI_EVENT,
         severity: 'medium',
         confidence: 0.7,
         details: {
           eventCount: multiEventCheck.count,
-          score: score
-        }
+          score,
+        },
       });
       totalScore += score;
     }
 
-    const patternCheck = await this.checkPurchasePatterns(userId);
+    // Check purchase patterns
+    const patternCheck = await this.checkPurchasePatterns(userId, tenantId);
     if (patternCheck.suspicious) {
       const score = 25;
       signals.push({
@@ -66,12 +114,14 @@ export class ScalperDetectorService {
         confidence: 0.75,
         details: {
           reason: patternCheck.reason,
-          score: score
-        }
+          purchaseCount: patternCheck.purchaseCount,
+          score,
+        },
       });
       totalScore += score;
     }
 
+    // Check device fingerprint
     if (deviceFingerprint) {
       const deviceCheck = await this.checkDeviceFingerprint(deviceFingerprint);
       if (deviceCheck.flagged) {
@@ -81,22 +131,31 @@ export class ScalperDetectorService {
           severity: 'high',
           confidence: 0.9,
           details: {
-            fingerprint: deviceFingerprint,
-            score: score
-          }
+            fingerprint: deviceFingerprint.slice(0, 8) + '...', // Don't log full fingerprint
+            reason: deviceCheck.reason,
+            score,
+          },
         });
         totalScore += score;
       }
     }
 
+    // Determine decision
     let decision: FraudDecision;
-    if (totalScore >= 50) {
+    if (totalScore >= this.config.declineThreshold) {
       decision = FraudDecision.DECLINE;
-    } else if (totalScore >= 30) {
+    } else if (totalScore >= this.config.reviewThreshold) {
       decision = FraudDecision.REVIEW;
     } else {
       decision = FraudDecision.APPROVE;
     }
+
+    log.info({
+      userId,
+      score: totalScore,
+      decision,
+      signalCount: signals.length,
+    }, 'Scalper detection completed');
 
     return {
       userId,
@@ -105,7 +164,7 @@ export class ScalperDetectorService {
       score: totalScore,
       signals,
       decision,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
   }
 
@@ -114,8 +173,8 @@ export class ScalperDetectorService {
     count: number;
     windowMinutes: number;
   }> {
-    const windowMinutes = 10;
-    const rapidKey = `rapid:${userId}`;
+    const windowMinutes = this.config.rapidPurchaseWindowMinutes;
+    const rapidKey = `scalper:rapid:${userId}`;
 
     try {
       const redis = RedisService.getClient();
@@ -123,9 +182,9 @@ export class ScalperDetectorService {
       await redis.expire(rapidKey, windowMinutes * 60);
 
       return {
-        isRapid: count > 3,
+        isRapid: count > this.config.rapidPurchaseThreshold,
         count,
-        windowMinutes
+        windowMinutes,
       };
     } catch (error) {
       log.error({ error }, 'Redis error in checkRapidPurchases');
@@ -133,70 +192,109 @@ export class ScalperDetectorService {
     }
   }
 
-  private async checkMultipleEvents(userId: string): Promise<{ count: number }> {
+  private async checkMultipleEvents(userId: string, tenantId: string): Promise<{ count: number }> {
     const result = await query(
       `SELECT COUNT(DISTINCT event_id) as event_count
        FROM payment_transactions
        WHERE user_id = $1
+         AND tenant_id = $2
          AND created_at > NOW() - INTERVAL '24 hours'
          AND status IN ('completed', 'processing')`,
-      [userId]
+      [userId, tenantId]
     );
 
     return { count: parseInt(result.rows[0].event_count) || 0 };
   }
 
-  private async checkPurchasePatterns(userId: string): Promise<{
+  private async checkPurchasePatterns(userId: string, tenantId: string): Promise<{
     suspicious: boolean;
     reason: string;
+    purchaseCount: number;
   }> {
     const result = await query(
       `SELECT
         COUNT(*) as purchase_count,
-        SUM(amount_cents) as total_spent,
-        AVG(amount_cents) as avg_amount,
-        COUNT(DISTINCT payment_method_id) as payment_methods
+        COALESCE(SUM(amount), 0) as total_spent,
+        COALESCE(AVG(amount), 0) as avg_amount,
+        COUNT(DISTINCT stripe_payment_intent_id) as unique_intents
        FROM payment_transactions
        WHERE user_id = $1
+         AND tenant_id = $2
          AND created_at > NOW() - INTERVAL '7 days'
          AND status = 'completed'`,
-      [userId]
+      [userId, tenantId]
     );
 
     const stats = result.rows[0];
-    const purchaseCount = parseInt(stats.purchase_count);
-    const paymentMethods = parseInt(stats.payment_methods);
+    const purchaseCount = parseInt(stats.purchase_count) || 0;
+    const uniqueIntents = parseInt(stats.unique_intents) || 0;
 
-    if (purchaseCount > 10 && paymentMethods > 3) {
+    // Suspicious if many purchases with many different payment intents
+    if (purchaseCount > this.config.suspiciousPurchaseCount && 
+        uniqueIntents > this.config.suspiciousPaymentMethodCount) {
       return {
         suspicious: true,
-        reason: `${purchaseCount} purchases using ${paymentMethods} different payment methods`
+        reason: `${purchaseCount} purchases with ${uniqueIntents} different payment methods in 7 days`,
+        purchaseCount,
       };
     }
 
-    return { suspicious: false, reason: '' };
+    return { suspicious: false, reason: '', purchaseCount };
   }
 
-  private async checkDeviceFingerprint(fingerprint: string): Promise<{ flagged: boolean }> {
-    const flaggedKey = `device:flagged:${fingerprint}`;
+  private async checkDeviceFingerprint(fingerprint: string): Promise<{ flagged: boolean; reason?: string }> {
+    const flaggedKey = `scalper:device:flagged:${fingerprint}`;
 
     try {
       const redis = RedisService.getClient();
-      const exists = await redis.exists(flaggedKey);
-      return { flagged: exists === 1 };
+      const reason = await redis.get(flaggedKey);
+      return { flagged: !!reason, reason: reason || undefined };
     } catch (error) {
       log.error({ error }, 'Redis error in checkDeviceFingerprint');
       return { flagged: false };
     }
   }
 
-  async flagDevice(fingerprint: string, reason: string): Promise<void> {
+  /**
+   * Flag a device fingerprint as suspicious
+   */
+  async flagDevice(fingerprint: string, reason: string, durationDays: number = 30): Promise<void> {
     try {
       const redis = RedisService.getClient();
-      const flaggedKey = `device:flagged:${fingerprint}`;
-      await redis.setex(flaggedKey, 30 * 24 * 60 * 60, reason);
+      const flaggedKey = `scalper:device:flagged:${fingerprint}`;
+      await redis.setex(flaggedKey, durationDays * 24 * 60 * 60, reason);
+      log.info({ fingerprint: fingerprint.slice(0, 8) + '...', reason }, 'Device flagged');
     } catch (error) {
       log.error({ error }, 'Error flagging device');
     }
+  }
+
+  /**
+   * Unflag a device
+   */
+  async unflagDevice(fingerprint: string): Promise<void> {
+    try {
+      const redis = RedisService.getClient();
+      const flaggedKey = `scalper:device:flagged:${fingerprint}`;
+      await redis.del(flaggedKey);
+      log.info({ fingerprint: fingerprint.slice(0, 8) + '...' }, 'Device unflagged');
+    } catch (error) {
+      log.error({ error }, 'Error unflagging device');
+    }
+  }
+
+  /**
+   * Get current configuration
+   */
+  getConfig(): ScalperDetectionConfig {
+    return { ...this.config };
+  }
+
+  /**
+   * Update configuration
+   */
+  updateConfig(config: Partial<ScalperDetectionConfig>): void {
+    this.config = { ...this.config, ...config };
+    log.info({ config: this.config }, 'Scalper detection config updated');
   }
 }

@@ -1,47 +1,71 @@
-import { db } from '../../config/database';
+import { query } from '../../config/database';
 import { logger } from '../../utils/logger';
-import { FraudCheck, FraudSignal, SignalType, FraudDecision } from '../../types/fraud.types';
 
-interface FraudCheckRequest {
+const log = logger.child({ component: 'AdvancedFraudDetection' });
+
+export enum SignalType {
+  PROXY_DETECTED = 'proxy_detected',
+  RAPID_PURCHASES = 'rapid_purchases',
+  BOT_BEHAVIOR = 'bot_behavior',
+  SUSPICIOUS_CARD = 'suspicious_card',
+  MULTIPLE_ACCOUNTS = 'multiple_accounts',
+  ACCOUNT_TAKEOVER = 'account_takeover',
+}
+
+export enum FraudDecision {
+  APPROVE = 'approve',
+  CHALLENGE = 'challenge',
+  REVIEW = 'review',
+  DECLINE = 'decline',
+}
+
+export interface FraudSignal {
+  type: SignalType;
+  severity: 'low' | 'medium' | 'high';
+  confidence: number;
+  details: Record<string, any>;
+}
+
+export interface FraudCheck {
   userId: string;
-  sessionId: string;
+  ipAddress: string;
+  deviceFingerprint: string;
+  score: number;
+  signals: FraudSignal[];
+  decision: FraudDecision;
+  timestamp: Date;
+}
+
+export interface FraudCheckRequest {
+  tenantId: string;
+  userId: string;
+  sessionId?: string;
   ipAddress: string;
   deviceFingerprint: string;
   cardFingerprint?: string;
   amount: number;
   eventId?: string;
-  userAgent?: string;
-  behavioralData?: any;
 }
 
 export class AdvancedFraudDetectionService {
-  /**
-   * Main fraud check - orchestrates all detection methods
-   */
   async performFraudCheck(request: FraudCheckRequest): Promise<FraudCheck> {
     const signals: FraudSignal[] = [];
     let totalScore = 0;
 
-    // Run all fraud checks in parallel
     const [
       ipSignal,
       velocitySignal,
-      behavioralSignal,
-      mlSignal,
       cardSignal,
       accountTakeoverSignal,
-      ruleSignals
+      ruleSignals,
     ] = await Promise.all([
-      this.checkIPReputation(request.ipAddress),
+      this.checkIPReputation(request.ipAddress, request.tenantId),
       this.checkVelocityLimits(request),
-      this.analyzeBehavior(request),
-      this.getMLFraudScore(request),
       request.cardFingerprint ? this.checkCardReputation(request.cardFingerprint) : null,
-      this.checkAccountTakeover(request),
-      this.evaluateFraudRules(request)
+      this.checkAccountTakeover(request.userId, request.tenantId),
+      this.evaluateFraudRules(request),
     ]);
 
-    // Aggregate signals
     if (ipSignal) {
       signals.push(ipSignal);
       totalScore += this.calculateSignalScore(ipSignal);
@@ -50,16 +74,6 @@ export class AdvancedFraudDetectionService {
     if (velocitySignal) {
       signals.push(velocitySignal);
       totalScore += this.calculateSignalScore(velocitySignal);
-    }
-
-    if (behavioralSignal) {
-      signals.push(behavioralSignal);
-      totalScore += this.calculateSignalScore(behavioralSignal);
-    }
-
-    if (mlSignal) {
-      signals.push(mlSignal);
-      totalScore += this.calculateSignalScore(mlSignal);
     }
 
     if (cardSignal) {
@@ -72,15 +86,12 @@ export class AdvancedFraudDetectionService {
       totalScore += this.calculateSignalScore(accountTakeoverSignal);
     }
 
-    signals.push(...ruleSignals);
-    ruleSignals.forEach(signal => {
+    for (const signal of ruleSignals) {
+      signals.push(signal);
       totalScore += this.calculateSignalScore(signal);
-    });
+    }
 
-    // Normalize score to 0-1
     totalScore = Math.min(totalScore, 1.0);
-
-    // Determine decision
     const decision = this.determineDecision(totalScore, signals);
 
     const fraudCheck: FraudCheck = {
@@ -90,42 +101,43 @@ export class AdvancedFraudDetectionService {
       score: totalScore,
       signals,
       decision,
-      timestamp: new Date()
+      timestamp: new Date(),
     };
 
-    // Store check
-    await this.storeFraudCheck(fraudCheck);
+    await this.storeFraudCheck(fraudCheck, request.tenantId);
 
-    // Queue for review if needed
     if (decision === FraudDecision.REVIEW) {
-      await this.queueForReview(fraudCheck);
+      await this.queueForReview(fraudCheck, request.tenantId);
     }
 
-    // Update reputation systems
-    await this.updateReputations(request, decision);
+    log.info({
+      userId: request.userId,
+      score: totalScore,
+      decision,
+      signalCount: signals.length,
+    }, 'Fraud check completed');
 
     return fraudCheck;
   }
 
-  /**
-   * Check IP reputation
-   */
-  private async checkIPReputation(ipAddress: string): Promise<FraudSignal | null> {
+  async checkIPReputation(ipAddress: string, tenantId: string): Promise<FraudSignal | null> {
     try {
-      const reputation = await db('ip_reputation')
-        .where('ip_address', ipAddress)
-        .first();
+      const result = await query(
+        `SELECT * FROM ip_reputation WHERE ip_address = $1::inet`,
+        [ipAddress]
+      );
 
-      if (!reputation) {
-        // New IP - check with external service (placeholder)
+      if (result.rows.length === 0) {
         await this.createIPReputation(ipAddress);
         return null;
       }
 
-      // Update last seen
-      await db('ip_reputation')
-        .where('ip_address', ipAddress)
-        .update({ last_seen: new Date() });
+      const reputation = result.rows[0];
+
+      await query(
+        `UPDATE ip_reputation SET last_seen = NOW() WHERE ip_address = $1::inet`,
+        [ipAddress]
+      );
 
       if (reputation.reputation_status === 'blocked') {
         return {
@@ -135,24 +147,24 @@ export class AdvancedFraudDetectionService {
           details: {
             ipAddress,
             reason: reputation.blocked_reason,
-            blockedAt: reputation.blocked_at
-          }
+            status: 'blocked',
+          },
         };
       }
 
-      if (reputation.risk_score > 70) {
+      const riskScore = parseInt(reputation.risk_score) || 0;
+      if (riskScore > 70) {
         return {
           type: SignalType.PROXY_DETECTED,
           severity: 'high',
-          confidence: reputation.risk_score / 100,
+          confidence: riskScore / 100,
           details: {
             ipAddress,
-            riskScore: reputation.risk_score,
+            riskScore,
             fraudCount: reputation.fraud_count,
             isProxy: reputation.is_proxy,
             isVPN: reputation.is_vpn,
-            isTor: reputation.is_tor
-          }
+          },
         };
       }
 
@@ -165,28 +177,23 @@ export class AdvancedFraudDetectionService {
             ipAddress,
             isProxy: reputation.is_proxy,
             isVPN: reputation.is_vpn,
-            isTor: reputation.is_tor
-          }
+            isTor: reputation.is_tor,
+          },
         };
       }
-
     } catch (error) {
-      logger.error('Error checking IP reputation:', error instanceof Error ? error.message : String(error));
+      log.error({ error, ipAddress }, 'Error checking IP reputation');
     }
 
     return null;
   }
 
-  /**
-   * Check velocity limits
-   */
-  private async checkVelocityLimits(request: FraudCheckRequest): Promise<FraudSignal | null> {
+  async checkVelocityLimits(request: FraudCheckRequest): Promise<FraudSignal | null> {
     try {
-      // Check multiple entity types
       const entities = [
         { type: 'user', id: request.userId },
         { type: 'ip', id: request.ipAddress },
-        { type: 'device', id: request.deviceFingerprint }
+        { type: 'device', id: request.deviceFingerprint },
       ];
 
       if (request.cardFingerprint) {
@@ -194,191 +201,69 @@ export class AdvancedFraudDetectionService {
       }
 
       for (const entity of entities) {
-        const limit = await db('velocity_limits')
-          .where('entity_type', entity.type)
-          .where('entity_id', entity.id)
-          .where('action_type', 'purchase')
-          .where('window_end', '>', new Date())
-          .first();
+        const result = await query(
+          `SELECT * FROM velocity_limits
+           WHERE tenant_id = $1 AND entity_type = $2 AND entity_id = $3
+             AND action_type = 'purchase' AND window_end > NOW()
+           ORDER BY window_end DESC LIMIT 1`,
+          [request.tenantId, entity.type, entity.id]
+        );
 
-        if (limit) {
-          // Increment counter
-          await db('velocity_limits')
-            .where('id', limit.id)
-            .increment('current_count', 1);
+        if (result.rows.length > 0) {
+          const limit = result.rows[0];
+          const currentCount = parseInt(limit.current_count) || 0;
+          const limitCount = parseInt(limit.limit_count) || 10;
 
-          if (limit.current_count >= limit.limit_count) {
+          await query(
+            `UPDATE velocity_limits SET current_count = current_count + 1 WHERE id = $1`,
+            [limit.id]
+          );
+
+          if (currentCount >= limitCount) {
             return {
               type: SignalType.RAPID_PURCHASES,
               severity: 'high',
               confidence: 0.9,
               details: {
                 entityType: entity.type,
-                count: limit.current_count + 1,
-                limit: limit.limit_count,
-                windowMinutes: limit.window_minutes
-              }
+                count: currentCount + 1,
+                limit: limitCount,
+                windowMinutes: limit.window_minutes,
+              },
             };
           }
         } else {
-          // Create new velocity limit window
-          await db('velocity_limits').insert({
-            entity_type: entity.type,
-            entity_id: entity.id,
-            action_type: 'purchase',
-            limit_count: 10, // Default limit
-            window_minutes: 60,
-            current_count: 1,
-            window_start: new Date(),
-            window_end: new Date(Date.now() + 60 * 60 * 1000)
-          });
+          await query(
+            `INSERT INTO velocity_limits (
+              tenant_id, entity_type, entity_id, action_type,
+              limit_count, window_minutes, current_count, window_start, window_end
+            ) VALUES ($1, $2, $3, 'purchase', 10, 60, 1, NOW(), NOW() + INTERVAL '60 minutes')`,
+            [request.tenantId, entity.type, entity.id]
+          );
         }
       }
-
     } catch (error) {
-      logger.error('Error checking velocity limits:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error checking velocity limits');
     }
 
     return null;
   }
 
-  /**
-   * Analyze behavioral patterns
-   */
-  private async analyzeBehavior(request: FraudCheckRequest): Promise<FraudSignal | null> {
+  async checkCardReputation(cardFingerprint: string): Promise<FraudSignal | null> {
     try {
-      if (!request.behavioralData) return null;
+      const result = await query(
+        `SELECT * FROM card_fingerprints WHERE card_fingerprint = $1`,
+        [cardFingerprint]
+      );
 
-      const { sessionId, userId } = request;
+      if (result.rows.length === 0) return null;
 
-      // Get recent behavioral data
-      const recentBehavior = await db('behavioral_analytics')
-        .where('session_id', sessionId)
-        .where('user_id', userId)
-        .orderBy('timestamp', 'desc')
-        .limit(50);
+      const cardRep = result.rows[0];
 
-      if (recentBehavior.length === 0) return null;
-
-      // Analyze patterns
-      const botIndicators = [];
-
-      // Check for copy-paste
-      const copyPasteCount = recentBehavior.filter((b: any) => b.copy_paste_detected).length;
-      if (copyPasteCount > 3) {
-        botIndicators.push('excessive_copy_paste');
-      }
-
-      // Check for form autofill
-      const autofillCount = recentBehavior.filter((b: any) => b.form_autofill_detected).length;
-      if (autofillCount > 5) {
-        botIndicators.push('excessive_autofill');
-      }
-
-      // Check mouse movement
-      const avgMouseMovements = recentBehavior
-        .filter((b: any) => b.mouse_movements != null)
-        .reduce((sum: number, b: any) => sum + b.mouse_movements, 0) / recentBehavior.length;
-
-      if (avgMouseMovements < 5) {
-        botIndicators.push('low_mouse_activity');
-      }
-
-      // Check page time
-      const avgTimeOnPage = recentBehavior
-        .filter((b: any) => b.time_on_page_ms != null)
-        .reduce((sum: number, b: any) => sum + b.time_on_page_ms, 0) / recentBehavior.length;
-
-      if (avgTimeOnPage < 1000) {
-        botIndicators.push('unusually_fast_navigation');
-      }
-
-      if (botIndicators.length >= 2) {
-        return {
-          type: SignalType.BOT_BEHAVIOR,
-          severity: botIndicators.length >= 3 ? 'high' : 'medium',
-          confidence: Math.min(botIndicators.length / 4, 1.0),
-          details: {
-            indicators: botIndicators,
-            sessionId,
-            avgMouseMovements,
-            avgTimeOnPage
-          }
-        };
-      }
-
-    } catch (error) {
-      logger.error('Error analyzing behavior:', error instanceof Error ? error.message : String(error));
-    }
-
-    return null;
-  }
-
-  /**
-   * Get ML fraud score
-   */
-  private async getMLFraudScore(request: FraudCheckRequest): Promise<FraudSignal | null> {
-    try {
-      // Get active ML model
-      const activeModel = await db('ml_fraud_models')
-        .where('status', 'active')
-        .orderBy('deployed_at', 'desc')
-        .first();
-
-      if (!activeModel) return null;
-
-      // Extract features
-      const features = await this.extractFeatures(request);
-
-      // In production, this would call actual ML model
-      // For now, simple rule-based scoring
-      const fraudProbability = this.calculateMLScore(features);
-
-      // Store prediction
-      await db('ml_fraud_predictions').insert({
-        model_id: activeModel.id,
-        user_id: request.userId,
-        fraud_probability: fraudProbability,
-        predicted_class: fraudProbability > 0.5 ? 'fraud' : 'legitimate',
-        feature_values: JSON.stringify(features),
-        prediction_time_ms: 50
-      });
-
-      if (fraudProbability > 0.7) {
-        return {
-          type: SignalType.SUSPICIOUS_CARD,
-          severity: 'high',
-          confidence: fraudProbability,
-          details: {
-            modelName: activeModel.model_name,
-            fraudProbability,
-            features
-          }
-        };
-      }
-
-    } catch (error) {
-      logger.error('Error getting ML fraud score:', error instanceof Error ? error.message : String(error));
-    }
-
-    return null;
-  }
-
-  /**
-   * Check card reputation
-   */
-  private async checkCardReputation(cardFingerprint: string): Promise<FraudSignal | null> {
-    try {
-      const cardRep = await db('card_fingerprints')
-        .where('card_fingerprint', cardFingerprint)
-        .first();
-
-      if (!cardRep) return null;
-
-      // Update last used
-      await db('card_fingerprints')
-        .where('card_fingerprint', cardFingerprint)
-        .update({ last_used: new Date() });
+      await query(
+        `UPDATE card_fingerprints SET last_used = NOW() WHERE id = $1`,
+        [cardRep.id]
+      );
 
       if (cardRep.risk_level === 'blocked') {
         return {
@@ -386,88 +271,85 @@ export class AdvancedFraudDetectionService {
           severity: 'high',
           confidence: 1.0,
           details: {
-            cardFingerprint,
-            riskLevel: cardRep.risk_level,
+            riskLevel: 'blocked',
             chargebackCount: cardRep.chargeback_count,
-            fraudCount: cardRep.fraud_count
-          }
+            fraudCount: cardRep.fraud_count,
+          },
         };
       }
 
-      if (cardRep.chargeback_count > 0 || cardRep.fraud_count > 0) {
+      const chargebackCount = parseInt(cardRep.chargeback_count) || 0;
+      const fraudCount = parseInt(cardRep.fraud_count) || 0;
+
+      if (chargebackCount > 0 || fraudCount > 0) {
         return {
           type: SignalType.SUSPICIOUS_CARD,
           severity: 'medium',
           confidence: 0.7,
           details: {
-            cardFingerprint,
-            chargebackCount: cardRep.chargeback_count,
-            fraudCount: cardRep.fraud_count
-          }
+            chargebackCount,
+            fraudCount,
+          },
         };
       }
-
     } catch (error) {
-      logger.error('Error checking card reputation:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error checking card reputation');
     }
 
     return null;
   }
 
-  /**
-   * Check for account takeover signals
-   */
-  private async checkAccountTakeover(request: FraudCheckRequest): Promise<FraudSignal | null> {
+  async checkAccountTakeover(userId: string, tenantId: string): Promise<FraudSignal | null> {
     try {
-      // Look for recent takeover signals
-      const recentSignals = await db('account_takeover_signals')
-        .where('user_id', request.userId)
-        .where('timestamp', '>', new Date(Date.now() - 24 * 60 * 60 * 1000))
-        .where('is_anomaly', true);
+      const result = await query(
+        `SELECT * FROM account_takeover_signals
+         WHERE user_id = $1 AND tenant_id = $2
+           AND timestamp > NOW() - INTERVAL '24 hours'
+           AND is_anomaly = true`,
+        [userId, tenantId]
+      );
 
-      if (recentSignals.length >= 2) {
+      if (result.rows.length >= 2) {
         return {
-          type: SignalType.MULTIPLE_ACCOUNTS,
+          type: SignalType.ACCOUNT_TAKEOVER,
           severity: 'high',
           confidence: 0.8,
           details: {
-            signalCount: recentSignals.length,
-            signals: recentSignals.map((s: any) => s.signal_type)
-          }
+            signalCount: result.rows.length,
+            signals: result.rows.map(s => s.signal_type),
+          },
         };
       }
-
     } catch (error) {
-      logger.error('Error checking account takeover:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error checking account takeover');
     }
 
     return null;
   }
 
-  /**
-   * Evaluate custom fraud rules
-   */
-  private async evaluateFraudRules(request: FraudCheckRequest): Promise<FraudSignal[]> {
+  async evaluateFraudRules(request: FraudCheckRequest): Promise<FraudSignal[]> {
     const signals: FraudSignal[] = [];
 
     try {
-      const activeRules = await db('fraud_rules')
-        .where('is_active', true)
-        .orderBy('priority', 'asc');
+      const result = await query(
+        `SELECT * FROM fraud_rules WHERE tenant_id = $1 AND is_active = true ORDER BY priority ASC`,
+        [request.tenantId]
+      );
 
-      for (const rule of activeRules) {
-        const conditions = rule.conditions;
+      for (const rule of result.rows) {
+        const conditions = rule.conditions || {};
 
         if (this.evaluateConditions(conditions, request)) {
-          // Increment trigger count
-          await db('fraud_rules')
-            .where('id', rule.id)
-            .increment('trigger_count', 1);
+          await query(
+            `UPDATE fraud_rules SET trigger_count = trigger_count + 1 WHERE id = $1`,
+            [rule.id]
+          );
 
           if (rule.action === 'block') {
-            await db('fraud_rules')
-              .where('id', rule.id)
-              .increment('block_count', 1);
+            await query(
+              `UPDATE fraud_rules SET block_count = block_count + 1 WHERE id = $1`,
+              [rule.id]
+            );
           }
 
           signals.push({
@@ -477,30 +359,23 @@ export class AdvancedFraudDetectionService {
             details: {
               ruleName: rule.rule_name,
               ruleAction: rule.action,
-              conditions
-            }
+            },
           });
         }
       }
-
     } catch (error) {
-      logger.error('Error evaluating fraud rules:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error evaluating fraud rules');
     }
 
     return signals;
   }
 
-  /**
-   * Helper methods
-   */
-
   private calculateSignalScore(signal: FraudSignal): number {
-    const severityWeight = {
-      'low': 0.1,
-      'medium': 0.3,
-      'high': 0.5
+    const severityWeight: Record<string, number> = {
+      low: 0.1,
+      medium: 0.3,
+      high: 0.5,
     };
-
     return (severityWeight[signal.severity] || 0.2) * signal.confidence;
   }
 
@@ -518,134 +393,101 @@ export class AdvancedFraudDetectionService {
     }
   }
 
-  private async storeFraudCheck(fraudCheck: FraudCheck): Promise<void> {
+  private async storeFraudCheck(fraudCheck: FraudCheck, tenantId: string): Promise<void> {
     try {
-      await db('fraud_checks').insert({
-        user_id: fraudCheck.userId,
-        device_fingerprint: fraudCheck.deviceFingerprint,
-        ip_address: fraudCheck.ipAddress,
-        score: fraudCheck.score,
-        risk_score: fraudCheck.score * 100,
-        signals: JSON.stringify(fraudCheck.signals),
-        decision: fraudCheck.decision,
-        timestamp: fraudCheck.timestamp
-      });
+      await query(
+        `INSERT INTO fraud_checks (
+          tenant_id, user_id, device_fingerprint, ip_address,
+          score, risk_score, signals, decision, timestamp
+        ) VALUES ($1, $2, $3, $4::inet, $5, $6, $7, $8, $9)`,
+        [
+          tenantId,
+          fraudCheck.userId,
+          fraudCheck.deviceFingerprint,
+          fraudCheck.ipAddress,
+          fraudCheck.score,
+          fraudCheck.score * 100,
+          JSON.stringify(fraudCheck.signals),
+          fraudCheck.decision,
+          fraudCheck.timestamp,
+        ]
+      );
     } catch (error) {
-      logger.error('Error storing fraud check:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error storing fraud check');
     }
   }
 
-  private async queueForReview(fraudCheck: FraudCheck): Promise<void> {
+  private async queueForReview(fraudCheck: FraudCheck, tenantId: string): Promise<void> {
     try {
       const priority = fraudCheck.score >= 0.7 ? 'high' : 'medium';
-
-      await db('fraud_review_queue').insert({
-        user_id: fraudCheck.userId,
-        reason: `Fraud score: ${(fraudCheck.score * 100).toFixed(0)}%`,
-        priority,
-        status: 'pending'
-      });
-
-      logger.info({
-        userId: fraudCheck.userId,
-        score: fraudCheck.score
-      });
+      await query(
+        `INSERT INTO fraud_review_queue (tenant_id, user_id, reason, priority, status)
+         VALUES ($1, $2, $3, $4, 'pending')`,
+        [tenantId, fraudCheck.userId, `Fraud score: ${(fraudCheck.score * 100).toFixed(0)}%`, priority]
+      );
     } catch (error) {
-      logger.error('Error queueing for review:', error instanceof Error ? error.message : String(error));
-    }
-  }
-
-  private async updateReputations(request: FraudCheckRequest, decision: FraudDecision): Promise<void> {
-    try {
-      // Update IP reputation
-      if (decision === FraudDecision.DECLINE) {
-        await db('ip_reputation')
-          .where('ip_address', request.ipAddress)
-          .increment('fraud_count', 1)
-          .increment('risk_score', 10);
-      }
-
-      await db('ip_reputation')
-        .where('ip_address', request.ipAddress)
-        .increment('total_transactions', 1);
-
-      // Update card reputation if available
-      if (request.cardFingerprint) {
-        if (decision === FraudDecision.APPROVE) {
-          await db('card_fingerprints')
-            .where('card_fingerprint', request.cardFingerprint)
-            .increment('successful_purchases', 1);
-        } else if (decision === FraudDecision.DECLINE) {
-          await db('card_fingerprints')
-            .where('card_fingerprint', request.cardFingerprint)
-            .increment('fraud_count', 1);
-        }
-      }
-
-    } catch (error) {
-      logger.error('Error updating reputations:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error queueing for review');
     }
   }
 
   private async createIPReputation(ipAddress: string): Promise<void> {
     try {
-      await db('ip_reputation').insert({
-        ip_address: ipAddress,
-        risk_score: 0,
-        reputation_status: 'clean',
-        first_seen: new Date(),
-        last_seen: new Date()
-      }).onConflict('ip_address').ignore();
+      await query(
+        `INSERT INTO ip_reputation (ip_address, risk_score, reputation_status, first_seen, last_seen)
+         VALUES ($1::inet, 0, 'unknown', NOW(), NOW())
+         ON CONFLICT (ip_address) DO NOTHING`,
+        [ipAddress]
+      );
     } catch (error) {
-      logger.error('Error creating IP reputation:', error instanceof Error ? error.message : String(error));
+      log.error({ error }, 'Error creating IP reputation');
     }
   }
 
-  private async extractFeatures(request: FraudCheckRequest): Promise<any> {
-    // Extract ML features
+  private evaluateConditions(conditions: any, request: FraudCheckRequest): boolean {
+    if (!conditions) return false;
+    if (conditions.min_amount && request.amount < conditions.min_amount) return false;
+    if (conditions.max_amount && request.amount > conditions.max_amount) return false;
+    return Object.keys(conditions).length > 0;
+  }
+
+  async getFraudCheckById(checkId: string, tenantId: string): Promise<FraudCheck | null> {
+    const result = await query(
+      `SELECT * FROM fraud_checks WHERE id = $1 AND tenant_id = $2`,
+      [checkId, tenantId]
+    );
+
+    if (result.rows.length === 0) return null;
+
+    const row = result.rows[0];
     return {
-      amount: request.amount,
-      hour_of_day: new Date().getHours(),
-      day_of_week: new Date().getDay(),
-      has_card: !!request.cardFingerprint,
-      user_age_days: 30, // Placeholder
-      previous_purchases: 0 // Placeholder
+      userId: row.user_id,
+      ipAddress: row.ip_address,
+      deviceFingerprint: row.device_fingerprint,
+      score: parseFloat(row.score) || 0,
+      signals: row.signals || [],
+      decision: row.decision,
+      timestamp: row.timestamp,
     };
   }
 
-  private calculateMLScore(features: any): number {
-    // Simple rule-based scoring (replace with actual ML model in production)
-    let score = 0;
+  async getUserFraudHistory(userId: string, tenantId: string, limit: number = 10): Promise<FraudCheck[]> {
+    const result = await query(
+      `SELECT * FROM fraud_checks
+       WHERE user_id = $1 AND tenant_id = $2
+       ORDER BY timestamp DESC LIMIT $3`,
+      [userId, tenantId, limit]
+    );
 
-    if (features.amount > 1000) score += 0.2;
-    if (features.hour_of_day < 6 || features.hour_of_day > 22) score += 0.1;
-    if (features.user_age_days < 7) score += 0.3;
-
-    return Math.min(score, 1.0);
-  }
-
-  private evaluateConditions(conditions: any, request: FraudCheckRequest): boolean {
-    // Simple condition evaluation
-    if (conditions.min_amount && request.amount < conditions.min_amount) return false;
-    if (conditions.max_amount && request.amount > conditions.max_amount) return false;
-
-    return true;
+    return result.rows.map(row => ({
+      userId: row.user_id,
+      ipAddress: row.ip_address,
+      deviceFingerprint: row.device_fingerprint,
+      score: parseFloat(row.score) || 0,
+      signals: row.signals || [],
+      decision: row.decision,
+      timestamp: row.timestamp,
+    }));
   }
 }
 
-
-let serviceInstance: AdvancedFraudDetectionService | null = null;
-
-export function getAdvancedFraudDetectionService(): AdvancedFraudDetectionService {
-  if (!serviceInstance) {
-    serviceInstance = new AdvancedFraudDetectionService();
-  }
-  return serviceInstance;
-}
-
-// Backward compatibility
-export const advancedFraudDetectionService = new Proxy({} as AdvancedFraudDetectionService, {
-  get(target, prop) {
-    return (getAdvancedFraudDetectionService() as any)[prop];
-  }
-});
+export const advancedFraudDetectionService = new AdvancedFraudDetectionService();

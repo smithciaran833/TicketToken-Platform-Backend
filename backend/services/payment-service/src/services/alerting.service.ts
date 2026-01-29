@@ -1,16 +1,10 @@
 /**
  * Alerting Service for Payment Failures
- * 
- * HIGH FIX: Implements alerting for critical payment events:
- * - Transfer failures
- * - Payout failures
- * - Disputes opened
- * - High-value refunds
- * - Rate limit exceeded
- * 
- * MEDIUM FIXES:
- * - MON-3: Alert on account disabled (not just log)
- * - COMM-6: Support visibility beyond audit log (dashboard, notifications)
+ *
+ * FIXED: Aligned with actual alert_history schema
+ * - Uses alert_type instead of type
+ * - Combines title into message
+ * - Uses metric_value and threshold_value instead of metadata
  */
 
 import { logger } from '../utils/logger';
@@ -18,6 +12,11 @@ import { metricsRegistry } from '../routes/metrics.routes';
 import { SecureHttpClient } from '../utils/http-client.util';
 
 const log = logger.child({ component: 'AlertingService' });
+
+/**
+ * SECURITY: Explicit field list for alert queries - FIXED to match actual schema
+ */
+const ALERT_HISTORY_FIELDS = 'id, tenant_id, alert_type, severity, message, queue_name, metric_value, threshold_value, acknowledged, acknowledged_at, acknowledged_by, created_at';
 
 // =============================================================================
 // TYPES
@@ -56,7 +55,7 @@ export interface AlertConfig {
   emailRecipients?: string[];
   webhookUrl?: string;
   thresholds: {
-    highValueRefundAmount: number; // In cents
+    highValueRefundAmount: number;
     transferFailureCountPerHour: number;
     disputeCountPerDay: number;
   };
@@ -69,10 +68,9 @@ export interface AlertConfig {
 export class AlertingService {
   private config: AlertConfig;
   private httpClient: SecureHttpClient;
-  
-  // In-memory counters for rate limiting alerts
+
   private alertCounts: Map<string, { count: number; windowStart: Date }> = new Map();
-  private readonly ALERT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+  private readonly ALERT_WINDOW_MS = 5 * 60 * 1000;
   private readonly MAX_ALERTS_PER_WINDOW = 10;
 
   constructor(config?: Partial<AlertConfig>) {
@@ -83,7 +81,7 @@ export class AlertingService {
       emailRecipients: config?.emailRecipients || process.env.ALERT_EMAIL_RECIPIENTS?.split(','),
       webhookUrl: config?.webhookUrl || process.env.ALERT_WEBHOOK_URL,
       thresholds: {
-        highValueRefundAmount: config?.thresholds?.highValueRefundAmount || 100_000, // $1000
+        highValueRefundAmount: config?.thresholds?.highValueRefundAmount || 100_000,
         transferFailureCountPerHour: config?.thresholds?.transferFailureCountPerHour || 5,
         disputeCountPerDay: config?.thresholds?.disputeCountPerDay || 10,
       },
@@ -92,23 +90,17 @@ export class AlertingService {
     this.httpClient = new SecureHttpClient('alerting-service');
   }
 
-  /**
-   * Send an alert
-   */
   async sendAlert(alert: Alert): Promise<void> {
-    // Rate limit check
     if (!this.shouldSendAlert(alert.type)) {
       log.debug({ type: alert.type }, 'Alert rate limited');
       return;
     }
 
-    // Increment metrics
     metricsRegistry.incCounter('alerts_sent_total', {
       type: alert.type,
       severity: alert.severity,
     });
 
-    // Send to all configured channels
     const promises: Promise<void>[] = [];
 
     for (const channel of this.config.channels) {
@@ -132,7 +124,6 @@ export class AlertingService {
           }
           break;
         case AlertChannel.EMAIL:
-          // Email is typically handled by a separate service
           promises.push(this.queueEmailAlert(alert));
           break;
       }
@@ -141,37 +132,30 @@ export class AlertingService {
     await Promise.allSettled(promises);
   }
 
-  /**
-   * Check if we should send this alert (rate limiting)
-   */
   private shouldSendAlert(alertType: string): boolean {
     const now = new Date();
     const key = alertType;
-    
+
     const existing = this.alertCounts.get(key);
-    
+
     if (!existing || (now.getTime() - existing.windowStart.getTime()) > this.ALERT_WINDOW_MS) {
-      // New window
       this.alertCounts.set(key, { count: 1, windowStart: now });
       return true;
     }
-    
+
     if (existing.count >= this.MAX_ALERTS_PER_WINDOW) {
       return false;
     }
-    
+
     existing.count++;
     return true;
   }
 
-  /**
-   * Log alert
-   */
   private async sendLogAlert(alert: Alert): Promise<void> {
     const logMethod = alert.severity === AlertSeverity.CRITICAL ? 'fatal' :
                       alert.severity === AlertSeverity.ERROR ? 'error' :
                       alert.severity === AlertSeverity.WARNING ? 'warn' : 'info';
-    
+
     log[logMethod]({
       alertId: alert.id,
       type: alert.type,
@@ -181,9 +165,6 @@ export class AlertingService {
     }, `[ALERT] ${alert.title}: ${alert.message}`);
   }
 
-  /**
-   * Send Slack alert
-   */
   private async sendSlackAlert(alert: Alert): Promise<void> {
     if (!this.config.slackWebhookUrl) return;
 
@@ -217,9 +198,6 @@ export class AlertingService {
     }
   }
 
-  /**
-   * Send PagerDuty alert
-   */
   private async sendPagerDutyAlert(alert: Alert): Promise<void> {
     if (!this.config.pagerdutyIntegrationKey) return;
 
@@ -248,9 +226,6 @@ export class AlertingService {
     }
   }
 
-  /**
-   * Send webhook alert
-   */
   private async sendWebhookAlert(alert: Alert): Promise<void> {
     if (!this.config.webhookUrl) return;
 
@@ -261,21 +236,55 @@ export class AlertingService {
     }
   }
 
-  /**
-   * Queue email alert (placeholder - implement with your email service)
-   */
   private async queueEmailAlert(alert: Alert): Promise<void> {
-    // In production, queue this for your email service
-    log.info({ alertId: alert.id, recipients: this.config.emailRecipients }, 'Email alert queued');
+    const recipients = this.config.emailRecipients;
+
+    if (!recipients || recipients.length === 0) {
+      log.debug({ alertId: alert.id }, 'No email recipients configured, skipping email alert');
+      return;
+    }
+
+    const notificationServiceUrl = process.env.NOTIFICATION_SERVICE_URL || 'http://notification-service:3000';
+
+    try {
+      for (const recipient of recipients) {
+        const emailPayload = {
+          to: recipient.trim(),
+          subject: `[${alert.severity.toUpperCase()}] Payment Alert: ${alert.title}`,
+          template: 'payment_alert',
+          data: {
+            alert_id: alert.id,
+            alert_type: alert.type,
+            severity: alert.severity,
+            title: alert.title,
+            message: alert.message,
+            metadata: alert.metadata,
+            timestamp: alert.timestamp.toISOString(),
+            tenant_id: alert.tenantId,
+          },
+        };
+
+        await this.httpClient.post(`${notificationServiceUrl}/api/notifications/email`, emailPayload);
+      }
+
+      log.info({
+        alertId: alert.id,
+        recipientCount: recipients.length,
+        severity: alert.severity,
+      }, 'Email alert sent via notification-service');
+    } catch (error: any) {
+      log.error({
+        alertId: alert.id,
+        error: error.message,
+        recipients,
+      }, 'Failed to send email alert via notification-service');
+    }
   }
 
   // =============================================================================
   // PAYMENT-SPECIFIC ALERTS
   // =============================================================================
 
-  /**
-   * Alert for transfer failure
-   */
   async alertTransferFailed(
     transferId: string,
     amount: number,
@@ -300,9 +309,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for payout failure
-   */
   async alertPayoutFailed(
     payoutId: string,
     amount: number,
@@ -327,9 +333,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for new dispute
-   */
   async alertDisputeOpened(
     disputeId: string,
     chargeId: string,
@@ -354,9 +357,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for high-value refund
-   */
   async alertHighValueRefund(
     refundId: string,
     paymentIntentId: string,
@@ -384,9 +384,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for repeated authentication failures
-   */
   async alertAuthFailures(
     ip: string,
     failureCount: number,
@@ -407,9 +404,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for rate limit exceeded
-   */
   async alertRateLimitExceeded(
     ip: string,
     endpoint: string,
@@ -430,9 +424,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for database connection issues
-   */
   async alertDatabaseIssue(
     issue: string,
     details: Record<string, any>
@@ -448,9 +439,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * Alert for Stripe API issues
-   */
   async alertStripeApiIssue(
     operation: string,
     error: string,
@@ -471,14 +459,6 @@ export class AlertingService {
     });
   }
 
-  // =============================================================================
-  // MON-3: ACCOUNT DISABLED ALERTS
-  // =============================================================================
-
-  /**
-   * MON-3: Alert when a Stripe Connect account is disabled
-   * This is critical as it affects the venue's ability to receive payments
-   */
   async alertAccountDisabled(
     accountId: string,
     reason: string,
@@ -489,7 +469,7 @@ export class AlertingService {
     await this.sendAlert({
       id: `account-disabled-${accountId}`,
       type: 'account.disabled',
-      severity: AlertSeverity.CRITICAL, // Critical - affects business operations
+      severity: AlertSeverity.CRITICAL,
       title: 'Stripe Account Disabled',
       message: `Account ${accountId}${venueName ? ` (${venueName})` : ''} has been disabled: ${reason}`,
       metadata: {
@@ -504,9 +484,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * MON-3: Alert when account verification fails
-   */
   async alertAccountVerificationFailed(
     accountId: string,
     requirements: string[],
@@ -530,9 +507,6 @@ export class AlertingService {
     });
   }
 
-  /**
-   * MON-3: Alert when payouts are paused
-   */
   async alertPayoutsPaused(
     accountId: string,
     reason: string,
@@ -555,30 +529,34 @@ export class AlertingService {
   }
 
   // =============================================================================
-  // COMM-6: VISIBILITY BEYOND AUDIT LOG
+  // COMM-6: VISIBILITY BEYOND AUDIT LOG - FIXED to match schema
   // =============================================================================
 
-  /**
-   * COMM-6: Publish alert to dashboard/notification system
-   * This makes alerts visible in admin dashboards, not just logs
-   */
   async publishToDashboard(alert: Alert): Promise<void> {
-    // Store in database for dashboard visibility
     try {
       const db = await import('../services/databaseService').then(m => m.DatabaseService.getPool());
+
+      // FIXED: Use actual schema columns
+      // Combine title into message
+      const fullMessage = `${alert.title}: ${alert.message}`;
       
+      // Extract numeric values from metadata if present
+      const metricValue = alert.metadata.amount || alert.metadata.failureCount || null;
+      const thresholdValue = alert.metadata.threshold || alert.metadata.limit || null;
+
       await db.query(`
         INSERT INTO alert_history (
-          id, type, severity, title, message, metadata, tenant_id, created_at, acknowledged
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), false)
+          id, alert_type, severity, message, queue_name, metric_value, threshold_value, tenant_id, created_at, acknowledged
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), false)
         ON CONFLICT (id) DO NOTHING
       `, [
         alert.id,
         alert.type,
         alert.severity,
-        alert.title,
-        alert.message,
-        JSON.stringify(alert.metadata),
+        fullMessage,
+        alert.metadata.queue || null,
+        metricValue,
+        thresholdValue,
         alert.tenantId,
       ]);
 
@@ -588,58 +566,63 @@ export class AlertingService {
     }
   }
 
-  /**
-   * COMM-6: Get active alerts for dashboard
-   */
   async getActiveAlerts(tenantId?: string, limit: number = 50): Promise<Alert[]> {
     try {
       const db = await import('../services/databaseService').then(m => m.DatabaseService.getPool());
-      
+
       let query = `
-        SELECT * FROM alert_history 
+        SELECT ${ALERT_HISTORY_FIELDS} FROM alert_history
         WHERE acknowledged = false
       `;
       const params: any[] = [];
-      
+
       if (tenantId) {
-        query += ` AND (tenant_id = $1 OR tenant_id IS NULL)`;
+        query += ` AND tenant_id = $1`;
         params.push(tenantId);
       }
-      
+
       query += ` ORDER BY created_at DESC LIMIT ${limit}`;
-      
+
       const result = await db.query(query, params);
-      
-      return result.rows.map(row => ({
-        id: row.id,
-        type: row.type,
-        severity: row.severity as AlertSeverity,
-        title: row.title,
-        message: row.message,
-        metadata: row.metadata,
-        timestamp: row.created_at,
-        tenantId: row.tenant_id,
-      }));
+
+      return result.rows.map(row => {
+        // Parse message back into title and message
+        const parts = row.message.split(': ');
+        const title = parts.length > 1 ? parts[0] : 'Alert';
+        const message = parts.length > 1 ? parts.slice(1).join(': ') : row.message;
+
+        return {
+          id: row.id,
+          type: row.alert_type,
+          severity: row.severity as AlertSeverity,
+          title,
+          message,
+          metadata: {
+            queue_name: row.queue_name,
+            metric_value: row.metric_value,
+            threshold_value: row.threshold_value,
+          },
+          timestamp: row.created_at,
+          tenantId: row.tenant_id,
+        };
+      });
     } catch (error) {
       log.error({ error }, 'Failed to get active alerts');
       return [];
     }
   }
 
-  /**
-   * COMM-6: Acknowledge an alert
-   */
   async acknowledgeAlert(alertId: string, acknowledgedBy: string): Promise<boolean> {
     try {
       const db = await import('../services/databaseService').then(m => m.DatabaseService.getPool());
-      
+
       const result = await db.query(`
-        UPDATE alert_history 
+        UPDATE alert_history
         SET acknowledged = true, acknowledged_at = NOW(), acknowledged_by = $2
         WHERE id = $1
         RETURNING id
       `, [alertId, acknowledgedBy]);
-      
+
       if (result.rows.length > 0) {
         log.info({ alertId, acknowledgedBy }, 'Alert acknowledged');
         return true;
@@ -651,9 +634,6 @@ export class AlertingService {
     }
   }
 
-  /**
-   * COMM-6: Get alert statistics for dashboard
-   */
   async getAlertStats(tenantId?: string): Promise<{
     total: number;
     byType: Record<string, number>;
@@ -662,19 +642,19 @@ export class AlertingService {
   }> {
     try {
       const db = await import('../services/databaseService').then(m => m.DatabaseService.getPool());
-      
-      const tenantFilter = tenantId ? `WHERE tenant_id = '${tenantId}' OR tenant_id IS NULL` : '';
-      
+
+      const tenantFilter = tenantId ? `WHERE tenant_id = '${tenantId}'` : '';
+
       const [totalResult, typeResult, severityResult, unackResult] = await Promise.all([
         db.query(`SELECT COUNT(*) as count FROM alert_history ${tenantFilter}`),
-        db.query(`SELECT type, COUNT(*) as count FROM alert_history ${tenantFilter} GROUP BY type`),
+        db.query(`SELECT alert_type, COUNT(*) as count FROM alert_history ${tenantFilter} GROUP BY alert_type`),
         db.query(`SELECT severity, COUNT(*) as count FROM alert_history ${tenantFilter} GROUP BY severity`),
         db.query(`SELECT COUNT(*) as count FROM alert_history WHERE acknowledged = false ${tenantFilter ? 'AND ' + tenantFilter.replace('WHERE ', '') : ''}`),
       ]);
-      
+
       return {
         total: parseInt(totalResult.rows[0]?.count || '0', 10),
-        byType: Object.fromEntries(typeResult.rows.map(r => [r.type, parseInt(r.count, 10)])),
+        byType: Object.fromEntries(typeResult.rows.map(r => [r.alert_type, parseInt(r.count, 10)])),
         bySeverity: Object.fromEntries(severityResult.rows.map(r => [r.severity, parseInt(r.count, 10)])),
         unacknowledged: parseInt(unackResult.rows[0]?.count || '0', 10),
       };
@@ -685,17 +665,8 @@ export class AlertingService {
   }
 }
 
-// =============================================================================
-// SINGLETON INSTANCE
-// =============================================================================
-
 export const alertingService = new AlertingService();
 
-// =============================================================================
-// METRIC REGISTRATION
-// =============================================================================
-
-// Register alert metrics
 metricsRegistry.registerCounter(
   'alerts_sent_total',
   'Total number of alerts sent'

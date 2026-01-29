@@ -9,6 +9,13 @@ import { PaymentRequest, FraudDecision } from '../types';
 import Stripe from 'stripe';
 import { config } from '../config';
 import { db, pool } from '../config/database';
+import {
+  serializeTransaction,
+  serializeTransactionSummary,
+  SAFE_TRANSACTION_SELECT,
+  serializeRefund,
+  SAFE_REFUND_SELECT,
+} from '../serializers';
 
 export class PaymentController {
   private paymentProcessor: PaymentProcessorService;
@@ -50,6 +57,7 @@ export class PaymentController {
     }
 
     const userId = user.id;
+    const tenantId = (user as any).tenantId;
     const sessionId = request.id; // Fastify request ID
 
     // 1. Check waiting room status
@@ -104,14 +112,12 @@ export class PaymentController {
       });
     }
 
-    // 3. Fraud checks
+    // 3. Fraud checks - signature: (userId, tenantId, transaction, deviceFingerprint)
     this.log.info({ userId }, 'Starting fraud checks');
     const fraudCheck = await this.scalperDetector.detectScalper(
       userId,
-      {
-        ipAddress: request.ip || '',
-        ...paymentRequest
-      },
+      tenantId,
+      { ipAddress: request.ip || '' },
       (paymentRequest as any).deviceFingerprint
     );
 
@@ -157,8 +163,7 @@ export class PaymentController {
       ticketCount
     );
 
-    // 6. Process payment - FIX: Match the expected interface
-    // Create a mock order ID (in production, this would come from order-service)
+    // 6. Process payment
     const orderId = `order_${Date.now()}`;
     const amountCents = Math.round(totalAmount * 100); // Convert to cents
 
@@ -167,10 +172,12 @@ export class PaymentController {
     const transaction = await this.paymentProcessor.processPayment({
       userId,
       orderId,
+      venueId: paymentRequest.venueId,
+      eventId: paymentRequest.eventId,
       amountCents,
       currency: 'USD',
       idempotencyKey: request.headers['idempotency-key'] as string || `${userId}_${Date.now()}`,
-      tenantId: (user as any).tenantId
+      tenantId
     });
 
     // 7. Queue NFT minting
@@ -187,8 +194,9 @@ export class PaymentController {
       (transaction as any).metadata = { mintJobId };
     }
 
-    // 8. Record velocity
+    // 8. Record velocity (tenantId, userId, eventId, ipAddress, paymentMethodToken)
     await this.velocityChecker.recordPurchase(
+      tenantId,
       userId,
       paymentRequest.eventId,
       request.ip || '',
@@ -197,7 +205,7 @@ export class PaymentController {
 
     return reply.status(200).send({
       success: true,
-      transaction,
+      transaction: serializeTransactionSummary(transaction),
       fees: fees.breakdown,
       nftStatus: (transaction as any).metadata?.mintJobId ? 'queued' : 'pending'
     });
@@ -231,9 +239,9 @@ export class PaymentController {
     }
 
     try {
-      // Query the actual transaction from database
+      // Query the actual transaction from database - explicit field selection for security
       const result = await pool.query(
-        `SELECT * FROM payment_transactions WHERE id = $1`,
+        `SELECT ${SAFE_TRANSACTION_SELECT}, user_id, metadata FROM payment_transactions WHERE id = $1`,
         [transactionId]
       );
 
@@ -257,8 +265,9 @@ export class PaymentController {
         nftStatus = await this.nftQueue.getJobStatus(transaction.metadata.mintJobId);
       }
 
+      // SECURITY: Serialize transaction to filter sensitive fields
       return reply.send({
-        transaction,
+        transaction: serializeTransaction(transaction),
         nftStatus
       });
     } catch (error) {
@@ -279,9 +288,9 @@ export class PaymentController {
     }
 
     try {
-      // Get the original transaction
+      // Get the original transaction - only fields needed for authorization and refund
       const txResult = await pool.query(
-        `SELECT * FROM payment_transactions WHERE id = $1`,
+        `SELECT id, tenant_id, user_id, amount FROM payment_transactions WHERE id = $1`,
         [transactionId]
       );
 
@@ -324,14 +333,16 @@ export class PaymentController {
         [refundAmount >= transaction.amount ? 'refunded' : 'partially_refunded', transactionId]
       );
 
+      // Query refund with explicit field selection - no SELECT *
       const refundResult = await pool.query(
-        `SELECT * FROM payment_refunds WHERE id = $1`,
+        `SELECT ${SAFE_REFUND_SELECT} FROM payment_refunds WHERE id = $1`,
         [refundId]
       );
 
+      // SECURITY: Serialize refund to filter sensitive fields
       return reply.send({
         success: true,
-        refund: refundResult.rows[0]
+        refund: serializeRefund(refundResult.rows[0])
       });
     } catch (error) {
       this.log.error({ error, transactionId }, 'Error processing refund');

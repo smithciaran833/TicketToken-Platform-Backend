@@ -1,6 +1,7 @@
 import { serviceCache } from '../services/cache-integration';
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { GroupPaymentService, ContributionTrackerService } from '../services/group';
+import { serializeGroupPaymentWithMembers } from '../serializers';
 
 export class GroupPaymentController {
   private groupPaymentService: GroupPaymentService;
@@ -28,13 +29,17 @@ export class GroupPaymentController {
       members
     );
 
+    // SECURITY: Serialize group payment - organizer view includes member emails
+    const serialized = serializeGroupPaymentWithMembers(groupPayment, groupPayment.members || []);
+
     return reply.status(201).send({
       success: true,
-      groupPayment,
-      paymentLinks: groupPayment.members.map(m => ({
+      groupPayment: serialized,
+      // Organizer can see emails for payment link distribution
+      paymentLinks: (groupPayment.members || []).map((m: any) => ({
         memberId: m.id,
         email: m.email,
-        amount: m.amountDue,
+        amount: m.amount_due || m.amountDue,
         link: `${process.env.FRONTEND_URL}/group-payment/${groupPayment.id}/${m.id}`
       }))
     });
@@ -64,21 +69,35 @@ export class GroupPaymentController {
 
     const status = await this.groupPaymentService.getGroupStatus(groupId);
 
-    return reply.send(status);
+    // SECURITY: This endpoint has no authentication - return only summary info
+    // The summary is pre-computed safe data from the service
+    return reply.send({
+      group: {
+        id: status.group.id,
+        eventId: status.group.eventId,
+        status: status.group.status,
+        expiresAt: status.group.expiresAt,
+      },
+      summary: status.summary,
+    });
   }
 
   async sendReminders(request: FastifyRequest, reply: FastifyReply) {
     const { groupId } = request.params as any;
     const user = (request as any).user;
 
-    // Verify organizer
-    // TODO: Make getGroupPayment public or add a public method
-    const group = { organizerId: "" }; // await this.groupPaymentService.getGroupPayment(groupId);
-    
     if (!user) {
-      return reply.status(401).send({ error: "Authentication required" });
+      return reply.status(401).send({ error: 'Authentication required' });
     }
-    
+
+    // Get group payment to verify organizer
+    const group = await this.groupPaymentService.getGroupPayment(groupId);
+
+    if (!group) {
+      return reply.status(404).send({ error: 'Group payment not found' });
+    }
+
+    // Verify user is the organizer
     if (group.organizerId !== user.id) {
       return reply.status(403).send({
         error: 'Only the organizer can send reminders'
@@ -98,6 +117,28 @@ export class GroupPaymentController {
 
     const history = await this.contributionTracker.getContributionHistory(groupId);
 
-    return reply.send(history);
+    // SECURITY: Serialize history - this endpoint has no authentication
+    // Filter any sensitive payment data from contribution history
+    const safeContributions = (history?.contributions || []).map((entry: any) => ({
+      memberId: entry.memberId,
+      memberName: entry.memberName,
+      amount: entry.amount,
+      contributedAt: entry.contributedAt,
+      status: entry.status,
+      // Note: email and payment details excluded for privacy
+    }));
+
+    // Timeline events are already safe summary data
+    const safeTimeline = (history?.timeline || []).map((event: any) => ({
+      timestamp: event.timestamp,
+      event: event.event,
+      // Note: details may contain sensitive info, filter carefully
+      details: typeof event.details === 'string' ? event.details : undefined,
+    }));
+
+    return reply.send({
+      contributions: safeContributions,
+      timeline: safeTimeline,
+    });
   }
 }

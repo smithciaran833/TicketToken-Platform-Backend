@@ -7,6 +7,11 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ component: 'WebhookProcessor' });
 
+/**
+ * SECURITY: Explicit field list for webhook processor queries.
+ */
+const WEBHOOK_INBOX_FIELDS = 'id, webhook_id, event_id, provider, event_type, payload, status, attempts, created_at';
+
 class WebhookProcessorClass {
   private stripe: Stripe;
   private paymentProcessor: PaymentProcessorService;
@@ -23,8 +28,9 @@ class WebhookProcessorClass {
     const db = DatabaseService.getPool();
 
     // Get webhook from inbox
+    // SECURITY: Use explicit field list instead of SELECT *
     const result = await db.query(
-      `SELECT * FROM webhook_inbox WHERE webhook_id = $1`,
+      `SELECT ${WEBHOOK_INBOX_FIELDS} FROM webhook_inbox WHERE webhook_id = $1`,
       [webhookId]
     );
 
@@ -93,7 +99,9 @@ class WebhookProcessorClass {
 
   verifyStripeSignature(payload: string, signature: string): boolean {
     if (!process.env.STRIPE_WEBHOOK_SECRET) {
-      return true; // Mock mode
+      const error = 'STRIPE_WEBHOOK_SECRET is required for webhook verification';
+      log.error(error);
+      throw new Error(error);
     }
 
     const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -101,6 +109,7 @@ class WebhookProcessorClass {
       stripe.webhooks.constructEvent(payload, signature, process.env.STRIPE_WEBHOOK_SECRET);
       return true;
     } catch (err) {
+      log.warn({ error: err }, 'Webhook signature verification failed');
       return false;
     }
   }

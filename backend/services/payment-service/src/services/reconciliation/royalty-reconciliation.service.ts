@@ -1,23 +1,26 @@
-import { db } from '../../config/database';
+import { Pool, PoolClient } from 'pg';
 import { logger } from '../../utils/logger';
-import axios from 'axios';
 
-interface SecondarySale {
+const log = logger.child({ component: 'RoyaltyReconciliation' });
+
+export interface SecondarySale {
   signature: string;
   tokenId: string;
   price: number;
   seller: string;
   buyer: string;
   timestamp: Date;
-  eventId?: string;
-  venueId?: string;
+  eventId: string;
+  venueId: string;
+  tenantId: string;
 }
 
-interface RoyaltyDistribution {
+export interface RoyaltyDistribution {
   id: string;
+  tenant_id: string;
   transaction_id: string;
   event_id: string;
-  recipient_type: string;
+  recipient_type: 'venue' | 'artist' | 'platform';
   recipient_id: string;
   amount_cents: number;
   percentage: number;
@@ -25,78 +28,78 @@ interface RoyaltyDistribution {
   created_at: Date;
 }
 
+export interface ReconciliationRunResult {
+  runId: string;
+  transactionsChecked: number;
+  discrepanciesFound: number;
+  discrepanciesResolved: number;
+  totalRoyaltiesCalculated: number;
+  totalRoyaltiesPaid: number;
+}
+
+export interface BlockchainIndexerClient {
+  getSecondarySales(startDate: Date, endDate: Date): Promise<SecondarySale[]>;
+  getTransaction(signature: string): Promise<SecondarySale | null>;
+}
+
 export class RoyaltyReconciliationService {
-  private log = logger.child({ component: 'RoyaltyReconciliation' });
-  private blockchainIndexerUrl = process.env.BLOCKCHAIN_INDEXER_URL || 'http://blockchain-indexer:3012';
+  private pool: Pool;
+  private blockchainClient: BlockchainIndexerClient;
 
-  /**
-   * Main reconciliation run - checks blockchain sales vs database royalties
-   */
-  async runReconciliation(startDate: Date, endDate: Date): Promise<void> {
-    this.log.info({ startDate, endDate }, 'Starting royalty reconciliation');
+  constructor(pool: Pool, blockchainClient: BlockchainIndexerClient) {
+    this.pool = pool;
+    this.blockchainClient = blockchainClient;
+  }
 
-    const runId = await this.createReconciliationRun(startDate, endDate);
+  async runReconciliation(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<ReconciliationRunResult> {
+    log.info({ tenantId, startDate, endDate }, 'Starting royalty reconciliation');
+
+    const runId = await this.createReconciliationRun(tenantId, startDate, endDate);
 
     try {
-      // 1. Get secondary sales from blockchain-indexer (MongoDB)
-      const secondarySales = await this.getSecondarySalesFromBlockchain(startDate, endDate);
-      this.log.info(`Found ${secondarySales.length} secondary sales on blockchain`);
+      const secondarySales = await this.blockchainClient.getSecondarySales(startDate, endDate);
+      log.info({ count: secondarySales.length }, 'Found secondary sales on blockchain');
 
-      // 2. Get royalty distributions from our database
-      const distributions = await this.getRoyaltyDistributions(startDate, endDate);
-      this.log.info(`Found ${distributions.length} royalty distributions in database`);
+      const distributions = await this.getRoyaltyDistributions(tenantId, startDate, endDate);
+      log.info({ count: distributions.length }, 'Found royalty distributions in database');
 
-      // 3. Reconcile and find discrepancies
-      const results = await this.reconcile(runId, secondarySales, distributions);
+      const results = await this.reconcile(tenantId, runId, secondarySales, distributions);
 
-      // 4. Schedule pending payouts
-      await this.schedulePayouts();
-
-      // 5. Complete the run
       await this.completeReconciliationRun(runId, results);
 
-      this.log.info({ runId, ...results }, 'Reconciliation completed successfully');
+      log.info({ runId, ...results }, 'Reconciliation completed');
 
-    } catch (error: any) {
-      this.log.error({ error, runId }, 'Reconciliation failed');
-      await this.failReconciliationRun(runId, error.message);
+      return { runId, ...results };
+
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      await this.failReconciliationRun(runId, msg);
       throw error;
     }
   }
 
-  /**
-   * Get secondary sales from blockchain-indexer MongoDB
-   */
-  private async getSecondarySalesFromBlockchain(startDate: Date, endDate: Date): Promise<SecondarySale[]> {
-    try {
-      const response = await axios.post(`${this.blockchainIndexerUrl}/api/v1/marketplace/sales`, {
-        startDate: startDate.toISOString(),
-        endDate: endDate.toISOString(),
-        eventType: 'sale'
-      });
+  async getRoyaltyDistributions(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<RoyaltyDistribution[]> {
+    const result = await this.pool.query(`
+      SELECT id, tenant_id, transaction_id, event_id, recipient_type, 
+             recipient_id, amount_cents, percentage, status, created_at
+      FROM royalty_distributions
+      WHERE tenant_id = $1
+        AND created_at BETWEEN $2 AND $3
+    `, [tenantId, startDate, endDate]);
 
-      return response.data.sales || [];
-    } catch (error: any) {
-      this.log.error({ error }, 'Failed to fetch secondary sales from blockchain-indexer');
-      return [];
-    }
+    return result.rows;
   }
 
-  /**
-   * Get royalty distributions from PostgreSQL
-   */
-  private async getRoyaltyDistributions(startDate: Date, endDate: Date): Promise<RoyaltyDistribution[]> {
-    const distributions = await db('royalty_distributions')
-      .whereBetween('created_at', [startDate, endDate])
-      .select('*');
-
-    return distributions;
-  }
-
-  /**
-   * Reconcile blockchain sales with database distributions
-   */
   private async reconcile(
+    tenantId: string,
     runId: string,
     sales: SecondarySale[],
     distributions: RoyaltyDistribution[]
@@ -112,7 +115,6 @@ export class RoyaltyReconciliationService {
     let totalRoyaltiesCalculated = 0;
     let totalRoyaltiesPaid = 0;
 
-    // Create a map of distributions by transaction signature
     const distributionMap = new Map<string, RoyaltyDistribution[]>();
     for (const dist of distributions) {
       const key = dist.transaction_id;
@@ -122,52 +124,48 @@ export class RoyaltyReconciliationService {
       distributionMap.get(key)!.push(dist);
     }
 
-    // Check each blockchain sale
     for (const sale of sales) {
       const existingDistributions = distributionMap.get(sale.signature) || [];
 
-      // Calculate expected royalties
-      const expectedRoyalties = await this.calculateExpectedRoyalties(sale);
+      const expectedRoyalties = await this.calculateExpectedRoyalties(tenantId, sale);
       totalRoyaltiesCalculated += expectedRoyalties.total;
 
       if (existingDistributions.length === 0) {
-        // Missing distribution - create discrepancy
-        this.log.warn({ signature: sale.signature }, 'Missing royalty distribution for sale');
+        log.warn({ signature: sale.signature }, 'Missing royalty distribution');
 
-        await this.recordDiscrepancy(runId, {
-          transaction_id: sale.signature,
-          discrepancy_type: 'missing_distribution',
-          expected_amount: expectedRoyalties.total,
-          actual_amount: 0,
+        await this.recordDiscrepancy(tenantId, runId, {
+          transactionId: sale.signature,
+          discrepancyType: 'missing_distribution',
+          expectedAmount: expectedRoyalties.total,
+          actualAmount: 0,
           variance: expectedRoyalties.total
         });
 
         discrepanciesFound++;
 
-        // Auto-create the missing distribution
-        await this.createMissingDistribution(sale, expectedRoyalties);
+        await this.createMissingDistribution(tenantId, sale, expectedRoyalties);
         discrepanciesResolved++;
 
       } else {
-        // Check amounts
-        const actualTotal = existingDistributions.reduce((sum, d) => sum + parseFloat(d.amount_cents.toString()), 0);
+        const actualTotal = existingDistributions.reduce(
+          (sum, d) => sum + parseFloat(d.amount_cents.toString()), 0
+        );
         totalRoyaltiesPaid += actualTotal;
 
         const variance = Math.abs(expectedRoyalties.total - actualTotal);
 
-        if (variance > 0.01) { // More than 1 cent difference
-          this.log.warn({
+        if (variance > 1) {
+          log.warn({
             signature: sale.signature,
             expected: expectedRoyalties.total,
-            actual: actualTotal,
-            variance
+            actual: actualTotal
           }, 'Royalty amount mismatch');
 
-          await this.recordDiscrepancy(runId, {
-            transaction_id: sale.signature,
-            discrepancy_type: 'incorrect_amount',
-            expected_amount: expectedRoyalties.total,
-            actual_amount: actualTotal,
+          await this.recordDiscrepancy(tenantId, runId, {
+            transactionId: sale.signature,
+            discrepancyType: 'incorrect_amount',
+            expectedAmount: expectedRoyalties.total,
+            actualAmount: actualTotal,
             variance
           });
 
@@ -185,35 +183,29 @@ export class RoyaltyReconciliationService {
     };
   }
 
-  /**
-   * Calculate expected royalties for a secondary sale
-   */
-  private async calculateExpectedRoyalties(sale: SecondarySale): Promise<{
-    venue: number;
-    artist: number;
-    platform: number;
-    total: number;
-  }> {
-    // Get venue settings
-    const venueSettings = await db('venue_royalty_settings')
-      .where('venue_id', sale.venueId)
-      .first();
+  async calculateExpectedRoyalties(
+    tenantId: string,
+    sale: SecondarySale
+  ): Promise<{ venue: number; artist: number; platform: number; total: number }> {
+    const venueSettings = await this.pool.query(`
+      SELECT default_royalty_percentage FROM venue_royalty_settings
+      WHERE tenant_id = $1 AND venue_id = $2
+    `, [tenantId, sale.venueId]);
 
-    // Get event settings
-    const eventSettings = await db('event_royalty_settings')
-      .where('event_id', sale.eventId)
-      .first();
+    const eventSettings = await this.pool.query(`
+      SELECT venue_royalty_percentage, artist_royalty_percentage 
+      FROM event_royalty_settings
+      WHERE tenant_id = $1 AND event_id = $2
+    `, [tenantId, sale.eventId]);
 
-    const venuePercentage = eventSettings?.venue_royalty_percentage ??
-                           venueSettings?.default_royalty_percentage ??
-                           10;
-
-    const artistPercentage = eventSettings?.artist_royalty_percentage ?? 0;
+    const venueDefault = venueSettings.rows[0]?.default_royalty_percentage ?? 10;
+    const venuePercentage = eventSettings.rows[0]?.venue_royalty_percentage ?? venueDefault;
+    const artistPercentage = eventSettings.rows[0]?.artist_royalty_percentage ?? 0;
     const platformPercentage = 5;
 
-    const venue = (sale.price * venuePercentage) / 100;
-    const artist = (sale.price * artistPercentage) / 100;
-    const platform = (sale.price * platformPercentage) / 100;
+    const venue = Math.round((sale.price * venuePercentage) / 100);
+    const artist = Math.round((sale.price * artistPercentage) / 100);
+    const platform = Math.round((sale.price * platformPercentage) / 100);
 
     return {
       venue,
@@ -223,214 +215,232 @@ export class RoyaltyReconciliationService {
     };
   }
 
-  /**
-   * Create missing royalty distribution
-   */
-  private async createMissingDistribution(sale: SecondarySale, royalties: any): Promise<void> {
-    const distributions = [
-      {
-        transaction_id: sale.signature,
-        event_id: sale.eventId,
-        transaction_type: 'secondary_sale',
-        recipient_type: 'venue',
-        recipient_id: sale.venueId,
-        amount_cents: royalties.venue,
-        percentage: royalties.venue / sale.price * 100,
-        status: 'pending'
-      },
-      {
-        transaction_id: sale.signature,
-        event_id: sale.eventId,
-        transaction_type: 'secondary_sale',
-        recipient_type: 'platform',
-        recipient_id: 'tickettoken',
-        amount_cents: royalties.platform,
-        percentage: 5,
-        status: 'pending'
-      }
-    ];
+  private async createMissingDistribution(
+    tenantId: string,
+    sale: SecondarySale,
+    royalties: { venue: number; artist: number; platform: number }
+  ): Promise<void> {
+    const client = await this.pool.connect();
 
-    if (royalties.artist > 0) {
-      const eventSettings = await db('event_royalty_settings')
-        .where('event_id', sale.eventId)
-        .first();
+    try {
+      await client.query('BEGIN');
 
-      distributions.push({
-        transaction_id: sale.signature,
-        event_id: sale.eventId,
-        transaction_type: 'secondary_sale',
-        recipient_type: 'artist',
-        recipient_id: eventSettings?.artist_wallet_address || 'unknown',
-        amount_cents: royalties.artist,
-        percentage: royalties.artist / sale.price * 100,
-        status: 'pending'
-      });
-    }
-
-    await db('royalty_distributions').insert(distributions);
-
-    this.log.info({ signature: sale.signature }, 'Created missing royalty distributions');
-  }
-
-  /**
-   * Record a discrepancy
-   */
-  private async recordDiscrepancy(runId: string, discrepancy: any): Promise<void> {
-    await db('royalty_discrepancies').insert({
-      reconciliation_run_id: runId,
-      transaction_id: discrepancy.transaction_id,
-      discrepancy_type: discrepancy.discrepancy_type,
-      expected_amount: discrepancy.expected_amount,
-      actual_amount: discrepancy.actual_amount,
-      variance: discrepancy.variance,
-      status: 'identified'
-    });
-  }
-
-  /**
-   * Schedule payouts for pending distributions
-   */
-  private async schedulePayouts(): Promise<void> {
-    this.log.info('Scheduling royalty payouts');
-
-    // Group pending distributions by recipient
-    const pendingByRecipient = await db('royalty_distributions')
-      .where('status', 'pending')
-      .select('recipient_id', 'recipient_type')
-      .sum('amount_cents as total_amount')
-      .count('* as distribution_count')
-      .groupBy('recipient_id', 'recipient_type');
-
-    for (const group of pendingByRecipient) {
-      // Check minimum payout threshold
-      if (group.recipient_type === 'venue') {
-        const settings = await db('venue_royalty_settings')
-          .where('venue_id', group.recipient_id)
-          .first();
-
-        if (settings && parseFloat(group.total_amount) < settings.minimum_payout_amount_cents) {
-          this.log.debug({
-            venueId: group.recipient_id,
-            amount: group.total_amount,
-            minimum: settings.minimum_payout_amount_cents
-          }, 'Skipping payout - below minimum threshold');
-          continue;
-        }
+      if (royalties.venue > 0) {
+        await client.query(`
+          INSERT INTO royalty_distributions (
+            tenant_id, transaction_id, event_id, transaction_type,
+            recipient_type, recipient_id, amount_cents, percentage, status
+          ) VALUES ($1, $2, $3, 'secondary_sale', 'venue', $4, $5, $6, 'pending')
+        `, [
+          tenantId,
+          sale.signature,
+          sale.eventId,
+          sale.venueId,
+          royalties.venue,
+          (royalties.venue / sale.price) * 100
+        ]);
       }
 
-      // Create payout
-      await this.createPayout(group);
+      if (royalties.platform > 0) {
+        const platformId = '00000000-0000-0000-0000-000000000001';
+        await client.query(`
+          INSERT INTO royalty_distributions (
+            tenant_id, transaction_id, event_id, transaction_type,
+            recipient_type, recipient_id, amount_cents, percentage, status
+          ) VALUES ($1, $2, $3, 'secondary_sale', 'platform', $4, $5, 5, 'pending')
+        `, [tenantId, sale.signature, sale.eventId, platformId, royalties.platform]);
+      }
+
+      if (royalties.artist > 0) {
+        const artistId = sale.venueId;
+        await client.query(`
+          INSERT INTO royalty_distributions (
+            tenant_id, transaction_id, event_id, transaction_type,
+            recipient_type, recipient_id, amount_cents, percentage, status
+          ) VALUES ($1, $2, $3, 'secondary_sale', 'artist', $4, $5, $6, 'pending')
+        `, [
+          tenantId,
+          sale.signature,
+          sale.eventId,
+          artistId,
+          royalties.artist,
+          (royalties.artist / sale.price) * 100
+        ]);
+      }
+
+      await client.query('COMMIT');
+      log.info({ signature: sale.signature }, 'Created missing royalty distributions');
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
   }
 
-  /**
-   * Create a payout for a recipient
-   */
-  private async createPayout(group: any): Promise<void> {
-    const now = new Date();
-    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  private async recordDiscrepancy(
+    tenantId: string,
+    runId: string,
+    discrepancy: {
+      transactionId: string;
+      discrepancyType: string;
+      expectedAmount: number;
+      actualAmount: number;
+      variance: number;
+    }
+  ): Promise<string> {
+    const result = await this.pool.query(`
+      INSERT INTO royalty_discrepancies (
+        tenant_id, reconciliation_run_id, transaction_id,
+        discrepancy_type, expected_amount, actual_amount, variance, status
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'identified')
+      RETURNING id
+    `, [
+      tenantId,
+      runId,
+      discrepancy.transactionId,
+      discrepancy.discrepancyType,
+      discrepancy.expectedAmount,
+      discrepancy.actualAmount,
+      discrepancy.variance
+    ]);
 
-    const [payoutId] = await db('royalty_payouts').insert({
-      recipient_id: group.recipient_id,
-      recipient_type: group.recipient_type,
-      amount_cents: group.total_amount,
-      distribution_count: group.distribution_count,
-      period_start: periodStart,
-      period_end: periodEnd,
-      status: 'scheduled',
-      scheduled_at: new Date()
-    }).returning('id');
-
-    // Mark distributions as scheduled
-    await db('royalty_distributions')
-      .where('recipient_id', group.recipient_id)
-      .where('recipient_type', group.recipient_type)
-      .where('status', 'pending')
-      .update({ status: 'scheduled' });
-
-    this.log.info({
-      payoutId,
-      recipientId: group.recipient_id,
-      amount: group.total_amount
-    }, 'Created royalty payout');
+    return result.rows[0].id;
   }
 
-  /**
-   * Create reconciliation run record
-   */
-  private async createReconciliationRun(startDate: Date, endDate: Date): Promise<string> {
-    const [run] = await db('royalty_reconciliation_runs').insert({
-      reconciliation_date: new Date(),
-      period_start: startDate,
-      period_end: endDate,
-      status: 'running',
-      started_at: new Date()
-    }).returning('id');
+  private async createReconciliationRun(
+    tenantId: string,
+    startDate: Date,
+    endDate: Date
+  ): Promise<string> {
+    const result = await this.pool.query(`
+      INSERT INTO royalty_reconciliation_runs (
+        tenant_id, reconciliation_date, period_start, period_end, status, started_at
+      ) VALUES ($1, CURRENT_DATE, $2, $3, 'running', NOW())
+      RETURNING id
+    `, [tenantId, startDate, endDate]);
 
-    return run.id;
+    return result.rows[0].id;
   }
 
-  /**
-   * Complete reconciliation run
-   */
-  private async completeReconciliationRun(runId: string, results: any): Promise<void> {
+  private async completeReconciliationRun(
+    runId: string,
+    results: {
+      transactionsChecked: number;
+      discrepanciesFound: number;
+      discrepanciesResolved: number;
+      totalRoyaltiesCalculated: number;
+      totalRoyaltiesPaid: number;
+    }
+  ): Promise<void> {
     const variance = results.totalRoyaltiesCalculated - results.totalRoyaltiesPaid;
 
-    await db('royalty_reconciliation_runs')
-      .where('id', runId)
-      .update({
-        transactions_checked: results.transactionsChecked,
-        discrepancies_found: results.discrepanciesFound,
-        discrepancies_resolved: results.discrepanciesResolved,
-        total_royalties_calculated: results.totalRoyaltiesCalculated,
-        total_royalties_paid: results.totalRoyaltiesPaid,
-        variance_amount: variance,
-        status: 'completed',
-        completed_at: new Date()
-      });
+    await this.pool.query(`
+      UPDATE royalty_reconciliation_runs
+      SET transactions_checked = $2,
+          discrepancies_found = $3,
+          discrepancies_resolved = $4,
+          total_royalties_calculated = $5,
+          total_royalties_paid = $6,
+          variance_amount = $7,
+          status = 'completed',
+          completed_at = NOW()
+      WHERE id = $1
+    `, [
+      runId,
+      results.transactionsChecked,
+      results.discrepanciesFound,
+      results.discrepanciesResolved,
+      results.totalRoyaltiesCalculated,
+      results.totalRoyaltiesPaid,
+      variance
+    ]);
   }
 
-  /**
-   * Mark reconciliation run as failed
-   */
   private async failReconciliationRun(runId: string, errorMessage: string): Promise<void> {
-    await db('royalty_reconciliation_runs')
-      .where('id', runId)
-      .update({
-        status: 'failed',
-        error_message: errorMessage,
-        completed_at: new Date()
-      });
+    await this.pool.query(`
+      UPDATE royalty_reconciliation_runs
+      SET status = 'failed',
+          error_message = $2,
+          completed_at = NOW()
+      WHERE id = $1
+    `, [runId, errorMessage]);
   }
 
-  /**
-   * Manual reconciliation for specific transaction
-   */
-  async reconcileTransaction(transactionSignature: string): Promise<void> {
-    this.log.info({ signature: transactionSignature }, 'Manual reconciliation for transaction');
+  async getDiscrepancies(runId: string): Promise<any[]> {
+    const result = await this.pool.query(`
+      SELECT * FROM royalty_discrepancies WHERE reconciliation_run_id = $1
+    `, [runId]);
+    return result.rows;
+  }
 
-    // Get the transaction from blockchain
-    const response = await axios.get(
-      `${this.blockchainIndexerUrl}/api/v1/transactions/${transactionSignature}`
-    );
+  async getReconciliationRun(runId: string): Promise<any | null> {
+    const result = await this.pool.query(`
+      SELECT * FROM royalty_reconciliation_runs WHERE id = $1
+    `, [runId]);
+    return result.rows[0] || null;
+  }
 
-    const sale: SecondarySale = response.data;
+  async schedulePayouts(tenantId: string): Promise<number> {
+    const client = await this.pool.connect();
+    let payoutsCreated = 0;
 
-    // Check existing distributions
-    const existing = await db('royalty_distributions')
-      .where('transaction_id', transactionSignature)
-      .select('*');
+    try {
+      const pending = await client.query(`
+        SELECT recipient_id, recipient_type,
+               SUM(amount_cents) as total_amount,
+               COUNT(*) as distribution_count
+        FROM royalty_distributions
+        WHERE tenant_id = $1 AND status = 'pending'
+        GROUP BY recipient_id, recipient_type
+      `, [tenantId]);
 
-    if (existing.length === 0) {
-      // Create missing distributions
-      const royalties = await this.calculateExpectedRoyalties(sale);
-      await this.createMissingDistribution(sale, royalties);
-      this.log.info({ signature: transactionSignature }, 'Created missing distributions');
-    } else {
-      this.log.info({ signature: transactionSignature }, 'Distributions already exist');
+      for (const group of pending.rows) {
+        if (group.recipient_type === 'venue') {
+          const settings = await client.query(`
+            SELECT minimum_payout_amount_cents FROM venue_royalty_settings
+            WHERE tenant_id = $1 AND venue_id = $2
+          `, [tenantId, group.recipient_id]);
+
+          const minimum = settings.rows[0]?.minimum_payout_amount_cents ?? 1000;
+          if (parseFloat(group.total_amount) < minimum) {
+            continue;
+          }
+        }
+
+        const now = new Date();
+        const periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+
+        await client.query(`
+          INSERT INTO royalty_payouts (
+            tenant_id, recipient_id, recipient_type, amount_cents,
+            distribution_count, period_start, period_end, status, scheduled_at
+          ) VALUES ($1, $2, $3, $4, $5, $6, $7, 'scheduled', NOW())
+        `, [
+          tenantId,
+          group.recipient_id,
+          group.recipient_type,
+          group.total_amount,
+          group.distribution_count,
+          periodStart,
+          periodEnd
+        ]);
+
+        await client.query(`
+          UPDATE royalty_distributions
+          SET status = 'scheduled'
+          WHERE tenant_id = $1 AND recipient_id = $2 AND recipient_type = $3 AND status = 'pending'
+        `, [tenantId, group.recipient_id, group.recipient_type]);
+
+        payoutsCreated++;
+      }
+
+      return payoutsCreated;
+
+    } finally {
+      client.release();
     }
   }
 }
-
-export const royaltyReconciliationService = new RoyaltyReconciliationService();
